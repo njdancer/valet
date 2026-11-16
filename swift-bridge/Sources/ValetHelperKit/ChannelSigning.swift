@@ -13,6 +13,7 @@ public let relayBindingDomain = "valet/relay-binding/v1"
 public let deviceRecordDomain = "valet/device-record/v1"
 public let pairingChallengeDomain = "valet/pairing/v1 challenge"
 public let rosterChangeDomain = "valet/roster-change/v1"
+public let hubGrantDomain = "valet/hub-grant/v1"
 
 /// Changes to the account's device list signed at once: the first one (this Mac adding itself)
 /// plus the phones it already paired, so joining needs one Touch ID prompt.
@@ -71,6 +72,9 @@ public func channelApprovalToSign(domain: String, payloads: [String], own: OwnKe
       kinds.contains(.start)
       ? "put this Mac and its iPhones on your Valet account"
       : kinds.contains(.remove) ? "remove a device from your Valet account" : "add an iPhone to your Valet account"
+  case hubGrantDomain:
+    guard payloads.count == 1, let host = hubGrantHost(payloads[0], own: own) else { return nil }
+    reason = "let an agent at \(host) use your Valet tools through your Valet account"
   default:
     return nil
   }
@@ -192,6 +196,36 @@ func rosterDeviceRole(_ device: [String: Any], own: OwnKeys) -> String? {
   default:
     return nil
   }
+}
+
+/// The agent's host if the payload is a grant this Mac may sign (core's hub-grant.ts): in this
+/// Mac's name, for the tools remote agents may use and nothing wider, for at most 90 days.
+func hubGrantHost(_ payload: String, own: OwnKeys) -> String? {
+  let fields: Set<String> = [
+    "v", "account", "consentId", "clientId", "clientName", "host", "scope", "at", "expiresAt", "by",
+  ]
+  guard let object = jsonObject(payload), Set(object.keys) == fields, object["v"] as? Int == 1,
+    object["by"] as? String == own.macId, object["scope"] as? String == "remote-tools",
+    let account = object["account"] as? String, isBase64url(account, max: 64), account.utf8.count >= 16,
+    let consent = object["consentId"] as? String, isBase64url(consent, max: 40), consent.utf8.count >= 10,
+    let client = object["clientId"] as? String, client.hasPrefix("hc"), isBase64url(client, max: 42),
+    client.utf8.count >= 12,
+    let name = object["clientName"] as? String, !name.isEmpty, name.utf8.count <= 240,
+    let host = object["host"] as? String, (1...253).contains(host.utf8.count),
+    host.utf8.allSatisfy({ ($0 >= 0x61 && $0 <= 0x7A) || ($0 >= 0x30 && $0 <= 0x39) || $0 == 0x2E || $0 == 0x2D }),
+    let at = object["at"] as? String, let expires = object["expiresAt"] as? String,
+    let start = isoDate(at), let end = isoDate(expires),
+    end > start, end.timeIntervalSince(start) <= 90 * 24 * 60 * 60
+  else { return nil }
+  return host
+}
+
+func isoDate(_ text: String) -> Date? {
+  let formatter = ISO8601DateFormatter()
+  formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+  if let date = formatter.date(from: text) { return date }
+  formatter.formatOptions = [.withInternetDateTime]
+  return formatter.date(from: text)
 }
 
 func isLowerHex(_ text: String) -> Bool {

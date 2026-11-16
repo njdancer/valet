@@ -142,6 +142,8 @@ function Consent({
     setTicked(next)
   }
   const many = state.requests.length > 1
+  // Agents signing in through the Valet account get what each Mac lets cloud agents use.
+  const hubOnly = state.requests.every((r) => r.via === 'hub')
 
   return (
     <SheetContent
@@ -232,66 +234,80 @@ function Consent({
           </Text>
         ) : null}
 
-        <fieldset aria-labelledby={toolsId} className="m-0 flex flex-col gap-2 border-0 p-0">
-          <Text id={toolsId} weight="semibold">
-            Tools it may use
-          </Text>
-          {state.tools.length === 0 ? (
+        {hubOnly ? (
+          <Stack gap={1}>
+            <Text weight="semibold">What it gets</Text>
             <Text size="sm" tone="muted">
-              No tools are on for cloud agents yet. Approving now grants nothing until you turn tools on in{' '}
-              <TextLink href={href.remote()}>Remote access</TextLink> and approve the connector again.
-            </Text>
-          ) : (
-            <>
-              <Text size="sm" tone="muted">
-                None is ticked. Tick only what you want it to do. Even a tool that only reads can make Valet
-                log in to the site with your login.
-              </Text>
-              {state.tools.map((tool) => {
-                const id = `${toolsId}-${tool.ref}`
-                return (
-                  <div key={tool.ref} className="flex items-start gap-2.5">
-                    <Checkbox
-                      id={id}
-                      className="mt-0.5"
-                      checked={ticked.has(tool.ref)}
-                      onCheckedChange={() => toggle(tool.ref)}
-                    />
-                    <Stack gap={0.5}>
-                      <span className="flex flex-wrap items-center gap-2">
-                        <Label htmlFor={id}>
-                          {tool.adapterName}: {tool.toolTitle}
-                        </Label>
-                        <RiskBadge purpose={tool.sideEffect} />
-                      </span>
-                      {tool.sideEffect === 'irreversible' ? (
-                        <Text size="sm" tone="muted">
-                          Every call still waits for you to confirm it on this Mac.
-                        </Text>
-                      ) : null}
-                    </Stack>
-                  </div>
-                )
-              })}
-            </>
-          )}
-        </fieldset>
-
-        <div className="flex items-start gap-2.5">
-          <Checkbox
-            id={`${toolsId}-ask`}
-            className="mt-0.5"
-            checked={askForChanges}
-            onCheckedChange={(next) => setAskForChanges(next === true)}
-          />
-          <Stack gap={0.5}>
-            <Label htmlFor={`${toolsId}-ask`}>Let it ask for changes</Label>
-            <Text size="sm" tone="muted">
-              It can see Valet, write and test adapters, and ask for tools and settings. Nothing it writes
-              runs or installs until you approve it on your phone or here. Signed-in trials stay on this Mac.
+              It signs in through your Valet account, so it can use the tools each of your Macs lets cloud
+              agents use (<TextLink href={href.remote()}>Remote access</TextLink>), and nothing else. Every
+              call still follows each Mac’s own approvals. Approving asks for Touch ID.
             </Text>
           </Stack>
-        </div>
+        ) : (
+          <>
+            <fieldset aria-labelledby={toolsId} className="m-0 flex flex-col gap-2 border-0 p-0">
+              <Text id={toolsId} weight="semibold">
+                Tools it may use
+              </Text>
+              {state.tools.length === 0 ? (
+                <Text size="sm" tone="muted">
+                  No tools are on for cloud agents yet. Approving now grants nothing until you turn tools on
+                  in <TextLink href={href.remote()}>Remote access</TextLink> and approve the connector again.
+                </Text>
+              ) : (
+                <>
+                  <Text size="sm" tone="muted">
+                    None is ticked. Tick only what you want it to do. Even a tool that only reads can make
+                    Valet log in to the site with your login.
+                  </Text>
+                  {state.tools.map((tool) => {
+                    const id = `${toolsId}-${tool.ref}`
+                    return (
+                      <div key={tool.ref} className="flex items-start gap-2.5">
+                        <Checkbox
+                          id={id}
+                          className="mt-0.5"
+                          checked={ticked.has(tool.ref)}
+                          onCheckedChange={() => toggle(tool.ref)}
+                        />
+                        <Stack gap={0.5}>
+                          <span className="flex flex-wrap items-center gap-2">
+                            <Label htmlFor={id}>
+                              {tool.adapterName}: {tool.toolTitle}
+                            </Label>
+                            <RiskBadge purpose={tool.sideEffect} />
+                          </span>
+                          {tool.sideEffect === 'irreversible' ? (
+                            <Text size="sm" tone="muted">
+                              Every call still waits for you to confirm it on this Mac.
+                            </Text>
+                          ) : null}
+                        </Stack>
+                      </div>
+                    )
+                  })}
+                </>
+              )}
+            </fieldset>
+
+            <div className="flex items-start gap-2.5">
+              <Checkbox
+                id={`${toolsId}-ask`}
+                className="mt-0.5"
+                checked={askForChanges}
+                onCheckedChange={(next) => setAskForChanges(next === true)}
+              />
+              <Stack gap={0.5}>
+                <Label htmlFor={`${toolsId}-ask`}>Let it ask for changes</Label>
+                <Text size="sm" tone="muted">
+                  It can see Valet, write and test adapters, and ask for tools and settings. Nothing it writes
+                  runs or installs until you approve it on your phone or here. Signed-in trials stay on this
+                  Mac.
+                </Text>
+              </Stack>
+            </div>
+          </>
+        )}
         <Failed failed={action.failed} what="send your answer" />
       </Stack>
     </SheetContent>
@@ -313,6 +329,9 @@ function RequestFacts({
       <DescriptionList
         items={[
           { term: 'Asks as', value: <Value mono>{request.clientHost}</Value> },
+          ...(request.via === 'hub'
+            ? [{ term: 'Through', value: 'Your Valet account (all your Macs)' }]
+            : []),
           {
             term: 'Asked',
             value: `${formatClock(request.requestedAt)} · ${formatAgo(request.requestedAt, now)}`,
