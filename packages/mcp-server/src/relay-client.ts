@@ -73,6 +73,12 @@ export interface RelayClientOptions {
   readonly binding: RelayBinding
   /** The remote listener's loopback URL, or null while remote access is paused. */
   readonly listener: () => string | null
+  /**
+   * For a request the hub forwards for an agent signed in there: this Mac's own credential for
+   * that grant (`Bearer …`), or null unless the Mac checked the grant itself. Without this
+   * option, no request from the hub is served.
+   */
+  readonly hubAuthorization?: (grantId: string) => string | null
   /** RemoteAuthorization.relayConsent, bound to this Mac's public host. */
   readonly consent: (id: string, query: string, source: string | null) => RelayConsentView
   readonly onEvent?: (event: RelayEvent) => void
@@ -279,6 +285,12 @@ export class RelayClient {
       return answer(400)
     const target = new URL(frame.path + (frame.query === '' ? '' : `?${frame.query}`), listener)
     const headers: Record<string, string> = { ...frame.headers, host: this.publicHost }
+    if (frame.hub !== undefined) {
+      // The hub's request carries no credential of its own: the Mac's, for a grant it checked.
+      const authorization = this.options.hubAuthorization?.(frame.hub.grantId) ?? null
+      if (authorization === null) return answer(403)
+      headers['authorization'] = authorization
+    }
     if (frame.source !== '') headers['cf-connecting-ip'] = frame.source
     if (frame.body !== '') headers['content-length'] = String(Buffer.byteLength(frame.body))
     const coalesceMs = this.options.coalesceMs ?? 20

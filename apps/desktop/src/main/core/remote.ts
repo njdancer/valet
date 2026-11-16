@@ -18,10 +18,16 @@
 // "Consent happens on the Mac"); a client may then call only the remote-enabled tools they ticked.
 // The control panel sets it up (RemoteConsent.tsx). Not here: the tunnel (D14: Cloudflare Tunnel,
 // which the person runs themselves).
+//
+// Agents signed in at the Valet hub (docs/relay-hub.md, step 2) come through the relay too, as
+// client `hub-<grant>`: the relay client asks hubAuthorization for a token only for a grant this
+// Mac checked itself, and such a client may call every remote-enabled tool, the same set the
+// person turned on for remote agents, and none of Valet's own.
 
 import type { ToolDeclaration } from '@valet/core'
 import { ValetError } from '@valet/core'
 import {
+  ACCESS_TOKEN_TTL_MS,
   type AdminReader,
   type Authoring,
   type ConsentPrompt,
@@ -40,6 +46,7 @@ import {
   type RemoteRefusal,
   type RunningRemoteListener,
   remoteClientsStateSchema,
+  remoteResource,
   type ServerInfo,
   startRemoteListener,
   type ToolCall,
@@ -185,6 +192,8 @@ export class RemoteAccess {
   private queue: Promise<unknown> = Promise.resolve()
   /** This Mac's name at the relay, `<macId>.<relay host>`, while the relay client runs. */
   private relayHost: string | null = null
+  /** Tokens minted for agents through the hub, by grant id. Memory only, like every access token. */
+  private readonly hubTokens = new Map<string, { readonly token: string; readonly renewAt: number }>()
 
   constructor(private readonly deps: RemoteAccessDeps) {
     this.tokens = new RemoteAccessTokens({ now: deps.now })
@@ -236,7 +245,43 @@ export class RemoteAccess {
     const entry = this.current.tools[adapter]?.[declaration.name]
     if (entry === undefined || RANK[declaration.sideEffect] > RANK[entry.sideEffect]) return false
     if (clientId === null) return true
+    // An agent through the hub: its grant (checked per request, hubAuthorization) covers them all.
+    if (isHubClient(clientId)) return true
     return this.clients.get(clientId)?.grant?.tools.includes(`${adapter}.${declaration.name}`) ?? false
+  }
+
+  /**
+   * The credential for one request the hub forwards for an agent signed in there, or null. The
+   * caller has already checked the grant against the account's list; this only says whether
+   * remote access is on and listening at the relay's name, and mints (or reuses) the token.
+   */
+  hubAuthorization(grantId: string): string | null {
+    if (!/^[0-9a-f]{64}$/.test(grantId)) return null
+    if (this.relayHost === null || !this.current.enabled || this.listener === null) return null
+    const clientId = hubClientId(grantId)
+    const resource = remoteResource(this.relayHost)
+    const now = this.deps.now()
+    const cached = this.hubTokens.get(grantId)
+    // Renewed ten minutes before it expires, so no request carries one that lapses on the way.
+    if (
+      cached !== undefined &&
+      cached.renewAt > now &&
+      this.tokens.identify(cached.token, resource) === clientId
+    )
+      return `Bearer ${cached.token}`
+    const token = this.tokens.issue(clientId, resource)
+    this.hubTokens.set(grantId, { token, renewAt: now + ACCESS_TOKEN_TTL_MS - 10 * 60_000 })
+    return `Bearer ${token}`
+  }
+
+  /** The hub's grants this Mac still honours: the others' tokens and sessions go. */
+  hubGrantsChanged(live: ReadonlySet<string>): void {
+    for (const grantId of [...this.hubTokens.keys()]) {
+      if (live.has(grantId)) continue
+      this.hubTokens.delete(grantId)
+      void this.listener?.endClient(hubClientId(grantId)).catch(() => undefined)
+      this.tokens.revokeClient(hubClientId(grantId))
+    }
   }
 
   /**
@@ -523,6 +568,7 @@ export class RemoteAccess {
     this.listener = null
     // Even with no listener, tokens minted while it was down are refused from now on.
     this.tokens.revokeAll()
+    this.hubTokens.clear()
     await listener?.close()
   }
 
@@ -580,4 +626,13 @@ export class RemoteAccess {
     this.queue = run.catch(() => undefined)
     return run
   }
+}
+
+/** The client id an agent through the hub has on this Mac: registrations start `rc`, so never one. */
+export function hubClientId(grantId: string): string {
+  return `hub-${grantId.slice(0, 32)}`
+}
+
+function isHubClient(clientId: string): boolean {
+  return /^hub-[0-9a-f]{32}$/.test(clientId)
 }

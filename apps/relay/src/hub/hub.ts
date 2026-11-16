@@ -31,6 +31,7 @@ import { logFailure } from '../log'
 import { verifyHubGrantSignature, verifyRosterSignature } from '../verify'
 import { WindowCounter } from '../window'
 import { macStub } from './link'
+import { HubMcp, type HubNode } from './mcp'
 import { HubOAuth } from './oauth'
 import { type HubPageName, hubPage } from './pages'
 import {
@@ -161,6 +162,7 @@ export class Hub extends DurableObject<Env> {
   private readonly wrongCodes = new WindowCounter(HUB_CAPS.wrongCodes, 10 * 60_000, Date.now, 64)
   private readonly appSignIns = new WindowCounter(HUB_CAPS.appSignIns, 10 * 60_000, Date.now, 256)
   private readonly oauth: HubOAuth
+  private readonly mcp: HubMcp
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -173,6 +175,22 @@ export class Hub extends DurableObject<Env> {
       },
       () => this.origin,
     )
+    this.mcp = new HubMcp({
+      forward: (macId, grantId, body, headers, signal) =>
+        macStub(this.env, macId).forward(
+          {
+            method: 'POST',
+            path: '/mcp',
+            query: '',
+            headers,
+            body,
+            source: '',
+            stream: false,
+            hub: { grantId },
+          },
+          signal,
+        ),
+    })
     this.migrate()
     this.oauth.migrate()
   }
@@ -244,6 +262,12 @@ export class Hub extends DurableObject<Env> {
     return (Number.isFinite(seconds) && seconds > 0 ? seconds : 90) * 1000
   }
 
+  /** How long an offline node's tools stay listed, failing fast. */
+  private get graceMs(): number {
+    const seconds = Number(this.env.HUB_GRACE_S ?? '120')
+    return (Number.isFinite(seconds) && seconds >= 0 ? seconds : 120) * 1000
+  }
+
   // ---------- Entry ----------
 
   override async fetch(request: Request): Promise<Response> {
@@ -251,6 +275,7 @@ export class Hub extends DurableObject<Env> {
     try {
       if (url.origin === 'https://hub.internal')
         return Response.json(await this.internal(url.pathname, request))
+      if (url.pathname === '/mcp') return await this.agentMcp(request)
       if (this.oauth.handles(url.pathname)) return await this.agentSignIn(request, url)
       return await this.public(request, url)
     } catch (error) {
@@ -348,6 +373,35 @@ export class Hub extends DurableObject<Env> {
       if (account !== null) await this.tellNodes(account.id, '')
     }
     return response
+  }
+
+  /** The one MCP address (mcp.ts), for an agent whose token's grant the hub still holds. */
+  private async agentMcp(request: Request): Promise<Response> {
+    const agent = await this.oauth.authenticate(request)
+    if (agent === null) return this.oauth.unauthorized()
+    const grant = this.one<{ account_id: string; client_id: string; payload: string }>(
+      'SELECT account_id, client_id, payload FROM grants WHERE id = ? AND expires_at > ?',
+      agent.grantId,
+      Date.now(),
+    )
+    if (grant === null || grant.client_id !== agent.clientId) return this.oauth.unauthorized()
+    let clientName = 'An agent'
+    try {
+      const parsed = JSON.parse(grant.payload) as { clientName?: unknown }
+      if (typeof parsed.clientName === 'string') clientName = parsed.clientName
+    } catch {
+      // The grant was checked when kept; its name is only for the Mac's list of sessions.
+    }
+    const nodes = await this.nodes(grant.account_id)
+    const now = Date.now()
+    const listed: HubNode[] = nodes.map((n) => ({
+      macId: n.macId,
+      slug: n.slug,
+      name: n.name,
+      online: n.online,
+      listed: !n.online && now < n.offlineAt + this.graceMs,
+    }))
+    return this.mcp.handle(request, { grantId: agent.grantId, clientName }, listed)
   }
 
   /**
@@ -484,7 +538,10 @@ export class Hub extends DurableObject<Env> {
 
     if (request.method === 'GET') {
       if (path === '/api/me') return this.me(this.need(session), now)
-      if (path === '/api/nodes') return Response.json({ nodes: await this.nodes(this.need(session).account) })
+      if (path === '/api/nodes')
+        return Response.json({
+          nodes: (await this.nodes(this.need(session).account.id)).map(({ offlineAt: _, ...n }) => n),
+        })
       throw new Refusal(404, 'not_found', 'Nothing here.')
     }
     if (request.method !== 'POST') throw new Refusal(405, 'method_not_allowed', 'Not allowed.')
@@ -891,19 +948,26 @@ export class Hub extends DurableObject<Env> {
 
   // ---------- Nodes ----------
 
-  private async nodes(account: AccountRow) {
-    const rows = this.all<NodeRow>('SELECT * FROM nodes WHERE account_id = ? ORDER BY linked_at', account.id)
+  /**
+   * The account's nodes, each online if its object heard from it within HUB_OFFLINE_AFTER_S, and
+   * when it went (or goes) offline: a socket that closed counts from its close, one that went
+   * quiet from its last frame plus that time.
+   */
+  private async nodes(accountId: string) {
+    const rows = this.all<NodeRow>('SELECT * FROM nodes WHERE account_id = ? ORDER BY linked_at', accountId)
     const now = Date.now()
     return Promise.all(
       rows.map(async (node) => {
         let online = false
         let lastSeenAt = node.last_seen_at
+        let offlineAt = node.last_seen_at
         try {
           // The Mac's object knows when it last heard a ping, even after the hub missed a close.
           const presence = await macStub(this.env, node.mac_id).presence()
           if (presence.connected && presence.lastFrameAt !== undefined) {
             lastSeenAt = Math.max(lastSeenAt, presence.lastFrameAt)
             online = now - presence.lastFrameAt < this.offlineAfterMs
+            offlineAt = presence.lastFrameAt + this.offlineAfterMs
           }
         } catch (error) {
           logFailure('hub presence', error)
@@ -915,6 +979,7 @@ export class Hub extends DurableObject<Env> {
           linkedAt: iso(node.linked_at),
           online,
           lastSeenAt: iso(lastSeenAt),
+          offlineAt,
         }
       }),
     )

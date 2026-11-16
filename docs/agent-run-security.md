@@ -451,6 +451,25 @@ What changes with the hub's first step, which adds accounts and nodes but forwar
 - **Accepted for now:** the hub's pages are served by the same Worker as the relay, so a bug in
   either is a bug in both. No email verification, as there is one account and no email is sent.
 
+### The hub, steps 2 and 3: agents through one address
+
+- **An agent at the hub reaches a Mac only with a grant that Mac checked itself.** A grant is
+  signed by the approval key of a device on the account's list (Touch ID or the phone), and every
+  Mac verifies the list from a start it signed itself. The hub forwards a request naming the grant
+  and no credential; the Mac's relay client mints its own token only for a grant it holds and
+  checks against that list at that moment. A breached hub can drop grants, refuse agents, or
+  read and alter traffic in transit as the relay already can, but it can't approve an agent or
+  widen what one gets.
+- **What a grant gives is the Mac's own remote policy:** the tools the person turned on for remote
+  agents, behind the same approvals, pacing, circuit breaker and lockdown. Valet's own admin and
+  authoring tools stay per-Mac decisions.
+- **New in memory at the hub, never stored:** one MCP session per grant and node, and each node's
+  tool list as the agent last saw it (names, titles, descriptions, schemas). Tool calls and
+  results pass through and are not kept.
+- **Accepted for now:** the hub sees tool arguments and results in transit, as the relay does.
+  A token stolen from an agent works until it expires (an hour) or its grant goes, as for any
+  OAuth client.
+
 ## Lockdown and revocation
 
 - **Lockdown** (J7) from the Mac or a phone: every call is refused, every remote client revoked,

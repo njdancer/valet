@@ -575,6 +575,8 @@ export class AppService {
         setRelayHost: (host) => this.remote.setRelayHost(host),
         relayListener: () => this.remote.relayListener(),
         relayConsent: (id, query, source) => this.remote.relayConsent(id, query, source),
+        hubAuthorization: (grantId) => this.remote.hubAuthorization(grantId),
+        hubGrantsChanged: (live) => this.remote.hubGrantsChanged(live),
       },
     })
     const { paths } = deps

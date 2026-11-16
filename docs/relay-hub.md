@@ -266,11 +266,40 @@ Built in this order: the hub's sign-in for agents and the grant format (3a), the
   grant with Touch ID (the Secure Enclave helper checks it is this Mac's, for `remote-tools`, for
   at most 90 days, and writes the prompt's reason) and sends it. Grants last 30 days. Declining
   tells the hub. The Mac holds the hub's grants and honours only those that check against the
-  device list it verified; serving agents with them comes with step 2.
+  device list it verified, and serves agents with them from step 2 (below).
 - **Taking access away needs no signature.** The hub can drop a grant (and its tokens), and a Mac
   can stop honouring one; neither can add one.
 - **Who signs:** any device on the list. Nick chose whether that includes the Mac's Touch ID or only
   the phone (see the thread); the format allows both.
+
+## Step 2 as built: one MCP address
+
+- **`<hub>/mcp`** (`apps/relay/src/hub/mcp.ts`) takes an access token from the hub's OAuth server
+  whose grant the hub still holds, and answers `initialize`, `ping`, `tools/list` and `tools/call`
+  itself, as plain JSON. It is stateless towards the agent: no session id and no event stream, so
+  `list_changed` is not sent yet (clients that list tools again on their own see changes).
+- **Calls use the existing `http-request` framing.** The hub sends each node a POST to its own
+  `/mcp`, through that Mac's relay object, with `hub: { grantId }` and no credential. The Mac's
+  relay client serves it only if `HubAgents` checks that grant against the device list the Mac
+  verified; it then supplies its own token, minted in memory for client `hub-<grant>`, and the
+  request goes to the same remote listener, policy, approvals, pacing and audit as any remote
+  agent's. Anything else gets a 403 from the Mac. A public request can't set `hub`: the front door
+  builds every forwarded request itself.
+- **What an agent through the hub gets on a Mac:** every tool that Mac turned on for remote agents,
+  at the side effect it had then, and none of Valet's own admin or authoring tools. A grant the
+  hub stops sending ends its tokens and sessions on the Mac.
+- **Names:** `<node slug>__<the node's tool name>` (for example `studio__woolworths_view_cart`),
+  skipping any name that would pass 64 characters. Titles and descriptions name the node.
+- **Offline nodes:** online means the Mac's object heard a frame within `HUB_OFFLINE_AFTER_S`
+  (default 90). An offline node's tools stay listed for `HUB_GRACE_S` (default 120) after it
+  went quiet or closed, and a call fails fast with "<name> is offline, so nothing was sent. Try
+  again shortly." After that its tools leave the list until it is back. A call to a name that
+  isn't there gets a tool error saying to list the tools again.
+- **Towards each node** the hub keeps one MCP session per grant, and the node's last tool list for
+  that grant (what an offline node shows during its grace), both in memory only: never stored.
+  A node that forgot the session (a restart) gets a new one on the next request.
+- **Not yet:** `list_changed` over an event stream, hub-level tools (which nodes are online), and a
+  page on the hub to see and revoke grants. Step 5 retires the per-Mac hosts.
 
 ## Open, for the building agent to propose (not for Nick unless it changes his goal)
 

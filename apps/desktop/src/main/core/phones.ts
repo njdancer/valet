@@ -50,6 +50,10 @@ export interface RelayRemote {
   /** The listener's loopback URL, or null while remote access is off. */
   relayListener(): string | null
   relayConsent(id: string, query: string, source: string | null): RelayConsentView
+  /** For an agent through the hub whose grant this Mac checked: a credential, or null (remote.ts). */
+  hubAuthorization(grantId: string): string | null
+  /** The hub's grants this Mac honours now. */
+  hubGrantsChanged(live: ReadonlySet<string>): void
 }
 
 export interface PhonesParts {
@@ -155,6 +159,11 @@ export class Phones implements PhoneOutbox {
       listener: () => this.options.remote?.relayListener() ?? null,
       consent: (id, query, source) =>
         this.options.remote?.relayConsent(id, query, source) ?? { state: 'declined' },
+      // Agents through the hub: only for a grant this Mac checks against the account's list now.
+      hubAuthorization: (grantId) =>
+        agents.grants().some((g) => g.id === grantId)
+          ? (this.options.remote?.hubAuthorization(grantId) ?? null)
+          : null,
       ...(relay.connectUrl === undefined ? {} : { connectUrl: relay.connectUrl }),
       ...(relay.macHost === undefined ? {} : { macHost: relay.macHost }),
       onStatus: (status) => {
@@ -181,6 +190,7 @@ export class Phones implements PhoneOutbox {
         }
         if (event.type === 'hub-grants') {
           agents.grantsReceived(event.grants)
+          this.options.remote?.hubGrantsChanged(new Set(agents.grants().map((g) => g.id)))
           return
         }
         if (event.type === 'hub-roster') {
