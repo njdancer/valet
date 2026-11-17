@@ -13,8 +13,9 @@
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { Worker } from 'node:worker_threads'
-import { PACKAGE_ENTRY, type PackageFiles } from '@valet/core'
+import { type DependencyLock, EMPTY_LOCK, PACKAGE_ENTRY, type PackageFiles } from '@valet/core'
 import { TOOL_LIBRARY_GLOBAL } from '@valet/runtime/tool-script'
+import { NPM_RESOLVER_SOURCE } from './npm-resolve'
 
 /** The esbuild version compiling packages. A test checks it matches the installed esbuild-wasm. */
 export const COMPILER_VERSION = '0.28.2'
@@ -54,6 +55,8 @@ new Function('module', 'exports', workerData.source)(module, module.exports)
 const esbuild = module.exports
 const ready = esbuild.initialize({ wasmModule: new WebAssembly.Module(workerData.wasm), worker: false })
 const LIBRARIES = { zod: 'zod', '@valet/core': 'core' }
+${NPM_RESOLVER_SOURCE}
+const BUILTINS = require('node:module').builtinModules
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k)
 const clip = (t) => (t.length > 200 ? t.slice(0, 197) + '...' : t)
 function resolveRelative(files, specifier, importer) {
@@ -65,9 +68,77 @@ function resolveRelative(files, specifier, importer) {
   }
   return null
 }
-parentPort.on('message', async ({ id, files, entry, global }) => {
+// A raw adapter: built for Node, its npm dependencies resolved from the lockfile and the files
+// given, Node's built-ins left as require calls for the runtime (docs/node-runtime.md#bundling).
+async function buildNode({ id, files, entry, global, node }) {
+  const resolver = createNpmResolver(node.lock, node.packages, BUILTINS)
+  const SEP = '::'
+  const result = await esbuild.build({
+    stdin: {
+      contents: [
+        "export { tools } from './" + entry + "'",
+        "export { NeedsUserError, ValetError } from '@valet/core'",
+        "export { toJSONSchema } from 'zod'",
+      ].join('\n'),
+      sourcefile: 'valet-entry.ts',
+      loader: 'ts',
+    },
+    bundle: true,
+    write: false,
+    format: 'iife',
+    globalName: '__valetTools',
+    platform: 'node',
+    target: 'node22',
+    legalComments: 'none',
+    logLevel: 'silent',
+    sourcemap: false,
+    tsconfigRaw: '{}',
+    plugins: [{
+      name: 'valet-raw-package',
+      setup(b) {
+        b.onResolve({ filter: /.*/ }, (args) => {
+          const fromNpm = args.namespace === 'npm'
+          if (!fromNpm && own(LIBRARIES, args.path)) return { path: LIBRARIES[args.path], namespace: 'valet-library' }
+          if (!fromNpm) {
+            const path = resolveRelative(files, args.path, args.namespace === 'valet-package' ? args.importer : null)
+            if (path !== null) return { path, namespace: 'valet-package' }
+            if (args.path.startsWith('./') || args.path.startsWith('../')) return { errors: [{ text: 'may not import ' + clip(args.path) }] }
+          }
+          let from = null
+          if (fromNpm) {
+            const at = args.importer.indexOf(SEP)
+            from = { key: args.importer.slice(0, at), path: args.importer.slice(at + SEP.length) }
+          }
+          const r = resolver.resolve(args.path, from, args.kind)
+          if (r.external) return { path: r.external, external: true }
+          if (r.error) return { errors: [{ text: r.error }] }
+          return { path: r.key + SEP + r.path, namespace: 'npm' }
+        })
+        b.onLoad({ filter: /.*/, namespace: 'valet-package' }, (args) => ({ contents: files[args.path], loader: 'ts' }))
+        b.onLoad({ filter: /.*/, namespace: 'npm' }, (args) => {
+          const at = args.path.indexOf(SEP)
+          const key = args.path.slice(0, at)
+          const path = args.path.slice(at + SEP.length)
+          return { contents: node.packages[key][path], loader: loaderOf(path) }
+        })
+        b.onLoad({ filter: /.*/, namespace: 'valet-library' }, (args) => ({
+          contents: 'module.exports = globalThis.' + global + '.' + args.path,
+          loader: 'js',
+        }))
+      },
+    }],
+  })
+  const output = result.outputFiles && result.outputFiles[0]
+  if (!output) parentPort.postMessage({ id, ok: false, detail: 'no output' })
+  else if (output.text.length > MAX_NODE_OUTPUT) parentPort.postMessage({ id, ok: false, detail: 'the bundle is larger than 16 MB' })
+  else parentPort.postMessage({ id, ok: true, text: output.text })
+}
+const loaderOf = (path) => (path.endsWith('.json') ? 'json' : 'js')
+const MAX_NODE_OUTPUT = 16 * 1024 * 1024
+parentPort.on('message', async ({ id, files, entry, global, node }) => {
   try {
     await ready
+    if (node) return await buildNode({ id, files, entry, global, node })
     const result = await esbuild.build({
       stdin: {
         contents: [
@@ -148,6 +219,29 @@ export class Compiler {
    * compiler version.
    */
   async compile(files: PackageFiles): Promise<string> {
+    return this.request({ files: { ...files }, entry: PACKAGE_ENTRY, global: TOOL_LIBRARY_GLOBAL })
+  }
+
+  /**
+   * A `raw` adapter's code for the Node runtime (docs/node-runtime.md#bundling): one IIFE like
+   * compile's, with its npm dependencies bundled in from `packages` (each package's files, by
+   * lockfile key) as `lock` resolves them, and Node's built-ins left as `require` calls. Nothing
+   * outside `files` and `packages` can be imported.
+   */
+  async compileNode(
+    files: PackageFiles,
+    lock: DependencyLock | null,
+    packages: Readonly<Record<string, Readonly<Record<string, string>>>>,
+  ): Promise<string> {
+    return this.request({
+      files: { ...files },
+      entry: PACKAGE_ENTRY,
+      global: TOOL_LIBRARY_GLOBAL,
+      node: { lock: lock ?? EMPTY_LOCK, packages },
+    })
+  }
+
+  private async request(message: Record<string, unknown>): Promise<string> {
     const worker = await this.start()
     const id = this.next++
     return new Promise<string>((resolve, reject) => {
@@ -170,7 +264,7 @@ export class Compiler {
       })
       // Held open only while a compile is waiting, so an idle compiler never keeps a process alive.
       worker.ref()
-      worker.postMessage({ id, files: { ...files }, entry: PACKAGE_ENTRY, global: TOOL_LIBRARY_GLOBAL })
+      worker.postMessage({ id, ...message })
     })
   }
 
@@ -247,4 +341,14 @@ let shared: Compiler | null = null
 export function compilePackage(files: PackageFiles): Promise<string> {
   shared ??= new Compiler()
   return shared.compile(files)
+}
+
+/** compileNode with the shared Compiler. */
+export function compileNodePackage(
+  files: PackageFiles,
+  lock: DependencyLock | null,
+  packages: Readonly<Record<string, Readonly<Record<string, string>>>>,
+): Promise<string> {
+  shared ??= new Compiler()
+  return shared.compileNode(files, lock, packages)
 }

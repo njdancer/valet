@@ -363,3 +363,25 @@ once, counting other work.
 broker API. B owns `credentials` and the redaction contract. C owns the runtime host protocol
 and the profile generator. D, E and G own their own `protocols.*` entries. Each workstream merges
 `main` often. A change to someone else's contract goes through that workstream's thread.
+
+## Decisions for Nick's review
+
+Nick was away while these were built and asked each thread to take its own recommendation and
+note it here. Each one can be reversed.
+
+**Workstream C (the Node runtime, [node-runtime.md](node-runtime.md)):**
+
+- **One process per call, not one per adapter hash.** The design said "one process per hash,
+  killed when idle". The build starts a fresh process for every call, so no state carries between
+  calls. Node starts in well under a second, so the cost is small.
+- **One loopback port per endpoint.** The broker opens one listener per declared endpoint for each
+  process, rather than one CONNECT proxy with a token. The shim stays synchronous, and code that
+  goes around it reaches nothing more.
+- **Three days before a release can be added.** `valet_add_dependency` picks the newest version in
+  range that has been public for three days, the same rule this repository's own lockfile follows.
+- **No audit event for adding a dependency.** The addition lands in the draft's lockfile, and the
+  approval card shows the dependencies when the draft is submitted. That card is the decision point.
+- **A memory cap on the whole process.** Valet ends a process whose resident memory passes 1 GB
+  (the heap alone is capped at 256 MB), found by the red team.
+- **Shipping the signed Node binary is a follow-up.** It touches the release signing setup, so it
+  gets its own pull request. Until then nothing uses the runtime: `raw` stays refused (workstream F).

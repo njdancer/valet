@@ -106,6 +106,20 @@ export const writtenSchema = z.object({
   draftStatus,
 })
 export const removedSchema = z.object({ path: z.string(), removed: z.boolean() })
+export const dependencyReportSchema = z.object({
+  name: z.string(),
+  version: z.string(),
+  range: z.string(),
+  /** Every package in valet-lock.json now, this one and everything it needs included. */
+  packages: z.number().int().nonnegative(),
+  /** Packages fetched for this addition, as name@version. */
+  added: z.array(z.string()),
+  /** Packages no longer needed, as name@version. */
+  removed: z.array(z.string()),
+  warnings: z.array(z.string()),
+  draftStatus,
+})
+export type DependencyReport = z.output<typeof dependencyReportSchema>
 
 const finding = z.object({
   level: z.enum(['error', 'caution']),
@@ -332,6 +346,12 @@ export interface Authoring {
     content: string,
   ): Promise<z.output<typeof writtenSchema>>
   deleteFile(viewer: ClientIdentity, draftId: string, path: string): Promise<z.output<typeof removedSchema>>
+  /** A raw draft's npm dependency (docs/node-runtime.md#dependencies), into its valet-lock.json. */
+  addDependency(
+    viewer: ClientIdentity,
+    draftId: string,
+    request: { readonly name: string; readonly range?: string },
+  ): Promise<DependencyReport>
   check(viewer: ClientIdentity, draftId: string, tool?: string): Promise<CheckReport>
   diff(viewer: ClientIdentity, all: boolean, draftId: string): Promise<DiffReport>
   submit(
@@ -599,6 +619,38 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
     needs: 'ask',
     annotations: { ...EDITS, destructiveHint: true },
     run: (a, args, s) => a.deleteFile(s.viewer, args['draftId'] as string, args['path'] as string),
+  },
+  {
+    name: 'valet_add_dependency',
+    title: 'Add an npm package to a raw draft',
+    description:
+      'For a raw adapter only (runtime "raw" in manifest.json): adds an npm package your tool code can import, ' +
+      'or moves it to the newest version in a new range. Valet fetches it and everything it needs from the npm ' +
+      'registry itself, picks the newest version in the range that has been public for three days, checks every ' +
+      'tarball against its sha512 integrity, and writes valet-lock.json; no install script ever runs, and ' +
+      'packages with native addons are refused. Import it by name in src/; Node’s built-ins (node:net, ' +
+      'node:crypto...) need no adding. The person sees the direct dependencies, and a count of the rest, when ' +
+      'they approve the adapter.',
+    input: z.object({
+      draftId: draftIdInput,
+      name: z.string().min(1).max(214).describe('The npm package’s name, e.g. "imapflow" or "@scope/name".'),
+      range: z
+        .string()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe(
+          'An npm version range, e.g. "^1.4.0" or "2.3.1". The newest version old enough by default.',
+        ),
+    }),
+    output: dependencyReportSchema,
+    needs: 'ask',
+    annotations: { ...EDITS, openWorldHint: true },
+    run: (a, args, s) =>
+      a.addDependency(s.viewer, args['draftId'] as string, {
+        name: args['name'] as string,
+        ...(typeof args['range'] === 'string' ? { range: args['range'] } : {}),
+      }),
   },
   {
     name: 'valet_check_draft',

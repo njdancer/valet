@@ -1,5 +1,6 @@
 export * from './compile'
 export * from './folder'
 export * from './load'
+export * from './npm-resolve'
 export * from './schemas'
 export * from './store'

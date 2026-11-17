@@ -61,6 +61,7 @@ import {
   type ToolCall,
   type ToolCaller,
 } from '@valet/mcp-server'
+import { addDependency, diskTarballStore } from '@valet/node-runtime'
 import {
   ApprovalStore,
   AuditLog,
@@ -1475,7 +1476,9 @@ export class AppService {
     const signer = this.deps.approvalKeys.signer
     const devices = this.deviceStore
     if (signer.rotateChannel === undefined || devices === null) throw new ValetError('config', 'not-found')
-    for (const phone of devices.activePhones()) {
+    // Phones paired here only: one on the account's list stays on it (revoking it here would
+    // take it off the account).
+    for (const phone of devices.activePhones().filter((p) => !devices.isAccountPhone(p.deviceId))) {
       this.phones.unpair(phone.deviceId)
       await devices.revoke(phone.deviceId, 'mac-ui', new Date(this.deps.now()).toISOString())
       await this.audit.append({ type: 'device-revoked', deviceId: phone.deviceId, by: 'mac-ui' })
@@ -2790,6 +2793,11 @@ export class AppService {
       },
       notify: (text) => this.notifier.draftActivity(text),
       now: this.deps.now,
+      // Raw drafts' npm packages, kept by integrity in Valet's own folder (docs/node-runtime.md).
+      dependencies: {
+        add: (lock, name, range) =>
+          addDependency(lock, name, range, diskTarballStore(join(this.deps.paths.dir, 'npm-tarballs'))),
+      },
       ...(this.deps.scratch === undefined ? {} : { research: this.scratchSessions(this.deps.scratch) }),
       ...(this.deps.fixtureBrowser === undefined ? {} : { caseBrowser: this.deps.fixtureBrowser }),
       ...(this.deps.trialDriver === undefined

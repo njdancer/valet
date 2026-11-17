@@ -12,6 +12,8 @@ const SIGN_IN = new Set([
   '/register',
   '/authorize',
   '/token',
+  // Phones on the account (hub-phone.ts): a challenge each time the app opens.
+  '/phone/challenge',
 ])
 const MAX_BODY = 64 * 1024
 
