@@ -12,7 +12,10 @@
 
 import {
   type AdapterManifest,
+  CREDENTIAL_FIELDS,
   checkPackagePath,
+  credentialHeaderNames,
+  credentialTargets,
   type EnsureResult,
   type FetchInit,
   type FetchResult,
@@ -21,14 +24,17 @@ import {
   NeedsUserError,
   type PackageFiles,
   runtimeOf,
+  SecretValue,
   type ToolContext,
   type ToolPage,
   uploadBudget,
   ValetError,
 } from '@valet/core'
-import { type ExchangeResult, RunMeter, requestSize } from '@valet/egress'
+import { type ExchangeResult, type RunContext, RunMeter, requestSize } from '@valet/egress'
 import {
   CallState,
+  CredentialGate,
+  type EgressSocket,
   failureDetail,
   GuardedHttp,
   GuardedToolPage,
@@ -41,6 +47,18 @@ import {
   type ToolProcessFactory,
 } from '@valet/runtime'
 import { z } from 'zod'
+
+/**
+ * What a case's kept credentials hold, by field: placeholders, so a tool that names a credential
+ * runs in a case as it would installed, through the same gate, and never with a real value. The
+ * case's fixtures don't check headers, so these only have to be there.
+ */
+export const CASE_CREDENTIAL_VALUES: Readonly<Record<string, string>> = {
+  username: 'case-username',
+  password: 'case-password',
+  token: 'case-token',
+  'ssh-key': 'case-ssh-key',
+}
 
 export const MAX_CASES = 100
 export const CASE_TIMEOUT_MS = 5_000
@@ -74,6 +92,26 @@ const expectSchema = z.union([
   z.object({ needsUser: z.string().regex(/^[a-z][a-z-]{1,40}$/) }).strict(),
 ])
 
+/**
+ * One WebSocket a case answers (an http adapter's ctx.http.websocket): the URL the tool opens, and
+ * the conversation, in order. A `server` step is a message the socket hands the tool; a `client`
+ * step is the next message the tool must send, matched like an output (an object or array is
+ * matched on what it lists, text exactly); `close` ends the socket with that code. Server steps
+ * after a client step arrive only once the tool has sent it.
+ */
+const socketStepSchema = z.union([
+  z.object({ server: z.unknown() }).strict(),
+  z.object({ client: z.unknown() }).strict(),
+  z.object({ close: z.number().int().min(1000).max(4999) }).strict(),
+])
+const socketEntrySchema = z
+  .object({
+    /** The URL as the tool opens it: https:// (or http:// for a plain-http private host). */
+    url: z.string().min(1).max(2000),
+    steps: z.array(socketStepSchema).max(100).default([]),
+  })
+  .strict()
+
 export const caseSchema = z
   .object({
     name: z.string().min(1).max(120),
@@ -82,6 +120,7 @@ export const caseSchema = z
     /** Pages page.goto loads, by absolute URL: a fixture path each. Needs the fixture browser. */
     pages: z.record(z.string().max(2000), fixturePath).default({}),
     fetch: z.array(fetchEntrySchema).max(50).default([]),
+    sockets: z.array(socketEntrySchema).max(4).default([]),
     session: z.enum(['ok', 'needs-user', 'failed']).default('ok'),
     /**
      * A repair's reproduction (docs/authoring-tools.md#repairs-pr-3): the ticket this case
@@ -263,7 +302,7 @@ export async function runCase(
   // what a live trial is for.
   const raw = runtimeOf(draft.manifest) === 'raw'
   if (raw) {
-    if (Object.keys(c.pages).length > 0 || c.fetch.length > 0)
+    if (Object.keys(c.pages).length > 0 || c.fetch.length > 0 || c.sockets.length > 0)
       return fail(
         'A raw adapter’s case has no network, so no "pages" or "fetch": give the data in the input, and try the network with valet_live_trial.',
       )
@@ -323,6 +362,8 @@ export async function runCase(
             state,
             audit: async () => {},
             broker: fixtureEgress(fixtures),
+            credentials: caseCredentials(draft.manifest),
+            credentialHeaders: [...credentialHeaderNames(draft.manifest)],
             run: {
               meter: new RunMeter(uploadBudget(draft.manifest, declared.sideEffect)),
               signal: controller.signal,
@@ -610,6 +651,41 @@ function withPages(fixtures: FixturePage, browser: ToolPage, c: DraftCase): Tool
 }
 
 /**
+ * A case's kept credentials: the real gate over a grant of every kept header credential the draft
+ * declares, for all its hosts, whose fields are CASE_CREDENTIAL_VALUES. Nothing is audited.
+ */
+function caseCredentials(manifest: AdapterManifest) {
+  const gate = new CredentialGate({
+    adapterId: manifest.id,
+    adapterHash: 'case',
+    credentials: manifest.credentials,
+    findGrant: async (credential) => {
+      const declaration = manifest.credentials?.[credential]
+      if (declaration === undefined || declaration.custody !== 'kept') return null
+      return {
+        adapterId: manifest.id,
+        adapterHash: 'case',
+        credential,
+        kind: declaration.kind,
+        custody: declaration.custody,
+        provider: 'keychain-copy',
+        itemRef: 'case',
+        targets: [...credentialTargets(declaration)],
+        grantedAt: new Date(0).toISOString(),
+      }
+    },
+    resolve: async (grant, field) => {
+      if (!CREDENTIAL_FIELDS[grant.kind].includes(field)) throw new ValetError('credential', 'field-missing')
+      return SecretValue.fromString(CASE_CREDENTIAL_VALUES[field] ?? '')
+    },
+    audit: { append: async () => undefined },
+    remember: () => undefined,
+    callId: null,
+  })
+  return { headerFor: (credential: string, host: string) => gate.headerFor(credential, host) }
+}
+
+/**
  * The egress broker as a case sees it: each request that passed ctx.http's guard is answered from
  * the case's `fetch` list, as the page's are. Its bytes are spent from the run's budget as the real
  * broker would spend them. Sockets aren't served yet.
@@ -620,20 +696,14 @@ function fixtureEgress(fixtures: FixturePage): HttpEgress {
       run.meter.spend(
         requestSize({ method: request.method, url, headers: request.headers, body: request.body }),
       )
-      const result = await fixtures.fetch(url.href, { method: request.method })
-      const body =
-        result.body === null
-          ? Buffer.alloc(0)
-          : Buffer.from(typeof result.body === 'string' ? result.body : JSON.stringify(result.body), 'utf8')
+      const result = fixtures.fetchText(url.href, { method: request.method })
       return {
         status: result.status,
-        headers: result.contentType === null ? {} : { 'content-type': result.contentType },
-        body,
+        headers: { 'content-type': result.contentType },
+        body: Buffer.from(result.body, 'utf8'),
       }
     },
-    websocket: async () => {
-      throw fixtures.unsupported('A case can’t open a WebSocket yet: check the socket in a live trial.')
-    },
+    websocket: async (url, _options, run) => fixtures.socket(url.href, run),
   }
 }
 
@@ -646,6 +716,7 @@ class FixturePage implements ToolPage {
   problem: string | null = null
   private url: string
   private readonly remaining: DraftCase['fetch'][number][]
+  private readonly sockets: DraftCase['sockets'][number][]
 
   constructor(
     private readonly manifest: AdapterManifest,
@@ -655,6 +726,7 @@ class FixturePage implements ToolPage {
   ) {
     this.url = manifest.home
     this.remaining = [...c.fetch]
+    this.sockets = [...c.sockets]
   }
 
   currentUrl(): string {
@@ -670,6 +742,29 @@ class FixturePage implements ToolPage {
   }
 
   async fetch(url: string, init?: FetchInit): Promise<FetchResult> {
+    const entry = this.take(url, init)
+    return { status: entry.status, contentType: entry.contentType, body: this.body(entry) }
+  }
+
+  /**
+   * ctx.http's answer: the body as the bytes a server would send. An inline JSON value is sent as
+   * JSON, so `{"inline": null}` is the text `null`, which a page's parsed body can't tell from none.
+   */
+  fetchText(url: string, init?: FetchInit): { status: number; contentType: string; body: string } {
+    const entry = this.take(url, init)
+    const json = /json/i.test(entry.contentType)
+    const body =
+      entry.body === undefined
+        ? ''
+        : typeof entry.body === 'string'
+          ? this.read(entry.body)
+          : typeof entry.body.inline === 'string' && !json
+            ? entry.body.inline
+            : (JSON.stringify(entry.body.inline ?? null) ?? '')
+    return { status: entry.status, contentType: entry.contentType, body }
+  }
+
+  private take(url: string, init?: FetchInit): DraftCase['fetch'][number] {
     const method = (init?.method ?? 'GET').toUpperCase()
     const target = new URL(url)
     const index = this.remaining.findIndex(
@@ -679,7 +774,7 @@ class FixturePage implements ToolPage {
       throw this.miss(`No response for ${method} ${clip(target.pathname + target.search)} in the case.`)
     const [entry] = this.remaining.splice(index, 1)
     if (entry === undefined) throw this.miss('No response in the case.')
-    return { status: entry.status, contentType: entry.contentType, body: this.body(entry) }
+    return entry
   }
 
   async click(): Promise<void> {
@@ -737,6 +832,74 @@ class FixturePage implements ToolPage {
   }
 
   /** Something the case harness can't serve: the case fails, saying so. */
+  /** The case's scripted socket for `url`, opened once. */
+  socket(url: string, run: RunContext): EgressSocket {
+    const target = new URL(url)
+    const index = this.sockets.findIndex((entry) => this.matches(entry.url, target))
+    if (index === -1)
+      throw this.miss(
+        `No socket for ${clip(target.pathname + target.search)} in the case: add it under "sockets".`,
+      )
+    const [entry] = this.sockets.splice(index, 1)
+    const steps = [...(entry?.steps ?? [])]
+    const ready: Buffer[] = []
+    let closed: number | null = null
+    // Hands over every server step up to the next client step.
+    const release = () => {
+      while (steps.length > 0) {
+        const step = steps[0] as (typeof steps)[number]
+        if ('client' in step) return
+        steps.shift()
+        if ('close' in step) {
+          closed = step.close
+          steps.length = 0
+          return
+        }
+        ready.push(
+          Buffer.from(typeof step.server === 'string' ? step.server : JSON.stringify(step.server), 'utf8'),
+        )
+      }
+    }
+    release()
+    return {
+      send: async (data, binary) => {
+        run.meter.spend(data.length)
+        const step = steps[0]
+        if (closed !== null || step === undefined || !('client' in step))
+          throw this.miss(`The tool sent a message the case doesn't expect: ${clip(data.toString('utf8'))}.`)
+        steps.shift()
+        const text = binary ? data.toString('base64') : data.toString('utf8')
+        let sent: unknown = text
+        if (typeof step.client !== 'string') {
+          try {
+            sent = JSON.parse(text)
+          } catch {
+            throw this.miss(`The tool sent ${clip(text)}, which isn't JSON; the case expects JSON.`)
+          }
+        }
+        const mismatch =
+          typeof step.client === 'string'
+            ? step.client === text
+              ? null
+              : `message (the case expects ${clip(step.client)})`
+            : partialMismatch(step.client, sent, 'message')
+        if (mismatch !== null)
+          throw this.miss(`The tool sent ${clip(text)}, which doesn't match the case at ${mismatch}.`)
+        release()
+      },
+      // A case never waits: what the script has is there at once, and nothing more ever comes.
+      receive: async () => {
+        const next = ready.shift()
+        if (next !== undefined) return { kind: 'message', data: next, binary: false }
+        if (closed !== null) return { kind: 'closed', code: closed }
+        return null
+      },
+      close: () => {
+        closed ??= 1000
+      },
+    }
+  }
+
   unsupported(reason: string): Error {
     return this.miss(reason)
   }

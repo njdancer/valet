@@ -10,6 +10,9 @@ import {
   type AdapterManifest,
   bundleHash,
   canonicalJson,
+  DEPENDENCY_LOCK,
+  LOCK_HASH_ENTRY,
+  lockHashEntry,
   parseManifest,
 } from '@valet/core'
 import { z } from 'zod'
@@ -37,9 +40,24 @@ export function builtinAdapter(
   files: Readonly<Record<string, string>>,
   toolScript: string | null = null,
 ): BuiltinAdapter {
-  if (Object.hasOwn(files, MANIFEST_ENTRY)) throw new Error('reserved bundle entry')
-  const hash = bundleHash({ ...files, [MANIFEST_ENTRY]: canonicalJson(definition.manifest) })
+  if (Object.hasOwn(files, MANIFEST_ENTRY) || Object.hasOwn(files, LOCK_HASH_ENTRY))
+    throw new Error('reserved bundle entry')
+  const hash = adapterHash(files, definition.manifest)
   return { definition, hash, files: { ...files }, toolScript }
+}
+
+/**
+ * The sources plus the effective manifest, and a raw adapter's lockfile (valet-lock.json in
+ * `files`) as core's adapterHashOf adds it, so a package's hash and its installed hash agree.
+ */
+function adapterHash(files: Readonly<Record<string, string>>, manifest: AdapterManifest): string {
+  const { [DEPENDENCY_LOCK]: _lock, ...sources } = files
+  const lock = lockHashEntry(files)
+  return bundleHash({
+    ...sources,
+    [MANIFEST_ENTRY]: canonicalJson(manifest),
+    ...(lock === null ? {} : { [LOCK_HASH_ENTRY]: lock }),
+  })
 }
 
 export interface ApprovedSnapshot {
@@ -55,10 +73,9 @@ export interface ApprovedSnapshot {
  * sits in the data folder, so anything that decides what a grant may keep checks it first.
  */
 export function snapshotIntact(snapshot: ApprovedSnapshot): boolean {
-  if (Object.hasOwn(snapshot.files, MANIFEST_ENTRY)) return false
-  return (
-    bundleHash({ ...snapshot.files, [MANIFEST_ENTRY]: canonicalJson(snapshot.manifest) }) === snapshot.hash
-  )
+  if (Object.hasOwn(snapshot.files, MANIFEST_ENTRY) || Object.hasOwn(snapshot.files, LOCK_HASH_ENTRY))
+    return false
+  return adapterHash(snapshot.files, snapshot.manifest) === snapshot.hash
 }
 
 const snapshotSchema = z

@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "id": "hacker-news",
+  "name": "Hacker News",
+  "version": "0.1.0",
+  "description": "Stories and comments from Hacker News, read from its public API. An example of an http adapter: no browser, no login, plain JSON over HTTPS.",
+  "runtime": "http",
+  "egress": ["hacker-news.firebaseio.com"],
+  "secrets": {},
+  "session": { "cookieDomains": [], "storage": [], "probe": { "kind": "none" } },
+  "auth": { "steps": [], "frameOrigins": [] },
+  "requests": [
+    {
+      "method": "GET",
+      "host": "hacker-news.firebaseio.com",
+      "path": "/v0/:list",
+      "purpose": "read",
+      "cacheSeconds": 60
+    },
+    {
+      "method": "GET",
+      "host": "hacker-news.firebaseio.com",
+      "path": "/v0/item/:id",
+      "purpose": "read",
+      "cacheSeconds": 60
+    }
+  ],
+  "tools": [
+    {
+      "name": "list_stories",
+      "title": "List stories",
+      "description": "The first stories on one of Hacker News's lists (top, new, best, ask, show or jobs): each one's title, link, author, points, comment count and time.",
+      "sideEffect": "read"
+    },
+    {
+      "name": "get_story",
+      "title": "Get story",
+      "description": "One story or job by its id, with its text and up to 10 of its top-level comments as plain text.",
+      "sideEffect": "read"
+    }
+  ],
+  "settings": {},
+  "limits": {
+    "requestsPerRun": 12,
+    "minGapMs": 250,
+    "requestsPerHour": 600,
+    "requestsPerMinute": 120,
+    "gapJitterPercent": 20,
+    "cooldownSeconds": 600,
+    "maxCooldownSeconds": 7200
+  }
+}

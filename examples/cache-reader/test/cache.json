@@ -1,0 +1,112 @@
+{
+  "cases": [
+    {
+      "name": "a key's value",
+      "tool": "get_key",
+      "input": {
+        "key": "weather:sydney",
+        "caseReply": "+OK\r\n$26\r\n{\"tempC\":24,\"sky\":\"sunny\"}\r\n"
+      },
+      "expect": {
+        "output": {
+          "key": "weather:sydney",
+          "value": "{\"tempC\":24,\"sky\":\"sunny\"}"
+        }
+      }
+    },
+    {
+      "name": "a key that isn't there",
+      "tool": "get_key",
+      "input": {
+        "key": "nope",
+        "caseReply": "+OK\r\n$-1\r\n"
+      },
+      "expect": {
+        "output": {
+          "key": "nope",
+          "value": null
+        }
+      }
+    },
+    {
+      "name": "a key the account may not read",
+      "tool": "get_key",
+      "input": {
+        "key": "secret:admin",
+        "caseReply": "+OK\r\n-NOPERM User reader has no permissions to access one of the keys used as arguments\r\n"
+      },
+      "expect": {
+        "error": {
+          "stage": "tool-run",
+          "errorClass": "not-granted"
+        }
+      }
+    },
+    {
+      "name": "a wrong password",
+      "tool": "get_key",
+      "input": {
+        "key": "weather:sydney",
+        "caseReply": "-WRONGPASS invalid username-password pair or user is disabled.\r\n-NOAUTH Authentication required.\r\n"
+      },
+      "expect": {
+        "error": {
+          "stage": "tool-run",
+          "errorClass": "auth-failed"
+        }
+      }
+    },
+    {
+      "name": "an answer that isn't RESP",
+      "tool": "get_key",
+      "input": {
+        "key": "weather:sydney",
+        "caseReply": "HTTP/1.1 400 Bad Request\r\n\r\n"
+      },
+      "expect": {
+        "error": {
+          "stage": "tool-run",
+          "errorClass": "unexpected-shape"
+        }
+      }
+    },
+    {
+      "name": "the keys that match, sorted",
+      "tool": "scan_keys",
+      "input": {
+        "pattern": "weather:*",
+        "caseReply": "+OK\r\n*2\r\n$1\r\n0\r\n*2\r\n$14\r\nweather:sydney\r\n$14\r\nweather:hobart\r\n"
+      },
+      "expect": {
+        "output": {
+          "keys": ["weather:hobart", "weather:sydney"],
+          "complete": true
+        }
+      }
+    },
+    {
+      "name": "a scan the cache hasn't finished",
+      "tool": "scan_keys",
+      "input": {
+        "caseReply": "+OK\r\n*2\r\n$2\r\n17\r\n*1\r\n$11\r\nqueue:depth\r\n"
+      },
+      "expect": {
+        "output": {
+          "keys": ["queue:depth"],
+          "complete": false
+        }
+      }
+    },
+    {
+      "name": "no account to sign in with",
+      "tool": "scan_keys",
+      "input": {},
+      "expect": {
+        "error": {
+          "stage": "tool-run",
+          "errorClass": "not-granted"
+        }
+      }
+    }
+  ]
+}

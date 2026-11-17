@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?><multistatus xmlns="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav" xmlns:card="urn:ietf:params:xml:ns:carddav" xmlns:ical="http://apple.com/ns/ical/"><response><href>/1234567890/calendars/home/ev-dentist.ics</href><propstat><prop><getetag>"ev-dentist-1"</getetag><cal:calendar-data>BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Fake iCloud//EN
+BEGIN:VEVENT
+UID:ev-dentist
+DTSTAMP:20261101T000000Z
+DTSTART:20261118T090000Z
+DTEND:20261118T100000Z
+SUMMARY:Dentist
+LOCATION:12 High St\
+ , Sydney
+END:VEVENT
+END:VCALENDAR
+</cal:calendar-data></prop><status>HTTP/1.1 200 OK</status></propstat></response><response><href>/1234567890/calendars/home/ev-dinner.ics</href><propstat><prop><getetag>"ev-dinner-1"</getetag><cal:calendar-data>BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Fake iCloud//EN
+BEGIN:VEVENT
+UID:ev-dinner
+DTSTAMP:20261101T000000Z
+DTSTART:20261120T080000Z
+DTEND:20261120T110000Z
+SUMMARY:Dinner\, with friends
+END:VEVENT
+END:VCALENDAR
+</cal:calendar-data></prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>

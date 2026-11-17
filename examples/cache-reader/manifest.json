@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "cache-reader",
+  "name": "Cache reader",
+  "version": "0.1.0",
+  "description": "Reads keys from a Redis-compatible cache over TLS: one key's value, or the keys that match a pattern. An example of a raw adapter: Node code that opens its own TLS connection to one exact endpoint, speaks the cache's own protocol with an npm package (redis-parser, added with valet_add_dependency), and signs in with an entrusted password.",
+  "runtime": "raw",
+  "endpoints": ["cache.example.com:6380"],
+  "secrets": {},
+  "credentials": {
+    "cache": {
+      "description": "The cache's user name and password (a read-only account is best)",
+      "kind": "password",
+      "custody": "entrusted",
+      "use": { "entrusted": { "endpoints": ["cache.example.com:6380"] } }
+    }
+  },
+  "session": { "cookieDomains": [], "storage": [], "probe": { "kind": "none" } },
+  "auth": { "steps": [], "frameOrigins": [] },
+  "requests": [],
+  "tools": [
+    {
+      "name": "get_key",
+      "title": "Get key",
+      "description": "One key's value as text (cut at 10,000 characters), or null if the key isn't there.",
+      "sideEffect": "read"
+    },
+    {
+      "name": "scan_keys",
+      "title": "Scan keys",
+      "description": "The keys that match a pattern (* and ? as wildcards), at most 500.",
+      "sideEffect": "read"
+    }
+  ],
+  "settings": {},
+  "limits": {
+    "requestsPerRun": 2,
+    "minGapMs": 250,
+    "requestsPerHour": 300,
+    "requestsPerMinute": 30,
+    "gapJitterPercent": 0,
+    "cooldownSeconds": 60,
+    "maxCooldownSeconds": 600
+  }
+}

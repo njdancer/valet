@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "id": "feed-reader",
+  "name": "News and releases",
+  "version": "0.1.0",
+  "description": "Headlines from BBC News's RSS feeds and a GitHub project's releases from its Atom feed. An example of an http adapter that reads feeds with parseFeed: RSS and Atom from two hosts, no login.",
+  "runtime": "http",
+  "egress": ["feeds.bbci.co.uk", "github.com"],
+  "secrets": {},
+  "session": { "cookieDomains": [], "storage": [], "probe": { "kind": "none" } },
+  "auth": { "steps": [], "frameOrigins": [] },
+  "requests": [
+    {
+      "method": "GET",
+      "host": "feeds.bbci.co.uk",
+      "path": "/news/rss.xml",
+      "purpose": "read",
+      "cacheSeconds": 300
+    },
+    {
+      "method": "GET",
+      "host": "feeds.bbci.co.uk",
+      "path": "/news/:section/rss.xml",
+      "purpose": "read",
+      "cacheSeconds": 300
+    },
+    {
+      "method": "GET",
+      "host": "github.com",
+      "path": "/:owner/:repo/releases.atom",
+      "purpose": "read",
+      "cacheSeconds": 300
+    }
+  ],
+  "tools": [
+    {
+      "name": "get_headlines",
+      "title": "Get headlines",
+      "description": "The latest headlines from one section of BBC News (top stories, world, UK, business, technology, science, health or entertainment): each one's title, link, time and summary.",
+      "sideEffect": "read"
+    },
+    {
+      "name": "list_releases",
+      "title": "List releases",
+      "description": "A GitHub project's latest releases, from its public releases feed: each one's tag, link, date and notes as plain text.",
+      "sideEffect": "read"
+    }
+  ],
+  "settings": {},
+  "limits": {
+    "requestsPerRun": 2,
+    "minGapMs": 1000,
+    "requestsPerHour": 120,
+    "requestsPerMinute": 20,
+    "gapJitterPercent": 20,
+    "cooldownSeconds": 600,
+    "maxCooldownSeconds": 7200
+  }
+}

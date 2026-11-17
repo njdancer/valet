@@ -1,0 +1,11 @@
+{
+  "id": 41001,
+  "type": "story",
+  "by": "pg",
+  "time": 1763370000,
+  "title": "Show HN: A calendar that reads itself",
+  "url": "https://example.org/calendar",
+  "score": 312,
+  "descendants": 2,
+  "kids": [41010, 41011]
+}

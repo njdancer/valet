@@ -70,7 +70,7 @@ const SEGMENT = /^[a-z0-9][a-z0-9._-]*$/
 const PLACEMENT: Readonly<Record<string, readonly string[]>> = {
   src: ['.ts'],
   test: ['.ts', '.json'],
-  fixtures: ['.json', '.html', '.txt'],
+  fixtures: ['.json', '.html', '.txt', '.xml'],
 }
 const TOP_LEVEL = new Set([PACKAGE_MANIFEST, 'README.md', DEPENDENCY_LOCK])
 
@@ -186,17 +186,25 @@ export function adapterHashOf(files: PackageFiles, manifest: AdapterManifest): s
     if (path.startsWith('src/')) covered[path] = files[path] as string
   }
   covered[MANIFEST_HASH_ENTRY] = canonicalJson(manifest)
-  if (Object.hasOwn(files, DEPENDENCY_LOCK)) {
-    const text = files[DEPENDENCY_LOCK] as string
-    let lock: unknown
-    try {
-      lock = JSON.parse(text)
-    } catch {
-      lock = text
-    }
-    covered[LOCK_HASH_ENTRY] = canonicalJson(lock)
-  }
+  const lock = lockHashEntry(files)
+  if (lock !== null) covered[LOCK_HASH_ENTRY] = lock
   return bundleHash(covered)
+}
+
+/**
+ * What a package's lockfile adds to its hash, canonicalised; null without one. Every formula that
+ * hashes an adapter (the app's registry and approved snapshots too) must add it the same way.
+ */
+export function lockHashEntry(files: Readonly<Record<string, string>>): string | null {
+  if (!Object.hasOwn(files, DEPENDENCY_LOCK)) return null
+  const text = files[DEPENDENCY_LOCK] as string
+  let lock: unknown
+  try {
+    lock = JSON.parse(text)
+  } catch {
+    lock = text
+  }
+  return canonicalJson(lock)
 }
 
 /** A package from a manifest and sources, as the built-ins and tests make one. */

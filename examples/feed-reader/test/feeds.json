@@ -1,0 +1,171 @@
+{
+  "cases": [
+    {
+      "name": "the top stories, as plain text",
+      "tool": "get_headlines",
+      "input": {},
+      "fetch": [
+        {
+          "method": "GET",
+          "url": "https://feeds.bbci.co.uk/news/rss.xml",
+          "status": 200,
+          "contentType": "application/rss+xml",
+          "body": "fixtures/bbc-top.xml"
+        }
+      ],
+      "expect": {
+        "output": {
+          "feed": "BBC News",
+          "headlines": [
+            {
+              "title": "Storm closes coastal roads",
+              "link": "https://www.bbc.co.uk/news/articles/a1",
+              "time": "2026-11-16T07:00:00.000Z",
+              "summary": "About: Storm closes coastal roads"
+            },
+            {
+              "title": "Markets rise on rate hopes & more",
+              "link": "https://www.bbc.co.uk/news/articles/a2",
+              "time": "2026-11-16T08:30:00.000Z",
+              "summary": "About: Markets rise on rate hopes & more"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "one headline only",
+      "tool": "get_headlines",
+      "input": {
+        "section": "top",
+        "limit": 1
+      },
+      "fetch": [
+        {
+          "method": "GET",
+          "url": "https://feeds.bbci.co.uk/news/rss.xml",
+          "status": 200,
+          "contentType": "application/rss+xml",
+          "body": "fixtures/bbc-top.xml"
+        }
+      ],
+      "expect": {
+        "output": {
+          "headlines": [
+            {
+              "title": "Storm closes coastal roads"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a section with nothing in it",
+      "tool": "get_headlines",
+      "input": {
+        "section": "world"
+      },
+      "fetch": [
+        {
+          "method": "GET",
+          "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+          "status": 200,
+          "contentType": "application/rss+xml",
+          "body": "fixtures/bbc-world.xml"
+        }
+      ],
+      "expect": {
+        "output": {
+          "feed": "BBC News - World",
+          "headlines": []
+        }
+      }
+    },
+    {
+      "name": "a page that is not a feed",
+      "tool": "get_headlines",
+      "input": {
+        "section": "health"
+      },
+      "fetch": [
+        {
+          "method": "GET",
+          "url": "https://feeds.bbci.co.uk/news/health/rss.xml",
+          "status": 200,
+          "contentType": "text/html",
+          "body": {
+            "inline": "<html><body>Sorry</body></html>"
+          }
+        }
+      ],
+      "expect": {
+        "error": {
+          "stage": "tool-run",
+          "errorClass": "unexpected-shape"
+        }
+      }
+    },
+    {
+      "name": "a project's releases, notes as plain text",
+      "tool": "list_releases",
+      "input": {
+        "owner": "nodejs",
+        "repo": "node"
+      },
+      "fetch": [
+        {
+          "method": "GET",
+          "url": "https://github.com/nodejs/node/releases.atom",
+          "status": 200,
+          "contentType": "application/atom+xml",
+          "body": "fixtures/node-releases.xml"
+        }
+      ],
+      "expect": {
+        "output": {
+          "releases": [
+            {
+              "tag": "v24.11.1",
+              "title": "v24.11.1",
+              "link": "https://github.com/nodejs/node/releases/tag/v24.11.1",
+              "time": "2026-11-12T10:00:00.000Z",
+              "summary": "Security release."
+            },
+            {
+              "tag": "v24.11.0",
+              "title": "v24.11.0",
+              "link": "https://github.com/nodejs/node/releases/tag/v24.11.0",
+              "time": "2026-10-28T10:00:00.000Z",
+              "summary": "Notable changes & fixes."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a project that does not exist",
+      "tool": "list_releases",
+      "input": {
+        "owner": "nobody",
+        "repo": "nothing"
+      },
+      "fetch": [
+        {
+          "method": "GET",
+          "url": "https://github.com/nobody/nothing/releases.atom",
+          "status": 404,
+          "contentType": "text/plain",
+          "body": {
+            "inline": "Not Found"
+          }
+        }
+      ],
+      "expect": {
+        "error": {
+          "stage": "tool-run",
+          "errorClass": "not-found"
+        }
+      }
+    }
+  ]
+}

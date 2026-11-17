@@ -148,7 +148,7 @@ export const tools = {
       const response = await ctx.http.fetch(\`/v1/items/\${encodeURIComponent(input.id)}\`, {
         headers: { accept: 'application/json' },
       })
-      if (response.status === 404) throw new ValetError('tool-input', 'not-found')
+      if (response.status === 404) throw new ValetError('tool-run', 'not-found')
       if (response.status !== 200) throw new ValetError('tool-run', 'unavailable')
       let body: { id?: unknown; title?: unknown; price?: unknown } | null = null
       try {
@@ -193,7 +193,7 @@ export const tools = {
             body: { inline: { error: 'not found' } },
           },
         ],
-        expect: { error: { stage: 'tool-input', errorClass: 'not-found' } },
+        expect: { error: { stage: 'tool-run', errorClass: 'not-found' } },
       },
     ],
   }

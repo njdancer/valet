@@ -19,6 +19,7 @@ import {
   AVAILABLE_RUNTIMES,
   type CheckedPackage,
   checkPackage,
+  DEPENDENCY_LOCK,
   PackageError,
   type PackageFiles,
   runtimeOf,
@@ -299,7 +300,9 @@ export function rollbackEligible(records: readonly AuditRecord[], adapterId: str
 
 function toInstalled(loaded: LoadedPackage, source: PackageSource): InstalledAdapter {
   const sources: Record<string, string> = {}
-  for (const [path, text] of Object.entries(loaded.files)) if (path.startsWith('src/')) sources[path] = text
+  // The sources, and a raw adapter's lockfile: its hash covers the exact code of every dependency.
+  for (const [path, text] of Object.entries(loaded.files))
+    if (path.startsWith('src/') || path === DEPENDENCY_LOCK) sources[path] = text
   const adapter = builtinAdapter(loaded.definition, sources, loaded.script)
   // The same formula; a mismatch would mean approvals keyed by one hash running another's code.
   if (adapter.hash !== loaded.adapterHash) throw new InstallError('The package hash did not match.')
