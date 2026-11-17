@@ -242,12 +242,12 @@ test('the review screen shows the change, and Approve waits for the acknowledgem
   await control.evaluate(() => {
     window.location.hash = '#/sites/woolworths'
   })
-  await expect(control.getByText('Woolworths 0.4.0 is waiting for your review.')).toBeVisible()
+  await expect(control.getByText('Woolworths 0.5.0 is waiting for your review.')).toBeVisible()
   await control.getByRole('link', { name: 'Review Woolworths update' }).first().click()
   await expect(control.getByText('This update asks for more')).toBeVisible()
   await expect(control.getByText('remove_from_cart').first()).toBeVisible()
   await expect(control.getByText('src/manifest.ts')).toBeVisible()
-  const approve = control.getByRole('button', { name: 'Approve 0.4.0' })
+  const approve = control.getByRole('button', { name: 'Approve 0.5.0' })
   await expect(approve).toBeDisabled()
   await control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' }).check()
   await approve.click()

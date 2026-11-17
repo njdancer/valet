@@ -55,7 +55,7 @@ function stepsIn(steps: readonly unknown[]): any[] {
 describe('the real manifest', () => {
   it('is the default export and points at the live site', () => {
     expect(realManifest.home).toBe('https://www.woolworths.com.au/')
-    expect(realManifest.version).toBe('0.4.0')
+    expect(realManifest.version).toBe('0.5.0')
     expect(manifestSchema.parse(realManifest)).toEqual(realManifest)
   })
 

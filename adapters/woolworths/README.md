@@ -28,16 +28,16 @@ All site calls are in-page `fetch`es with paths relative to the page, so cookies
 browser and the same code serves both origins. Output is reshaped into plain fields; raw
 Woolworths JSON never reaches the client.
 
-| Tool                | Side effect | Login  | Site calls                                    |
-| ------------------- | ----------- | ------ | --------------------------------------------- |
-| `search_products`   | read        | no     | `POST /apis/ui/Search/products`               |
-| `get_product`       | read        | no     | `GET /apis/ui/product/detail/:stockcode`      |
-| `get_cart`          | read        | ensure | `GET /apis/ui/Trolley`                        |
-| `add_to_cart`       | write       | ensure | `GET /apis/ui/Trolley`, then `POST …/update`  |
-| `set_cart_quantity` | write       | ensure | `POST /api/v3/ui/trolley/update`              |
-| `remove_from_cart`  | write       | ensure | `POST /api/v3/ui/trolley/update` (quantity 0) |
-| `find_stores`       | read        | no     | `GET /api/v3/ui/fulfilment/stores`            |
-| `apply_store`       | write       | no     | `POST /api/v3/ui/fulfilment`                  |
+| Tool                | Side effect | Login  | Site calls                                   |
+| ------------------- | ----------- | ------ | -------------------------------------------- |
+| `search_products`   | read        | no     | `POST /apis/ui/Search/products`              |
+| `get_product`       | read        | no     | `GET /apis/ui/product/detail/:stockcode`     |
+| `get_cart`          | read        | ensure | `GET /apis/ui/Trolley`                       |
+| `add_to_cart`       | write       | ensure | `GET /apis/ui/Trolley`, then `POST …/update` |
+| `set_cart_quantity` | write       | ensure | `POST /api/v3/ui/trolley/update`             |
+| `remove_from_cart`  | write       | ensure | `GET /apis/ui/Trolley`, then `POST …/update` |
+| `find_stores`       | read        | no     | `GET /api/v3/ui/fulfilment/stores`           |
+| `apply_store`       | write       | no     | `POST /api/v3/ui/fulfilment`                 |
 
 The last two serve the [store setting](#store) and are run only by Valet. An MCP client is never
 told about them and can't call them.
@@ -61,18 +61,30 @@ notices }`. Each item is `{ stockcode, name, quantity, price, lineTotal, availab
   20 on one line (D54), makes no write if the call is cancelled after the read, and makes no write if
   the trolley it read isn't complete (below), since the write could shrink a line it can't see
   (`tool-run` / `site-changed`).
-- **`set_cart_quantity { stockcode, quantity 0..20 }`** and **`remove_from_cart { stockcode }`**
-  make one write each.
+- **`set_cart_quantity { stockcode, quantity 0..20 }`** makes one write. **`remove_from_cart
+{ stockcode }`** reads the trolley first (the runtime's cached copy when it has one), so it can say
+  whether the product was there, then writes quantity 0.
+- **`update_cart { items: [{ stockcode, quantity, mode }] }`**: `quantity` defaults to 1 for an add
+  and is required for a set, so a set without one is refused rather than setting 1. A product may
+  appear once; a refusal names the line (`items[2].stockcode`, `duplicate`).
+
+Input refusals say where and why, from Valet's fixed vocabulary (core's `input-issue.ts`): a line
+taken past 20 is `over-total` with the limit, and a stockcode the site answers 400 to on the update
+is `not-accepted` on `stockcode` (or on `items` when the update had several lines), not `unavailable`.
+The fake answers an unknown stockcode that way; what the live site sends is unverified.
 
 ### What the write tools report
 
 Every write returns `{ stockcode, quantity, confirmed, cart, notices }`, plus `requestedQuantity`
-(and `previousQuantity` for `add_to_cart`), or `removed` for `remove_from_cart`:
+(and `previousQuantity` for `add_to_cart`), or `wasInCart` and `removed` for `remove_from_cart`:
 
 - When the reply is a trolley, `quantity` is the line's quantity **in that trolley**, not the one
   asked for, and `confirmed` is true. The site clamps to its own supply limits, so
   `set_cart_quantity { quantity: 20 }` can return `quantity: 12`; a notice then says the two
-  differ. A line missing from a complete reply counts as 0. `removed` is `quantity === 0`.
+  differ. A line missing from a complete reply counts as 0. A line the reply shows set aside (out
+  of stock, say) gets a notice naming the bucket's reason: it is in the cart but not in the
+  subtotal. `removed` is true only when the product was in the cart and the reply is without it; a
+  product that was never there gives `wasInCart: false`, `removed: false` and a notice.
 - When the reply isn't a trolley, `quantity`, `cart` and `removed` are null, `confirmed` is false,
   and a notice says to call `get_cart`. The write may or may not have happened. The tools don't
   spend another request finding out.
