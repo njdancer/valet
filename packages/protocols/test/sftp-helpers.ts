@@ -77,7 +77,9 @@ export function builtSftpHost(): Promise<string> {
 }
 
 /** Host options for tests: this Node, Seatbelt on macOS only. */
-export async function sftpHostOptions(extra: Partial<ProtocolHostOptions> = {}): Promise<ProtocolHostOptions> {
+export async function sftpHostOptions(
+  extra: Partial<ProtocolHostOptions> = {},
+): Promise<ProtocolHostOptions> {
   const home = await mkdtemp(join(tmpdir(), 'valet-home-'))
   return {
     nodeBinary: process.execPath,
@@ -99,7 +101,9 @@ export function brokerToSftp(server: FakeSftp) {
 }
 
 /** The fake's key as the credential gate would hand it over: no username in the item. */
-export const keySignIn = (server: FakeSftp, username: string | null = null) => async () => ({
-  username: username === null ? null : SecretValue.fromString(username),
-  secret: SecretValue.fromString(server.clientKey.private),
-})
+export const keySignIn =
+  (server: FakeSftp, username: string | null = null) =>
+  async () => ({
+    username: username === null ? null : SecretValue.fromString(username),
+    secret: SecretValue.fromString(server.clientKey.private),
+  })

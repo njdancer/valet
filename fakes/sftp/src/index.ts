@@ -12,6 +12,7 @@
 import { spawn } from 'node:child_process'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { constants, existsSync } from 'node:fs'
+import type { FileHandle } from 'node:fs/promises'
 import {
   lstat,
   mkdir,
@@ -25,7 +26,6 @@ import {
   stat,
   unlink,
 } from 'node:fs/promises'
-import type { FileHandle } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, posix } from 'node:path'
@@ -54,7 +54,8 @@ export interface KeyPair {
 export function keyPair(): KeyPair {
   for (;;) {
     const pair = utils.generateKeyPairSync('ed25519')
-    if (!(utils.parseKey(pair.private) instanceof Error)) return { private: pair.private, public: pair.public }
+    if (!(utils.parseKey(pair.private) instanceof Error))
+      return { private: pair.private, public: pair.public }
   }
 }
 
@@ -239,7 +240,10 @@ export async function startFakeSftp(options: FakeSftpOptions = {}): Promise<Fake
   })
 
   function serveSftp(sftp: SFTPWrapper, connection: number): void {
-    const handles = new Map<string, { kind: 'file'; file: FileHandle; path: string } | { kind: 'dir'; path: string; done: boolean }>()
+    const handles = new Map<
+      string,
+      { kind: 'file'; file: FileHandle; path: string } | { kind: 'dir'; path: string; done: boolean }
+    >()
     let nextHandle = 1
     const newHandle = (value: Parameters<typeof handles.set>[1]) => {
       const key = Buffer.alloc(4)
@@ -384,7 +388,13 @@ export async function startFakeSftp(options: FakeSftpOptions = {}): Promise<Fake
       if (record(reqid, { type: 'RENAME', path: from, path2: to })) return
       try {
         // As OpenSSH: never over something that's there.
-        if (await lstat(toLocal(to)).then(() => true, () => false)) return sftp.status(reqid, STATUS_CODE.FAILURE)
+        if (
+          await lstat(toLocal(to)).then(
+            () => true,
+            () => false,
+          )
+        )
+          return sftp.status(reqid, STATUS_CODE.FAILURE)
         await rename(toLocal(from), toLocal(to))
         sftp.status(reqid, STATUS_CODE.OK)
       } catch (error) {
@@ -459,4 +469,3 @@ function statusOf(error: unknown): number {
   if (code === 'EACCES' || code === 'EPERM') return STATUS_CODE.PERMISSION_DENIED
   return STATUS_CODE.FAILURE
 }
-

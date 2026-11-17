@@ -32,12 +32,7 @@ export const ALGORITHMS: NonNullable<ConnectConfig['algorithms']> = {
     'rsa-sha2-256',
   ],
   cipher: ['aes256-gcm@openssh.com', 'aes128-gcm@openssh.com', 'aes256-ctr', 'aes192-ctr', 'aes128-ctr'],
-  hmac: [
-    'hmac-sha2-256-etm@openssh.com',
-    'hmac-sha2-512-etm@openssh.com',
-    'hmac-sha2-256',
-    'hmac-sha2-512',
-  ],
+  hmac: ['hmac-sha2-256-etm@openssh.com', 'hmac-sha2-512-etm@openssh.com', 'hmac-sha2-256', 'hmac-sha2-512'],
   compress: ['none'],
 }
 

@@ -47,13 +47,17 @@ describe('a server whose REALPATH doesn’t follow links', () => {
     await expect(ops.run('read', ['/docs/out/secret.txt'])).rejects.toMatchObject({ failure: 'not-allowed' })
     await expect(ops.run('read', ['/docs/secret'])).rejects.toMatchObject({ failure: 'not-allowed' })
     await expect(ops.run('list', ['/docs/out'])).rejects.toMatchObject({ failure: 'not-allowed' })
-    expect(server.requests.some((r) => (r.type === 'OPEN' || r.type === 'OPENDIR') && r.path?.includes('out'))).toBe(false)
+    expect(
+      server.requests.some((r) => (r.type === 'OPEN' || r.type === 'OPENDIR') && r.path?.includes('out')),
+    ).toBe(false)
   })
 
   it('nor a write through a linked folder', async () => {
     const { ops, server } = await session('write', { hostile: lexicalRealpath })
     await symlink('../docs', server.at('/inbox/docs'))
-    await expect(ops.run('write', ['/inbox/docs/new.txt', 'x'])).rejects.toMatchObject({ failure: 'not-allowed' })
+    await expect(ops.run('write', ['/inbox/docs/new.txt', 'x'])).rejects.toMatchObject({
+      failure: 'not-allowed',
+    })
     await expect(ops.run('mkdir', ['/inbox/docs/new'])).rejects.toMatchObject({ failure: 'not-allowed' })
   })
 })
@@ -88,11 +92,17 @@ describe('a server that sends odd names and data', () => {
       hostile: ({ request, reqid, sftp }) => {
         if (request.type !== 'READDIR') return false
         const names = Array.from({ length: 50 }, () => `f${n++}`)
-        sftp.name(reqid, names.map((x) => ({ filename: x, longname: x, attrs: {} as never })))
+        sftp.name(
+          reqid,
+          names.map((x) => ({ filename: x, longname: x, attrs: {} as never })),
+        )
         return true
       },
     })
-    const listed = (await ops.run('list', ['/docs', { limit: 1000 }])) as { entries: unknown[]; truncated: boolean }
+    const listed = (await ops.run('list', ['/docs', { limit: 1000 }])) as {
+      entries: unknown[]
+      truncated: boolean
+    }
     expect(listed.entries).toHaveLength(1000)
     expect(listed.truncated).toBe(true)
   })

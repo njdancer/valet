@@ -20,16 +20,16 @@ import {
   parentOf,
   pathAllowed,
   rootOf,
+  SFTP_PURPOSE_RANK,
   type SftpOperation,
   type SftpPurpose,
   type SftpRoot,
   sftpOperationPurpose,
-  SFTP_PURPOSE_RANK,
   wireAllows,
 } from '@valet/core/sftp-policy'
 import { cleanBody } from '../imap/decode'
 import type { SftpClient } from './client'
-import { FX, MAX_READ_CHUNK, MAX_WRITE_CHUNK, SftpError, type SftpAttrs, type SftpReply } from './wire'
+import { FX, MAX_READ_CHUNK, MAX_WRITE_CHUNK, type SftpAttrs, SftpError, type SftpReply } from './wire'
 
 export const SFTP_LIMITS = {
   listDefault: 200,
@@ -72,7 +72,8 @@ function describe(attrs: SftpAttrs): Omit<Entry, 'name'> {
     type: typeOf(attrs),
     size: attrs.size,
     modified: attrs.mtime === null ? null : new Date(attrs.mtime * 1000).toISOString(),
-    permissions: attrs.permissions === null ? null : (attrs.permissions & 0o7777).toString(8).padStart(4, '0'),
+    permissions:
+      attrs.permissions === null ? null : (attrs.permissions & 0o7777).toString(8).padStart(4, '0'),
   }
 }
 
@@ -228,7 +229,9 @@ export class SftpOperations {
     const real = await this.followed(path, 'read')
     const attrs = this.attrsOf(await this.client.request({ type: 'STAT', path: real }))
     if (typeOf(attrs) !== 'file') throw invalid()
-    const handle = this.handleOf(await this.client.request({ type: 'OPEN', path: real, flags: OPEN_FLAGS.READ }))
+    const handle = this.handleOf(
+      await this.client.request({ type: 'OPEN', path: real, flags: OPEN_FLAGS.READ }),
+    )
     const chunks: Buffer[] = []
     let got = 0
     let eof = false

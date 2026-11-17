@@ -72,13 +72,7 @@ export const SFTP_PATH_ARGS: Readonly<Record<SftpOperation, readonly number[]>> 
 }
 
 /** Operations that change the thing at a path, so may never name a root itself. */
-const CHANGES_PATH: ReadonlySet<SftpOperation> = new Set([
-  'write',
-  'mkdir',
-  'rename',
-  'remove',
-  'removeDir',
-])
+const CHANGES_PATH: ReadonlySet<SftpOperation> = new Set(['write', 'mkdir', 'rename', 'remove', 'removeDir'])
 
 export const MAX_SFTP_PATH_BYTES = 1024
 export const MAX_SFTP_NAME_BYTES = 255
@@ -245,7 +239,14 @@ export const PACKET_PURPOSE = {
 export type SftpPacket = keyof typeof PACKET_PURPOSE
 
 /** SSH_FXF_* open flags (draft-ietf-secsh-filexfer-02). */
-export const OPEN_FLAGS = { READ: 0x01, WRITE: 0x02, APPEND: 0x04, CREAT: 0x08, TRUNC: 0x10, EXCL: 0x20 } as const
+export const OPEN_FLAGS = {
+  READ: 0x01,
+  WRITE: 0x02,
+  APPEND: 0x04,
+  CREAT: 0x08,
+  TRUNC: 0x10,
+  EXCL: 0x20,
+} as const
 
 /**
  * The purpose an OPEN with these flags needs, or null for a combination Valet never sends. Reading

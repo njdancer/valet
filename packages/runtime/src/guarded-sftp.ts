@@ -18,8 +18,8 @@ import {
   type ErrorClass,
   isSftpOperation,
   isSftpPath,
-  pathAllowed,
   type Purpose,
+  pathAllowed,
   type SecretValue,
   SFTP_PATH_ARGS,
   SFTP_PURPOSE_RANK,
@@ -27,8 +27,8 @@ import {
   type SftpOperation,
   type SftpPurpose,
   type SftpRoot,
-  sftpOperationPurpose,
   type Stage,
+  sftpOperationPurpose,
   ValetError,
 } from '@valet/core'
 import type { RunContext } from '@valet/egress'

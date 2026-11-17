@@ -29,7 +29,9 @@ const fails = (failure: string, code: string | null = null) =>
 describe('reading', () => {
   it('lists a folder, sorted, with types and sizes', async () => {
     const { ops } = await session('read')
-    const listed = (await ops.run('list', ['/docs'])) as { entries: { name: string; type: string; size: number }[] }
+    const listed = (await ops.run('list', ['/docs'])) as {
+      entries: { name: string; type: string; size: number }[]
+    }
     expect(listed.entries.map((e) => [e.name, e.type])).toEqual([
       ['notes', 'directory'],
       ['readme.txt', 'file'],
@@ -41,7 +43,11 @@ describe('reading', () => {
   it('stats and reads a file as base64 or text', async () => {
     const { ops } = await session('read')
     expect(await ops.run('stat', ['/docs/readme.txt'])).toMatchObject({ type: 'file', size: 20 })
-    const b = (await ops.run('read', ['/docs/readme.txt'])) as { base64: string; bytes: number; truncated: boolean }
+    const b = (await ops.run('read', ['/docs/readme.txt'])) as {
+      base64: string
+      bytes: number
+      truncated: boolean
+    }
     expect(Buffer.from(b.base64, 'base64').toString()).toBe('Hello from the NAS.\n')
     expect(b).toMatchObject({ bytes: 20, truncated: false })
     const t = await ops.run('read', ['/docs/readme.txt', { encoding: 'utf8', offset: 6, length: 4 }])
@@ -52,7 +58,10 @@ describe('reading', () => {
     const { ops, server } = await session('read')
     const big = Buffer.alloc(200_000, 7)
     await writeFile(server.at('/docs/big.bin'), big)
-    const r = (await ops.run('read', ['/docs/big.bin', { length: 100_000 }])) as { base64: string; truncated: boolean }
+    const r = (await ops.run('read', ['/docs/big.bin', { length: 100_000 }])) as {
+      base64: string
+      truncated: boolean
+    }
     expect(Buffer.from(r.base64, 'base64')).toEqual(big.subarray(0, 100_000))
     expect(r.truncated).toBe(true)
   })
@@ -60,8 +69,19 @@ describe('reading', () => {
   it('refuses paths outside the roots, and paths not in Valet’s form, before asking the server', async () => {
     const { ops, server } = await session('read')
     const before = server.requests.length
-    for (const bad of ['/private/secret.txt', '/', '/docs/../private/secret.txt', '/docs/./readme.txt', 'docs', '/docs/', '/docs//readme.txt', '/docs\\x']) {
-      await expect(ops.run('read', [bad])).rejects.toEqual(fails(bad.startsWith('/private') || bad === '/' ? 'not-allowed' : 'invalid'))
+    for (const bad of [
+      '/private/secret.txt',
+      '/',
+      '/docs/../private/secret.txt',
+      '/docs/./readme.txt',
+      'docs',
+      '/docs/',
+      '/docs//readme.txt',
+      '/docs\\x',
+    ]) {
+      await expect(ops.run('read', [bad])).rejects.toEqual(
+        fails(bad.startsWith('/private') || bad === '/' ? 'not-allowed' : 'invalid'),
+      )
     }
     expect(server.requests.length).toBe(before)
   })
@@ -71,7 +91,9 @@ describe('reading', () => {
     await symlink('readme.txt', server.at('/docs/inside'))
     await symlink('../private/secret.txt', server.at('/docs/outside'))
     await symlink('../private', server.at('/docs/outdir'))
-    expect(await ops.run('read', ['/docs/inside', { encoding: 'utf8' }])).toMatchObject({ text: 'Hello from the NAS.\n' })
+    expect(await ops.run('read', ['/docs/inside', { encoding: 'utf8' }])).toMatchObject({
+      text: 'Hello from the NAS.\n',
+    })
     await expect(ops.run('read', ['/docs/outside'])).rejects.toEqual(fails('not-allowed'))
     await expect(ops.run('list', ['/docs/outdir'])).rejects.toEqual(fails('not-allowed'))
     await expect(ops.run('read', ['/docs/outdir/secret.txt'])).rejects.toEqual(fails('not-allowed'))
@@ -91,7 +113,11 @@ describe('reading', () => {
 describe('writing', () => {
   it('creates a file, and never over one that is there', async () => {
     const { ops, server } = await session('write')
-    expect(await ops.run('write', ['/inbox/a.txt', 'hello'])).toEqual({ path: '/inbox/a.txt', bytes: 5, mode: 'create' })
+    expect(await ops.run('write', ['/inbox/a.txt', 'hello'])).toEqual({
+      path: '/inbox/a.txt',
+      bytes: 5,
+      mode: 'create',
+    })
     expect(await readFile(server.at('/inbox/a.txt'), 'utf8')).toBe('hello')
     await expect(ops.run('write', ['/inbox/a.txt', 'again'])).rejects.toEqual(fails('no', 'ALREADYEXISTS'))
     expect(await readFile(server.at('/inbox/a.txt'), 'utf8')).toBe('hello')
@@ -100,9 +126,15 @@ describe('writing', () => {
   it('appends to a file, and writes base64', async () => {
     const { ops, server } = await session('write')
     await ops.run('write', ['/inbox/log.txt', 'one\n'])
-    await ops.run('write', ['/inbox/log.txt', Buffer.from('two\n').toString('base64'), { mode: 'append', encoding: 'base64' }])
+    await ops.run('write', [
+      '/inbox/log.txt',
+      Buffer.from('two\n').toString('base64'),
+      { mode: 'append', encoding: 'base64' },
+    ])
     expect(await readFile(server.at('/inbox/log.txt'), 'utf8')).toBe('one\ntwo\n')
-    await expect(ops.run('write', ['/inbox/missing.txt', 'x', { mode: 'append' }])).rejects.toEqual(fails('no', 'NONEXISTENT'))
+    await expect(ops.run('write', ['/inbox/missing.txt', 'x', { mode: 'append' }])).rejects.toEqual(
+      fails('no', 'NONEXISTENT'),
+    )
   })
 
   it('writes a file larger than one packet', async () => {
@@ -114,14 +146,18 @@ describe('writing', () => {
 
   it('needs an irreversible session to replace a file', async () => {
     const { ops } = await session('write')
-    await expect(ops.run('write', ['/scratch/old.txt', 'new', { mode: 'replace' }])).rejects.toEqual(fails('not-allowed'))
+    await expect(ops.run('write', ['/scratch/old.txt', 'new', { mode: 'replace' }])).rejects.toEqual(
+      fails('not-allowed'),
+    )
   })
 
   it('refuses to write in a read-only root, or to write through a link', async () => {
     const { ops, server } = await session('write')
     await expect(ops.run('write', ['/docs/new.txt', 'x'])).rejects.toEqual(fails('not-allowed'))
     await symlink('../docs/readme.txt', server.at('/inbox/link'))
-    await expect(ops.run('write', ['/inbox/link', 'x', { mode: 'append' }])).rejects.toEqual(fails('not-allowed'))
+    await expect(ops.run('write', ['/inbox/link', 'x', { mode: 'append' }])).rejects.toEqual(
+      fails('not-allowed'),
+    )
     await expect(ops.run('write', ['/inbox/link', 'x'])).rejects.toEqual(fails('no', 'ALREADYEXISTS'))
     expect(await readFile(server.at('/docs/readme.txt'), 'utf8')).toBe('Hello from the NAS.\n')
   })
@@ -131,12 +167,19 @@ describe('writing', () => {
     await ops.run('mkdir', ['/inbox/sub'])
     await expect(ops.run('mkdir', ['/inbox/sub'])).rejects.toEqual(fails('no', 'ALREADYEXISTS'))
     await ops.run('write', ['/inbox/sub/x.txt', 'x'])
-    expect(await ops.run('rename', ['/inbox/sub/x.txt', '/inbox/y.txt'])).toEqual({ from: '/inbox/sub/x.txt', to: '/inbox/y.txt' })
+    expect(await ops.run('rename', ['/inbox/sub/x.txt', '/inbox/y.txt'])).toEqual({
+      from: '/inbox/sub/x.txt',
+      to: '/inbox/y.txt',
+    })
     expect(await readFile(server.at('/inbox/y.txt'), 'utf8')).toBe('x')
     await ops.run('write', ['/inbox/z.txt', 'z'])
-    await expect(ops.run('rename', ['/inbox/z.txt', '/inbox/y.txt'])).rejects.toEqual(fails('no', 'ALREADYEXISTS'))
+    await expect(ops.run('rename', ['/inbox/z.txt', '/inbox/y.txt'])).rejects.toEqual(
+      fails('no', 'ALREADYEXISTS'),
+    )
     await expect(ops.run('rename', ['/inbox', '/scratch/inbox'])).rejects.toEqual(fails('not-allowed'))
-    await expect(ops.run('rename', ['/docs/readme.txt', '/inbox/readme.txt'])).rejects.toEqual(fails('not-allowed'))
+    await expect(ops.run('rename', ['/docs/readme.txt', '/inbox/readme.txt'])).rejects.toEqual(
+      fails('not-allowed'),
+    )
     await expect(ops.run('mkdir', ['/inbox'])).rejects.toEqual(fails('not-allowed'))
   })
 })
@@ -161,7 +204,10 @@ describe('removing', () => {
 
   it('replaces a file', async () => {
     const { ops, server } = await session('irreversible')
-    expect(await ops.run('write', ['/scratch/old.txt', 'new', { mode: 'replace' }])).toMatchObject({ bytes: 3, mode: 'replace' })
+    expect(await ops.run('write', ['/scratch/old.txt', 'new', { mode: 'replace' }])).toMatchObject({
+      bytes: 3,
+      mode: 'replace',
+    })
     expect(await readFile(server.at('/scratch/old.txt'), 'utf8')).toBe('new')
   })
 
@@ -183,7 +229,8 @@ describe('the wire', () => {
     await ops.run('rename', ['/scratch/n', '/scratch/m'])
     await ops.run('remove', ['/scratch/m'])
     const types = new Set(server.requests.map((r) => r.type))
-    for (const never of ['SETSTAT', 'FSETSTAT', 'FSTAT', 'READLINK', 'SYMLINK']) expect(types.has(never)).toBe(false)
+    for (const never of ['SETSTAT', 'FSETSTAT', 'FSTAT', 'READLINK', 'SYMLINK'])
+      expect(types.has(never)).toBe(false)
   })
 })
 

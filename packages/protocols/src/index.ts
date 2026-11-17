@@ -7,8 +7,8 @@ export {
   hostError,
   ImapHostSession,
   type ProtocolHostOptions,
-  type SftpStartOptions,
   SftpHostSession,
+  type SftpStartOptions,
   type SignInValues,
   type StartOptions,
 } from './host-session'

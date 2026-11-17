@@ -27,7 +27,17 @@ const ROOTS: SftpRoot[] = [
 
 describe('paths', () => {
   it('takes absolute paths in one form only', () => {
-    for (const good of ['/', '/a', '/a/b.txt', '/a b/ç', '/.hidden', '/a/..b', '/a/b..', `/${'x'.repeat(255)}`, '/😀'])
+    for (const good of [
+      '/',
+      '/a',
+      '/a/b.txt',
+      '/a b/ç',
+      '/.hidden',
+      '/a/..b',
+      '/a/b..',
+      `/${'x'.repeat(255)}`,
+      '/😀',
+    ])
       expect(isSftpPath(good), good).toBe(true)
     for (const bad of [
       '',
@@ -104,9 +114,14 @@ describe('roots', () => {
     expect(wireAllows('/data/x', 'write', declared, resolved)).toBe(true)
     expect(wireAllows('/etc/passwd', 'read', declared, resolved)).toBe(false)
     // Where a declared read root and a resolved write root both hold a path, read wins.
-    expect(wireAllows('/a/sub/x', 'write', [{ path: '/a', access: 'read' }], [{ path: '/a/sub', access: 'write' }])).toBe(
-      false,
-    )
+    expect(
+      wireAllows(
+        '/a/sub/x',
+        'write',
+        [{ path: '/a', access: 'read' }],
+        [{ path: '/a/sub', access: 'write' }],
+      ),
+    ).toBe(false)
     expect(wireAllows('/a/../x', 'read', [{ path: '/', access: 'read' }], [])).toBe(false)
   })
 })
@@ -130,7 +145,17 @@ describe('purposes', () => {
     expect(openPurpose(F.WRITE | F.CREAT | F.EXCL)).toBe('write')
     expect(openPurpose(F.WRITE | F.APPEND)).toBe('write')
     expect(openPurpose(F.WRITE | F.CREAT | F.TRUNC)).toBe('irreversible')
-    for (const flags of [0, F.WRITE, F.READ | F.WRITE, F.WRITE | F.CREAT, F.WRITE | F.TRUNC, F.READ | F.CREAT, F.WRITE | F.APPEND | F.CREAT, 0x40, F.READ | 0x100])
+    for (const flags of [
+      0,
+      F.WRITE,
+      F.READ | F.WRITE,
+      F.WRITE | F.CREAT,
+      F.WRITE | F.TRUNC,
+      F.READ | F.CREAT,
+      F.WRITE | F.APPEND | F.CREAT,
+      0x40,
+      F.READ | 0x100,
+    ])
       expect(openPurpose(flags), String(flags)).toBeNull()
   })
 })

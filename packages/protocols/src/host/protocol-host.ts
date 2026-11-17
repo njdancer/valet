@@ -99,9 +99,6 @@ async function handle(message: Record<string, unknown>): Promise<void> {
   }
 }
 
-const { post } = serveChannel<Boot>(
-  (b) => {
-    boot = b
-  },
-  handle,
-)
+const { post } = serveChannel<Boot>((b) => {
+  boot = b
+}, handle)

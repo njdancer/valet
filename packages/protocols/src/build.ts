@@ -4,8 +4,8 @@
 // three small packages it needs, at the versions in the lockfile, and nothing else from npm. Used by
 // the app's build and by tests; esbuild is a dev dependency.
 
-import { builtinModules, createRequire } from 'node:module'
 import { mkdir, writeFile } from 'node:fs/promises'
+import { builtinModules, createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -83,7 +83,10 @@ export async function buildSftpHost(): Promise<string> {
           // Its Poly1305 in WebAssembly, loaded at start-up for chacha20-poly1305. That cipher is
           // never offered (sftp/ssh.ts ALGORITHMS), so the host carries a stand-in that loads and
           // refuses to run, and no WebAssembly at all.
-          b.onResolve({ filter: /[\\/]poly1305\.js$/ }, (args) => ({ path: args.path, namespace: 'valet-poly1305' }))
+          b.onResolve({ filter: /[\\/]poly1305\.js$/ }, (args) => ({
+            path: args.path,
+            namespace: 'valet-poly1305',
+          }))
           b.onLoad({ filter: /.*/, namespace: 'valet-poly1305' }, () => ({
             contents:
               "module.exports = () => Promise.resolve({ _malloc: () => 0, cwrap: () => () => { throw new Error('chacha20-poly1305 is not offered') } })",

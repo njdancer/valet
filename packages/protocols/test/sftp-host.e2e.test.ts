@@ -45,7 +45,11 @@ async function backend(extra: Record<string, unknown> = {}, s?: FakeSftp) {
   })
 }
 
-const call = (purpose: 'read' | 'write' | 'irreversible', r = run(), signIn = keySignIn(server as FakeSftp)) => ({
+const call = (
+  purpose: 'read' | 'write' | 'irreversible',
+  r = run(),
+  signIn = keySignIn(server as FakeSftp),
+) => ({
   purpose,
   run: r,
   admit: async () => {},
@@ -60,7 +64,9 @@ describe('the SFTP host', () => {
     const connection = await b.connect(call('read', r))
     const listed = (await connection.operation('list', ['/docs'])) as { entries: { name: string }[] }
     expect(listed.entries.map((e) => e.name)).toEqual(['notes', 'readme.txt'])
-    const read = (await connection.operation('read', ['/docs/readme.txt', { encoding: 'utf8' }])) as { text: string }
+    const read = (await connection.operation('read', ['/docs/readme.txt', { encoding: 'utf8' }])) as {
+      text: string
+    }
     expect(read.text).toBe(FILES['/docs/readme.txt'])
     await connection.end()
     expect(server?.logins.filter((l) => l.ok)).toEqual([{ username: 'nick', method: 'publickey', ok: true }])
@@ -97,7 +103,10 @@ describe('the SFTP host', () => {
       host: await sftpHostOptions(),
       broker: brokerToSftp(server),
     })
-    await expect(b.connect(call('read'))).rejects.toMatchObject({ stage: 'egress', errorClass: 'host-key-mismatch' })
+    await expect(b.connect(call('read'))).rejects.toMatchObject({
+      stage: 'egress',
+      errorClass: 'host-key-mismatch',
+    })
     expect(server.logins).toEqual([])
   })
 
@@ -119,24 +128,40 @@ describe('the SFTP host', () => {
   it('refuses a change from a read session, and a replace from a write session, in the host itself', async () => {
     const b = await backend()
     const reader = await b.connect(call('read'))
-    await expect(reader.operation('write', ['/inbox/a.txt', 'x'])).rejects.toMatchObject({ errorClass: 'command-not-allowed' })
-    await reader.end()
-    const writer = await b.connect(call('write'))
-    expect(await writer.operation('write', ['/inbox/a.txt', 'x'])).toEqual({ path: '/inbox/a.txt', bytes: 1, mode: 'create' })
-    await expect(writer.operation('write', ['/scratch/old.txt', 'y', { mode: 'replace' }])).rejects.toMatchObject({
+    await expect(reader.operation('write', ['/inbox/a.txt', 'x'])).rejects.toMatchObject({
       errorClass: 'command-not-allowed',
     })
-    await expect(writer.operation('remove', ['/scratch/old.txt'])).rejects.toMatchObject({ errorClass: 'command-not-allowed' })
+    await reader.end()
+    const writer = await b.connect(call('write'))
+    expect(await writer.operation('write', ['/inbox/a.txt', 'x'])).toEqual({
+      path: '/inbox/a.txt',
+      bytes: 1,
+      mode: 'create',
+    })
+    await expect(
+      writer.operation('write', ['/scratch/old.txt', 'y', { mode: 'replace' }]),
+    ).rejects.toMatchObject({
+      errorClass: 'command-not-allowed',
+    })
+    await expect(writer.operation('remove', ['/scratch/old.txt'])).rejects.toMatchObject({
+      errorClass: 'command-not-allowed',
+    })
     await writer.end()
     expect(await readFile((server as FakeSftp).at('/scratch/old.txt'), 'utf8')).toBe('old')
-    expect(server?.requests.some((r) => r.type === 'REMOVE' || (r.type === 'OPEN' && r.path === '/scratch/old.txt'))).toBe(false)
+    expect(
+      server?.requests.some(
+        (r) => r.type === 'REMOVE' || (r.type === 'OPEN' && r.path === '/scratch/old.txt'),
+      ),
+    ).toBe(false)
   })
 
   it('removes from an irreversible session, inside an irreversible root only', async () => {
     const b = await backend()
     const remover = await b.connect(call('irreversible'))
     expect(await remover.operation('remove', ['/scratch/old.txt'])).toEqual({ path: '/scratch/old.txt' })
-    await expect(remover.operation('remove', ['/docs/readme.txt'])).rejects.toMatchObject({ errorClass: 'command-not-allowed' })
+    await expect(remover.operation('remove', ['/docs/readme.txt'])).rejects.toMatchObject({
+      errorClass: 'command-not-allowed',
+    })
     await remover.end()
   })
 
@@ -154,7 +179,9 @@ describe('the SFTP host', () => {
     const r = run(64 * 1024)
     const c = await b.connect(call('write', r))
     const big = Buffer.alloc(200_000, 3).toString('base64')
-    await expect(c.operation('write', ['/inbox/big.bin', big, { encoding: 'base64' }])).rejects.toBeInstanceOf(ValetError)
+    await expect(
+      c.operation('write', ['/inbox/big.bin', big, { encoding: 'base64' }]),
+    ).rejects.toBeInstanceOf(ValetError)
     await c.end().catch(() => undefined)
     await new Promise((resolve) => setTimeout(resolve, 100))
     expect(r.records.some((x) => x.errorClass === 'upload-budget')).toBe(true)

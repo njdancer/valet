@@ -10,7 +10,7 @@
 //   host → Valet: ready, result (for login and op, by id).
 // Valet checks what comes back as untrusted; the purpose and root rules are enforced here too.
 
-import { connect as tcpConnect, type Socket } from 'node:net'
+import { type Socket, connect as tcpConnect } from 'node:net'
 import { isSftpOperation, type SftpPurpose, type SftpRoot } from '@valet/core/sftp-policy'
 import { SftpClient } from '../sftp/client'
 import { SftpOperations } from '../sftp/operations'
@@ -87,9 +87,6 @@ async function handle(message: Record<string, unknown>): Promise<void> {
   }
 }
 
-const { post } = serveChannel<Boot>(
-  (b) => {
-    boot = b
-  },
-  handle,
-)
+const { post } = serveChannel<Boot>((b) => {
+  boot = b
+}, handle)

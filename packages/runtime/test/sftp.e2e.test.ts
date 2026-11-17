@@ -70,8 +70,16 @@ const definition = defineAdapter({
   manifest,
   tools: {
     // `do` is for the isolated script's tools (isolation/sftp-tools.ts).
-    read_files: tool({ input: z.object({ do: z.string().optional() }), output: z.unknown(), run: (ctx) => body(ctx) }),
-    file_files: tool({ input: z.object({ do: z.string().optional() }), output: z.unknown(), run: (ctx) => body(ctx) }),
+    read_files: tool({
+      input: z.object({ do: z.string().optional() }),
+      output: z.unknown(),
+      run: (ctx) => body(ctx),
+    }),
+    file_files: tool({
+      input: z.object({ do: z.string().optional() }),
+      output: z.unknown(),
+      run: (ctx) => body(ctx),
+    }),
   },
 })
 
@@ -168,7 +176,10 @@ describe('ctx.sftp through the tool host', () => {
 
   it('takes the key back out of anything the server echoes', async () => {
     body = async (ctx) => ctx.sftp?.read('/docs/a.txt', { encoding: 'utf8' })
-    const fake = backend((_op, key) => ({ text: `here: ${key}`, base64: Buffer.from(key).toString('base64') }))
+    const fake = backend((_op, key) => ({
+      text: `here: ${key}`,
+      base64: Buffer.from(key).toString('base64'),
+    }))
     const t = setup({ sftp: fake.b })
     const result = await t.run()
     const text = JSON.stringify(result)
@@ -205,9 +216,15 @@ describe('ctx.sftp through the tool host', () => {
 
   it('needs an irreversible tool to replace, and never names a root for a change', async () => {
     body = async (ctx) => ctx.sftp?.write('/inbox/a.txt', 'x', { mode: 'replace' })
-    expect(await setup().run('file_files')).toMatchObject({ status: 'failed', errorClass: 'command-not-allowed' })
+    expect(await setup().run('file_files')).toMatchObject({
+      status: 'failed',
+      errorClass: 'command-not-allowed',
+    })
     body = async (ctx) => ctx.sftp?.rename('/inbox', '/inbox2')
-    expect(await setup().run('file_files')).toMatchObject({ status: 'failed', errorClass: 'command-not-allowed' })
+    expect(await setup().run('file_files')).toMatchObject({
+      status: 'failed',
+      errorClass: 'command-not-allowed',
+    })
     body = async (ctx) => ctx.sftp?.write('/inbox/a.txt', 'x', { mode: 'append' })
     expect(await setup().run('file_files')).toMatchObject({ status: 'ok' })
   })

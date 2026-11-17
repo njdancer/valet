@@ -7,8 +7,8 @@ import type { ImapAccess } from './imap-access'
 import type { LocalAccess } from './local-access'
 import type { AdapterManifest } from './manifest'
 import type { ToolPage } from './page'
-import type { SftpAccess } from './sftp-access'
 import { REQUEST_METHODS } from './request-surface'
+import type { SftpAccess } from './sftp-access'
 
 export type EnsureResult =
   | { readonly status: 'ok' }

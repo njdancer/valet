@@ -42,7 +42,12 @@ const version = (v = 3, ...ext: Buffer[]) => packet(Buffer.from([FXP.VERSION]), 
 const status = (id: number, code: number, withMessage = true) =>
   packet(Buffer.from([FXP.STATUS]), u32(id), u32(code), ...(withMessage ? [str('msg'), str('en')] : []))
 const name = (id: number, ...names: string[]) =>
-  packet(Buffer.from([FXP.NAME]), u32(id), u32(names.length), ...names.flatMap((n) => [str(n), str(n), u32(0)]))
+  packet(
+    Buffer.from([FXP.NAME]),
+    u32(id),
+    u32(names.length),
+    ...names.flatMap((n) => [str(n), str(n), u32(0)]),
+  )
 const handle = (id: number, h = 'h1') => packet(Buffer.from([FXP.HANDLE]), u32(id), str(h))
 const data = (id: number, d: Buffer) => packet(Buffer.from([FXP.DATA]), u32(id), str(d))
 
@@ -67,7 +72,10 @@ function scripted(answers: ((id: number, request: Buffer) => Buffer | Buffer[] |
   return { stream, sent }
 }
 
-async function client(answers: Parameters<typeof scripted>[0], purpose: 'read' | 'write' | 'irreversible' = 'read') {
+async function client(
+  answers: Parameters<typeof scripted>[0],
+  purpose: 'read' | 'write' | 'irreversible' = 'read',
+) {
   const s = scripted([() => version(), ...answers])
   const c = await SftpClient.open(s.stream, { purpose, roots: ROOTS, requestTimeoutMs: 500 })
   c.setResolvedRoots(ROOTS)
@@ -93,11 +101,28 @@ describe('decoding', () => {
   it('reads each reply type', () => {
     const body = (p: Buffer) => p.subarray(4)
     expect(decodeReply(body(status(3, FX.EOF)))).toEqual({ id: 3, reply: { type: 'STATUS', code: FX.EOF } })
-    expect(decodeReply(body(status(3, FX.OK, false)))).toEqual({ id: 3, reply: { type: 'STATUS', code: FX.OK } })
+    expect(decodeReply(body(status(3, FX.OK, false)))).toEqual({
+      id: 3,
+      reply: { type: 'STATUS', code: FX.OK },
+    })
     expect(decodeReply(body(handle(4))).reply).toEqual({ type: 'HANDLE', handle: Buffer.from('h1') })
-    expect(decodeReply(body(name(5, '/docs'))).reply).toMatchObject({ type: 'NAME', names: [{ filename: Buffer.from('/docs') }] })
-    const attrs = packet(Buffer.from([FXP.ATTRS]), u32(6), u32(0x1 | 0x4 | 0x8), Buffer.alloc(8, 0), u32(0o100644), u32(1), u32(1_700_000_000))
-    expect(decodeReply(body(attrs)).reply).toEqual({ type: 'ATTRS', attrs: { size: 0, permissions: 0o100644, mtime: 1_700_000_000 } })
+    expect(decodeReply(body(name(5, '/docs'))).reply).toMatchObject({
+      type: 'NAME',
+      names: [{ filename: Buffer.from('/docs') }],
+    })
+    const attrs = packet(
+      Buffer.from([FXP.ATTRS]),
+      u32(6),
+      u32(0x1 | 0x4 | 0x8),
+      Buffer.alloc(8, 0),
+      u32(0o100644),
+      u32(1),
+      u32(1_700_000_000),
+    )
+    expect(decodeReply(body(attrs)).reply).toEqual({
+      type: 'ATTRS',
+      attrs: { size: 0, permissions: 0o100644, mtime: 1_700_000_000 },
+    })
     expect(decodeVersion(body(version(3, str('posix-rename@openssh.com'), str('1'))))).toBe(3)
   })
 
@@ -132,12 +157,16 @@ describe('decoding', () => {
 describe('the client', () => {
   it('needs version 3', async () => {
     const s = scripted([() => version(6)])
-    await expect(SftpClient.open(s.stream, { purpose: 'read', roots: ROOTS })).rejects.toMatchObject({ failure: 'unsupported' })
+    await expect(SftpClient.open(s.stream, { purpose: 'read', roots: ROOTS })).rejects.toMatchObject({
+      failure: 'unsupported',
+    })
   })
 
   it('fails closed on a reply for another request, an unasked one, or the wrong kind', async () => {
     const wrongId = await client([(id) => name(id + 1, '/docs')])
-    await expect(wrongId.c.request({ type: 'REALPATH', path: '/docs' })).rejects.toMatchObject({ failure: 'malformed' })
+    await expect(wrongId.c.request({ type: 'REALPATH', path: '/docs' })).rejects.toMatchObject({
+      failure: 'malformed',
+    })
     // The session is over: nothing more is sent.
     await expect(wrongId.c.request({ type: 'REALPATH', path: '/docs' })).rejects.toBeTruthy()
     expect(wrongId.sent).toHaveLength(2)
@@ -145,18 +174,26 @@ describe('the client', () => {
     const extra = await client([(id) => [name(id, '/docs'), name(id, '/docs')]])
     await extra.c.request({ type: 'REALPATH', path: '/docs' })
     await new Promise((r) => setTimeout(r, 20))
-    await expect(extra.c.request({ type: 'REALPATH', path: '/docs' })).rejects.toMatchObject({ failure: 'malformed' })
+    await expect(extra.c.request({ type: 'REALPATH', path: '/docs' })).rejects.toMatchObject({
+      failure: 'malformed',
+    })
 
     const kind = await client([(id) => handle(id)])
-    await expect(kind.c.request({ type: 'STAT', path: '/docs' })).rejects.toMatchObject({ failure: 'malformed' })
+    await expect(kind.c.request({ type: 'STAT', path: '/docs' })).rejects.toMatchObject({
+      failure: 'malformed',
+    })
 
     const twoNames = await client([(id) => name(id, '/docs', '/inbox')])
-    await expect(twoNames.c.request({ type: 'REALPATH', path: '/docs' })).rejects.toMatchObject({ failure: 'malformed' })
+    await expect(twoNames.c.request({ type: 'REALPATH', path: '/docs' })).rejects.toMatchObject({
+      failure: 'malformed',
+    })
   })
 
   it('times out a server that never answers, and ends the session', async () => {
     const silent = await client([() => null])
-    await expect(silent.c.request({ type: 'STAT', path: '/docs' })).rejects.toMatchObject({ failure: 'timeout' })
+    await expect(silent.c.request({ type: 'STAT', path: '/docs' })).rejects.toMatchObject({
+      failure: 'timeout',
+    })
   })
 
   it('refuses DATA longer than the READ asked for', async () => {
@@ -171,13 +208,19 @@ describe('the client', () => {
   it('sends a handle only where the server gave it, and for what it was opened for', async () => {
     const r = await client([(id) => handle(id, 'dirh')], 'write')
     await r.c.request({ type: 'OPENDIR', path: '/inbox' })
-    await expect(r.c.request({ type: 'READ', handle: Buffer.from('dirh'), offset: 0, length: 1 })).rejects.toMatchObject({
+    await expect(
+      r.c.request({ type: 'READ', handle: Buffer.from('dirh'), offset: 0, length: 1 }),
+    ).rejects.toMatchObject({
       failure: 'invalid',
     })
-    await expect(r.c.request({ type: 'WRITE', handle: Buffer.from('dirh'), offset: 0, data: Buffer.from('x') })).rejects.toMatchObject({
+    await expect(
+      r.c.request({ type: 'WRITE', handle: Buffer.from('dirh'), offset: 0, data: Buffer.from('x') }),
+    ).rejects.toMatchObject({
       failure: 'invalid',
     })
-    await expect(r.c.request({ type: 'CLOSE', handle: Buffer.from('nope') })).rejects.toMatchObject({ failure: 'invalid' })
+    await expect(r.c.request({ type: 'CLOSE', handle: Buffer.from('nope') })).rejects.toMatchObject({
+      failure: 'invalid',
+    })
     expect(r.sent).toHaveLength(2)
   })
 })
@@ -193,12 +236,15 @@ describe('checkRequest', () => {
     expect(check({ type: 'MKDIR', path: '/inbox/a' }, 'write')).toBeNull()
     expect(check({ type: 'REMOVE', path: '/scratch/a' }, 'write')).toBe('not-allowed')
     expect(check({ type: 'REMOVE', path: '/scratch/a' }, 'irreversible')).toBeNull()
-    expect(check({ type: 'OPEN', path: '/inbox/a', flags: OPEN_FLAGS.WRITE | OPEN_FLAGS.CREAT | OPEN_FLAGS.TRUNC }, 'write')).toBe(
-      'not-allowed',
-    )
-    expect(check({ type: 'OPEN', path: '/inbox/a', flags: OPEN_FLAGS.WRITE | OPEN_FLAGS.CREAT }, 'irreversible')).toBe(
-      'not-allowed',
-    )
+    expect(
+      check(
+        { type: 'OPEN', path: '/inbox/a', flags: OPEN_FLAGS.WRITE | OPEN_FLAGS.CREAT | OPEN_FLAGS.TRUNC },
+        'write',
+      ),
+    ).toBe('not-allowed')
+    expect(
+      check({ type: 'OPEN', path: '/inbox/a', flags: OPEN_FLAGS.WRITE | OPEN_FLAGS.CREAT }, 'irreversible'),
+    ).toBe('not-allowed')
   })
 
   it('holds each path to the roots', () => {
@@ -211,6 +257,8 @@ describe('checkRequest', () => {
     expect(check({ type: 'RENAME', from: '/docs/a', to: '/inbox/a' }, 'irreversible')).toBe('not-allowed')
     expect(check({ type: 'RENAME', from: '/inbox', to: '/scratch/x' }, 'irreversible')).toBe('not-allowed')
     expect(check({ type: 'RENAME', from: '/inbox/a', to: '/scratch/a' }, 'write')).toBeNull()
-    expect(check({ type: 'OPEN', path: '/inbox', flags: OPEN_FLAGS.WRITE | OPEN_FLAGS.APPEND }, 'write')).toBe('not-allowed')
+    expect(
+      check({ type: 'OPEN', path: '/inbox', flags: OPEN_FLAGS.WRITE | OPEN_FLAGS.APPEND }, 'write'),
+    ).toBe('not-allowed')
   })
 })

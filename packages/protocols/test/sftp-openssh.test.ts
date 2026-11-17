@@ -34,7 +34,8 @@ describe.runIf(OPENSSH_SFTP_SERVER !== undefined)('OpenSSH’s sftp-server', () 
     // The server's own log says what it was asked: Valet's few requests, nothing else.
     const types = new Set(server?.requests.map((r) => r.type))
     expect(types.has('REALPATH')).toBe(true)
-    for (const never of ['SETSTAT', 'FSETSTAT', 'SYMLINK', 'READLINK', 'EXTENDED']) expect(types.has(never)).toBe(false)
+    for (const never of ['SETSTAT', 'FSETSTAT', 'SYMLINK', 'READLINK', 'EXTENDED'])
+      expect(types.has(never)).toBe(false)
   })
 
   it('follows links inside the roots, and refuses links out, by its own REALPATH', async () => {
@@ -43,7 +44,9 @@ describe.runIf(OPENSSH_SFTP_SERVER !== undefined)('OpenSSH’s sftp-server', () 
     await symlink('../private', server.at(p('/docs/out')))
     await symlink('/etc', server.at(p('/docs/etc')))
     expect(await ops.run('stat', [p('/docs/inside')])).toMatchObject({ type: 'file' })
-    await expect(ops.run('read', [p('/docs/out/secret.txt')])).rejects.toMatchObject({ failure: 'not-allowed' })
+    await expect(ops.run('read', [p('/docs/out/secret.txt')])).rejects.toMatchObject({
+      failure: 'not-allowed',
+    })
     await expect(ops.run('list', [p('/docs/etc')])).rejects.toMatchObject({ failure: 'not-allowed' })
     await expect(ops.run('read', [p('/docs/etc/passwd')])).rejects.toMatchObject({ failure: 'not-allowed' })
   })

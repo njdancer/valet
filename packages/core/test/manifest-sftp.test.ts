@@ -64,7 +64,13 @@ describe('protocols.sftp', () => {
     v6.protocols.sftp.endpoint = 'fd00::5:22'
     v6.credentials.nas.use.endpoint = 'fd00::5:22'
     expect(parseManifest(v6).home).toBe('https://[fd00::5]/')
-    for (const bad of ['8.8.8.8:22', '127.0.0.1:22', '[fd00::5]:22', 'nas.example.com', 'NAS.example.com:22']) {
+    for (const bad of [
+      '8.8.8.8:22',
+      '127.0.0.1:22',
+      '[fd00::5]:22',
+      'nas.example.com',
+      'NAS.example.com:22',
+    ]) {
       const input = copy()
       input.protocols.sftp.endpoint = bad
       input.credentials.nas.use.endpoint = bad
@@ -155,14 +161,24 @@ describe('the card', () => {
   const m = parseManifest(copy())
   it('shows the server, its pinned key, and each root by what it allows', () => {
     expect(runtimePermissionChanges(null, m)).toEqual([
-      { area: 'runtime', change: 'added', items: ['Uses mail or file protocols through Valet'], risk: 'medium' },
+      {
+        area: 'runtime',
+        change: 'added',
+        items: ['Uses mail or file protocols through Valet'],
+        risk: 'medium',
+      },
       {
         area: 'egress',
         change: 'added',
         items: ['SFTP as nick to nas.example.com:22', `host key ${PIN}`],
         risk: 'medium',
       },
-      { area: 'requests', change: 'added', items: ['Read, add and rename files in /volume1/inbox'], risk: 'medium' },
+      {
+        area: 'requests',
+        change: 'added',
+        items: ['Read, add and rename files in /volume1/inbox'],
+        risk: 'medium',
+      },
       { area: 'requests', change: 'added', items: ['Read files in /volume1/docs'], risk: 'low' },
     ])
   })
@@ -172,7 +188,9 @@ describe('the card', () => {
     input.protocols.sftp.endpoint = '192.168.1.20:22'
     input.credentials.nas.use.endpoint = '192.168.1.20:22'
     const local = parseManifest(input)
-    expect(describeSftpServer(local.protocols?.sftp as never)[0]).toBe('SFTP as nick to 192.168.1.20:22 on your network')
+    expect(describeSftpServer(local.protocols?.sftp as never)[0]).toBe(
+      'SFTP as nick to 192.168.1.20:22 on your network',
+    )
     expect(runtimePermissionChanges(null, local)).toContainEqual(
       expect.objectContaining({ area: 'private-network', change: 'added', risk: 'high' }),
     )
@@ -188,17 +206,30 @@ describe('the card', () => {
       {
         area: 'egress',
         change: 'added',
-        items: ['SFTP as nick to nas.example.com:22', 'host key SHA256:AAAAztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s'],
+        items: [
+          'SFTP as nick to nas.example.com:22',
+          'host key SHA256:AAAAztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s',
+        ],
         risk: 'medium',
       },
-      { area: 'egress', change: 'removed', items: ['SFTP as nick to nas.example.com:22', `host key ${PIN}`], risk: 'low' },
+      {
+        area: 'egress',
+        change: 'removed',
+        items: ['SFTP as nick to nas.example.com:22', `host key ${PIN}`],
+        risk: 'low',
+      },
       {
         area: 'requests',
         change: 'added',
         items: ['Read, add, rename, replace and delete files in / (everything this account can reach)'],
         risk: 'high',
       },
-      { area: 'requests', change: 'added', items: ['Read, add and rename files in /volume1/docs'], risk: 'medium' },
+      {
+        area: 'requests',
+        change: 'added',
+        items: ['Read, add and rename files in /volume1/docs'],
+        risk: 'medium',
+      },
       { area: 'requests', change: 'removed', items: ['Read files in /volume1/docs'], risk: 'low' },
     ])
     expect(runtimePermissionChanges(m, m)).toEqual([])
