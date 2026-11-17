@@ -153,6 +153,10 @@ function dispatch(
   if (capability.startsWith('local.')) return dispatchLocal(ctx.local, capability, args)
   if (capability.startsWith('http.')) return dispatchHttp(ctx, capability, args, sockets)
   if (capability === 'imap.op') return dispatchImap(ctx, args)
+  if (capability === 'smtp.send') {
+    if (ctx.smtp === undefined) return Promise.reject(new ValetError('tool-run', 'not-granted'))
+    return ctx.smtp.send(args[0] as never)
+  }
   // Strings where the capability takes a selector, a URL or source text; the guards check the rest.
   const takesString = capability.startsWith('page.')
   if (takesString && typeof args[0] !== 'string') return Promise.reject(new ValetError('tool-run', 'invalid'))

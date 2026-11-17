@@ -47,10 +47,72 @@ describe('runtime: protocol', () => {
     expect(ICLOUD_IMAP_ENDPOINT).toBe('imap.mail.me.com:993')
   })
 
-  it('needs protocols.imap', () => {
+  it('needs protocols.imap or protocols.smtp', () => {
     const input = copy()
     delete input.protocols
-    expect(issues(input)).toContain('a protocol adapter needs protocols.imap')
+    expect(issues(input)).toContain('a protocol adapter needs protocols.imap or protocols.smtp')
+  })
+
+  describe('protocols.smtp', () => {
+    const SMTP = 'smtp.mail.me.com:587'
+    const send = (): any => {
+      const input = copy()
+      input.protocols = { smtp: { endpoint: SMTP, credential: 'send', recipients: ['@example.com'] } }
+      input.credentials = {
+        send: {
+          description: 'Your iCloud app-specific password',
+          kind: 'password',
+          custody: 'kept',
+          use: { protocol: 'smtp', endpoint: SMTP },
+        },
+      }
+      input.tools = [{ name: 'send', title: 'Send', description: 'Sends.', sideEffect: 'irreversible' }]
+      return input
+    }
+
+    it('parses alone, with home the SMTP server’s name', () => {
+      const manifest = parseManifest(send())
+      expect(manifest.home).toBe('https://smtp.mail.me.com/')
+      expect(manifest.protocols?.smtp?.recipients).toEqual(['@example.com'])
+    })
+
+    it('parses beside imap, each with its own credential', () => {
+      const input = send()
+      input.protocols.imap = MAIL.protocols?.imap
+      input.credentials.mail = MAIL.credentials?.['mail']
+      expect(issues(input)).toEqual([])
+    })
+
+    it('needs a kept password for smtp at exactly its endpoint', () => {
+      const input = send()
+      input.credentials.send.use = { protocol: 'imap', endpoint: SMTP }
+      expect(issues(input)).toContain(
+        `protocols.smtp: credential send must be a kept password for smtp at ${SMTP}`,
+      )
+      const other = send()
+      other.credentials.send.use.endpoint = 'smtp.other.example:587'
+      expect(issues(other)).toContain(
+        `protocols.smtp: credential send must be a kept password for smtp at ${SMTP}`,
+      )
+    })
+
+    it('refuses an smtp credential protocols.smtp doesn’t use', () => {
+      const input = send()
+      input.credentials.spare = { ...input.credentials.send }
+      expect(issues(input)).toContain("credential spare: an smtp credential that protocols.smtp doesn't use")
+    })
+
+    it.each([
+      [['ann@example.com', 'ANN@example.com']],
+      [['Ann <ann@example.com>']],
+      [['@']],
+      [['@localhost']],
+      [[]],
+    ])('refuses the recipients list %j', (recipients) => {
+      const input = send()
+      input.protocols.smtp.recipients = recipients
+      expect(issues(input)).not.toEqual([])
+    })
   })
 
   it('refuses anything that reaches past its server', () => {

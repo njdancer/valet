@@ -86,6 +86,7 @@ import { CredentialGate, type CredentialGateOptions } from './credential-gate'
 import { GuardedHttp, type HttpCredentials, type HttpEgress, NO_HTTP_ACCESS } from './guarded-http'
 import { GuardedImap, type ImapBackend, NO_IMAP_ACCESS } from './guarded-imap'
 import { GuardedToolPage } from './guarded-page'
+import { GuardedSmtp, NO_SMTP_ACCESS, type SmtpBackend } from './guarded-smtp'
 import { checkInputIsolated, type InputCheck, runIsolated, type ToolProcessFactory } from './isolation/host'
 import type { LoginMarkerStore } from './login-marker'
 import { KeyedMutex } from './mutex'
@@ -105,6 +106,7 @@ import {
   type ListedTool,
   type LoginStepContext,
   type LoginStepOptions,
+  type MailPreview,
   type RuntimeDiagnostic,
   type SettingChoicesRequest,
   type SettingChoicesResult,
@@ -200,6 +202,11 @@ export interface RegisteredAdapter {
    * `credentialGrants`. Without it, every ctx.imap call is not-granted.
    */
   readonly imap?: ImapBackend
+  /**
+   * The protocol host behind ctx.smtp, for a `protocol` adapter with protocols.smtp. Signs in like
+   * `imap`. Without it, every send is not-granted.
+   */
+  readonly smtp?: SmtpBackend
 }
 
 /**
@@ -403,6 +410,7 @@ export class ToolHost {
       ...(adapter.credentialGrants === undefined ? {} : { credentialGrants: adapter.credentialGrants }),
       ...(adapter.raw === undefined ? {} : { raw: adapter.raw }),
       ...(adapter.imap === undefined ? {} : { imap: adapter.imap }),
+      ...(adapter.smtp === undefined ? {} : { smtp: adapter.smtp }),
     })
   }
 
@@ -1082,6 +1090,23 @@ export class ToolHost {
       signal: controller.signal,
       http: this.httpFor(entry, declaration, state),
       imap: this.imapFor(entry, declaration, state),
+      smtp: this.smtpFor(entry, declaration, state, async (mail) => {
+        state.assertLive()
+        const answer = await state.track(
+          this.ask(
+            entry,
+            declaration,
+            state.callId,
+            client,
+            { kind: 'mail-send', mail },
+            controller.signal,
+            transport,
+          ),
+        )
+        // As for ctx.confirm: cancelled while it waited ends the run aborted.
+        if (answer === 'cancelled') controller.abort()
+        return answer
+      }),
       ...(entry.isolation?.local === undefined || raw !== null
         ? {}
         : { local: this.liveLocal(entry.isolation.local, manifest.id, state) }),
@@ -1486,6 +1511,53 @@ export class ToolHost {
       signIn: async () => {
         if (grants === undefined) throw new ValetError('credential', 'not-granted')
         return this.gateFor(entry, grants, state).signIn(imap.credential, 'imap', imap.endpoint)
+      },
+      run: this.runFor(entry, declaration, state),
+    })
+  }
+
+  /**
+   * ctx.smtp for one call: each send checked (guarded-smtp.ts), confirmed by the person as Valet
+   * shows it, then sent by a fresh protocol host signed in through the call's own CredentialGate.
+   * Not-granted for any adapter but a protocol adapter with protocols.smtp and a backend.
+   */
+  private smtpFor(
+    entry: Entry,
+    declaration: ToolDeclaration,
+    state: CallState,
+    ask: (mail: MailPreview) => Promise<ConfirmationAnswer>,
+  ): ToolContext['smtp'] {
+    const manifest = entry.definition.manifest
+    const smtp = manifest.protocols?.smtp
+    if (entry.smtp === undefined || smtp === undefined || runtimeOf(manifest) !== 'protocol')
+      return NO_SMTP_ACCESS
+    const grants = entry.credentialGrants
+    const host = smtp.endpoint.slice(0, smtp.endpoint.lastIndexOf(':'))
+    return new GuardedSmtp({
+      adapterId: manifest.id,
+      manifest,
+      sideEffect: declaration.sideEffect,
+      site: entry.site,
+      state,
+      audit: (event) => this.record(event),
+      clock: this.clock,
+      backend: entry.smtp,
+      confirm: (message) =>
+        ask({
+          endpoint: smtp.endpoint,
+          to: message.to,
+          cc: message.cc,
+          bcc: message.bcc,
+          subject: message.subject,
+          text: message.text,
+          inReplyTo: message.inReplyTo,
+          references: message.references,
+        }),
+      messageId: () => `<${randomUUID()}@${host}>`,
+      now: () => this.clock.now(),
+      signIn: async () => {
+        if (grants === undefined) throw new ValetError('credential', 'not-granted')
+        return this.gateFor(entry, grants, state).signIn(smtp.credential, 'smtp', smtp.endpoint)
       },
       run: this.runFor(entry, declaration, state),
     })

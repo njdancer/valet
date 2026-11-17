@@ -8,6 +8,7 @@ import type { LocalAccess } from './local-access'
 import type { AdapterManifest } from './manifest'
 import type { ToolPage } from './page'
 import { REQUEST_METHODS } from './request-surface'
+import type { SmtpAccess } from './smtp-access'
 
 export type EnsureResult =
   | { readonly status: 'ok' }
@@ -81,6 +82,12 @@ export interface ToolContext {
    * adapter rejects with `tool-run/not-granted`. Optional like `http`.
    */
   readonly imap?: ImapAccess
+  /**
+   * Sending mail, for a `protocol` adapter with protocols.smtp. Only an irreversible tool may send,
+   * and every send waits for the person. Every call from any other adapter rejects with
+   * `tool-run/not-granted`. Optional like `http`.
+   */
+  readonly smtp?: SmtpAccess
   /**
    * Credentials entrusted to a `raw` adapter (docs/adapter-kinds.md#raw). Every call from any other
    * kind rejects with `tool-run/not-granted`. Optional for the runtime's own contexts and older

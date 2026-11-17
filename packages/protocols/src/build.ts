@@ -6,7 +6,9 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const IMAP_POLICY = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'core', 'src', 'imap-policy.ts')
+const CORE = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'core', 'src')
+const IMAP_POLICY = join(CORE, 'imap-policy.ts')
+const SMTP_POLICY = join(CORE, 'smtp-policy.ts')
 
 export const PROTOCOL_HOST_ENTRY = join(dirname(fileURLToPath(import.meta.url)), 'host', 'protocol-host.ts')
 
@@ -31,6 +33,7 @@ export async function buildProtocolHost(): Promise<string> {
           b.onResolve({ filter: /^[^./]/ }, (args) => {
             if (args.path.startsWith('node:')) return { path: args.path, external: true }
             if (args.path === '@valet/core/imap-policy') return { path: IMAP_POLICY }
+            if (args.path === '@valet/core/smtp-policy') return { path: SMTP_POLICY }
             return { errors: [{ text: `the protocol host may not import ${args.path}` }] }
           })
         },

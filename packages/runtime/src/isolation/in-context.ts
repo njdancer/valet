@@ -54,6 +54,9 @@ async function answer(ctx: ToolContext, capability: string, args: readonly unkno
         throw new ValetError('tool-run', 'invalid')
       return (ctx.imap[name] as (...a: unknown[]) => Promise<unknown>).apply(ctx.imap, list)
     }
+    case 'smtp.send':
+      if (ctx.smtp === undefined) throw new ValetError('tool-run', 'not-granted')
+      return ctx.smtp.send(args[0] as never)
     default:
       if (capability.startsWith('local.')) return dispatchLocal(ctx.local, capability, args)
       throw new ValetError('tool-run', 'invalid')

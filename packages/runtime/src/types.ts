@@ -131,6 +131,27 @@ export type ConfirmationQuestion =
       /** The adapter's note, unverified, or null. */
       readonly note: string | null
     }
+  | {
+      /**
+       * Tool code calling ctx.smtp.send: the exact message, as Valet will build and send it. Asked
+       * for every send, on top of the irreversible tool's own confirmation before it ran.
+       */
+      readonly kind: 'mail-send'
+      readonly mail: MailPreview
+    }
+
+/** A send as the person sees it. Every field is Valet's checked copy of what tool code passed. */
+export interface MailPreview {
+  /** Where it is sent from: the account Valet signs in to `endpoint` with. */
+  readonly endpoint: string
+  readonly to: readonly string[]
+  readonly cc: readonly string[]
+  readonly bcc: readonly string[]
+  readonly subject: string
+  readonly text: string
+  readonly inReplyTo: string | null
+  readonly references: readonly string[]
+}
 
 export type ConfirmationRequest = ConfirmationRequestBase & ConfirmationQuestion
 
