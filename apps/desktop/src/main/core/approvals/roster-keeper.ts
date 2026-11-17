@@ -97,8 +97,20 @@ export class RosterKeeper {
     return { state: this.state, devices: this.count }
   }
 
-  /** The hub's status said which account this Mac is on, or that it is on none. */
-  async linked(accountId: string | null): Promise<void> {
+  /**
+   * The hub's status said which account this Mac is on, or that it is on none. `fresh`: the Mac
+   * was just added with a code it showed, so any list it pinned before belongs to an earlier time
+   * on the account (it was removed while offline, or it lost its keys and came back new): the
+   * account's current list decides, and a Mac never joins another's list without a signature.
+   */
+  async linked(accountId: string | null, fresh = false): Promise<void> {
+    if (fresh && accountId !== null && this.options.ledger.data.roster !== undefined) {
+      this.options.log?.('[roster] added to the account again: forgetting the list pinned before')
+      await this.options.ledger.commit((draft) => {
+        delete draft.roster
+      })
+      this.account = null
+    }
     if (accountId === this.account) return
     this.account = accountId
     this.chain = null
