@@ -118,7 +118,7 @@ function parseRecord(line: string): AuditRecord | null {
 }
 
 export const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent['type'][]>> = {
-  'tool-calls': ['tool-called', 'call-waited', 'tool-finished'],
+  'tool-calls': ['tool-called', 'call-waited', 'tool-finished', 'call-refused', 'refusals-dropped'],
   logins: ['login-started', 'login-finished'],
   'secret-use': ['secret-used'],
   blocked: ['request-blocked', 'breaker-opened', 'breaker-closed'],
@@ -144,6 +144,12 @@ export const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent[
     'lock-down',
     'site-paused',
     'agent-change',
+    'app-paused',
+    'client-added',
+    'client-revoked',
+    'client-reset',
+    'client-access-changed',
+    'client-tool-on',
   ],
 }
 

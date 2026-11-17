@@ -14,7 +14,7 @@
 
 import type { ToolDeclaration } from '@valet/core'
 import type { ClientIdentity } from './auth'
-import type { CallOutcome, ListedTool, ToolCall, ToolCaller } from './tool-caller'
+import type { CallOutcome, ListedTool, ProtocolRefusal, ToolCall, ToolCaller } from './tool-caller'
 
 export interface RemotePolicy {
   /**
@@ -119,6 +119,11 @@ export class RemotePolicyCaller implements ToolCaller {
     times.push(now)
     this.recent.set(clientId, times)
     return null
+  }
+
+  /** A cloud agent's call the SDK refused is recorded the same way as a local one's. */
+  async refusedByProtocol(refusal: ProtocolRefusal): Promise<void> {
+    await this.inner.refusedByProtocol?.(refusal)
   }
 
   private async refuse(call: ToolCall, reason: RemoteRefusal, outcome: CallOutcome): Promise<CallOutcome> {

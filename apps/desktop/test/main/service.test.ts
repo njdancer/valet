@@ -1027,8 +1027,10 @@ describe('tool calls', () => {
       ],
     )
     const called = (await s.api.audit.page({ clientId: `local:${desktop.id}` })).records.map((r) => r.event)
+    // Its call, and the person adding it, newest first.
     expect(called).toEqual([
       expect.objectContaining({ type: 'tool-called', callId: 'call_c', clientId: `local:${desktop.id}` }),
+      { type: 'client-added', clientId: `local:${desktop.id}` },
     ])
   })
 
@@ -1144,11 +1146,16 @@ describe('tool calls', () => {
       await new Promise((r) => setTimeout(r, 10))
     client.abort()
     expect(await cancelled).toEqual({ status: 'failed', stage: 'tool-run', errorClass: 'aborted' })
-    // The panel closed with the call, and the answer is on record as declined.
+    // The panel closed with the call, and the answer is on record as cancelled: nobody declined it.
     expect(s.ui.closedConfirmations).toEqual(s.ui.shownConfirmations)
     expect(s.service.confirmationPending(s.ui.shownConfirmations[0] as string)).toBe(false)
     const events = (await s.api.audit.page({})).records.map((r) => r.event)
-    expect(events).toContainEqual(expect.objectContaining({ type: 'confirmation', answer: 'declined' }))
+    expect(events).toContainEqual(expect.objectContaining({ type: 'confirmation', answer: 'cancelled' }))
+    await vi.waitFor(async () =>
+      expect((await s.api.audit.page({})).records.map((r) => r.event)).toContainEqual(
+        expect.objectContaining({ type: 'approval-answered', answer: 'withdrawn', reason: 'call-cancelled' }),
+      ),
+    )
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'tool-finished',
@@ -3144,6 +3151,209 @@ describe('pausing one site', () => {
   })
 })
 
+describe('the person’s own controls and refused calls, in the audit log', () => {
+  const events = async (s: {
+    api: { audit: { page(q: object): Promise<{ records: readonly { event: unknown }[] }> } }
+  }) =>
+    (await s.api.audit.page({ limit: 500 })).records.map((r) => r.event).reverse() as Array<{ type: string }>
+  const local = (id: string) => ({
+    transport: 'http' as const,
+    identity: { origin: 'local' as const, clientId: id },
+  })
+  /** The confirmation shown nth (from 0), once its signed request is made. */
+  async function shown(s: Awaited<ReturnType<typeof approved>>, n: number): Promise<string> {
+    await vi.waitFor(() => expect(s.ui.shownConfirmations.length).toBeGreaterThan(n))
+    const id = s.ui.shownConfirmations[n] as string
+    await expect
+      .poll(async () =>
+        (await s.api.attention.list()).some(
+          (i) => i.kind === 'confirmation' && i.id === id && i.ref !== null,
+        ),
+      )
+      .toBe(true)
+    return id
+  }
+
+  it('records adding, widening, resetting and revoking an app, and pausing Valet, by fixed names only', async () => {
+    const s = await approved()
+    const app = await s.api.clients.add('My  secret <b>name</b>')
+    const label = `local:${app.id}`
+    await s.api.clients.setAccess(app.id, { askForChanges: false })
+    await s.api.clients.setAccess(app.id, { askForChanges: true, allActivity: true })
+    // Setting what is already set changes nothing, and records nothing.
+    await s.api.clients.setAccess(app.id, { askForChanges: true })
+    await s.api.clients.resetAccess(app.id)
+    await s.api.app.setPaused(true)
+    await s.api.app.setPaused(true)
+    await s.api.app.setPaused(false)
+    await s.api.clients.revoke(app.id)
+
+    const mine = (await events(s)).filter((e) => e.type.startsWith('client-') || e.type === 'app-paused')
+    expect(mine).toEqual([
+      { type: 'client-added', clientId: label },
+      {
+        type: 'client-access-changed',
+        clientId: label,
+        before: ['see-valet', 'ask-for-changes'],
+        after: ['see-valet'],
+      },
+      {
+        type: 'client-access-changed',
+        clientId: label,
+        before: ['see-valet'],
+        after: ['see-valet', 'all-activity', 'ask-for-changes'],
+      },
+      { type: 'client-reset', clientId: label },
+      { type: 'app-paused', paused: true },
+      { type: 'app-paused', paused: false },
+      { type: 'client-revoked', clientId: label },
+    ])
+    // The person's own name for the app is their text, kept in the app's list, never in the log.
+    expect(JSON.stringify(await events(s))).not.toContain('secret')
+  })
+
+  it('records the person’s Decline as a decline from this Mac, counted against the agent until it cools down', async () => {
+    const s = await approved()
+    const app = await s.api.clients.add('Claude Code')
+    for (let n = 0; n < 3; n++) {
+      const pending = s.call('add', { item: 'milk' }, 'Claude Code', `call_no${n}`, local(app.id))
+      const id = await shown(s, n)
+      await s.api.answerConfirmation(id, false, { role: 'tray', shows: null })
+      expect(await pending).toEqual({ status: 'ok', output: { added: false } })
+    }
+    // The site's own approval aside, each confirmation's request.
+    const confirmations = async () =>
+      (await events(s)).filter(
+        (e) => e.type === 'approval-answered' && (e as { answer?: string }).answer !== 'approved',
+      )
+    await vi.waitFor(async () => expect(await confirmations()).toHaveLength(3))
+    const answered = await confirmations()
+    for (const event of answered)
+      expect(event).toEqual({
+        type: 'approval-answered',
+        requestId: expect.any(String),
+        answer: 'declined',
+        deviceId: expect.any(String),
+      })
+    expect((await events(s)).filter((e) => e.type === 'confirmation')).toEqual(
+      Array(3).fill(expect.objectContaining({ answer: 'declined' })),
+    )
+    // Three declines: the agent's next confirmation isn't raised as a signed request while it cools
+    // down, and its call is declined.
+    const asked = (await events(s)).filter((e) => e.type === 'approval-requested').length
+    expect(await s.call('add', { item: 'eggs' }, 'Claude Code', 'call_no3', local(app.id))).toEqual({
+      status: 'ok',
+      output: { added: false },
+    })
+    expect((await events(s)).filter((e) => e.type === 'approval-requested')).toHaveLength(asked)
+  })
+
+  it('ends a call waiting on a confirmation at once when the person revokes its agent, recorded as revoked', async () => {
+    const s = await approved()
+    const app = await s.api.clients.add('Claude Code')
+    const pending = s.call('add', { item: 'milk' }, 'Claude Code', 'call_rv', local(app.id))
+    const id = await shown(s, 0)
+
+    await s.api.clients.revoke(app.id)
+
+    // The call ends before the app removes the client from the endpoint, so its answer reaches it.
+    expect(await pending).toEqual({ status: 'failed', stage: 'tool-run', errorClass: 'aborted' })
+    expect(s.ui.closedConfirmations).toEqual([id])
+    expect(s.endpoint.ops.slice(-2)).toEqual([`refuse ${app.id}`, `remove ${app.id}`])
+    await vi.waitFor(async () =>
+      expect(await events(s)).toContainEqual(
+        expect.objectContaining({ type: 'approval-answered', answer: 'withdrawn', reason: 'client-revoked' }),
+      ),
+    )
+    const all = await events(s)
+    expect(all).toContainEqual(
+      expect.objectContaining({ type: 'confirmation', callId: 'call_rv', answer: 'cancelled' }),
+    )
+    expect(all).toContainEqual({ type: 'client-revoked', clientId: `local:${app.id}` })
+    // Nobody declined anything.
+    expect(all).not.toContainEqual(expect.objectContaining({ answer: 'declined' }))
+  })
+
+  it('records calls the endpoint refused before they ran, by client, never their arguments', async () => {
+    const s = await approved()
+    const app = await s.api.clients.add('Claude Code')
+    const caller = s.endpoint.caller as ToolCaller
+    await caller.refusedByProtocol?.({
+      reason: 'unknown-tool',
+      name: 'shop_delete_account',
+      client: 'Claude\u0007 Code',
+      identity: { origin: 'local', clientId: app.id },
+      callId: 'call_unknown',
+    })
+    await caller.refusedByProtocol?.({
+      reason: 'invalid-input',
+      name: 'shop_echo',
+      tool: { adapterId: 'shop', tool: 'echo' },
+      client: 'Claude Code',
+      identity: { origin: 'local', clientId: app.id },
+      callId: 'call_badargs',
+    })
+    const all = await events(s)
+    expect(all).toContainEqual({
+      type: 'call-refused',
+      client: 'Claude Code',
+      clientId: `local:${app.id}`,
+      tool: 'shop_delete_account',
+      reason: 'unknown-tool',
+    })
+    // A site tool's refused arguments are a refused call of that tool, among the calls.
+    expect(all).toContainEqual(
+      expect.objectContaining({
+        type: 'tool-called',
+        tool: 'echo',
+        callId: 'call_badargs',
+        clientId: `local:${app.id}`,
+      }),
+    )
+    expect(all).toContainEqual(
+      expect.objectContaining({
+        type: 'tool-finished',
+        callId: 'call_badargs',
+        outcome: 'failed',
+        stage: 'tool-input',
+        errorClass: 'invalid',
+      }),
+    )
+    expect((await s.api.runs.list({})).map((r) => r.callId)).toContain('call_badargs')
+  })
+
+  it('records a client’s refused calls one by one up to a limit, then how many more there were', async () => {
+    const timers = new ManualTimers()
+    const s = await setup({ timers })
+    const caller = s.endpoint.caller as ToolCaller
+    const refuse = (clientId: string, n: number) =>
+      caller.refusedByProtocol?.({
+        reason: 'unknown-tool',
+        name: `nope_${n}`,
+        client: 'Looping agent',
+        identity: { origin: 'local', clientId },
+        callId: `call_${clientId}_${n}`,
+      })
+    for (let n = 0; n < 25; n++) await refuse('c_aaaaaaaaaaaaaaaa', n)
+    // Another client's are its own.
+    await refuse('c_bbbbbbbbbbbbbbbb', 0)
+    const refused = (await events(s)).filter((e) => e.type === 'call-refused') as unknown as Array<{
+      clientId: string
+    }>
+    expect(refused.filter((e) => e.clientId === 'local:c_aaaaaaaaaaaaaaaa')).toHaveLength(20)
+    expect(refused.filter((e) => e.clientId === 'local:c_bbbbbbbbbbbbbbbb')).toHaveLength(1)
+    timers.fire()
+    await vi.waitFor(async () =>
+      expect(await events(s)).toContainEqual({
+        type: 'refusals-dropped',
+        client: 'Looping agent',
+        clientId: 'local:c_aaaaaaaaaaaaaaaa',
+        count: 5,
+      }),
+    )
+  })
+})
+
 describe('Needs you items', () => {
   it('lists a login Valet was never given, for approved sites only', async () => {
     const s = await setup()
@@ -4244,6 +4454,30 @@ describe('admin tools (docs/admin-tools.md)', () => {
     await s.registry.setCapabilities(s.C1.clientId, { allActivity: true })
     expect(await ids(s.C1)).toEqual(['c_9b01aa', 'c_7f2a01'])
     expect(await callIds(s.C1)).toEqual(new Set(['c_7f2a01', 'c_9b01aa']))
+  })
+
+  it('shows an app another agent’s refused calls only if it may see all activity', async () => {
+    const s = await withLogin()
+    const caller = s.endpoint.caller as ToolCaller
+    for (const identity of [s.C1, s.C2])
+      await caller.refusedByProtocol?.({
+        reason: 'unknown-tool',
+        name: `nope_${identity.clientId}`,
+        client: 'agent',
+        identity,
+        callId: `c_${identity.clientId}`,
+      })
+    const refused = async (viewer: ClientIdentity) =>
+      (
+        (await run(s.admin, 'valet_audit_log', { limit: 100 }, viewer)).structuredContent as {
+          records: { event: { type: string; tool?: string } }[]
+        }
+      ).records
+        .filter((r) => r.event.type === 'call-refused')
+        .map((r) => r.event.tool)
+    expect(await refused(s.C1)).toEqual([`nope_${s.C1.clientId}`])
+    await s.registry.setCapabilities(s.C1.clientId, { allActivity: true })
+    expect(await refused(s.C1)).toEqual([`nope_${s.C2.clientId}`, `nope_${s.C1.clientId}`])
   })
 
   it('refuses an app the person hasn’t let see Valet, and one it doesn’t know', async () => {

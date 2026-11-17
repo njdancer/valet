@@ -129,7 +129,7 @@ describe('ToolHost.call: the caller’s signal', () => {
     expect(authSignal?.aborted).toBe(true)
   })
 
-  it('counts an abort during the confirmation as declined, and runs nothing even after a yes', async () => {
+  it('records an abort during the confirmation as cancelled, not declined, and runs nothing even after a yes', async () => {
     const { definition, events } = gated('irreversible')
     const { host, prompt, audit } = fixture(definition)
     prompt.answer = 'hang'
@@ -140,7 +140,7 @@ describe('ToolHost.call: the caller’s signal', () => {
     controller.abort()
     expect(await asking).toEqual(aborted)
     expect(prompt.signals[0]?.aborted).toBe(true)
-    expect(audit.events.find((e) => e.type === 'confirmation')).toMatchObject({ answer: 'declined' })
+    expect(audit.events.find((e) => e.type === 'confirmation')).toMatchObject({ answer: 'cancelled' })
     expect(events).toEqual([])
   })
 
@@ -157,8 +157,9 @@ describe('ToolHost.call: the caller’s signal', () => {
     expect(driver.runEvents).toEqual([])
   })
 
-  it('declines a ctx.confirm() whose call is aborted while the person is asked', async () => {
+  it('ends a ctx.confirm() whose call is aborted while the person is asked, never with a yes', async () => {
     let answered: boolean | undefined
+    let refused: unknown
     const { host, prompt } = fixture(
       defineAdapter({
         manifest,
@@ -167,7 +168,11 @@ describe('ToolHost.call: the caller’s signal', () => {
             input: z.object({}),
             output: z.unknown(),
             run: async (ctx) => {
-              answered = await ctx.confirm({ requests: [{ method: 'GET', path: '/api/trolley' }] })
+              try {
+                answered = await ctx.confirm({ requests: [{ method: 'GET', path: '/api/trolley' }] })
+              } catch (error) {
+                refused = error
+              }
               return answered
             },
           }),
@@ -181,7 +186,9 @@ describe('ToolHost.call: the caller’s signal', () => {
     controller.abort()
     expect(await running).toEqual(aborted)
     await flush()
-    expect(answered).toBe(false)
+    // Cancelled, not declined: tool code isn't told the person said no.
+    expect(answered).toBeUndefined()
+    expect(refused).toMatchObject({ stage: 'tool-run', errorClass: 'aborted' })
   })
 
   it('ignores a signal that is not an AbortSignal', async () => {

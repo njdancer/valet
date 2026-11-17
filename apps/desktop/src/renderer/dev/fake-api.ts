@@ -1982,7 +1982,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
 }
 
 const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent['type'][]>> = {
-  'tool-calls': ['tool-called', 'call-waited', 'tool-finished'],
+  'tool-calls': ['tool-called', 'call-waited', 'tool-finished', 'call-refused', 'refusals-dropped'],
   logins: ['login-started', 'login-finished'],
   'secret-use': ['secret-used'],
   blocked: ['request-blocked', 'breaker-opened', 'breaker-closed'],
@@ -2005,6 +2005,12 @@ const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent['type']
     'remote-consent',
     'remote-revoked',
     'remote-token-reuse',
+    'app-paused',
+    'client-added',
+    'client-revoked',
+    'client-reset',
+    'client-access-changed',
+    'client-tool-on',
   ],
 }
 

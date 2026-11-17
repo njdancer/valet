@@ -46,7 +46,8 @@ export function offset(ms: number): string {
   return `${(ms / 1000).toFixed(3)} s`
 }
 
-function confirmationWords(answer: 'approved' | 'declined' | 'timed-out'): string {
+function confirmationWords(answer: 'approved' | 'declined' | 'timed-out' | 'cancelled'): string {
+  if (answer === 'cancelled') return 'cancelled before anyone answered'
   return answer === 'approved' ? 'approved' : answer === 'declined' ? 'declined' : 'didn’t answer'
 }
 

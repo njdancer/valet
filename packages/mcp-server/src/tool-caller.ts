@@ -2,7 +2,7 @@
 // imports the runtime, so the endpoint can be tested against a fake and the runtime can change
 // behind this seam.
 
-import type { ErrorClass, NeedsUserReason, Stage, ToolDeclaration } from '@valet/core'
+import type { CallRefusal, ErrorClass, NeedsUserReason, Stage, ToolDeclaration } from '@valet/core'
 import type { z } from 'zod'
 import type { ClientIdentity } from './auth'
 
@@ -105,6 +105,24 @@ export type CallOutcome =
   /** The person declined the confirmation in the app, or (`timedOut`) didn't answer it in time. */
   | { readonly status: 'declined'; readonly timedOut?: true }
 
+/**
+ * A tools/call the MCP SDK refused before any tool ran (server.ts): the session offers no tool by
+ * that name, or the arguments don't fit its input schema. The argument values never cross here.
+ */
+export interface ProtocolRefusal {
+  readonly reason: CallRefusal
+  /** The name the client asked for, if it is a well-formed tool name (requestedToolName); else `(invalid)`. */
+  readonly name: string
+  /** The site tool the name stands for, when it names one this session offers. */
+  readonly tool?: { readonly adapterId: string; readonly tool: string }
+  /** The client's self-reported name, flattened and cut (clientLabel). Untrusted. */
+  readonly client: string
+  readonly identity?: ClientIdentity
+  readonly transport?: ClientTransport
+  /** A fresh id, made as a call's would be, for a refusal recorded as a call. */
+  readonly callId: string
+}
+
 export interface ToolCaller {
   /**
    * Every tool that may be called right now: approved adapters only. With an identity, the tools
@@ -112,4 +130,9 @@ export interface ToolCaller {
    */
   listTools(identity?: ClientIdentity): readonly ListedTool[]
   call(call: ToolCall): Promise<CallOutcome>
+  /**
+   * The SDK refused a call before it reached call(): audit it. Awaited before the client hears, as
+   * the remote policy's refusals are; one that can't be recorded is still refused. Absent: not recorded.
+   */
+  refusedByProtocol?(refusal: ProtocolRefusal): Promise<void>
 }

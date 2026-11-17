@@ -705,7 +705,7 @@ export class ToolHost {
           transport,
         )
         // Even a yes doesn't run a tool whose caller has gone.
-        if (external?.aborted) return failed('tool-run', 'aborted')
+        if (external?.aborted || answer === 'cancelled') return failed('tool-run', 'aborted')
         if (answer === 'timed-out') return { status: 'declined', timedOut: true }
         if (answer !== 'approved') return { status: 'declined' }
       }
@@ -978,7 +978,14 @@ export class ToolHost {
           controller.signal,
           transport,
         )
-        return (await state.track(asking)) === 'approved'
+        const answer = await state.track(asking)
+        // Cancelled while it waited (the agent that made the call was revoked): the run ends
+        // aborted, as if its caller had gone, rather than going on as if the person said no.
+        if (answer === 'cancelled') {
+          controller.abort()
+          throw new ValetError('tool-run', 'aborted')
+        }
+        return answer === 'approved'
       },
       signal: controller.signal,
       ...(entry.isolation?.local === undefined
@@ -1192,8 +1199,11 @@ export class ToolHost {
     deadline.abort()
     let answer: ConfirmationAnswer =
       asked.kind === 'returned' ? asked.value : asked.kind === 'timed-out' ? 'timed-out' : 'declined'
-    // Anything but an explicit yes is a no.
-    if (answer !== 'approved' && answer !== 'timed-out') answer = 'declined'
+    // Anything but an explicit yes is a no. One the call's own end cut short is recorded as
+    // cancelled, so the log never says the person declined what nobody answered.
+    if (answer !== 'approved' && (asked.kind === 'aborted' || callSignal?.aborted === true))
+      answer = 'cancelled'
+    else if (answer !== 'approved' && answer !== 'timed-out' && answer !== 'cancelled') answer = 'declined'
     // An approval we can't record doesn't count: this throws, and the call fails.
     await this.options.audit.append({
       type: 'confirmation',

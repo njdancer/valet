@@ -589,6 +589,19 @@ boundary.
   secret use; blocked requests with their initiator;
   breaker openings and closings; and confirmations with the client (event shapes a
   **Contract**).
+- The person's own controls are recorded too, by fixed names and the client's id only: adding,
+  resetting and revoking an app, changing what it may do (`client-access-changed`, with the
+  capabilities on before and after), turning a tool back on for it, and pausing or resuming Valet
+  (**Enforced**, 2026-11-17). A confirmation the person declines is the person's decline of its
+  signed request (`approval-answered` declined, from the Mac), and counts against the agent the
+  call was for; one whose call ended first (the agent cancelled or went away, was revoked, or the
+  app quit) is recorded as `cancelled` and its request withdrawn with that reason
+  (`call-cancelled`, `client-revoked`), never as a decline.
+- A tools/call the MCP SDK refuses before any Valet code runs (a name the session doesn't offer,
+  arguments its schema refuses) is recorded with the client and the requested name if it is a
+  well-formed tool name, never the arguments: as a refused call of the site tool when the name is
+  one (stage `tool-input`, `invalid`), else as `call-refused`. Each client gets 20 such records a
+  minute; past that they are counted and recorded once as `refusals-dropped` (**Enforced**).
 - The client name is the self-reported name from MCP `initialize`, stripped of control and
   format characters and cut to 100 characters (**Enforced**). It is a label, not an identity.
 - The identity is the client the bearer token names: each client the person adds gets its own

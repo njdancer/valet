@@ -399,6 +399,14 @@ const EVENT_FIELDS: Readonly<Record<AuditEvent['type'], readonly string[]>> = {
   'draft-submitted': ['draftId', 'adapterId', 'clientId', 'adapterHash', 'packageHash', 'requestId'],
   'draft-deleted': ['draftId', 'adapterId', 'clientId'],
   'draft-trial': ['draftId', 'adapterId', 'clientId', 'tool', 'host', 'packageHash', 'outcome', 'blocked'],
+  'client-added': ['clientId'],
+  'client-revoked': ['clientId'],
+  'client-reset': ['clientId'],
+  'client-access-changed': ['clientId', 'before', 'after'],
+  'client-tool-on': ['clientId', 'tool'],
+  'app-paused': ['paused'],
+  'call-refused': ['client', 'clientId', 'tool', 'reason'],
+  'refusals-dropped': ['client', 'clientId', 'count'],
 }
 
 function eventEntry(event: AuditEvent): AdminAuditPage['records'][number]['event'] {
@@ -425,6 +433,8 @@ function otherCalls(index: CallIndex, scope: AdminScope): Set<string> {
 /** A record of another agent's: about one of its calls, or an approval it asked for. */
 function aboutOtherAgent(event: AuditEvent, others: ReadonlySet<string>, mine: string): boolean {
   if (event.type === 'approval-requested') return event.clientId !== null && event.clientId !== mine
+  // Another agent's refused calls, like its calls: they carry its own name for itself.
+  if (event.type === 'call-refused' || event.type === 'refusals-dropped') return event.clientId !== mine
   const callId = 'callId' in event ? event.callId : null
   return typeof callId === 'string' && others.has(callId)
 }
