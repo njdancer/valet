@@ -142,7 +142,8 @@ describe.runIf(process.env['VALET_HUB_BROWSER'] === '1')('the hub in a browser',
     expect(await page.locator('#state').textContent()).toBe('Waiting for you to approve…')
     const id = JSON.parse((await page.locator('body').getAttribute('data-consent')) ?? '{}').id as string
     const state = await page.evaluate(
-      async (consent) => (await (await fetch(`/authorize/status?id=${consent}`)).json()).state,
+      async (consent) =>
+        ((await (await fetch(`/authorize/status?id=${consent}`)).json()) as { state: string }).state,
       id,
     )
     expect(state).toBe('pending')
