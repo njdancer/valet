@@ -300,7 +300,7 @@ Built in this order: the hub's sign-in for agents and the grant format (3a), the
   that grant (what an offline node shows during its grace), both in memory only: never stored.
   A node that forgot the session (a restart) gets a new one on the next request.
 - **Not yet:** `list_changed` over an event stream, hub-level tools (which nodes are online), and a
-  page on the hub to see and revoke grants. Step 5 retires the per-Mac hosts.
+  page on the hub to see and revoke grants (the Mac's Connections can remove them, below). Step 5 retires the per-Mac hosts.
 
 ## A Mac that started the list goes
 
@@ -313,6 +313,32 @@ Removing needs a recent sign-in; it only takes access away. A Mac that missed be
 (it was offline, or it is the same Mac with new keys) still holds a pin on the old list and would
 refuse the empty one; when it is next added with a code it showed (linking, then linked), it
 forgets that pin and starts the new list.
+
+## Removing an agent
+
+Connections lists, under Cloud agents, every agent approved through the account whose grant this
+Mac checked ("Through your Valet account"), with Remove. Removing sends `hub-grant-revoke`; the hub
+deletes that grant and its tokens at once, on every Mac, and tells the other nodes. Any node on the
+account may ask, with no signature, since it only takes access away. The Mac stops honouring the
+grant before the hub answers.
+
+## Tested end to end
+
+`apps/desktop/e2e/hub.spec.ts` runs the whole journey on every pull request (macOS CI, the fast
+e2e suite): the built app, the relay and hub in a local Workers runtime
+(`apps/relay/scripts/local.mjs --hub-origin …`), Playwright's Chromium with a virtual passkey as
+the person's browser, and the MCP SDK's own OAuth client as the agent. It signs up, puts the Mac
+on the account, signs an agent in with the code its browser shows, lists and calls a tool at
+`/mcp`, approves one of several waiting sign-ins and declines the rest, removes an agent from
+Connections, restarts the relay, and re-links the Mac after it lost its keys.
+`apps/relay/test/hub-browser.test.ts` runs in the same job. **No hub or relay deploy unless both
+passed on the commit being deployed.**
+
+The first live sign-in found three bugs between the parts, each now covered there: the consent
+cookie's path, a hub sign-in the Mac's own Decline refused, and a Mac with new keys still holding
+the old list. Writing the test found two more: a second sign-in in the same browser replaced the
+first one's cookie, so the first could never finish ("Sign-in has expired"), and approving one of
+several waiting sign-ins left the sheet showing the others with no sign the approval worked.
 
 ## Open, for the building agent to propose (not for Nick unless it changes his goal)
 

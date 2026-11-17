@@ -270,7 +270,7 @@ function HubAccount({
       ) : hub.state === 'linking' ? (
         <Text tone="muted">
           On the page that opened, signed in to your account, type this code. It works until{' '}
-          {new Date(hub.expiresAt).toLocaleTimeString()}.
+          {new Date(hub.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.
         </Text>
       ) : (
         <Text tone="muted">
@@ -299,6 +299,9 @@ function HubAccount({
             <Button onClick={() => void action.run(() => api.phones.openHub())}>Open the hub</Button>
             <Button loading={action.busy} onClick={() => void action.run(() => api.phones.joinHub())}>
               New code
+            </Button>
+            <Button variant="ghost" onClick={() => void action.run(() => api.phones.leaveHub())}>
+              Cancel
             </Button>
           </>
         ) : null}
