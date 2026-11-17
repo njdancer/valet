@@ -215,6 +215,9 @@ export function decodeMailbox(name: string): string {
     if (bytes.length % 2 !== 0) return whole
     let out = ''
     for (let i = 0; i < bytes.length; i += 2) out += String.fromCharCode(bytes.readUInt16BE(i))
+    // A shift may only hold what has no plain form: never ASCII (control characters included),
+    // and never a broken surrogate pair. Anything else stays as the server wrote it.
+    if (out.length === 0 || [...out].some((c) => c.charCodeAt(0) < 0x80) || !out.isWellFormed()) return whole
     return out
   })
 }
