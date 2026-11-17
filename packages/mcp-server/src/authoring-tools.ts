@@ -320,7 +320,7 @@ export interface Authoring {
       readonly from: 'blank' | 'installed'
       readonly name?: string
       /** For a blank draft: what kind of adapter it starts as (docs/adapter-kinds.md). */
-      readonly runtime?: 'browser' | 'http'
+      readonly runtime?: 'browser' | 'http' | 'raw'
     },
   ): Promise<DraftDetail>
   listDrafts(viewer: ClientIdentity, all: boolean): Promise<DraftList>
@@ -483,12 +483,13 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
         .optional()
         .describe('The site’s name, for a blank draft, e.g. "Yahoo Finance".'),
       runtime: z
-        .enum(['browser', 'http'])
+        .enum(['browser', 'http', 'raw'])
         .optional()
         .describe(
           'For a blank draft: "browser" (the default) drives the site in Valet’s browser; "http" opens no page and ' +
-            'calls an API, a feed, CalDAV/CardDAV or a device on the person’s network through ctx.http. ' +
-            'valet_authoring_guide says which fits.',
+            'calls an API, a feed, CalDAV/CardDAV or a device on the person’s network through ctx.http; "raw" runs ' +
+            'Node code and npm packages that open their own connections to exact endpoints, for the rare case ' +
+            'nothing else fits. valet_authoring_guide says which fits.',
         ),
       repairId: z
         .string()
@@ -504,7 +505,9 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
         adapterId: args['adapterId'] as string,
         from: (args['from'] as 'blank' | 'installed' | undefined) ?? 'blank',
         ...(typeof args['name'] === 'string' ? { name: args['name'] } : {}),
-        ...(args['runtime'] === 'http' || args['runtime'] === 'browser' ? { runtime: args['runtime'] } : {}),
+        ...(args['runtime'] === 'http' || args['runtime'] === 'browser' || args['runtime'] === 'raw'
+          ? { runtime: args['runtime'] }
+          : {}),
         ...(typeof args['repairId'] === 'string' ? { repairId: args['repairId'] } : {}),
       }),
   },

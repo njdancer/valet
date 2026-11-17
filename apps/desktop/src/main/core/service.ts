@@ -2805,6 +2805,8 @@ export class AppService {
       prepare: async (files) => (await packages.prepare(files, 'draft')).loaded,
       // Each case in a fresh one-shot sandbox window, as describing a package runs (docs/sandbox.md).
       caseProcess: runtime.start,
+      // A raw draft's cases in the Node runtime, with no network (docs/adapter-kinds.md#raw).
+      ...(runtime.raw === undefined ? {} : { rawCaseProcess: runtime.raw.start }),
       installed: async (adapterId) => {
         const adapter = this.adapter(adapterId)
         if (adapter === null) return null
@@ -2878,6 +2880,25 @@ export class AppService {
                 : {
                     egress: (endpoints: { readonly egress: readonly string[] }) =>
                       (this.deps.egress as NonNullable<ServiceDeps['egress']>)({ egress: endpoints.egress }),
+                  }),
+              // A raw draft's trial: its public endpoints only, through the broker's tunnels.
+              ...(this.deps.raw === undefined || this.deps.egress === undefined
+                ? {}
+                : {
+                    raw: {
+                      start: (manifest: AdapterManifest, openTunnels: OpenTunnels) =>
+                        (this.deps.raw as NonNullable<ServiceDeps['raw']>).start(manifest, openTunnels),
+                      tunnels: (endpoints: readonly string[]) => {
+                        const broker = (this.deps.egress as NonNullable<ServiceDeps['egress']>)({
+                          egress: [],
+                          endpoints,
+                        })
+                        return (run: RunContext, options: { readonly admit: () => Promise<void> }) => {
+                          if (broker.tunnels === undefined) throw new ValetError('tool-run', 'unavailable')
+                          return broker.tunnels(run, options)
+                        }
+                      },
+                    },
                   }),
             },
           }),

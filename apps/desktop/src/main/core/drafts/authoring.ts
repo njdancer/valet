@@ -66,7 +66,7 @@ import {
 } from './research'
 import { siteInputType, siteMethod, siteMime, siteRole, siteTag } from './site-text'
 import { DRAFT_LIMITS, DraftError, type DraftRecord, type DraftStore, type TrialSummary } from './store'
-import { blankDraft, blankHttpDraft } from './template'
+import { blankDraft, blankHttpDraft, blankRawDraft } from './template'
 import { runTrial, type SignedInTrial, TRIAL_LIMITS, type TrialDeps, type TrialResult } from './trial'
 
 /** A whole check's time, so a submit answers inside an MCP client's usual timeout. */
@@ -144,6 +144,8 @@ export interface AuthoringDeps {
   readonly prepare: (files: PackageFiles) => Promise<LoadedPackage>
   /** A fresh sandbox process per case (SandboxPool.oneShot()). */
   readonly caseProcess: ToolProcessFactory
+  /** A fresh Node runtime process with no network, per case of a raw draft. Without it, none run. */
+  readonly rawCaseProcess?: ToolProcessFactory
   readonly installed: (adapterId: string) => Promise<InstalledVersion | null>
   /** Repair tickets (PR 3), from the audit log. Without them no draft can be a repair. */
   readonly repairs?: {
@@ -233,7 +235,7 @@ export class DraftAuthoring implements Authoring {
       readonly from: 'blank' | 'installed'
       readonly name?: string
       readonly repairId?: string
-      readonly runtime?: 'browser' | 'http'
+      readonly runtime?: 'browser' | 'http' | 'raw'
     },
   ): Promise<DraftDetail> {
     const client = clientKey(viewer)
@@ -268,10 +270,13 @@ export class DraftAuthoring implements Authoring {
         throw new AuthoringRefusal(
           `${request.adapterId} is installed already. Start from "installed" to update it, or pick another id.`,
         )
+      const name = request.name ?? request.adapterId
       files =
         request.runtime === 'http'
-          ? blankHttpDraft(request.adapterId, request.name ?? request.adapterId)
-          : blankDraft(request.adapterId, request.name ?? request.adapterId)
+          ? blankHttpDraft(request.adapterId, name)
+          : request.runtime === 'raw'
+            ? blankRawDraft(request.adapterId, name)
+            : blankDraft(request.adapterId, name)
     }
     this.notifyLimit(client)
     const record = await this.wrap(() =>
@@ -670,6 +675,7 @@ export class DraftAuthoring implements Authoring {
     const left = Math.max(0, budget - (this.deps.now() - started))
     const run = await runCases({ manifest, script: loaded.script, tools: loaded.definition.tools }, files, {
       start: this.deps.caseProcess,
+      ...(this.deps.rawCaseProcess === undefined ? {} : { rawStart: this.deps.rawCaseProcess }),
       local: NO_LOCAL_ACCESS,
       ...(tool === undefined ? {} : { tool }),
       ...(this.deps.caseBrowser === undefined ? {} : { browser: this.deps.caseBrowser }),
@@ -759,6 +765,7 @@ export class DraftAuthoring implements Authoring {
         { ...c, expect: { error: { stage: ticket.stage, errorClass: ticket.errorClass } } },
         {
           start: this.deps.caseProcess,
+          ...(this.deps.rawCaseProcess === undefined ? {} : { rawStart: this.deps.rawCaseProcess }),
           local: NO_LOCAL_ACCESS,
           ...(this.deps.caseBrowser === undefined ? {} : { browser: this.deps.caseBrowser }),
           now: this.deps.now,

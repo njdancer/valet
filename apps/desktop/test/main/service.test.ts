@@ -14,11 +14,11 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { buildRecord } from '@valet/adapter-store'
+import { buildRecord, type RawPackageRuntime } from '@valet/adapter-store'
 import {
   type AdapterDefinition,
   CredentialError,
@@ -32,7 +32,7 @@ import {
   type SessionDriver,
   ValetError,
 } from '@valet/core'
-import { EgressBroker } from '@valet/egress'
+import { EgressBroker, type OpenTunnels } from '@valet/egress'
 import { startFakeApi } from '@valet/fake-http-api'
 import {
   ADMIN_LOCKED_DOWN_RESULT,
@@ -58,6 +58,7 @@ import {
   type WriteArgs,
   withAnswers,
 } from '@valet/mcp-server'
+import { loadDependencies, memoryTarballStore, nodeRuntimeProcess } from '@valet/node-runtime'
 import { LoginAttemptMarker, type ToolProcessFactory } from '@valet/runtime'
 import { inMemoryToolProcess } from '@valet/runtime/in-context'
 import { buildToolLibrary } from '@valet/runtime/tool-script'
@@ -140,6 +141,7 @@ async function setup(
     sandbox?: ServiceDeps['sandbox']
     trialDriver?: ServiceDeps['trialDriver']
     egress?: ServiceDeps['egress']
+    raw?: ServiceDeps['raw']
   } = {},
 ) {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'sa-service-'))
@@ -218,6 +220,7 @@ async function setup(
     ...(options.sandbox === undefined ? {} : { sandbox: options.sandbox }),
     ...(options.trialDriver === undefined ? {} : { trialDriver: options.trialDriver }),
     ...(options.egress === undefined ? {} : { egress: options.egress }),
+    ...(options.raw === undefined ? {} : { raw: options.raw }),
     createDriver: async (_manifest, reporters) => {
       driver.reporters = reporters
       return driver
@@ -3412,6 +3415,7 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     sandbox?: ServiceDeps['sandbox'],
     trialDriver?: ServiceDeps['trialDriver'],
     egress?: ServiceDeps['egress'],
+    raw?: { readonly runtime: RawPackageRuntime; readonly deps: ServiceDeps['raw'] },
   ) {
     const start = inMemoryToolProcess()
     const prelude = await buildToolLibrary()
@@ -3423,7 +3427,9 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
       packages: {
         builtins: [shopPackage('v1:')],
         runtime:
-          describe === 'answers' ? { prelude, start } : { prelude, start: hanging, describeTimeoutMs: 50 },
+          describe === 'answers'
+            ? { prelude, start, ...(raw === undefined ? {} : { raw: raw.runtime }) }
+            : { prelude, start: hanging, describeTimeoutMs: 50 },
         build: buildRecord('0.1.0', prelude),
         folders: { pick: async () => picked.next },
       },
@@ -3431,6 +3437,7 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
       ...(sandbox === undefined ? {} : { sandbox }),
       ...(trialDriver === undefined ? {} : { trialDriver }),
       ...(egress === undefined ? {} : { egress }),
+      ...(raw === undefined ? {} : { raw: raw.deps }),
     })
     const hashOf = (files: PackageFiles) => checkPackage(files).adapterHash
     return { ...s, picked, hashOf }
@@ -3574,6 +3581,122 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     } finally {
       await api.close()
     }
+  })
+
+  it('installs and runs a raw adapter in the Node runtime through its tunnels, approvable on the phone', async () => {
+    const api = await startFakeApi()
+    try {
+      const mac = process.platform === 'darwin'
+      const rawProcess = (endpoints: readonly string[], openTunnels: OpenTunnels) =>
+        nodeRuntimeProcess({
+          nodeBinary: process.execPath,
+          endpoints,
+          openTunnels,
+          home: homedir(),
+          withoutSeatbelt: !mac,
+        })
+      const egress: ServiceDeps['egress'] = (manifest) =>
+        new EgressBroker(
+          {
+            egress: manifest.egress,
+            privateHosts: manifest.privateHosts ?? [],
+            endpoints: manifest.endpoints ?? [],
+          },
+          {
+            lookup: (_name, cb) => cb(null, [{ address: '127.0.0.1', family: 4 }]),
+            testing: {
+              allowAddresses: ['127.0.0.1'],
+              route: () => ({ address: '127.0.0.1', port: api.port }),
+            },
+          },
+        )
+      const rawManifest: ManifestInput = {
+        schemaVersion: 1,
+        id: 'status',
+        name: 'Status',
+        version: '1.0.0',
+        description: 'Reads items over its own TLS connection.',
+        runtime: 'raw',
+        endpoints: ['api.example.test:443'],
+        tools: [{ name: 'count', title: 'Count', description: 'Counts items.', sideEffect: 'read' }],
+      }
+      const tools = [
+        "import { z } from 'zod'",
+        'declare const require: (id: string) => any',
+        'export const tools = {',
+        '  count: { input: z.object({ ca: z.string(), host: z.string() }), output: z.object({ count: z.number() }), run: (ctx, a) =>',
+        '    new Promise((resolve, reject) => {',
+        "      require('node:https').get({ host: a.host, path: '/v1/items', ca: a.ca, agent: false }, (res) => {",
+        "        let body = ''",
+        "        res.on('data', (d) => (body += d))",
+        "        res.on('end', () => resolve({ count: JSON.parse(body).items.length }))",
+        "      }).on('error', reject)",
+        '    }) },',
+        '}',
+      ].join('\n')
+      const files = packageOf(parseManifest(rawManifest), { 'src/tools.ts': tools })
+      const s = await withPackages(files, undefined, 'answers', undefined, undefined, egress, {
+        runtime: {
+          dependencies: (lock) => loadDependencies(lock, memoryTarballStore()),
+          start: rawProcess([], async () => ({
+            ports: new Map(),
+            close: () => undefined,
+            restrict: () => undefined,
+          })),
+        },
+        deps: { start: (manifest, openTunnels) => rawProcess(manifest.endpoints ?? [], openTunnels) },
+      })
+      let n = 0
+      const count = (host: string) =>
+        (s.endpoint.caller as ToolCaller).call({
+          adapterId: 'status',
+          tool: 'count',
+          input: { ca: api.cert, host },
+          client: 'Claude Code',
+          callId: `call_raw_${++n}`,
+          transport: 'http',
+        })
+      expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true, adapterId: 'status' })
+      const review = (await s.api.approvals.pending()).find((r) => r.adapterId === 'status')
+      expect(JSON.stringify(review)).toContain('api.example.test:443')
+      await s.api.approvals.approve('status', review?.to.hash ?? '')
+      expect(await count('api.example.test')).toMatchObject({ status: 'ok', output: { count: 2 } })
+      expect(api.seen.at(-1)).toMatchObject({ url: '/v1/items', servername: 'api.example.test' })
+      expect(readAudit(s.paths.audit)).toContainEqual(
+        expect.objectContaining({
+          type: 'egress-connection',
+          adapterId: 'status',
+          endpoint: 'api.example.test:443',
+          kind: 'tunnel',
+        }),
+      )
+      // A host it doesn't declare isn't reachable at all.
+      const before = api.seen.length
+      expect(await count('evil.example.test')).toMatchObject({ status: 'failed' })
+      expect(api.seen.length).toBe(before)
+    } finally {
+      await api.close()
+    }
+  }, 60_000)
+
+  it('doesn’t load a raw adapter in a build without the Node runtime', async () => {
+    const rawManifest: ManifestInput = {
+      schemaVersion: 1,
+      id: 'status',
+      name: 'Status',
+      version: '1.0.0',
+      description: 'Reads items over its own TLS connection.',
+      runtime: 'raw',
+      endpoints: ['api.example.test:443'],
+      tools: [{ name: 'count', title: 'Count', description: 'Counts items.', sideEffect: 'read' }],
+    }
+    const files = packageOf(parseManifest(rawManifest), {
+      'src/tools.ts':
+        "import { z } from 'zod'\nexport const tools = { count: { input: z.object({}), output: z.object({}), run: async () => ({}) } }",
+    })
+    const s = await withPackages(files)
+    // Without the Node runtime the package doesn't even load.
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: false })
   })
 
   it('installs from a folder: the new version waits for approval, says it takes the session, and can be rolled back', async () => {

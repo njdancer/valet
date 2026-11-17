@@ -15,12 +15,14 @@ import {
   type AdapterManifest,
   type BlockedRequest,
   type EnsureResult,
+  rawEndpoints,
   runtimeOf,
   type SessionDriver,
   type ToolContext,
   uploadBudget,
+  ValetError,
 } from '@valet/core'
-import { RunMeter } from '@valet/egress'
+import { type OpenTunnels, type RunContext, RunMeter } from '@valet/egress'
 import {
   breakerRefusal,
   CallState,
@@ -29,6 +31,7 @@ import {
   type HttpEgress,
   NO_HTTP_ACCESS,
   NO_PAGE,
+  NO_SECRETS,
   noBrowserDriver,
   runIsolated,
   SecretRedactionSet,
@@ -69,6 +72,16 @@ export interface TrialDeps {
    * given. Without it, such a draft's ctx.http is not granted.
    */
   readonly egress?: (endpoints: { readonly egress: readonly string[] }) => HttpEgress
+  /**
+   * A raw draft's runtime (docs/adapter-kinds.md#raw): its Node process for one call, and the
+   * broker's tunnels for the public endpoints it is given. Without it, a raw draft can't be tried.
+   */
+  readonly raw?: {
+    start(manifest: AdapterManifest, openTunnels: OpenTunnels): ToolProcessFactory
+    tunnels(
+      endpoints: readonly string[],
+    ): (run: RunContext, options: { readonly admit: () => Promise<void> }) => OpenTunnels
+  }
   readonly timeoutMs?: number
 }
 
@@ -180,6 +193,58 @@ export async function runTrial(
       }, timeoutMs)
     })
     const run = async (): Promise<unknown> => {
+      if (runtimeOf(manifest) === 'raw') {
+        // Its public endpoints only, a read's upload budget whatever the tool, the site's pace per
+        // connection, and no credential: unapproved code is never entrusted with one.
+        const raw = deps.raw
+        if (raw === undefined) throw new ValetError('tool-run', 'unavailable')
+        const publicOnly: AdapterManifest = { ...manifest, privateHosts: [] }
+        const endpoints = rawEndpoints(publicOnly)
+        const runContext: RunContext = {
+          meter: new RunMeter(uploadBudget(manifest, 'read')),
+          signal: controller.signal,
+          record: (c) => {
+            if (c.errorClass === null) return
+            record({
+              method: 'CONNECT',
+              target: `tcp://${c.endpoint}`,
+              reason: c.errorClass,
+              initiator: 'tool',
+            })
+            if (
+              c.errorClass === 'upload-budget' ||
+              c.errorClass === 'sni-mismatch' ||
+              c.errorClass === 'host-not-allowed'
+            )
+              state.violation ??= new ValetError('egress', c.errorClass)
+          },
+        }
+        let connections = 0
+        const admit = async (): Promise<void> => {
+          if (++connections > manifest.limits.requestsPerRun) {
+            state.violation ??= new ValetError('request-surface', 'request-ceiling')
+            throw state.violation
+          }
+          if (site.breaker.isOpen()) throw breakerRefusal()
+          await site.budget.acquire(controller.signal)
+        }
+        const rawCtx: ToolContext = {
+          page: NO_PAGE,
+          session: { ensure: async (): Promise<EnsureResult> => ({ status: 'ok' }) },
+          confirm: async () => false,
+          signal: controller.signal,
+          local: NO_LOCAL_ACCESS,
+          http: NO_HTTP_ACCESS,
+          secrets: NO_SECRETS,
+        }
+        return runIsolated(
+          raw.start(publicOnly, (asked) => raw.tunnels(endpoints)(runContext, { admit })(asked)),
+          draft.script,
+          rawCtx,
+          tool,
+          input,
+        )
+      }
       if (http) {
         const publicOnly: AdapterManifest = { ...manifest, privateHosts: [] }
         const httpCtx: ToolContext = {

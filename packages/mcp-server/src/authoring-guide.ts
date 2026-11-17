@@ -153,6 +153,29 @@ await socket.close()
   into elements with \`local\` names and resolved \`ns\` namespaces. Neither takes a DOCTYPE.
 - In cases, \`fetch\` entries answer \`ctx.http\` the same way they answer \`page.fetch\`; give absolute URLs.
 
+## Adapters that run their own code (runtime "raw")
+
+Only when neither the browser nor \`ctx.http\` can do it: a protocol only an npm package speaks, say.
+Start the draft with \`runtime: "raw"\`. Its code runs in Node, in a sandbox of its own, one process per
+call: Node's built-ins, npm packages you add with \`valet_add_dependency\`, zod, @valet/core and files
+under src/. It has no page, no \`ctx.http\` and no \`ctx.local\`.
+
+- \`endpoints\`: \`["imap.example.com:993"]\`, exact \`host:port\` pairs in lower case; nothing else is
+  reachable, DNS included. Every connection to one must be TLS from its first byte with that host as
+  its server name (STARTTLS and plain TCP to a public host are refused). \`privateHosts\` (without
+  \`certSha256\`) reach a device on the person's network, and live trials never reach them.
+- No \`home\`, \`navigation\`, \`egress\`, \`requests\`, login or irreversible tools. Each connection counts as
+  a request against \`requestsPerRun\` and waits for the site's pace. The upload budgets above apply to
+  every byte sent; past one, another server's name, or a refused endpoint, the call fails
+  (\`egress/upload-budget\`, \`egress/sni-mismatch\`, \`egress/host-not-allowed\`) even if the code catches it.
+- \`sandbox.exceptions\` may be \`files\` only: read, or read-write, folders the process may use.
+- A credential is \`"custody": "entrusted"\` with \`"use": { "entrusted": { "endpoints": [...] } }\`.
+  \`const { value, username } = await ctx.secrets.get('mail')\` gives it, once the person has granted
+  it. From then on, the call may reach only that credential's endpoints: a connection to any other
+  closes, and the call fails. The value and its encodings are removed from the tool's output.
+- Cases run with no network at all: give the data in the input. Live trials reach the public
+  endpoints only, with a read's upload budget and no credential.
+
 ## Cases
 
 \`test/<name>.json\` is \`{ "cases": [ { name, tool, input, pages?, fetch?, session?, expect } ] }\`:
