@@ -227,7 +227,8 @@ public enum MacToPhone: Equatable, Sendable {
       let f = try Fields(value, path: type, required: ["type", "seq", "ackSeq"])
       return .ack(seq: try f.int("seq", min: 1), ackSeq: try f.int("ackSeq", min: 1))
     case "status":
-      return .status(seq: try Fields(value, path: type, required: ["type", "seq", "at", "safety", "sites", "agents", "devices", "recent"]).int("seq", min: 1),
+      return .status(seq: try Fields(value, path: type, required: ["type", "seq", "at", "safety", "sites", "agents", "devices", "recent"],
+                                     optional: ["account"]).int("seq", min: 1),
                      status: try MacStatus.parse(value))
     case "unpaired":
       let f = try Fields(value, path: type, required: ["type", "seq", "at"])

@@ -22,6 +22,10 @@ public enum Patterns {
   public static let adapterId = "[a-z][a-z0-9-]{1,63}"
   public static let name = "[a-z][a-z0-9_]{0,63}"
   public static let origin = "https://[a-z0-9.-]+(?::[0-9]{1,5})?"
+  /// The hub's origin as the Mac names it; plain http only for a local hub in development.
+  public static let hubOrigin = "https?://[a-z0-9.-]+(?::[0-9]{1,5})?"
+  /// An account at the hub (roster.ts's `account`).
+  public static let accountId = "[A-Za-z0-9_-]{16,64}"
   public static let clientId = "(?:local|remote):[A-Za-z0-9_-]{1,64}"
   public static let qualifiedTool = "[a-z][a-z0-9-]{1,63}\\.[a-z][a-z0-9_]{0,63}"
   public static let address = "[0-9A-Fa-f:.]{2,45}"

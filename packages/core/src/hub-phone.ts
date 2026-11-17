@@ -39,6 +39,8 @@ export type HubPhoneRequest = z.infer<typeof hubPhoneRequestSchema>
 export const hubPhoneAccountSchema = z
   .object({
     account: z.string().regex(/^[A-Za-z0-9_-]{16,64}$/),
+    /** The relay every Mac on the account dials: the phone reaches each at /v1/phone/<macId> there. */
+    relay: z.url({ protocol: /^https$/ }).max(200),
     /** The whole chain, as the hub holds it after any append. The phone checks it itself. */
     changes: z.array(signedRosterChangeSchema).max(ROSTER_MAX_CHANGES),
     /** Set when `append` wasn't kept, and why; `changes` is then the chain without it. */

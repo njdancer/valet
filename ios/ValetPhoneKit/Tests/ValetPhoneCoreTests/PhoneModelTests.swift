@@ -46,6 +46,16 @@ final class PhoneModelTests: XCTestCase {
 
   // MARK: J1
 
+  func testReadsTheAccountTheMacSaysTheyAreOn() throws {
+    setUp(.quiet)
+    XCTAssertNil(model.status?.account)
+    world.mac.account = (hub: "https://valet.example", accountId: "acct_0123456789abcdef")
+    world.mac.sendStatus()
+    world.relay.drain()
+    XCTAssertEqual(model.status?.account?.hub, "https://valet.example")
+    XCTAssertEqual(model.status?.account?.accountId, "acct_0123456789abcdef")
+  }
+
   func testPairsEndToEnd() throws {
     setUp(.quiet)
     XCTAssertEqual(model.phase, .paired)
