@@ -8,7 +8,7 @@ struct MainTabs: View {
   var body: some View {
     TabView {
       Tab("Needs you", systemImage: "bell.badge") { NeedsYouView(model: model) }
-        .badge(model.openCards.count)
+        .badge(model.allMacs.reduce(0) { $0 + $1.openCards.count })
       Tab("Activity", systemImage: "list.bullet.rectangle") { ActivityView(model: model) }
       Tab("Sites", systemImage: "globe") { SitesView(model: model) }
       Tab("Agents", systemImage: "person.2") { AgentsView(model: model) }
