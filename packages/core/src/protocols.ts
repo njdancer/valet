@@ -6,7 +6,7 @@
 import { z } from 'zod'
 import { type CredentialDeclaration, isEndpoint } from './credential'
 import { folderAllowed } from './imap-policy'
-import { isMailAddress } from './smtp-policy'
+import { isMailAddress, recipientAllowed } from './smtp-policy'
 
 /** A folder name as the manifest writes it: no control characters, and no LIST wildcards. */
 export const imapFolderSchema = z
@@ -157,4 +157,57 @@ export function mayWriteInbox(manifest: {
   const imap = manifest.protocols?.imap
   if (imap === undefined) return false
   return manifest.tools.some((t) => t.sideEffect !== 'read') && folderAllowed('INBOX', imap.folders ?? null)
+}
+
+/**
+ * The IMAP folders `after` lets tools use that `before` didn't (cross-kind red team, workstream I):
+ * `'every'` when `after` has no folder list and `before` had one (or had no IMAP at all), else the
+ * added names. An update that widens this is a permission line, and a kept IMAP grant doesn't
+ * carry over it.
+ */
+export function widenedImapFolders(
+  before: Protocols | undefined,
+  after: Protocols | undefined,
+): 'every' | readonly string[] {
+  const now = after?.imap
+  if (now === undefined) return []
+  const was = before?.imap
+  if (now.folders === undefined) return was !== undefined && was.folders === undefined ? [] : 'every'
+  if (was === undefined) return now.folders
+  return now.folders.filter((f) => !folderAllowed(f, was.folders ?? null))
+}
+
+/** The IMAP folders `before` allowed that `after` no longer lists (a narrowing). */
+export function narrowedImapFolders(
+  before: Protocols | undefined,
+  after: Protocols | undefined,
+): readonly string[] {
+  const was = before?.imap?.folders
+  const now = after?.imap
+  if (was === undefined || now === undefined || now.folders === undefined) return []
+  return was.filter((f) => !folderAllowed(f, now.folders ?? null))
+}
+
+/**
+ * The SMTP recipients `after` lets tools send to that `before` didn't: `'anyone'` when `after` has
+ * no list and `before` had one (or had no SMTP), else the added rules. A rule `before` already
+ * covered (an address under one of its `@domain` rules) isn't a widening.
+ */
+export function widenedRecipients(
+  before: Protocols | undefined,
+  after: Protocols | undefined,
+): 'anyone' | readonly string[] {
+  const now = after?.smtp
+  if (now === undefined) return []
+  const was = before?.smtp
+  if (now.recipients === undefined) return was !== undefined && was.recipients === undefined ? [] : 'anyone'
+  if (was === undefined) return now.recipients
+  const rules = was.recipients ?? null
+  return now.recipients.filter((r) => {
+    if (rules === null) return false
+    const lower = r.toLowerCase()
+    return lower.startsWith('@')
+      ? !rules.some((w) => w.toLowerCase() === lower)
+      : !recipientAllowed(lower, rules)
+  })
 }

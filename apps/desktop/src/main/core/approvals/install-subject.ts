@@ -15,6 +15,7 @@ import {
   describeDeclaration,
   isDisplayText,
   type PermissionChange,
+  protocolPermissionChanges,
   type Risk,
   runtimePermissionChanges,
   STOP_STEPS,
@@ -128,6 +129,9 @@ export function permissionChanges(
   for (const change of sandbox) push(change.area, change.change, change.items, change.risk)
   // The kind and the private hosts (docs/adapter-kinds.md#approval-cards-and-the-permission-diff).
   for (const change of runtimePermissionChanges(before, after))
+    push(change.area, change.change, change.items, change.risk)
+  // A protocol adapter's folders and recipients (cross-kind red team, workstream I).
+  for (const change of protocolPermissionChanges(before, after))
     push(change.area, change.change, change.items, change.risk)
   // A raw adapter's npm packages, on every version's card (docs/node-runtime.md#dependencies).
   for (const change of dependencyPermissionChanges(dependencies))

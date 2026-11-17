@@ -191,9 +191,11 @@ export function nodeRuntimeProfile(input: ProfileInput): string {
   if (reads.length > 0) lines.push(`(allow file-read* ${subpaths(reads)})`)
   if (writes.length > 0) lines.push(`(allow file-read* file-write* ${subpaths(writes)})`)
   if (ports.length > 0) {
-    lines.push('(allow system-socket (socket-domain AF_INET) (socket-domain AF_INET6))')
+    // TCP over IPv4 to the tunnels' own ports, and nothing else: `ip` would also let UDP and IPv6
+    // reach whatever other socket holds the same number (red team I, XK-4).
+    lines.push('(allow system-socket (socket-domain AF_INET))')
     lines.push(
-      `(allow network-outbound ${ports.map((p) => `(remote ip ${sbplString(`localhost:${p}`)})`).join(' ')})`,
+      `(allow network-outbound ${ports.map((p) => `(remote tcp4 ${sbplString(`localhost:${p}`)})`).join(' ')})`,
     )
   }
   // Last, so nothing above can reopen them.

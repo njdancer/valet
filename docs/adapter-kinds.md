@@ -494,7 +494,8 @@ Residual risks, accepted for now:
   (backpressure), when it closes connections, and how many it opens can signal a server it
   controls. Only the per-connection request count limits this.
 - **Unverified on macOS:** the profile lets the adapter read `kern.hostname` (the Mac's name, often
-  the person's), and `(remote ip "localhost:PORT")` probably also matches `::1` on the same port.
+  the person's). (`(remote ip "localhost:PORT")` matching `::1` and UDP is closed: the rule is now
+  `remote tcp4`, workstream I.)
 
 ## H. Example adapters
 
@@ -813,3 +814,35 @@ note it here. Each one can be reversed.
   once. A declined ask holds the same agent's same ask back for an hour. Asks end after 24 hours,
   when the agent is disconnected or revoked, on lockdown, or when a new version is approved. Two
   agents asking for the same credential get two cards rather than one shared card.
+
+### Decisions for Nick's review (workstream I)
+
+Taken by the cross-kind red team while Nick was away, each the recommendation. The findings are
+in [red-team.md](red-team.md#2026-11-17-cross-kind-red-team-workstream-i). Any can be changed.
+
+1. **Folders and recipients are card lines, under "What kind of adapter it is".** No new card area,
+   so phones on today's build read them. Every folder, INBOX, and every recipient line are high;
+   another folder is medium.
+2. **A kept IMAP or SMTP grant doesn't carry over a wider folder or recipient list.** The person is
+   asked for the password again. Narrowing still carries.
+3. **A send whose recipients don't all fit on the signed card is declined**, rather than sent to the
+   Mac only, which would need a new field the phone understands. In practice that's more than about
+   15 recipients. Addresses are capped at 190 characters (was 200).
+4. **The body of a send may still be cut on the phone's card** (20 lines of 200 characters), with
+   "and N more lines not shown". The Mac panel shows all of it. Recipients are what a yes is about.
+5. **Sign-in mail stops while any non-protocol adapter holds the same mail password**, an http one
+   included, though it can't speak IMAP. It's the cautious reading.
+6. **The browser partition's proxy refuses a name that resolves to a non-public address**, the
+   broker's rule. A site behind NAT64 (`64:ff9b::`) answers is refused too, as the broker refuses it.
+
+Residual risks, accepted for now:
+
+- **The same password in two items.** Items are matched by id, not value, so the mail password
+  copied into a second 1Password item and granted to a raw adapter isn't noticed.
+- **A mail grant follows the account adapter's updates.** It names the account adapter, not its
+  endpoint or item, so an approved update that moves the account to another server, plus a new
+  credential grant, moves where sign-in links come from. Both steps are the person's.
+- **A raw adapter's new npm packages on the Mac review.** The phone's card lists them on every
+  version; the Mac's review shows them only in the code diff.
+- **The upload allowance grows with what a raw tunnel receives** (1 KB per 100 KB, no ceiling), so a
+  server the adapter controls can raise it. Bytes received already reach tool output.

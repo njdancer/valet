@@ -8,9 +8,12 @@
 //
 // Plain Node, no Electron: the e2e suite runs it inside Electron, the unit tests in Node.
 
+import dns from 'node:dns'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import { connect, type Socket } from 'node:net'
+import { connect, isIP, Socket } from 'node:net'
+import { networkInterfaces } from 'node:os'
 import type { Duplex } from 'node:stream'
+import { effectiveAddress, isPublicAddress } from '@valet/core'
 import type { ProxyHandle, ProxyPolicy } from './platform'
 
 /** Opens the upstream connection for an allowed CONNECT. Injected so tests choose where it goes. */
@@ -21,7 +24,44 @@ export interface EgressProxyOptions {
   readonly dial?: Dial
 }
 
-const realDial: Dial = (host, port) => connect({ host, port })
+/**
+ * The default dial: a host name must resolve to public addresses only, none of them this Mac's own,
+ * and the socket goes to the address that was checked (cross-kind red team I, XK-3; the rule the
+ * egress broker and ctx.local.fetch follow). An IP literal is dialled as it is: the policy allowed
+ * it by address, which only a private host the person approved can name.
+ */
+const realDial: Dial = (host, port) => {
+  if (isIP(host) !== 0) return connect({ host, port })
+  const socket = new Socket()
+  dns.lookup(host, { all: true, verbatim: true }, (error, answers) => {
+    const own = ownAddresses()
+    const first = answers?.[0]
+    const reachable =
+      error === null &&
+      first !== undefined &&
+      answers.every(
+        (a) => isPublicAddress(a.address) && !own.includes(effectiveAddress(a.address) ?? a.address),
+      )
+    if (!reachable) {
+      socket.destroy(new Error('refused'))
+      return
+    }
+    socket.connect({ host: first.address, port })
+  })
+  return socket
+}
+
+/** This Mac's own addresses, as a socket reaches them. */
+function ownAddresses(): string[] {
+  const out: string[] = []
+  for (const list of Object.values(networkInterfaces())) {
+    for (const entry of list ?? []) {
+      const address = effectiveAddress(entry.address.replace(/%.*$/, ''))
+      if (address !== null) out.push(address)
+    }
+  }
+  return out
+}
 
 const REFUSED = 'HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'
 const BAD_GATEWAY = 'HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'

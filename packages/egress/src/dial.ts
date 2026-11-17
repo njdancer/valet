@@ -17,7 +17,7 @@ import { lookup as dnsLookup, type LookupAddress } from 'node:dns'
 import { connect as netConnect, type Socket } from 'node:net'
 import { networkInterfaces } from 'node:os'
 import { type PeerCertificate, type TLSSocket, connect as tlsConnect } from 'node:tls'
-import { canonicalAddress, isPublicAddress, ValetError } from '@valet/core'
+import { canonicalAddress, effectiveAddress, isPublicAddress, ValetError } from '@valet/core'
 
 export type Lookup = (
   hostname: string,
@@ -115,13 +115,15 @@ export async function dial(target: DialTarget, options: DialOptions = {}): Promi
     const addresses = await resolvePublic(target.host, lookup, testing)
     // A public name may still answer with one of this Mac's own public addresses (a global IPv6
     // one, say): that is this Mac, which is never an endpoint.
-    const own = (options.ownAddresses ?? ownAddresses)()
-    if (addresses.some((a) => isPublicAddress(a) && own.includes(canonicalAddress(a) ?? a)))
+    // Both sides as the address a socket really reaches, so a mapped ::ffff:a.b.c.d is a.b.c.d.
+    const own = (options.ownAddresses ?? ownAddresses)().map((a) => effectiveAddress(a) ?? a)
+    if (addresses.some((a) => isPublicAddress(a) && own.includes(effectiveAddress(a) ?? a)))
       throw fail('host-not-allowed')
     address = addresses[0] as string
   } else {
     address = target.address
-    if ((options.ownAddresses ?? ownAddresses)().includes(address)) throw fail('host-not-allowed')
+    const own = (options.ownAddresses ?? ownAddresses)().map((a) => effectiveAddress(a) ?? a)
+    if (own.includes(effectiveAddress(address) ?? address)) throw fail('host-not-allowed')
   }
   const routed = testing?.route?.(address, target.port) ?? { address, port: target.port }
   const timeoutMs = options.timeoutMs ?? CONNECT_TIMEOUT_MS

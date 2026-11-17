@@ -5,6 +5,7 @@
 import { type DependencyLock, dependencySummary } from './dependencies'
 import { type AdapterManifest, type PrivateHost, type RuntimeKind, runtimeOf } from './manifest'
 import type { PermissionChange, Risk } from './permission-change'
+import { narrowedImapFolders, type Protocols, widenedImapFolders, widenedRecipients } from './protocols'
 import { privateHostKey } from './request-surface'
 
 /** What a kind means, as the card says it. */
@@ -80,6 +81,76 @@ export function runtimePermissionChanges(
   const hosts = (m: typeof after | null) =>
     new Set((m?.privateHosts ?? []).map((h) => describePrivateHost(h, runtimeOf(m ?? {}))))
   diff('private-network', hosts(before), hosts(after))
+  return changes
+}
+
+/**
+ * The lines for a protocol adapter's scope (cross-kind red team, workstream I): the IMAP folders its
+ * tools may use and who its SMTP tools may send to. Without these an update that drops a folder
+ * list (every folder, INBOX included) or a recipients list (anyone) had no line at all, and the
+ * card read "no new permissions". Every folder, INBOX and any recipient are high; another folder
+ * is medium. A first install lists its scope the same way.
+ */
+export function protocolPermissionChanges(
+  before: { readonly protocols?: Protocols | undefined } | null,
+  after: { readonly protocols?: Protocols | undefined },
+): PermissionChange[] {
+  const changes: PermissionChange[] = []
+  const had = before?.protocols
+  const has = after.protocols
+  const how = (present: boolean): PermissionChange['change'] => (present ? 'widened' : 'added')
+  const folders = widenedImapFolders(had, has)
+  if (folders === 'every') {
+    changes.push({
+      area: 'runtime',
+      change: how(had?.imap !== undefined),
+      items: ['Mail: every folder, INBOX included'],
+      risk: 'high',
+    })
+  } else {
+    const inbox = folders.filter((f) => f.toUpperCase() === 'INBOX')
+    const others = folders.filter((f) => f.toUpperCase() !== 'INBOX')
+    if (inbox.length > 0)
+      changes.push({
+        area: 'runtime',
+        change: how(had?.imap !== undefined),
+        items: ['Mail folder INBOX'],
+        risk: 'high',
+      })
+    if (others.length > 0)
+      changes.push({
+        area: 'runtime',
+        change: how(had?.imap !== undefined),
+        items: others.slice(0, 50).map((f) => `Mail folder ${f}`),
+        risk: 'medium',
+      })
+  }
+  const dropped = narrowedImapFolders(had, has)
+  if (dropped.length > 0)
+    changes.push({
+      area: 'runtime',
+      change: 'narrowed',
+      items: dropped.slice(0, 50).map((f) => `Mail folder ${f}`),
+      risk: 'low',
+    })
+  const recipients = widenedRecipients(had, has)
+  if (recipients === 'anyone') {
+    changes.push({
+      area: 'runtime',
+      change: how(had?.smtp !== undefined),
+      items: ['Sends mail to anyone (you confirm each message)'],
+      risk: 'high',
+    })
+  } else if (recipients.length > 0) {
+    changes.push({
+      area: 'runtime',
+      change: how(had?.smtp !== undefined),
+      items: recipients
+        .slice(0, 50)
+        .map((r) => `Sends mail to ${r.startsWith('@') ? `anyone at ${r.slice(1)}` : r}`),
+      risk: 'high',
+    })
+  }
   return changes
 }
 

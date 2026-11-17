@@ -25,7 +25,8 @@ export interface MailMessage {
 export const MAIL_LIMITS = {
   /** To, Cc and Bcc together. */
   recipients: 50,
-  address: 200,
+  /** 190, so "Bcc: " and an address fit one 200-character line of a signed preview (red team I). */
+  address: 190,
   subject: 300,
   /** Characters of body text. */
   text: 100_000,
