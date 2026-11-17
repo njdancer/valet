@@ -30,7 +30,18 @@ export const OAUTH_CAPS = {
   clients: 100,
   openConsents: 20,
   redirectUris: 5,
+  /**
+   * Anyone can reach /register and /authorize, so one address may register only so many clients an
+   * hour and hold only so many sign-ins open, and one client only so many: a flood from one place
+   * can neither use up the hub's room for clients nor fill the person's list of waiting sign-ins.
+   */
+  registrationsPerSourcePerHour: 20,
+  openConsentsPerSource: 5,
+  openConsentsPerClient: 3,
 } as const
+
+/** A client nobody signed in with (no token, no sign-in on record) is forgotten after this. */
+export const UNUSED_CLIENT_MS = 60 * 60_000
 
 export const MCP_SCOPE = 'valet'
 export const CONSENT_COOKIE = '__Host-valet-consent'
@@ -47,6 +58,7 @@ interface ClientRow {
   readonly name: string
   readonly redirect_uris: string
   readonly created_at: number
+  readonly source: string
 }
 
 export interface ConsentRow {
@@ -121,8 +133,15 @@ export class HubOAuth {
   migrate(): void {
     this.db.run(`
       CREATE TABLE IF NOT EXISTS oauth_clients (
-        id TEXT PRIMARY KEY, name TEXT NOT NULL, redirect_uris TEXT NOT NULL, created_at INTEGER NOT NULL
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, redirect_uris TEXT NOT NULL, created_at INTEGER NOT NULL,
+        source TEXT NOT NULL DEFAULT ''
       )`)
+    // Hubs made before registrations recorded where they came from.
+    try {
+      this.db.one('SELECT source FROM oauth_clients LIMIT 1')
+    } catch {
+      this.db.run("ALTER TABLE oauth_clients ADD COLUMN source TEXT NOT NULL DEFAULT ''")
+    }
     this.db.run(`
       CREATE TABLE IF NOT EXISTS oauth_consents (
         id TEXT PRIMARY KEY, client_id TEXT NOT NULL, redirect_uri TEXT NOT NULL, challenge TEXT NOT NULL,
@@ -182,7 +201,7 @@ export class HubOAuth {
       if (path === '/authorize/done') return this.done(request, url)
     }
     if (request.method === 'POST') {
-      if (path === '/register') return this.register(request)
+      if (path === '/register') return this.register(request, source)
       if (path === '/token') return this.token(request)
     }
     return Response.json({ error: 'not_found' }, { status: 404 })
@@ -271,7 +290,7 @@ export class HubOAuth {
 
   // ---------- Registration ----------
 
-  private async register(request: Request): Promise<Response> {
+  private async register(request: Request, source: string): Promise<Response> {
     const parsed = registration.safeParse(await readJson(request))
     if (!parsed.success)
       return oauthError(400, 'invalid_client_metadata', 'That registration isn’t one Valet takes.')
@@ -280,17 +299,27 @@ export class HubOAuth {
       return oauthError(400, 'invalid_client_metadata', 'Only public clients (PKCE, no secret).')
     if (!meta.redirect_uris.every(goodRedirect))
       return oauthError(400, 'invalid_redirect_uri', 'Redirects must be https, or http on this computer.')
+    const now = this.now()
+    const from = source.slice(0, 64)
+    const recent =
+      this.db.one<{ n: number }>(
+        'SELECT COUNT(*) AS n FROM oauth_clients WHERE source = ? AND created_at > ?',
+        from,
+        now - 60 * 60_000,
+      )?.n ?? 0
+    if (recent >= OAUTH_CAPS.registrationsPerSourcePerHour)
+      return oauthError(429, 'invalid_client_metadata', 'Too many registrations. Try again later.')
     const count = this.db.one<{ n: number }>('SELECT COUNT(*) AS n FROM oauth_clients')?.n ?? 0
     if (count >= OAUTH_CAPS.clients) return oauthError(400, 'invalid_client_metadata', 'Too many clients.')
     const id = `hc${token(16)}`
     const name = cleanName(meta.client_name) ?? new URL(meta.redirect_uris[0] as string).hostname
-    const now = this.now()
     this.db.run(
-      'INSERT INTO oauth_clients (id, name, redirect_uris, created_at) VALUES (?, ?, ?, ?)',
+      'INSERT INTO oauth_clients (id, name, redirect_uris, created_at, source) VALUES (?, ?, ?, ?, ?)',
       id,
       name,
       JSON.stringify(meta.redirect_uris),
       now,
+      from,
     )
     return json(
       {
@@ -336,6 +365,21 @@ export class HubOAuth {
       )?.n ?? 0
     if (open >= OAUTH_CAPS.openConsents)
       return consentPage('problem', 'Too many sign-ins are waiting. Try again in a few minutes.', 429)
+    const from = source.slice(0, 64)
+    const openHere =
+      this.db.one<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM oauth_consents WHERE status = 'pending' AND expires_at > ? AND source = ?",
+        now,
+        from,
+      )?.n ?? 0
+    const openForClient =
+      this.db.one<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM oauth_consents WHERE status = 'pending' AND expires_at > ? AND client_id = ?",
+        now,
+        client.id,
+      )?.n ?? 0
+    if (openHere >= OAUTH_CAPS.openConsentsPerSource || openForClient >= OAUTH_CAPS.openConsentsPerClient)
+      return consentPage('problem', 'Too many sign-ins are waiting. Try again in a few minutes.', 429)
 
     const id = token(16)
     const browser = token(32)
@@ -350,7 +394,7 @@ export class HubOAuth {
       state,
       code,
       await sha256Hex(browser),
-      source.slice(0, 64),
+      from,
       now,
       now + OAUTH_TIMINGS.consentMs,
     )
@@ -505,6 +549,14 @@ export class HubOAuth {
     const now = this.now()
     this.db.run('DELETE FROM oauth_tokens WHERE expires_at <= ?', now)
     this.db.run('DELETE FROM oauth_consents WHERE expires_at <= ?', now - OAUTH_TIMINGS.consentMs)
+    // A registration nobody signed in with, or whose tokens have all ended, gives nothing; without
+    // this, registrations alone would fill the cap for good and no agent could sign in again.
+    this.db.run(
+      `DELETE FROM oauth_clients WHERE created_at <= ?
+         AND NOT EXISTS (SELECT 1 FROM oauth_tokens t WHERE t.client_id = oauth_clients.id)
+         AND NOT EXISTS (SELECT 1 FROM oauth_consents c WHERE c.client_id = oauth_clients.id)`,
+      now - UNUSED_CLIENT_MS,
+    )
   }
 }
 

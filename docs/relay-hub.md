@@ -242,7 +242,8 @@ Built in this order: the hub's sign-in for agents and the grant format (3a), the
 
 - **The hub is an OAuth 2.1 server for MCP clients** (`apps/relay/src/hub/oauth.ts`): metadata for
   `<hub>/mcp`, Dynamic Client Registration (public clients, https or loopback redirects, at most
-  100), the code flow with PKCE S256 and resource indicators, codes good once for a minute,
+  100, 20 an hour from one address, and one nobody signed in with is forgotten after an hour), at
+  most 20 sign-ins waiting (5 from one address, 3 for one client), the code flow with PKCE S256 and resource indicators, codes good once for a minute,
   access tokens for an hour, rotating refresh tokens (a reuse ends everything from that sign-in).
   Tokens are stored as hashes, each tied to the grant that approved it.
 - **`/authorize` never decides.** It shows the browser a code and tells every node of the account
