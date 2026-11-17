@@ -123,10 +123,11 @@ export interface WriterSource {
   turnOffTool(clientId: string, qualified: string): Promise<'done' | 'already' | 'not-found'>
   /**
    * Files an agent's ask to remove a site (shown in Needs you; service.requestRemoval). The site's
-   * name, or why not: no such site, or a built-in one.
+   * name, or why not: no such site, or a built-in one. `asker` is the agent's label
+   * (`local:<id>` or `remote:<id>`), so its asks go when it does.
    */
   requestRemoval(
-    clientId: string,
+    asker: string,
     clientName: string,
     adapterId: string,
     note: string | null,
@@ -153,6 +154,10 @@ export interface WriterSource {
       }
     | 'not-found'
     | 'not-approved'
+    | {
+        readonly refused: 'cooling-down' | 'too-many-waiting' | 'too-many-total'
+        readonly until?: string
+      }
   >
   /** Revokes the client (its token stops working) and withdraws its requests. */
   disconnect(viewer: ClientIdentity): Promise<boolean>
@@ -345,7 +350,7 @@ export class AdminWriterImpl implements AdminWriter {
       if (limited !== null) return limited
       let result: Awaited<ReturnType<WriterSource['requestRemoval']>>
       try {
-        result = await this.source.requestRemoval(viewer.clientId, gate.name, adapterId, note)
+        result = await this.source.requestRemoval(identityLabel(viewer), gate.name, adapterId, note)
       } catch {
         return refused('unavailable')
       }
@@ -386,6 +391,12 @@ export class AdminWriterImpl implements AdminWriter {
       }
       if (result === 'not-found') return refused('not-found')
       if (result === 'not-approved') return refused('not-allowed')
+      if ('refused' in result)
+        return {
+          kind: 'refused',
+          reason: result.refused,
+          ...(result.until === undefined ? {} : { until: result.until }),
+        }
       return result
     })
   }

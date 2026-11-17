@@ -475,6 +475,12 @@ const PRUNE_EVERY_MS = 60 * 60_000
 
 const titlesSchema = z.record(z.string().max(512), z.string().max(200))
 
+/** How long a declined credential ask holds the same agent's same ask back. */
+const CREDENTIAL_DECLINE_COOLDOWN_MS = 60 * 60_000
+/** Credential asks one agent, and all agents, may keep waiting at once. */
+const CREDENTIAL_ASKS_PER_AGENT = 3
+const CREDENTIAL_ASKS_TOTAL = 10
+
 export class AppService {
   readonly api: MainApi
   private readonly audit: ObservedAudit
@@ -513,6 +519,8 @@ export class AppService {
     string,
     AgentRequestItem & { readonly asker: string; readonly credential: string; readonly adapterHash: string }
   >()
+  /** When the person declined a credential ask, by asker, adapter and credential: it waits an hour. */
+  private readonly credentialDeclines = new Map<string, number>()
   private readonly versions: VersionStore
   private readonly setup: SetupStore
   private updates: UpdatesPort | null = null
@@ -1316,6 +1324,22 @@ export class AppService {
     }
   }
 
+  /**
+   * Drops an agent's asks that aren't broker requests (removal and credential asks) when the agent
+   * goes: disconnected, revoked, or its Ask for changes taken away. Null drops every agent's
+   * (lockdown).
+   */
+  private dropAgentAsks(asker: string | null): void {
+    let dropped = false
+    for (const asks of [this.removalAsks, this.credentialAsks] as Map<string, { readonly asker: string }>[])
+      for (const [id, ask] of asks)
+        if (asker === null || ask.asker === asker) {
+          asks.delete(id)
+          dropped = true
+        }
+    if (dropped) this.emit('attention-changed')
+  }
+
   /** Drops the asks a grant just answered: every agent's, for that credential and version. */
   private answerCredentialAsks(adapterId: string, adapterHash: string, credential: string): boolean {
     let dropped = false
@@ -1527,6 +1551,7 @@ export class AppService {
     this.authoringSessions.clear()
     this.privateNetwork.clear()
     const ledger = this.approvalBroker?.lockdown().catch(() => undefined)
+    this.dropAgentAsks(null)
     let revoked = 0
     if (locked) {
       this.broker.declineAll()
@@ -2012,6 +2037,7 @@ export class AppService {
    */
   private cancelConfirmationsOf(label: string): void {
     this.broker.cancelWhere((item) => this.callers.get(item.callId) === label, 'client-revoked')
+    this.dropAgentAsks(label)
   }
 
   private async setSitePaused(adapterId: string, paused: boolean): Promise<void> {
@@ -2479,6 +2505,7 @@ export class AppService {
     await this.dropRemoteCapabilities(clientId)
     // Its requests about changes go with the capability.
     await this.approvalBroker.withdrawClient(`remote:${clientId}`).catch(() => 0)
+    this.dropAgentAsks(`remote:${clientId}`)
     await this.remote.reopenClient(clientId).catch(() => undefined)
     this.emit('remote-changed')
   }
@@ -3982,7 +4009,7 @@ export class AppService {
         if (adapter === null) return 'not-found'
         if (!this.canRemove(adapterId)) return 'built-in'
         const siteName = adapter.definition.manifest.name
-        const asker = `local:${clientId}`
+        const asker = clientId
         for (const ask of this.removalAsks.values())
           if (ask.adapterId === adapterId && ask.asker === asker) return { kind: 'removal-already', siteName }
         const id = `rm${randomBytes(15).toString('base64url')}`
@@ -4019,15 +4046,25 @@ export class AppService {
         // Granted only after the person approved this version, as on the card.
         if (!(await this.installGate.isApproved(adapterId, adapter.hash).catch(() => false)))
           return 'not-approved'
-        const siteName = manifest.name
+        const siteName = plainName(manifest.name)
         if ((await this.credentialKeeper.sourceFor(adapterId, adapter.hash).findGrant(credential)) !== null)
           return { kind: 'credential-granted', siteName }
         this.pruneCredentialAsks()
-        for (const ask of this.credentialAsks.values())
-          if (ask.adapterId === adapterId && ask.credential === credential && ask.asker === asker)
-            return { kind: 'credential-already', siteName }
-        const id = `cr${randomBytes(15).toString('base64url')}`
+        const mine = [...this.credentialAsks.values()].filter((ask) => ask.asker === asker)
+        if (mine.some((ask) => ask.adapterId === adapterId && ask.credential === credential))
+          return { kind: 'credential-already', siteName }
         const at = this.deps.now()
+        // As for the broker's requests: a decline holds this ask back for an hour, and an agent (and
+        // all agents) can keep only a few waiting, so asking can't flood the person.
+        const declined = this.credentialDeclines.get(`${asker} ${adapterId} ${credential}`)
+        if (declined !== undefined && at - declined < CREDENTIAL_DECLINE_COOLDOWN_MS)
+          return {
+            refused: 'cooling-down',
+            until: new Date(declined + CREDENTIAL_DECLINE_COOLDOWN_MS).toISOString(),
+          }
+        if (mine.length >= CREDENTIAL_ASKS_PER_AGENT) return { refused: 'too-many-waiting' }
+        if (this.credentialAsks.size >= CREDENTIAL_ASKS_TOTAL) return { refused: 'too-many-total' }
+        const id = `cr${randomBytes(15).toString('base64url')}`
         this.credentialAsks.set(id, {
           kind: 'agent-request',
           id,
@@ -4036,6 +4073,7 @@ export class AppService {
           title: `Grant ${credential} to ${siteName}`,
           details: [
             describeCredentialUse(credential, declaration),
+            `Any app or agent that can use ${siteName}’s tools can then use it.`,
             'You pick where it comes from on the site’s page, and approve with Touch ID. The agent never sees it.',
           ],
           adapterId,
@@ -4068,6 +4106,7 @@ export class AppService {
           const id = viewer.clientId
           if (this.remote.clients.get(id) === null) return false
           await this.approvalBroker?.withdrawClient(`remote:${id}`).catch(() => 0)
+          this.dropAgentAsks(`remote:${id}`)
           await this.dropRemoteCapabilities(id)
           // Just after, so this call's own result still reaches the agent.
           const timer = setTimeout(() => void this.remote.revokeClient(id).catch(() => false), 1000)
@@ -4659,6 +4698,16 @@ export class AppService {
           return result.ok
         },
         declineRequest: async (id) => {
+          const credentialAsk = this.credentialAsks.get(id)
+          if (credentialAsk !== undefined) {
+            const now = this.deps.now()
+            for (const [key, at] of this.credentialDeclines)
+              if (now - at >= CREDENTIAL_DECLINE_COOLDOWN_MS) this.credentialDeclines.delete(key)
+            this.credentialDeclines.set(
+              `${credentialAsk.asker} ${credentialAsk.adapterId} ${credentialAsk.credential}`,
+              now,
+            )
+          }
           if (this.removalAsks.delete(id) || this.credentialAsks.delete(id)) {
             this.emit('attention-changed')
             return true
