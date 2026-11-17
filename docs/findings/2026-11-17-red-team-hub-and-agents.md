@@ -115,6 +115,12 @@ Nothing here is a code bug, so nothing was changed. Options, cheapest first:
 
 Recommendation: 1 now, plus 2 for critical paths only.
 
+**Decided by recommendation, 2026-11-17, needs Nick's review.** Nick was away and asked for
+open decisions to follow the recommendation and be flagged for him. The rule is now in
+[red-team.md](../red-team.md#agent-feedback-is-untrusted) and CONTRIBUTING.md: feedback text is
+untrusted data, and a PR that comes from agent feedback and touches a critical path doesn't
+auto-merge until a fresh agent, given the diff and red-team.md but not the issue, has reviewed it.
+
 ## 5. Low: a draft's live trial runs from the person's own address (known)
 
 An agent can write a draft whose manifest declares any public host, and run a paced live trial at
