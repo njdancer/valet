@@ -31,9 +31,12 @@ import {
   REDIS_USER,
   startExampleServices,
 } from '@valet/fake-example-services'
+import { DEFAULT_USER, startFakeImap } from '@valet/fake-imap'
 import type { ClientIdentity } from '@valet/mcp-server'
 import { addDependency, loadDependencies, memoryTarballStore, nodeRuntimeProcess } from '@valet/node-runtime'
-import { noBrowserDriver, type SiteGuards, ToolHost } from '@valet/runtime'
+import { imapBackend, type ProtocolHostOptions } from '@valet/protocols'
+import { writeProtocolHost } from '@valet/protocols/build'
+import { type ImapBackend, noBrowserDriver, type SiteGuards, ToolHost } from '@valet/runtime'
 import { buildToolLibrary } from '@valet/runtime/tool-script'
 import { inProcessQuickJS, nodeQuickJS } from '@valet/sandbox'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -292,6 +295,7 @@ async function installed(
   grants: Grants,
   edit: (files: PackageFiles) => PackageFiles = (f) => f,
   dependencies: readonly { name: string; range: string }[] = [],
+  imap?: ImapBackend,
 ) {
   const h = await fromExample(example)
   for (const d of dependencies) await h.authoring.addDependency(AGENT, h.draftId, d)
@@ -322,6 +326,7 @@ async function installed(
     definition: loaded.definition,
     bundleHash: loaded.adapterHash,
     driver: noBrowserDriver(),
+    ...(imap === undefined ? {} : { imap }),
     ...(manifest.runtime === 'raw'
       ? {
           raw: {
@@ -347,9 +352,11 @@ async function installed(
           targets:
             'header' in declared.use
               ? [...declared.use.hosts]
-              : 'entrusted' in declared.use
-                ? [...declared.use.entrusted.endpoints]
-                : [],
+              : 'protocol' in declared.use
+                ? [declared.use.endpoint]
+                : 'entrusted' in declared.use
+                  ? [...declared.use.entrusted.endpoints]
+                  : [],
           grantedAt: '2026-11-17T00:00:00.000Z',
         }
       },
@@ -383,6 +390,7 @@ describe('the examples', () => {
       'home-hub',
       'icloud-calendar',
       'icloud-contacts',
+      'icloud-mail-read',
     ])
     for (const example of EXAMPLES.values()) {
       expect(example.files['manifest.json']).toBeDefined()
@@ -713,4 +721,150 @@ describe('the cache reader (raw, an npm dependency, an entrusted password)', () 
     expect(used(audit.events)).toHaveLength(3)
     expect(JSON.stringify(audit.events)).not.toContain(REDIS_PASSWORD)
   }, 120_000)
+})
+
+/** An iCloud-like message for the fake IMAP server. */
+const mail = (from: string, subject: string, day: number) => ({
+  raw: [
+    `From: ${from}`,
+    'To: nick@icloud.test',
+    `Subject: ${subject}`,
+    `Date: ${day} Nov 2026 08:00:00 +0000`,
+    `Message-ID: <m${day}@example.test>`,
+    'Content-Type: text/plain; charset=utf-8',
+    '',
+    'The body, which no tool reads.',
+    '',
+  ].join('\r\n'),
+  internalDate: new Date(Date.UTC(2026, 10, day, 8)),
+})
+
+describe('iCloud Mail, read only (protocol, IMAP, a kept password)', () => {
+  it('passes its check and every case, ctx.imap answered by the cases’ scripts', async () => {
+    await expectPasses(await fromExample('icloud-mail-read'))
+  })
+
+  it('a case whose script the tool doesn’t follow fails, and a write from a read tool is refused', async () => {
+    const h = await fromExample('icloud-mail-read')
+    const cases = JSON.parse(await h.read('test/inbox.json')) as { cases: Record<string, unknown>[] }
+    const first = cases.cases[0] as Record<string, unknown>
+    // The tool makes status, not search: the script doesn't match.
+    await h.write(
+      'test/inbox.json',
+      JSON.stringify({ cases: [{ ...first, imap: [{ op: 'search', answer: { uids: [] } }] }] }),
+    )
+    const wrong = await h.authoring.check(AGENT, h.draftId)
+    expect(wrong.ok).toBe(false)
+    expect(wrong.cases[0]?.reason).toContain('IMAP step 1 is search')
+    // Tool code that tries to mark mail read from a read tool: refused before the script is asked.
+    const tools = await h.read('src/tools.ts')
+    await h.write(
+      'src/tools.ts',
+      tools.replace(
+        'const status = await imap(ctx).status(INBOX)',
+        "await imap(ctx).setFlags(INBOX, [1], { add: ['\\\\Seen'] })\n      const status = await imap(ctx).status(INBOX)",
+      ),
+    )
+    await h.write(
+      'test/inbox.json',
+      JSON.stringify({
+        cases: [
+          { ...first, expect: { error: { stage: 'request-surface', errorClass: 'command-not-allowed' } } },
+        ],
+      }),
+    )
+    const refused = await h.authoring.check(AGENT, h.draftId)
+    expect(refused.cases.filter((c) => !c.passed)).toEqual([])
+  })
+
+  it('as installed: reads the inbox through the real protocol host, signs in itself and changes nothing', async () => {
+    const server = await startFakeImap({
+      mailboxes: {
+        INBOX: [
+          mail('Shop <receipts@shop.example>', 'Your receipt', 15),
+          mail('Ann <ann@example.com>', 'Lunch tomorrow?', 16),
+          mail('Bank <alerts@bank.example>', 'Statement ready', 17),
+        ],
+        Private: [mail('Someone <x@example.com>', 'Not for this adapter', 17)],
+      },
+    })
+    const home = mkdtempSync(join(tmpdir(), 'ex-mail-home-'))
+    const hostDir = mkdtempSync(join(tmpdir(), 'ex-mail-host-'))
+    dirs.push(home, hostDir)
+    try {
+      const host = {
+        nodeBinary: process.execPath,
+        hostScript: await writeProtocolHost(join(hostDir, 'protocol-host.cjs')),
+        home,
+        withoutSeatbelt: !mac,
+        testCa: server.cert ?? undefined,
+        operationTimeoutMs: 10_000,
+      } as ProtocolHostOptions
+      const broker = {
+        lookup: (_n: string, cb: (e: Error | null, a: { address: string; family: number }[]) => void) =>
+          cb(null, [{ address: '127.0.0.1', family: 4 }]),
+        testing: {
+          allowAddresses: ['127.0.0.1'],
+          route: () => ({ address: '127.0.0.1', port: server.port }),
+        },
+      }
+      const { call, audit } = await installed(
+        'icloud-mail-read',
+        {
+          mail: {
+            kind: 'password',
+            fields: { username: DEFAULT_USER.username, password: DEFAULT_USER.password },
+          },
+        },
+        (f) => f,
+        [],
+        imapBackend({
+          protocol: { endpoint: 'imap.mail.me.com:993', credential: 'mail', folders: ['INBOX'] },
+          host,
+          broker,
+        }),
+      )
+      const overview = await call('inbox_overview')
+      expect(overview).toMatchObject({ status: 'ok', output: { messages: 3, unread: 3 } })
+      const recent = await call('recent_mail', { count: 2 })
+      expect(recent).toMatchObject({
+        status: 'ok',
+        output: {
+          total: 3,
+          messages: [
+            { from: 'alerts@bank.example', subject: 'Statement ready', read: false },
+            { from: 'ann@example.com', subject: 'Lunch tomorrow?', read: false },
+          ],
+        },
+      })
+      // Nothing changed on the server: no flag set, INBOX only ever examined, no body fetched.
+      for (const m of server.mailboxes.get('INBOX')?.messages ?? []) expect([...m.flags]).toEqual([])
+      const verbs = server.commands.map((c) => c.verb)
+      expect(verbs).toContain('EXAMINE')
+      for (const v of [
+        'SELECT',
+        'STORE',
+        'UID STORE',
+        'APPEND',
+        'COPY',
+        'UID COPY',
+        'MOVE',
+        'UID MOVE',
+        'EXPUNGE',
+        'UID EXPUNGE',
+      ])
+        expect(verbs).not.toContain(v)
+      expect(server.commands.some((c) => /BODY\[\]|RFC822(?!\.SIZE)|BODY\[TEXT\]/i.test(c.line))).toBe(false)
+      expect(server.commands.some((c) => c.line.includes('Private'))).toBe(false)
+      // Signed in by Valet with the kept password, which no output or audit target carries.
+      expect(server.logins).toEqual([
+        { username: DEFAULT_USER.username, ok: true },
+        { username: DEFAULT_USER.username, ok: true },
+      ])
+      expect(JSON.stringify([overview, recent, audit.events])).not.toContain(DEFAULT_USER.password)
+      expect(used(audit.events).length).toBe(2)
+    } finally {
+      await server.close()
+    }
+  })
 })

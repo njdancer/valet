@@ -124,6 +124,14 @@ with `Contents/MacOS/valet-node`, or in a development run with `.node-runtime/va
 (`scripts/node-runtime.mjs`). Without the binary, protocol adapters answer not-granted and
 sign-in mail isn't offered (`src/main/core/protocol-host.ts`).
 
+## Cases and the example
+
+A protocol draft's cases answer `ctx.imap` from an `imap` script in the case: each step names the
+operation the tool makes next, the arguments it checks (from the first), and the server's `answer`
+or an `error`. The runtime's own GuardedImap runs first, so a case shows a refused write or folder
+as a live call would. No credential is ever asked for. The worked example is
+`examples/icloud-mail-read`, the adapter for the [live check](live-checks/icloud-mail-read.md).
+
 ## iCloud
 
 - IMAP is `imap.mail.me.com:993`, which `ICLOUD_IMAP_ENDPOINT` names.

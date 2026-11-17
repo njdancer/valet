@@ -17,14 +17,18 @@ import {
   credentialHeaderNames,
   credentialTargets,
   type EnsureResult,
+  type ErrorClass,
   type FetchInit,
   type FetchResult,
   homeUnreachable,
   type LocalAccess,
   NeedsUserError,
+  OPERATION_PURPOSE,
+  type Operation,
   type PackageFiles,
   runtimeOf,
   SecretValue,
+  type Stage,
   type ToolContext,
   type ToolPage,
   uploadBudget,
@@ -37,8 +41,10 @@ import {
   type EgressSocket,
   failureDetail,
   GuardedHttp,
+  GuardedImap,
   GuardedToolPage,
   type HttpEgress,
+  type ImapBackend,
   NO_HTTP_ACCESS,
   NO_PAGE,
   runIsolated,
@@ -112,6 +118,21 @@ const socketEntrySchema = z
   })
   .strict()
 
+/**
+ * One IMAP operation a case answers (a protocol adapter's ctx.imap), in the order the tool makes
+ * them: the operation's name, its arguments if the case checks them (matched like an output), and
+ * what the server "answers": a value, or an error. Each operation still passes the runtime's own
+ * checks first (purpose, folders, the request ceiling), as a live call's does.
+ */
+const imapStepSchema = z
+  .object({
+    op: z.enum(Object.keys(OPERATION_PURPOSE) as [Operation, ...Operation[]]),
+    args: z.array(z.unknown()).max(4).optional(),
+    answer: z.unknown().optional(),
+    error: z.object({ stage, errorClass: stage }).strict().optional(),
+  })
+  .strict()
+
 export const caseSchema = z
   .object({
     name: z.string().min(1).max(120),
@@ -121,6 +142,7 @@ export const caseSchema = z
     pages: z.record(z.string().max(2000), fixturePath).default({}),
     fetch: z.array(fetchEntrySchema).max(50).default([]),
     sockets: z.array(socketEntrySchema).max(4).default([]),
+    imap: z.array(imapStepSchema).max(50).default([]),
     session: z.enum(['ok', 'needs-user', 'failed']).default('ok'),
     /**
      * A repair's reproduction (docs/authoring-tools.md#repairs-pr-3): the ticket this case
@@ -349,10 +371,36 @@ export async function runCase(
   // An http adapter has no page: its requests go through the runtime's own ctx.http guard, to the
   // case's responses in place of the egress broker, with the run's real upload budget.
   const http = runtimeOf(draft.manifest) !== 'browser'
+  // A protocol adapter's ctx.imap: the runtime's own GuardedImap, answered from the case's script in
+  // place of the protocol host. No credential is ever asked for.
+  const imapProtocol = runtimeOf(draft.manifest) === 'protocol' ? draft.manifest.protocols?.imap : undefined
+  const imapScript = scriptedImap(c.imap, imapProtocol?.endpoint ?? '', imapProtocol?.folders ?? null)
   const ctx: ToolContext = {
+    ...(imapProtocol === undefined
+      ? {}
+      : {
+          imap: new GuardedImap({
+            adapterId: draft.manifest.id,
+            manifest: draft.manifest,
+            sideEffect: declared.sideEffect,
+            site: OPEN_SITE,
+            state,
+            audit: async () => {},
+            backend: imapScript.backend,
+            signIn: async () => {
+              throw new ValetError('credential', 'not-granted')
+            },
+            run: {
+              meter: new RunMeter(uploadBudget(draft.manifest, declared.sideEffect)),
+              signal: controller.signal,
+              record: () => {},
+            },
+          }),
+        }),
     page: http ? NO_PAGE : browser === null ? watchDom(guarded, domUse) : guarded,
+    // Only an http adapter has ctx.http, as an installed call (tool-host.ts) gives it.
     http:
-      http && !raw
+      http && !raw && runtimeOf(draft.manifest) === 'http'
         ? new GuardedHttp({
             adapterId: draft.manifest.id,
             manifest: draft.manifest,
@@ -408,6 +456,9 @@ export async function runCase(
   }
   if (outcome === 'timeout') return fail(`Ran over ${Math.round(timeoutMs / 1000)} seconds.`)
   if (fixtures.problem !== null) return fail(fixtures.problem)
+  // Steps the tool never reached matter only when it was meant to finish.
+  const imapProblem = imapScript.problem('output' in c.expect)
+  if (imapProblem !== null) return fail(imapProblem)
   if (domUse.name !== null)
     return fail(
       `The tool calls page.${domUse.name}, which needs a page: give the case one under "pages" (its URL and a fixture).`,
@@ -922,4 +973,51 @@ function pathOk(path: string): boolean {
 
 function clip(text: string): string {
   return text.length > 120 ? `${text.slice(0, 117)}...` : text
+}
+
+/**
+ * A protocol host stand-in for a case's IMAP script: each operation must be the next one the case
+ * lists (and match the arguments it lists, from the first); it answers that step's value or error.
+ * An operation the case doesn't expect fails the case, and so does a step the tool never made when
+ * the case expects output.
+ */
+function scriptedImap(
+  steps: DraftCase['imap'],
+  endpoint: string,
+  folders: readonly string[] | null,
+): { readonly backend: ImapBackend; readonly problem: (finished: boolean) => string | null } {
+  let next = 0
+  let problem: string | null = null
+  const backend: ImapBackend = {
+    endpoint,
+    folders,
+    connect: async () => ({
+      operation: async (op, args) => {
+        const step = steps[next]
+        if (step === undefined) {
+          problem ??= `The tool made an IMAP ${op} the case doesn't list (after ${next} steps).`
+          throw new ValetError('egress', 'unavailable')
+        }
+        next++
+        if (step.op !== op) {
+          problem ??= `IMAP step ${next} is ${step.op}, but the tool made ${op}.`
+          throw new ValetError('egress', 'unavailable')
+        }
+        if (step.args !== undefined && partialMismatch(step.args, args.slice(0, step.args.length), 'args') !== null) {
+          problem ??= `IMAP step ${next} (${op}) was made with other arguments: ${JSON.stringify(args).slice(0, 200)}.`
+          throw new ValetError('egress', 'unavailable')
+        }
+        if (step.error !== undefined)
+          throw new ValetError(step.error.stage as Stage, step.error.errorClass as ErrorClass)
+        return step.answer ?? null
+      },
+      end: async () => {},
+    }),
+  }
+  return {
+    backend,
+    problem: (finished) =>
+      problem ??
+      (finished && next < steps.length ? `The tool made ${next} of the case's ${steps.length} IMAP steps.` : null),
+  }
 }

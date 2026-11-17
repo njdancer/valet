@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "id": "icloud-mail-read",
+  "name": "iCloud Mail (read only)",
+  "version": "0.1.0",
+  "description": "Your iCloud inbox over IMAP, read only: how many messages and how many unread, and the sender, subject and date of the newest few. An example of a protocol adapter with a kept credential: Valet signs in with your app-specific password and opens INBOX read-only, so nothing is marked read, and the tool code never sees the password or any message body.",
+  "runtime": "protocol",
+  "protocols": {
+    "imap": { "endpoint": "imap.mail.me.com:993", "credential": "mail", "folders": ["INBOX"] }
+  },
+  "credentials": {
+    "mail": {
+      "description": "Your iCloud email address and an app-specific password (account.apple.com, Sign-In and Security, App-Specific Passwords)",
+      "kind": "password",
+      "custody": "kept",
+      "use": { "protocol": "imap", "endpoint": "imap.mail.me.com:993" }
+    }
+  },
+  "tools": [
+    {
+      "name": "inbox_overview",
+      "title": "Inbox overview",
+      "description": "How many messages your iCloud inbox holds and how many are unread. Reads nothing else.",
+      "sideEffect": "read"
+    },
+    {
+      "name": "recent_mail",
+      "title": "Recent mail",
+      "description": "The newest messages in your iCloud inbox (at most 10): each one's sender address, subject, date and whether you've read it. Never the body, and nothing is marked read.",
+      "sideEffect": "read"
+    }
+  ],
+  "limits": {
+    "requestsPerRun": 4,
+    "minGapMs": 1000,
+    "requestsPerHour": 120,
+    "requestsPerMinute": 20,
+    "gapJitterPercent": 20,
+    "cooldownSeconds": 600,
+    "maxCooldownSeconds": 7200
+  }
+}
