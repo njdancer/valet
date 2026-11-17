@@ -155,7 +155,7 @@ public final class MigratingStore: SecretStore {
   public func write(_ item: KeychainItem, secret: [UInt8], comment: String) throws {
     try primary.write(item, secret: secret, comment: comment)
     // An old copy left behind would come back if the new one were ever deleted.
-    try? legacy.delete(item)
+    try retireOldCopy(item, keeping: secret)
   }
 
   public func delete(_ item: KeychainItem) throws {
@@ -182,8 +182,27 @@ public final class MigratingStore: SecretStore {
     let secret = try legacy.read(item)
     let note = (try? legacy.comment(item)) ?? ""
     try primary.write(item, secret: secret, comment: note)
-    try? legacy.delete(item)
+    try retireOldCopy(item, keeping: secret)
     return secret
+  }
+
+  /// Removes the old copy only once the new one reads back the same, and checks it still does
+  /// afterwards. A store that confused the two (a classic query reaching the protected Keychain)
+  /// once deleted both copies of a device key; this refuses to let that happen silently again.
+  private func retireOldCopy(_ item: KeychainItem, keeping secret: [UInt8]) throws {
+    guard (try? primary.read(item)) == secret else { throw KeychainFailure.other(errSecInternalError) }
+    do {
+      try legacy.delete(item)
+    } catch KeychainFailure.notFound {
+      return
+    } catch {
+      return  // The old copy stays; the protected one is read first, so it wins either way.
+    }
+    guard (try? primary.read(item)) == secret else {
+      // Removing the old copy took the new one with it: put it back.
+      try primary.write(item, secret: secret, comment: (try? primary.comment(item)) ?? "")
+      throw KeychainFailure.other(errSecInternalError)
+    }
   }
 }
 

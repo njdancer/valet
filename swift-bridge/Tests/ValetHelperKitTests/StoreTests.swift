@@ -14,6 +14,9 @@ final class MemoryStore: SecretStore {
   var failReads: KeychainFailure?
   var failDeletes: KeychainFailure?
   var failWrites: KeychainFailure?
+  /// Deleting from this store also deletes from that one: the bug where a classic query reached
+  /// the protected Keychain.
+  weak var deletesAlsoIn: MemoryStore?
 
   private func key(_ item: KeychainItem) -> String { "\(item.service)/\(item.account)" }
 
@@ -39,6 +42,7 @@ final class MemoryStore: SecretStore {
   func delete(_ item: KeychainItem) throws {
     calls.append("delete \(key(item))")
     if let failDeletes { throw failDeletes }
+    deletesAlsoIn?.items.removeValue(forKey: key(item))
     guard items.removeValue(forKey: key(item)) != nil else { throw KeychainFailure.notFound }
   }
 
@@ -96,6 +100,38 @@ final class MigratingStoreTests: XCTestCase {
     primary.failWrites = .other(-34018)
     XCTAssertThrowsError(try store.read(item)) { XCTAssertEqual($0 as? KeychainFailure, .other(-34018)) }
     XCTAssertNotNil(legacy.items["valet.device/transport"], "never delete the only copy")
+  }
+
+  func testNeverLosesAKeyWhenRemovingTheOldCopyTakesTheNewOneToo() {
+    legacy.items["valet.device/approval"] = ([5, 5], "Valet device key")
+    legacy.deletesAlsoIn = primary
+    let approval = KeychainItem(service: "valet.device", account: "approval")!
+    XCTAssertThrowsError(try store.read(approval))
+    XCTAssertEqual(primary.items["valet.device/approval"]?.secret, [5, 5], "the key was put back")
+    // And a later read finds it.
+    legacy.deletesAlsoIn = nil
+    XCTAssertEqual(try store.read(approval), [5, 5])
+  }
+
+  func testAWriteThatLosesItsCopyIsRestoredAndReported() {
+    legacy.items["valet.device/transport"] = ([1], "old")
+    legacy.deletesAlsoIn = primary
+    XCTAssertThrowsError(try store.write(item, secret: [9], comment: "new"))
+    XCTAssertEqual(primary.items["valet.device/transport"]?.secret, [9])
+  }
+
+  func testNeverRemovesTheOldCopyUnlessTheNewOneReadsBackTheSame() {
+    final class Forgetful: SecretStore {
+      func read(_ item: KeychainItem) throws -> [UInt8] { throw KeychainFailure.notFound }
+      func comment(_ item: KeychainItem) throws -> String { throw KeychainFailure.notFound }
+      func write(_ item: KeychainItem, secret: [UInt8], comment: String) throws {}
+      func delete(_ item: KeychainItem) throws { throw KeychainFailure.notFound }
+      func purge(service: String) throws -> Int { 0 }
+    }
+    legacy.items["valet.device/transport"] = ([7], "c")
+    let store = MigratingStore(primary: Forgetful(), legacy: legacy)
+    XCTAssertThrowsError(try store.read(item))
+    XCTAssertEqual(legacy.items["valet.device/transport"]?.secret, [7], "the only copy stays")
   }
 
   func testMissingEverywhereIsNotFound() {

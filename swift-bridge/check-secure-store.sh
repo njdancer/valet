@@ -16,10 +16,12 @@ failures=0
 step() { # step <name> <seconds> <command...>
   local name=$1 seconds=$2
   shift 2
-  if perl -e 'alarm shift; exec @ARGV' "$seconds" "$@" >/dev/null 2>&1; then
+  local status=0
+  perl -e 'alarm shift; exec @ARGV' "$seconds" "$@" >/dev/null 2>&1 || status=$?
+  if [ "$status" -eq 0 ]; then
     echo "ok   $name"
   else
-    echo "FAIL $name (exit $?; a timeout means the Keychain asked for permission)"
+    echo "FAIL $name (exit $status; 142 is a timeout, which means the Keychain asked for permission)"
     failures=$((failures + 1))
   fi
 }
