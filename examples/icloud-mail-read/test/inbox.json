@@ -1,0 +1,98 @@
+{
+  "cases": [
+    {
+      "name": "counts the inbox and its unread messages",
+      "tool": "inbox_overview",
+      "input": {},
+      "imap": [
+        {
+          "op": "status",
+          "args": ["INBOX"],
+          "answer": { "folder": "INBOX", "messages": 1204, "unseen": 3, "uidNext": 9001, "uidValidity": 1 }
+        }
+      ],
+      "expect": { "output": { "messages": 1204, "unread": 3 } }
+    },
+    {
+      "name": "the newest messages, newest first, envelopes only",
+      "tool": "recent_mail",
+      "input": { "count": 2 },
+      "imap": [
+        {
+          "op": "search",
+          "args": ["INBOX"],
+          "answer": { "folder": "INBOX", "uidValidity": 1, "total": 1204, "uids": [9000, 8999] }
+        },
+        {
+          "op": "fetch",
+          "args": ["INBOX", [9000, 8999]],
+          "answer": {
+            "folder": "INBOX",
+            "messages": [
+              {
+                "uid": 8999,
+                "flags": ["\\Seen"],
+                "internalDate": "2026-11-16T09:00:00Z",
+                "size": 2048,
+                "envelope": {
+                  "date": "Mon, 16 Nov 2026 09:00:00 +0000",
+                  "subject": "Your receipt",
+                  "from": [{ "name": "Shop", "address": "receipts@shop.example" }],
+                  "sender": [],
+                  "replyTo": [],
+                  "to": [],
+                  "cc": [],
+                  "inReplyTo": null,
+                  "messageId": "<a@shop.example>"
+                }
+              },
+              {
+                "uid": 9000,
+                "flags": [],
+                "internalDate": "2026-11-17T08:00:00Z",
+                "size": 1024,
+                "envelope": {
+                  "date": "Tue, 17 Nov 2026 08:00:00 +0000",
+                  "subject": "Lunch  \n tomorrow?",
+                  "from": [{ "name": "Ann", "address": "ann@example.com" }],
+                  "sender": [],
+                  "replyTo": [],
+                  "to": [],
+                  "cc": [],
+                  "inReplyTo": null,
+                  "messageId": "<b@example.com>"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "expect": {
+        "output": {
+          "total": 1204,
+          "messages": [
+            {
+              "from": "ann@example.com",
+              "subject": "Lunch tomorrow?",
+              "date": "Tue, 17 Nov 2026 08:00:00 +0000",
+              "read": false
+            },
+            {
+              "from": "receipts@shop.example",
+              "subject": "Your receipt",
+              "date": "Mon, 16 Nov 2026 09:00:00 +0000",
+              "read": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "an empty inbox",
+      "tool": "recent_mail",
+      "input": {},
+      "imap": [{ "op": "search", "answer": { "folder": "INBOX", "uidValidity": 1, "total": 0, "uids": [] } }],
+      "expect": { "output": { "total": 0, "messages": [] } }
+    }
+  ]
+}

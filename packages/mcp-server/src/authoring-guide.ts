@@ -26,6 +26,10 @@ and name, to read or adapt. Each passes its own check; each README says what it 
   read and a WebSocket to act, with cases that script the socket.
 - \`cache-reader\`: a raw adapter speaking a cache's own protocol over TLS with an npm package (add it
   first: \`valet_add_dependency\` redis-parser 3.0.0) and an entrusted password.
+- \`icloud-mail-read\`: a protocol adapter reading an iCloud inbox over IMAP (\`ctx.imap\`), INBOX only,
+  envelopes only, with a kept password Valet signs in with. Its cases script \`ctx.imap\` with an
+  \`imap\` list: each step's \`op\`, the \`args\` it checks (from the first) and the server's \`answer\`
+  (or an \`error\`), in order.
 
 ## The manifest, briefly
 
