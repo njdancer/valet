@@ -4150,8 +4150,11 @@ export class AppService {
         status: async (): Promise<EndpointStatus> => ({
           listening: this.endpoint !== null,
           url: this.endpoint?.url ?? null,
-          // Sessions open now, bridged or HTTP, as the endpoint counts them.
-          connectedClients: this.endpoint?.sessions().total ?? 0,
+          // Apps with a session open now, bridged or HTTP: one app reconnecting, or leaving a
+          // session behind when it went away without ending it, is still one app.
+          connectedClients: new Set(
+            (this.endpoint?.sessions().sessions ?? []).map((session) => identityLabel(session.identity)),
+          ).size,
         }),
         setListening: async (listening) => {
           if (listening) {

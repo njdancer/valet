@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest'
 import { createFakeApi } from '../src/renderer/dev/fake-api'
 import { ClientPage } from '../src/renderer/screens/connections/ClientPage'
 import { ConnectionsPage } from '../src/renderer/screens/connections/ConnectionsPage'
-import { initials, reportedAs, toolSummary } from '../src/renderer/screens/connections/shared'
+import { initials, reportedAs, siteHosts, toolSummary } from '../src/renderer/screens/connections/shared'
+import type { AdapterDetail } from '../src/shared/api'
 import { called, NOW, renderAt, renderPage } from './connections-helpers'
 
 const CLAUDE_CODE = 'c_c7d2a1b2c3d4e5f6'
@@ -181,6 +182,32 @@ describe('an app’s page', () => {
     expect(screen.getByRole('link', { name: '141 calls' }).getAttribute('href')).toBe(
       `#/activity/calls?client=${CLAUDE_CODE}`,
     )
+  })
+
+  it('says the token is new at each start, not "never reset" (persona QA)', async () => {
+    renderPage(createFakeApi({ now: NOW }), <ClientPage clientId={CLAUDE_CODE} />)
+    expect(await screen.findByText(/^Its own · a new one each time Valet starts/)).toBeTruthy()
+    expect(screen.queryByText(/never reset/)).toBeNull()
+  })
+
+  it('doesn’t say it has access while Valet is locked down or paused (persona QA)', async () => {
+    const api = createFakeApi({ now: NOW })
+    await api.app.setLockedDown(true)
+    renderPage(api, <ClientPage clientId={CLAUDE_CODE} />)
+    expect(await screen.findByText('Locked down')).toBeTruthy()
+    expect(
+      screen.getByText('Valet is locked down, so this app can’t reach anything until you unlock it.'),
+    ).toBeTruthy()
+    expect(screen.queryByText('Has access')).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Can reach' })).toBeNull()
+  })
+
+  it('lists each website once, whatever port its pages use (persona QA)', () => {
+    const detail = {
+      navigation: ['https://www.shop.test:35765', 'https://auth.shop.test:35766'],
+      egress: ['www.shop.test', 'cdn.shop.test:443'],
+    } as unknown as AdapterDetail
+    expect(siteHosts(detail)).toEqual(['www.shop.test', 'auth.shop.test', 'cdn.shop.test'])
   })
 
   it('asks before resetting access, with no Undo, and says the app has a new token', async () => {

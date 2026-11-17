@@ -1043,6 +1043,18 @@ describe('tool calls', () => {
     s.endpoint.sessionsChanged?.(s.endpoint.live)
     expect(s.events).toEqual([{ type: 'endpoint-changed' }])
     expect((await s.api.endpoint.status()).connectedClients).toBe(2)
+    // One app with a second session (it reconnected, leaving the first behind) is still one app
+    // (persona QA: "2 apps connected" with one app).
+    const again = s.endpoint.live.sessions[1] as LiveSessions['sessions'][number]
+    s.endpoint.live = {
+      ...s.endpoint.live,
+      total: 3,
+      http: 2,
+      sessions: [...s.endpoint.live.sessions, again],
+    }
+    expect((await s.api.endpoint.status()).connectedClients).toBe(2)
+    s.endpoint.live = { total: 2, bridge: 0, http: 2, sessions: [again, again] }
+    expect((await s.api.endpoint.status()).connectedClients).toBe(1)
     const desktop = await s.api.clients.add('Desktop')
     const code = await s.api.clients.add('Code')
     const id = (clientId: string) => ({ origin: 'local' as const, clientId })

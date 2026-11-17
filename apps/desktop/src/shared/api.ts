@@ -694,7 +694,7 @@ export interface EndpointStatus {
   readonly listening: boolean
   /** http://127.0.0.1:<port>/mcp, or null while stopped. */
   readonly url: string | null
-  /** MCP sessions open now, over the bridge or plain HTTP. */
+  /** Apps (one per token) with an MCP session open now, over the bridge or plain HTTP. */
   readonly connectedClients: number
 }
 
