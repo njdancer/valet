@@ -453,6 +453,48 @@ Taken while Nick was away, each the recommendation. Any can be changed.
 10. **Credential grants aren't wired into the app yet.** `ServiceDeps.credentialGrants` is the seam;
     granting a credential in the app is workstream B's follow-up. Until then, `ctx.secrets.get` is
     `not-granted` in the app (the tool host and its tests have it end to end).
+11. **A raw adapter with an entrusted credential keeps no read-write files** (found by the red team
+    below). Narrowing and redaction are per call, so a folder that outlives the call would carry the
+    secret to a later call that never asked for it. Its per-call temporary folder is removed after
+    each call. Read-only file paths are still allowed.
+
+#### Red team (workstream F, 2026-11-17)
+
+An adversarial pass on raw adapters, as an agent that writes the manifest and the code and may run a
+server at an allowed endpoint. Fixed before merge, each with its proof of concept kept as a test
+(`*.redteam.test.ts`):
+
+- **A raw draft's live trial ran with the draft's own `files` exceptions (high).** The trial handed
+  the runtime the draft's manifest, and the runtime turns `files` into profile and permission-model
+  paths. Unapproved code could read the person's files (or write to them from a "read" trial) and
+  return or upload them before any card was shown. A trial's process now gets no file paths, like
+  every other trial and case.
+- **A read-write folder carried an entrusted secret between calls (high).** A call given the token
+  could write it to the adapter's read-write folder, and a later call that never asked for it could
+  read it and send it to any declared endpoint, or return it unredacted. Closed by decision 11.
+- **A tunnel listener's later error could crash Valet's main process (low).** A failed accept (out
+  of file descriptors) is an `'error'` event on the server, and after `listen()` nothing handled it.
+  It now closes that call's tunnels.
+
+Held: `restrict` closes connections mid-hello, mid-dial and open; narrowing asked for before the
+tunnels open applies when they open; the SNI parser refuses duplicate extensions, ECH, trailing
+bytes, zero or several names, oversized and SSLv2 hellos; held ClientHello bytes count against the
+upload budget; private hosts can't be loopback or this Mac; IP-literal public endpoints are
+dropped; at most 16 connections per call; isolation errors carry only a stage and class.
+
+Residual risks, accepted for now:
+
+- **Side effects in a raw adapter are claims.** The broker can't see inside TLS, so a tool declared
+  `read` can make any request its endpoint accepts (a `DELETE`, say) within a read's upload
+  budget. "No irreversible tools" only changes the label.
+- **Transforms redaction doesn't list.** Shifting each character code, a cipher, or similar still
+  gets an entrusted value into tool output (as workstream B noted). The endpoints and the budget
+  are the boundary.
+- **Timing channels to an allowed endpoint aren't budgeted.** When the adapter reads
+  (backpressure), when it closes connections, and how many it opens can signal a server it
+  controls. Only the per-connection request count limits this.
+- **Unverified on macOS:** the profile lets the adapter read `kern.hostname` (the Mac's name, often
+  the person's), and `(remote ip "localhost:PORT")` probably also matches `::1` on the same port.
 
 ## Approval cards and the permission diff
 

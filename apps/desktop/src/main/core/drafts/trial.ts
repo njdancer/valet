@@ -14,6 +14,7 @@
 import {
   type AdapterManifest,
   type BlockedRequest,
+  DEFAULT_SANDBOX,
   type EnsureResult,
   rawEndpoints,
   runtimeOf,
@@ -195,10 +196,12 @@ export async function runTrial(
     const run = async (): Promise<unknown> => {
       if (runtimeOf(manifest) === 'raw') {
         // Its public endpoints only, a read's upload budget whatever the tool, the site's pace per
-        // connection, and no credential: unapproved code is never entrusted with one.
+        // connection, no credential and no files: unapproved code is never entrusted with one, and
+        // its process gets none of the draft's own `files` exceptions (the profile's read and
+        // read-write paths), as no other trial or case does (red team F1).
         const raw = deps.raw
         if (raw === undefined) throw new ValetError('tool-run', 'unavailable')
-        const publicOnly: AdapterManifest = { ...manifest, privateHosts: [] }
+        const publicOnly: AdapterManifest = { ...manifest, privateHosts: [], sandbox: DEFAULT_SANDBOX }
         const endpoints = rawEndpoints(publicOnly)
         const runContext: RunContext = {
           meter: new RunMeter(uploadBudget(manifest, 'read')),

@@ -122,7 +122,13 @@ export async function openTunnels(
       servers.push(server)
       await new Promise<void>((resolve, reject) => {
         server.once('error', reject)
-        server.listen(0, '127.0.0.1', () => resolve())
+        server.listen(0, '127.0.0.1', () => {
+          server.removeListener('error', reject)
+          // A listener's later error (an accept that fails, out of file descriptors) would otherwise
+          // be unhandled and end Valet's main process: the call's tunnels close instead (red team F).
+          server.on('error', close)
+          resolve()
+        })
       })
       const address = server.address()
       if (address === null || typeof address === 'string') throw new ValetError('egress', 'unavailable')

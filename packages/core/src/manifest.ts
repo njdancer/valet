@@ -857,6 +857,15 @@ function rawIssues(manifest: Parameters<typeof runtimeIssues>[0]): string[] {
       if (!reachable.has(endpoint))
         issues.push(`credential ${name}: ${endpoint} is not one of the adapter's endpoints or private hosts`)
   }
+  // Narrowing and redaction are per call: a folder that outlives the call would carry an entrusted
+  // value to a later call that never asked for it, unnarrowed and unredacted.
+  const entrusts = Object.values(manifest.credentials ?? {}).some((c) => 'entrusted' in c.use)
+  if (entrusts && sandbox?.mode === 'sandboxed')
+    for (const exception of sandbox.exceptions)
+      if (exception.kind === 'files' && exception.access === 'read-write')
+        issues.push(
+          "sandbox exception files: a raw adapter with an entrusted credential can't keep read-write files (they would carry the secret past the call)",
+        )
   return issues
 }
 

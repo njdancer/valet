@@ -158,6 +158,37 @@ describe('runtime: raw', () => {
     expect(issues(loose)).toContain('a raw adapter always runs in its sandbox profile')
   })
 
+  it('keeps no read-write files when it holds an entrusted credential', () => {
+    const entrusted = {
+      mail: {
+        description: 'An app password',
+        kind: 'password' as const,
+        custody: 'entrusted' as const,
+        use: { entrusted: { endpoints: ['imap.example.com:993'] } },
+      },
+    }
+    const writes = copy()
+    writes.credentials = entrusted
+    writes.sandbox = {
+      mode: 'sandboxed',
+      exceptions: [
+        { kind: 'files', access: 'read-write', paths: ['~/Documents/Mail'], purpose: 'Keeps a cache.' },
+      ],
+    }
+    expect(issues(writes)).toContain(
+      "sandbox exception files: a raw adapter with an entrusted credential can't keep read-write files (they would carry the secret past the call)",
+    )
+    const reads = copy()
+    reads.credentials = entrusted
+    reads.sandbox = {
+      mode: 'sandboxed',
+      exceptions: [
+        { kind: 'files', access: 'read', paths: ['~/Documents/Mail'], purpose: 'Reads saved mail.' },
+      ],
+    }
+    expect(issues(reads)).toEqual([])
+  })
+
   it('entrusts a credential only for endpoints it can reach', () => {
     const ok = copy()
     ok.credentials = {

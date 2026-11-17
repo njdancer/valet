@@ -168,7 +168,7 @@ under src/. It has no page, no \`ctx.http\` and no \`ctx.local\`.
   a request against \`requestsPerRun\` and waits for the site's pace. The upload budgets above apply to
   every byte sent; past one, another server's name, or a refused endpoint, the call fails
   (\`egress/upload-budget\`, \`egress/sni-mismatch\`, \`egress/host-not-allowed\`) even if the code catches it.
-- \`sandbox.exceptions\` may be \`files\` only: read, or read-write, folders the process may use.
+- \`sandbox.exceptions\` may be \`files\` only: read, or read-write, folders the process may use. An adapter with an entrusted credential gets read folders only, since a written file would carry the secret past the call.
 - A credential is \`"custody": "entrusted"\` with \`"use": { "entrusted": { "endpoints": [...] } }\`.
   \`const { value, username } = await ctx.secrets.get('mail')\` gives it, once the person has granted
   it. From then on, the call may reach only that credential's endpoints: a connection to any other
