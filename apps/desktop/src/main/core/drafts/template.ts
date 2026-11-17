@@ -3,6 +3,7 @@
 // everything. It names example.com until the agent edits it.
 
 import type { PackageFiles } from '@valet/core'
+import { STARTER_DESCRIPTION } from './checks'
 
 export function blankDraft(adapterId: string, name: string): PackageFiles {
   const manifest = {
@@ -10,7 +11,7 @@ export function blankDraft(adapterId: string, name: string): PackageFiles {
     id: adapterId,
     name,
     version: '0.1.0',
-    description: `Tools for ${name}. Replace this with what the adapter does.`,
+    description: `Tools for ${name}. ${STARTER_DESCRIPTION}`,
     home: 'https://www.example.com/',
     navigation: ['https://www.example.com'],
     egress: ['www.example.com'],
@@ -53,7 +54,7 @@ export const tools = {
       const response = await ctx.page.fetch(\`/api/items/\${encodeURIComponent(input.id)}\`, {
         headers: { accept: 'application/json' },
       })
-      if (response.status === 404) throw new ValetError('tool-input', 'not-found')
+      if (response.status === 404) throw new ValetError('tool-run', 'not-found')
       if (response.status !== 200) throw new ValetError('tool-run', 'unavailable')
       const body = response.body as { id?: unknown; title?: unknown; price?: unknown } | null
       return {
@@ -81,7 +82,7 @@ export const tools = {
         fetch: [
           { method: 'GET', url: '/api/items/nope', status: 404, body: { inline: { error: 'not found' } } },
         ],
-        expect: { error: { stage: 'tool-input', errorClass: 'not-found' } },
+        expect: { error: { stage: 'tool-run', errorClass: 'not-found' } },
       },
     ],
   }

@@ -129,6 +129,64 @@ test('a local agent sees the authoring tools', async () => {
     expect(names).toContain(name)
 })
 
+/** A no-login draft for the demo shop: one read of its bootstrap API. */
+const STATUS_TOOLS = `import { tool, ValetError } from '@valet/core'
+import { z } from 'zod'
+
+export const tools = {
+  get_status: tool({
+    input: z.object({}),
+    output: z.object({ loggedIn: z.boolean() }),
+    async run(ctx) {
+      const response = await ctx.page.fetch('/api/ui/v2/bootstrap')
+      const body = response.body as { ShopperDetails?: { IsLoggedIn?: unknown } } | null
+      if (response.status !== 200 || typeof body?.ShopperDetails?.IsLoggedIn !== 'boolean')
+        throw new ValetError('tool-run', 'unexpected-shape')
+      return { loggedIn: body.ShopperDetails.IsLoggedIn }
+    },
+  }),
+}
+`
+
+test('a live trial reaches the demo shop on its own port', async () => {
+  const origin = await launched.app.evaluate(() =>
+    (globalThis as { __valetE2e?: { siteOrigin(): string } }).__valetE2e?.siteOrigin(),
+  )
+  expect(origin).toMatch(/^https:\/\/www\.woolworths\.test:\d+$/)
+  const created = await call('valet_create_draft', {
+    adapterId: 'shop-status',
+    from: 'blank',
+    name: 'Shop Status',
+  })
+  const id = String((created['draft'] as { draftId: string }).draftId)
+  const manifest = {
+    schemaVersion: 1,
+    id: 'shop-status',
+    name: 'Shop Status',
+    version: '0.1.0',
+    description: 'Whether the demo shop says the visitor is signed in.',
+    // The shop's home page, whose script sets the cookie its API asks for (as the real one's does).
+    home: `${origin}/`,
+    navigation: [origin],
+    egress: ['www.woolworths.test'],
+    requests: [{ method: 'GET', path: '/api/ui/v2/bootstrap', purpose: 'read' }],
+    tools: [
+      { name: 'get_status', title: 'Get status', description: 'Signed in or not.', sideEffect: 'read' },
+    ],
+  }
+  await call('valet_write_draft_file', {
+    draftId: id,
+    path: 'manifest.json',
+    content: JSON.stringify(manifest),
+  })
+  await call('valet_write_draft_file', { draftId: id, path: 'src/tools.ts', content: STATUS_TOOLS })
+  const trial = await call('valet_live_trial', { draftId: id, tool: 'get_status', input: {} })
+  expect(trial['problem']).toBeNull()
+  expect(trial['ok']).toBe(true)
+  expect(trial['output']).toEqual({ fromSite: { loggedIn: false } })
+  await call('valet_delete_draft', { draftId: id })
+})
+
 test('the agent writes a draft whose case runs in the fixture browser, and nothing leaves', async () => {
   const created = await call('valet_create_draft', {
     adapterId: ADAPTER,

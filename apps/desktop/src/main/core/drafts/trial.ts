@@ -11,7 +11,14 @@
 //
 // Electron-free; the app gives it the driver.
 
-import type { AdapterManifest, BlockedRequest, EnsureResult, SessionDriver, ToolContext } from '@valet/core'
+import type {
+  AdapterManifest,
+  BlockedRequest,
+  EnsureResult,
+  SessionDriver,
+  ToolContext,
+  ToolPage,
+} from '@valet/core'
 import {
   breakerRefusal,
   CallState,
@@ -65,7 +72,14 @@ export interface SignedInTrial {
 
 export type TrialOutcome =
   | { readonly kind: 'output'; readonly output: unknown }
-  | { readonly kind: 'error'; readonly stage: string; readonly errorClass: string }
+  | {
+      readonly kind: 'error'
+      readonly stage: string
+      readonly errorClass: string
+      /** For a failure at navigate: the URL that didn't load (scrubbed), and whether it was home. */
+      readonly url?: string
+      readonly home?: boolean
+    }
   | { readonly kind: 'needs-user'; readonly reason: string }
   | { readonly kind: 'invalid-output' }
   /** A signed-in trial's output held a value of the session: withheld. */
@@ -157,8 +171,11 @@ export async function runTrial(
         resolve('timeout')
       }, timeoutMs)
     })
+    // A failure at navigate names the URL: home, opened before tool code, or the last goto.
+    let loading: { url: string; home: boolean } | null = { url: manifest.home, home: true }
     const run = async (): Promise<unknown> => {
       const inner = await driver.toolPage()
+      loading = null
       const page = new GuardedToolPage({
         adapterId: manifest.id,
         manifest,
@@ -174,7 +191,9 @@ export async function runTrial(
         },
       })
       const ctx: ToolContext = {
-        page,
+        page: watchGoto(page, manifest.home, (url) => {
+          loading = url === null ? null : { url, home: false }
+        }),
         session: {
           ensure: async (): Promise<EnsureResult> =>
             signedIn === null ? signedOut(manifest) : { status: 'ok' },
@@ -199,8 +218,16 @@ export async function runTrial(
     if (error !== null && error !== undefined) {
       const described = describeError(error)
       if (described.kind === 'needs-user') return done({ kind: 'needs-user', reason: described.reason })
+      const failedAt: { url: string; home: boolean } | null = loading
       if (described.kind === 'error')
-        return done({ kind: 'error', stage: described.stage, errorClass: described.errorClass })
+        return done({
+          kind: 'error',
+          stage: described.stage,
+          errorClass: described.errorClass,
+          ...(described.stage === 'navigate' && failedAt !== null
+            ? { url: scrubUrl(failedAt.url), home: failedAt.home }
+            : {}),
+        })
       return done({ kind: 'error', stage: 'tool-run', errorClass: 'internal' })
     }
     const output = await schemas.output.safeParseAsync(settled.ok ? settled.value : undefined)
@@ -225,6 +252,29 @@ export async function runTrial(
       // Closing below stops everything anyway.
     }
     await driver.close().catch(() => undefined)
+  }
+}
+
+/** The page with each goto's URL told to `loading` as it starts, and null once it has loaded. */
+function watchGoto(page: ToolPage, home: string, loading: (url: string | null) => void): ToolPage {
+  return {
+    goto: async (url) => {
+      let absolute = url
+      try {
+        absolute = new URL(url, home).href
+      } catch {
+        // The guard refuses it in its own words.
+      }
+      loading(absolute)
+      await page.goto(url)
+      loading(null)
+    },
+    currentUrl: () => page.currentUrl(),
+    fetch: (url, init) => page.fetch(url, init),
+    click: (selector) => page.click(selector),
+    fill: (selector, text) => page.fill(selector, text),
+    extract: (selector, options) => page.extract(selector, options),
+    evaluate: (source, args) => page.evaluate(source, args),
   }
 }
 

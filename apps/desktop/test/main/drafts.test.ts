@@ -15,19 +15,20 @@ import {
   type SessionDriver,
   sha256Hex,
 } from '@valet/core'
-import { AuthoringRefusal, type ClientIdentity } from '@valet/mcp-server'
+import { AUTHORING_GUIDE, AUTHORING_TOOLS, AuthoringRefusal, type ClientIdentity } from '@valet/mcp-server'
 import type { SiteGuards } from '@valet/runtime'
 import { buildToolLibrary } from '@valet/runtime/tool-script'
 import { inProcessQuickJS, nodeQuickJS } from '@valet/sandbox'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import {
   type AuthoringDeps,
+  CHECKS_PER_CLIENT_PER_HOUR,
   DraftAuthoring,
   type RequestState,
   type SubmitRequest,
   trialProblem,
 } from '../../src/main/core/drafts/authoring'
-import { partialMismatch } from '../../src/main/core/drafts/cases'
+import { outputMismatch, partialMismatch } from '../../src/main/core/drafts/cases'
 import { lint, siteDomain } from '../../src/main/core/drafts/checks'
 import { ScratchSessions } from '../../src/main/core/drafts/research'
 import { DraftStore } from '../../src/main/core/drafts/store'
@@ -302,6 +303,100 @@ describe('checks', () => {
     )
     const report = await authoring.check(AGENT, draft.draftId)
     expect(report.cases[0]?.reason).toMatch(/output schema|tool-output\/invalid/)
+  }, 60_000)
+
+  it('says where the output breaks its schema, what a mismatch produced, and what a plain throw said', async () => {
+    const { authoring } = await harness()
+    const { draft } = await authoring.createDraft(AGENT, { adapterId: 'shop', from: 'blank', name: 'Shop' })
+    const id = draft.draftId
+    const tools = (await authoring.readFile(AGENT, false, id, 'src/tools.ts')).content
+    await authoring.writeFile(AGENT, id, 'src/tools.ts', tools.replace('.slice(0, 200)', '.repeat(300)'))
+    const broken = await authoring.check(AGENT, id)
+    expect(broken.cases[0]?.reason).toMatch(
+      /^The tool failed: tool-output\/invalid: the output doesn't match get_item's output schema at name: /,
+    )
+    await authoring.writeFile(
+      AGENT,
+      id,
+      'src/tools.ts',
+      tools.replace(
+        "throw new ValetError('tool-run', 'not-found')",
+        "throw new Error('no item called ' + input.id)",
+      ),
+    )
+    await authoring.writeFile(
+      AGENT,
+      id,
+      'fixtures/item-abc-1.json',
+      JSON.stringify({ id: 'abc-1', title: 'Another item', price: 4.5 }),
+    )
+    const report = await authoring.check(AGENT, id)
+    expect(report.cases.map((c) => c.reason)).toEqual([
+      'Output differs at $.name: expected "Example item", got "Another item".',
+      'Expected tool-run/not-found, got tool-run/internal: the tool threw Error: no item called nope. Throw new ValetError(stage, errorClass) to fail on purpose.',
+    ])
+  }, 60_000)
+
+  it('answers a check of an unchanged draft again without counting it, and says when the next check frees up', async () => {
+    let clock = Date.parse('2026-11-17T09:00:00.000Z')
+    const { authoring } = await harness({ now: () => clock })
+    const { draft } = await authoring.createDraft(AGENT, { adapterId: 'shop', from: 'blank', name: 'Shop' })
+    const id = draft.draftId
+    const first = await authoring.check(AGENT, id)
+    expect(first.reused).toBeUndefined()
+    const again = await authoring.check(AGENT, id)
+    expect(again).toEqual({ ...first, reused: true })
+    // Each changed package counts: an unreadable manifest fails fast at the package step.
+    for (let i = 1; i < CHECKS_PER_CLIENT_PER_HOUR; i++) {
+      await authoring.writeFile(AGENT, id, 'manifest.json', `{"n": ${i}}`)
+      expect((await authoring.check(AGENT, id)).reused).toBeUndefined()
+      clock += 1000
+    }
+    await authoring.writeFile(AGENT, id, 'manifest.json', '{"n": 0}')
+    const seconds = 3600 - (CHECKS_PER_CLIENT_PER_HOUR - 1)
+    await expect(authoring.check(AGENT, id)).rejects.toThrow(
+      `Not checked: ${CHECKS_PER_CLIENT_PER_HOUR} checks an hour is the most, and you have used them. Try again in ${seconds} seconds`,
+    )
+    // The last result is still there for the asking.
+    await authoring.writeFile(AGENT, id, 'manifest.json', `{"n": ${CHECKS_PER_CLIENT_PER_HOUR - 1}}`)
+    expect((await authoring.check(AGENT, id)).reused).toBe(true)
+    clock += seconds * 1000
+    await authoring.writeFile(AGENT, id, 'manifest.json', '{"n": 0}')
+    expect((await authoring.check(AGENT, id)).reused).toBeUndefined()
+  }, 120_000)
+
+  it('lists the manifest’s problems with where they are, and the key it has for one it doesn’t', async () => {
+    const { authoring } = await harness()
+    const { draft } = await authoring.createDraft(AGENT, { adapterId: 'shop', from: 'blank', name: 'Shop' })
+    const manifest = JSON.parse(
+      (await authoring.readFile(AGENT, false, draft.draftId, 'manifest.json')).content,
+    )
+    manifest.endpoints = manifest.requests
+    delete manifest.requests
+    manifest.name = ''
+    await authoring.writeFile(AGENT, draft.draftId, 'manifest.json', JSON.stringify(manifest))
+    const text = (await authoring.check(AGENT, draft.draftId)).findings[0]?.text ?? ''
+    expect(text).toContain(
+      '(top level): Unrecognized key: "endpoints" (did you mean "requests" for "endpoints"?)',
+    )
+    expect(text).toContain('name: ')
+    await authoring.writeFile(AGENT, draft.draftId, 'manifest.json', '{ "id": "shop", }')
+    const json = (await authoring.check(AGENT, draft.draftId)).findings[0]?.text ?? ''
+    expect(json).toMatch(/manifest-invalid\): not JSON: .* at position \d+ \(line 1/)
+  }, 60_000)
+
+  it('cautions about the starter’s placeholder description', async () => {
+    const { authoring } = await harness()
+    const { draft } = await authoring.createDraft(AGENT, { adapterId: 'shop', from: 'blank', name: 'Shop' })
+    const caution = (r: { findings: readonly { text: string }[] }) =>
+      r.findings.some((f) => /description is still the starter’s placeholder/.test(f.text))
+    expect(caution(await authoring.check(AGENT, draft.draftId))).toBe(true)
+    const manifest = JSON.parse(
+      (await authoring.readFile(AGENT, false, draft.draftId, 'manifest.json')).content,
+    )
+    manifest.description = 'Looks up items in the example shop.'
+    await authoring.writeFile(AGENT, draft.draftId, 'manifest.json', JSON.stringify(manifest))
+    expect(caution(await authoring.check(AGENT, draft.draftId))).toBe(false)
   }, 60_000)
 
   it('requires the manifest id to stay the draft’s', async () => {
@@ -1144,7 +1239,7 @@ export const tools = {
       )
       const check = await h.authoring.check(AGENT, h.draftId)
       expect(check.findings.map((f) => f.text)).toContain(
-        'src/tools.ts names https://www.example.com/v0, but no declared request reaches it: page.fetch there would be refused. Declare its path in requests (with "host": "www.example.com" if only that host serves it).',
+        'src/tools.ts names https://www.example.com/v0, but no declared request reaches it: page.fetch there would be refused (page.goto to a page there is allowed undeclared). Declare its path in requests (with "host": "www.example.com" if only that host serves it).',
       )
       // The case's own answers can't get it through either: same guard as live.
       expect(check.cases[0]?.reason).toMatch(/request-surface\/undeclared-request/)
@@ -1229,6 +1324,82 @@ describe('helpers', () => {
     expect(partialMismatch({ a: 1 }, { a: 1, b: 2 }, '$')).toBeNull()
     expect(partialMismatch({ a: [1] }, { a: [1, 2] }, '$')).toBe('$.a')
     expect(partialMismatch({ a: { b: 'x' } }, { a: { b: 'y' } }, '$')).toBe('$.a.b')
+    expect(outputMismatch({ a: [{ w: 'x' }] }, { a: [{ w: 'y', n: 1 }] }, '$')).toEqual({
+      at: '$.a[0].w',
+      expected: 'x',
+      actual: 'y',
+      missing: false,
+    })
+    expect(outputMismatch({ a: { b: 1 } }, { a: {} }, '$')).toMatchObject({ at: '$.a.b', missing: true })
+  })
+
+  it('cautions about a fetch no declaration reaches, but not a goto, except under an API root', () => {
+    const manifest = parseManifest({
+      schemaVersion: 1,
+      id: 'dict',
+      name: 'Dict',
+      version: '1.0.0',
+      description: 'x',
+      home: 'https://www.dict.example/',
+      navigation: ['https://www.dict.example'],
+      egress: ['www.dict.example'],
+      requests: [{ method: 'GET', path: '/api/define/:word', purpose: 'read' }],
+      tools: [{ name: 'define', title: 'Define', description: 'x', sideEffect: 'read' }],
+    })
+    const texts = lint(manifest, {
+      'src/tools.ts': [
+        "await ctx.page.goto('https://www.dict.example/words/' + input.word)",
+        "await ctx.page.fetch('https://www.dict.example/lookup/' + input.word)",
+        "await ctx.page.goto('https://www.dict.example/api/other/' + input.word)",
+      ].join('\n'),
+    }).map((f) => f.text)
+    expect(texts.some((t) => t.includes('www.dict.example/words'))).toBe(false)
+    expect(texts.find((t) => t.includes('www.dict.example/lookup'))).toMatch(
+      /page\.fetch there would be refused \(page\.goto to a page there is allowed undeclared\)/,
+    )
+    expect(texts.find((t) => t.includes('www.dict.example/api/other'))).toMatch(
+      /opens https:\/\/www\.dict\.example\/api\/other\/ with page\.goto, but that path is under the API root/,
+    )
+  })
+
+  it('names the URL a navigate failure didn’t load', () => {
+    const failed = (url: string, home: boolean) =>
+      trialProblem({
+        outcome: { kind: 'error', stage: 'navigate', errorClass: 'unavailable', url, home },
+        blocked: [],
+        blockedCount: 0,
+        ms: 1,
+      })
+    expect(failed('https://www.example.com/', true)).toBe(
+      'Failed with navigate/unavailable loading home, https://www.example.com/, which every call opens before tool code runs.',
+    )
+    expect(failed('https://www.example.com/words/:param', false)).toBe(
+      'Failed with navigate/unavailable loading https://www.example.com/words/:param.',
+    )
+  })
+
+  it('agrees with the guide and the tool texts: the starter’s errors, the check budget', () => {
+    const starter = blankDraft('shop', 'Shop')
+    expect(starter['src/tools.ts']).toContain("new ValetError('tool-run', 'not-found')")
+    expect(starter['test/example.json']).toContain('"stage": "tool-run"')
+    expect(starter['src/tools.ts']).not.toContain("'tool-input', 'not-found'")
+    expect(AUTHORING_GUIDE.replace(/\s+/g, ' ')).toContain('`tool-run`/`not-found`')
+    const check = AUTHORING_TOOLS.find((t) => t.name === 'valet_check_draft')
+    expect(check?.description).toContain(`${CHECKS_PER_CLIENT_PER_HOUR} checks an hour`)
+  })
+
+  it('lists where a package’s files may go when a path is refused', async () => {
+    const store = new DraftStore(tempDir())
+    const record = await store.create(
+      { adapterId: 'shop', createdBy: 'local:a', createdByName: 'A', basedOn: null, repairId: null },
+      blankDraft('shop', 'Shop'),
+    )
+    await expect(store.write(record.id, 'tools.ts', 'x')).rejects.toThrow(
+      'Not written: tools.ts can’t sit at the top of the package. Only manifest.json and README.md sit at the top; src/ holds .ts (the entry is src/tools.ts), test/ .ts and .json, and fixtures/ .json, .html and .txt.',
+    )
+    await expect(store.write(record.id, 'src/Tools.ts', 'x')).rejects.toThrow(
+      /Each part of a path is lowercase/,
+    )
   })
 
   it('finds the registrable domain without a suffix list, well enough for the lint', () => {
