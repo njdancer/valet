@@ -186,3 +186,26 @@ and agent feedback. Full write-up: [findings/2026-11-17-red-team-hub-and-agents.
 - **Tried, held:** grant and tool isolation at the hub's `/mcp`, the code-picks-the-sign-in flow,
   redirect and client-name checks, token reuse, the admin writer's tiers, the scratch browser's
   address rules.
+
+### 2026-11-17: hostile agent against the persona QA fixes (#143)
+
+Scope: the changes #143 made on critical paths, read after it merged: strict input keys
+(`core/json-schema.ts`, `mcp-server/tool-names.ts`), protocol refusals and their per-client budget
+(`mcp-server/server.ts`, `caller.ts`), input refusals with a path (`core/input-issue.ts`), the
+revoke and Pause ordering in `service.ts`, and the keys-changed notice (`keys-changed.ts`).
+
+- **Found nothing an agent can use.** No code changed.
+- **Tried, held:** an adapter regex reaching the main process through the new strict copy
+  (`clientSchemas` rebuilds from the adapter store's schema, which has `pattern` removed); an
+  undeclared key nested in an object or array (`additionalProperties: false` at every depth that
+  declares properties); text of an adapter's choosing in an input refusal (path segments are
+  identifiers of at most 64 characters, the rest is fixed wording); a tool name with markup or
+  spaces in the audit record of a protocol refusal (`(invalid)`); flooding protocol refusals into
+  the audit log (one budget per client identity, then one summary); a call that keeps running
+  after its app is revoked (the token is refused and its waiting confirmation ends before the
+  audit write); the keys-changed notice naming a site that isn't installed (it lists installed
+  sites only, and only reads).
+- **Low, noted:** turning a local app's Ask for changes on stores the capability and then writes
+  the audit record, undoing the change if the write fails. For the few milliseconds of that write
+  the app holds the capability unrecorded. Only the person can make this change, so no agent can
+  use the window.
