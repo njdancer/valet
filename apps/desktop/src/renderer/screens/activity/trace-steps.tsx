@@ -209,7 +209,7 @@ function stepFacts(step: TraceStep, trace: RunTrace): readonly { term: ReactNode
       ]
     case 'login-started':
       return [
-        { term: 'How', value: 'The manifest’s declarative login steps, run by Valet, with no adapter code' },
+        { term: 'How', value: 'Login steps the adapter declares, run by Valet itself: no adapter code runs' },
       ]
     case 'auth-step':
       return [

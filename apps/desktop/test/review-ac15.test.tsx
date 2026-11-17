@@ -58,17 +58,17 @@ const KINDS: [string, (m: ManifestInput) => ManifestInput, Expect][] = [
   [
     'a new navigation origin',
     (m) => ({ ...m, navigation: [...(m.navigation as string[]), 'https://cdn.shop.test'] }),
-    { row: 'https://cdn.shop.test', tag: 'new origin', badge: '+1 login origin' },
+    { row: 'https://cdn.shop.test', tag: 'new origin', badge: '+1 login site' },
   ],
   [
     'a new egress host',
     (m) => ({ ...m, egress: ['www.shop.test', 'api.shop.test'] }),
-    { row: 'api.shop.test', tag: 'new host', badge: '+1 host' },
+    { row: 'api.shop.test', tag: 'new host', badge: '+1 site it contacts' },
   ],
   [
     'a new auth frame origin',
     (m) => ({ ...m, auth: { ...m.auth!, frameOrigins: ['https://captcha.test'] } }),
-    { row: 'https://captcha.test', tag: 'new frame origin', badge: '+1 frame origin' },
+    { row: 'https://captcha.test', tag: 'new frame origin', badge: '+1 embedded site' },
   ],
   [
     'a new secret',
@@ -110,7 +110,7 @@ const KINDS: [string, (m: ManifestInput) => ManifestInput, Expect][] = [
     {
       row: 'login',
       tag: 'new origin',
-      badge: '+1 secret origin',
+      badge: '+1 site a secret is typed on',
       why: 'Now also typed on https://www.shop.test.',
     },
   ],
@@ -135,7 +135,7 @@ const KINDS: [string, (m: ManifestInput) => ManifestInput, Expect][] = [
       ...m,
       requests: [...(m.requests ?? []), { method: 'POST', path: '/api/checkout', purpose: 'irreversible' }],
     }),
-    { row: 'POST /api/checkout', tag: 'irreversible', badge: '+1 irreversible path' },
+    { row: 'POST /api/checkout', tag: 'irreversible', badge: '+1 API call that can’t be undone' },
   ],
   [
     'a new tool',
@@ -143,12 +143,17 @@ const KINDS: [string, (m: ManifestInput) => ManifestInput, Expect][] = [
       ...m,
       tools: [...m.tools, { name: 'pay', title: 'Pay', description: 'Pays.', sideEffect: 'irreversible' }],
     }),
-    { row: 'pay', tag: 'irreversible', badge: '+1 irreversible tool' },
+    { row: 'pay', tag: 'irreversible', badge: '+1 tool that can’t be undone' },
   ],
   [
     'a tool whose side effect goes from read to write',
     (m) => ({ ...m, tools: m.tools.map((t) => (t.name === 'echo' ? { ...t, sideEffect: 'write' } : t)) }),
-    { row: 'echo', tag: 'read → write', badge: '+1 write tool', why: 'Its side effect went up.' },
+    {
+      row: 'echo',
+      tag: 'read → write',
+      badge: '+1 tool that changes things',
+      why: 'Its side effect went up.',
+    },
   ],
   [
     'a tool whose side effect goes to irreversible',
@@ -159,14 +164,14 @@ const KINDS: [string, (m: ManifestInput) => ManifestInput, Expect][] = [
     {
       row: 'add',
       tag: 'write → irreversible',
-      badge: '+1 irreversible tool',
+      badge: '+1 tool that can’t be undone',
       why: 'Its side effect went up.',
     },
   ],
   [
     'a new cookie domain',
     (m) => ({ ...m, session: { ...m.session!, cookieDomains: ['www.shop.test', 'shop.test'] } }),
-    { row: 'cookies on shop.test', tag: 'new domain', badge: '+1 hand-over domain' },
+    { row: 'cookies on shop.test', tag: 'new domain', badge: '+1 site it stays signed in to' },
   ],
   [
     'a new storage key',
@@ -174,7 +179,7 @@ const KINDS: [string, (m: ManifestInput) => ManifestInput, Expect][] = [
       ...m,
       session: { ...m.session!, storage: [{ origin: 'https://www.shop.test', keys: ['token'] }] },
     }),
-    { row: 'https://www.shop.test · token', tag: 'new storage key', badge: '+1 storage key' },
+    { row: 'https://www.shop.test · token', tag: 'new storage key', badge: '+1 kind of saved site data' },
   ],
   [
     'a higher requestsPerRun',

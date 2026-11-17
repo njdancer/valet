@@ -26,7 +26,7 @@ export function capSiteText(text: string, max = MAX_SITE_TEXT): string {
  */
 export function SiteText({
   text,
-  from = 'From the manifest',
+  from = 'From the adapter',
   className,
 }: {
   readonly text: string

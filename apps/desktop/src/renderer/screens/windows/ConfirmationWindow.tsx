@@ -402,14 +402,14 @@ function Checked({ item }: { readonly item: ConfirmationItem }) {
                   <Code>{describeDeclaration(r)}</Code> <RiskBadge purpose={r.purpose} />{' '}
                 </span>
               ))}
-              . Each is declared in the manifest and allowed for this tool. Approving doesn’t unlock them.
+              . Each is declared by the adapter and allowed for this tool. Approving doesn’t unlock them.
             </span>
           }
         />
       ) : null}
       <CheckItem
         state="pass"
-        title={`Its requests stay within the manifest’s declared paths, at most ${item.requestCeiling} this run`}
+        title={`Its requests stay within the paths the adapter declared, at most ${item.requestCeiling} this run`}
       />
       <CheckItem
         state={item.unlocks.length === 0 ? 'pass' : 'info'}

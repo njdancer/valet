@@ -89,7 +89,8 @@ describe('first-run setup', () => {
     const summary = screen.getByTestId('setup-perms').textContent ?? ''
     expect(summary).toContain('www.woolworths.com.au')
     expect(summary).toContain('auth.woolworths.com.au')
-    expect(summary).toMatch(/3 read.*3 write.*0 irreversible/)
+    expect(summary).toMatch(/3 read only.*3 change things/)
+    expect(summary).not.toMatch(/irreversible|can’t be undone/)
     expect(summary).toMatch(/login.*username, password, typed only on.*auth\.woolworths\.com\.au/)
     await user.click(screen.getByRole('link', { name: 'Review Woolworths 0.3.0…' }))
     await screen.findByRole('button', { name: 'Approve Woolworths' })
