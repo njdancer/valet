@@ -88,6 +88,27 @@ export interface ToolContext {
    * `tool-run/not-granted`. Optional like `http`.
    */
   readonly smtp?: SmtpAccess
+  /**
+   * Credentials entrusted to a `raw` adapter (docs/adapter-kinds.md#raw). Every call from any other
+   * kind rejects with `tool-run/not-granted`. Optional for the runtime's own contexts and older
+   * tests; tool code in the tool process always has it.
+   */
+  readonly secrets?: SecretsAccess
+}
+
+/**
+ * An entrusted credential as a `raw` adapter is given it: the secret (a password, token or private
+ * key) and the item's username when it has one. Getting one is audited, registers the value and its
+ * encodings for redaction from the call's output, and from then on the call's connections may reach
+ * only the endpoints that credential is for.
+ */
+export interface EntrustedCredential {
+  readonly value: string
+  readonly username: string | null
+}
+
+export interface SecretsAccess {
+  get(name: string): Promise<EntrustedCredential>
 }
 
 export interface ToolImplementation<

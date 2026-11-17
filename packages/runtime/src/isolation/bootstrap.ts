@@ -136,6 +136,8 @@ export const BOOTSTRAP = `(function (send) {
         })
       }),
     }),
+    // Credentials entrusted to a raw adapter (docs/adapter-kinds.md#raw); not-granted for the rest.
+    secrets: Object.freeze({ get: (name) => call('secrets.get', name) }),
     // The protocol host, for a protocol adapter with IMAP (docs/imap.md). Each operation is one call.
     imap: Object.freeze(Object.fromEntries(['listFolders', 'status', 'search', 'fetch', 'message', 'attachment',
       'setFlags', 'copy', 'move', 'append', 'createFolder', 'expunge', 'deleteFolder']

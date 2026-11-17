@@ -557,6 +557,14 @@ function checkNodeRuntime(app, expect) {
       result.stdout + result.stderr,
     )
   }
+  // The protocol host (docs/imap.md#the-protocol-host) is a real file beside app.asar, sealed by the
+  // app's signature, which the shipped Node can parse.
+  const host = join(app, 'Contents', 'Resources', 'app.asar.unpacked', 'out', 'main', 'protocol-host.cjs')
+  expect('the protocol host ships beside app.asar', existsSync(host))
+  if (existsSync(host)) {
+    const parsed = capture(node, ['--check', host])
+    expect('valet-node parses the protocol host', parsed.code === 0, parsed.stdout + parsed.stderr)
+  }
 }
 
 /** The release check from "Command-line switches": every unexpected switch is refused at once. */

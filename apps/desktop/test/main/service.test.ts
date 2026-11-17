@@ -14,16 +14,18 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { buildRecord } from '@valet/adapter-store'
+import { buildRecord, type RawPackageRuntime } from '@valet/adapter-store'
 import {
   type AdapterDefinition,
   CredentialError,
   checkPackage,
   defineAdapter,
+  MAIL_SECRET,
+  type MailReader,
   type ManifestInput,
   NeedsUserError,
   type PackageFiles,
@@ -34,8 +36,9 @@ import {
   ValetError,
 } from '@valet/core'
 import { MemoryKeychain, ValetKeys } from '@valet/credentials'
-import { EgressBroker } from '@valet/egress'
+import { EgressBroker, type OpenTunnels } from '@valet/egress'
 import { startFakeApi } from '@valet/fake-http-api'
+import { DEFAULT_USER, startFakeImap } from '@valet/fake-imap'
 import {
   ADMIN_LOCKED_DOWN_RESULT,
   ADMIN_OTHER_AGENT_RESULT,
@@ -60,6 +63,9 @@ import {
   type WriteArgs,
   withAnswers,
 } from '@valet/mcp-server'
+import { loadDependencies, memoryTarballStore, nodeRuntimeProcess } from '@valet/node-runtime'
+import { HostMailReader, imapBackend, type ProtocolHostOptions } from '@valet/protocols'
+import { writeProtocolHost } from '@valet/protocols/build'
 import { LoginAttemptMarker, type ToolProcessFactory } from '@valet/runtime'
 import { inMemoryToolProcess } from '@valet/runtime/in-context'
 import { buildToolLibrary } from '@valet/runtime/tool-script'
@@ -150,6 +156,9 @@ async function setup(
     /** Collects the diagnostics log's lines (their types). */
     diagnostics?: string[]
     egress?: ServiceDeps['egress']
+    imap?: ServiceDeps['imap']
+    mailReader?: ServiceDeps['mailReader']
+    raw?: ServiceDeps['raw']
   } = {},
 ) {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'sa-service-'))
@@ -231,6 +240,9 @@ async function setup(
       ? {}
       : { diagnostics: (d: { readonly type: string }) => options.diagnostics?.push(d.type) }),
     ...(options.egress === undefined ? {} : { egress: options.egress }),
+    ...(options.imap === undefined ? {} : { imap: options.imap }),
+    ...(options.mailReader === undefined ? {} : { mailReader: options.mailReader }),
+    ...(options.raw === undefined ? {} : { raw: options.raw }),
     createDriver: async (_manifest, reporters) => {
       driver.reporters = reporters
       return driver
@@ -3740,6 +3752,7 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     trialDriver?: ServiceDeps['trialDriver'],
     egress?: ServiceDeps['egress'],
     credentials?: Credentials,
+    raw?: { readonly runtime: RawPackageRuntime; readonly deps: ServiceDeps['raw'] },
   ) {
     const start = inMemoryToolProcess()
     const prelude = await buildToolLibrary()
@@ -3751,7 +3764,9 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
       packages: {
         builtins: [shopPackage('v1:')],
         runtime:
-          describe === 'answers' ? { prelude, start } : { prelude, start: hanging, describeTimeoutMs: 50 },
+          describe === 'answers'
+            ? { prelude, start, ...(raw === undefined ? {} : { raw: raw.runtime }) }
+            : { prelude, start: hanging, describeTimeoutMs: 50 },
         build: buildRecord('0.1.0', prelude),
         folders: { pick: async () => picked.next },
       },
@@ -3760,6 +3775,7 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
       ...(trialDriver === undefined ? {} : { trialDriver }),
       ...(egress === undefined ? {} : { egress }),
       ...(credentials === undefined ? {} : { credentials }),
+      ...(raw === undefined ? {} : { raw: raw.deps }),
     })
     const hashOf = (files: PackageFiles) => checkPackage(files).adapterHash
     return { ...s, picked, hashOf }
@@ -3903,6 +3919,122 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     } finally {
       await api.close()
     }
+  })
+
+  it('installs and runs a raw adapter in the Node runtime through its tunnels, approvable on the phone', async () => {
+    const api = await startFakeApi()
+    try {
+      const mac = process.platform === 'darwin'
+      const rawProcess = (endpoints: readonly string[], openTunnels: OpenTunnels) =>
+        nodeRuntimeProcess({
+          nodeBinary: process.execPath,
+          endpoints,
+          openTunnels,
+          home: homedir(),
+          withoutSeatbelt: !mac,
+        })
+      const egress: ServiceDeps['egress'] = (manifest) =>
+        new EgressBroker(
+          {
+            egress: manifest.egress,
+            privateHosts: manifest.privateHosts ?? [],
+            endpoints: manifest.endpoints ?? [],
+          },
+          {
+            lookup: (_name, cb) => cb(null, [{ address: '127.0.0.1', family: 4 }]),
+            testing: {
+              allowAddresses: ['127.0.0.1'],
+              route: () => ({ address: '127.0.0.1', port: api.port }),
+            },
+          },
+        )
+      const rawManifest: ManifestInput = {
+        schemaVersion: 1,
+        id: 'status',
+        name: 'Status',
+        version: '1.0.0',
+        description: 'Reads items over its own TLS connection.',
+        runtime: 'raw',
+        endpoints: ['api.example.test:443'],
+        tools: [{ name: 'count', title: 'Count', description: 'Counts items.', sideEffect: 'read' }],
+      }
+      const tools = [
+        "import { z } from 'zod'",
+        'declare const require: (id: string) => any',
+        'export const tools = {',
+        '  count: { input: z.object({ ca: z.string(), host: z.string() }), output: z.object({ count: z.number() }), run: (ctx, a) =>',
+        '    new Promise((resolve, reject) => {',
+        "      require('node:https').get({ host: a.host, path: '/v1/items', ca: a.ca, agent: false }, (res) => {",
+        "        let body = ''",
+        "        res.on('data', (d) => (body += d))",
+        "        res.on('end', () => resolve({ count: JSON.parse(body).items.length }))",
+        "      }).on('error', reject)",
+        '    }) },',
+        '}',
+      ].join('\n')
+      const files = packageOf(parseManifest(rawManifest), { 'src/tools.ts': tools })
+      const s = await withPackages(files, undefined, 'answers', undefined, undefined, egress, undefined, {
+        runtime: {
+          dependencies: (lock) => loadDependencies(lock, memoryTarballStore()),
+          start: rawProcess([], async () => ({
+            ports: new Map(),
+            close: () => undefined,
+            restrict: () => undefined,
+          })),
+        },
+        deps: { start: (manifest, openTunnels) => rawProcess(manifest.endpoints ?? [], openTunnels) },
+      })
+      let n = 0
+      const count = (host: string) =>
+        (s.endpoint.caller as ToolCaller).call({
+          adapterId: 'status',
+          tool: 'count',
+          input: { ca: api.cert, host },
+          client: 'Claude Code',
+          callId: `call_raw_${++n}`,
+          transport: 'http',
+        })
+      expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true, adapterId: 'status' })
+      const review = (await s.api.approvals.pending()).find((r) => r.adapterId === 'status')
+      expect(JSON.stringify(review)).toContain('api.example.test:443')
+      await s.api.approvals.approve('status', review?.to.hash ?? '')
+      expect(await count('api.example.test')).toMatchObject({ status: 'ok', output: { count: 2 } })
+      expect(api.seen.at(-1)).toMatchObject({ url: '/v1/items', servername: 'api.example.test' })
+      expect(readAudit(s.paths.audit)).toContainEqual(
+        expect.objectContaining({
+          type: 'egress-connection',
+          adapterId: 'status',
+          endpoint: 'api.example.test:443',
+          kind: 'tunnel',
+        }),
+      )
+      // A host it doesn't declare isn't reachable at all.
+      const before = api.seen.length
+      expect(await count('evil.example.test')).toMatchObject({ status: 'failed' })
+      expect(api.seen.length).toBe(before)
+    } finally {
+      await api.close()
+    }
+  }, 60_000)
+
+  it('doesn’t load a raw adapter in a build without the Node runtime', async () => {
+    const rawManifest: ManifestInput = {
+      schemaVersion: 1,
+      id: 'status',
+      name: 'Status',
+      version: '1.0.0',
+      description: 'Reads items over its own TLS connection.',
+      runtime: 'raw',
+      endpoints: ['api.example.test:443'],
+      tools: [{ name: 'count', title: 'Count', description: 'Counts items.', sideEffect: 'read' }],
+    }
+    const files = packageOf(parseManifest(rawManifest), {
+      'src/tools.ts':
+        "import { z } from 'zod'\nexport const tools = { count: { input: z.object({}), output: z.object({}), run: async () => ({}) } }",
+    })
+    const s = await withPackages(files)
+    // Without the Node runtime the package doesn't even load.
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: false })
   })
 
   describe('credentials (secrets v2)', () => {
@@ -4630,6 +4762,367 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
       status: 'failed',
       errorClass: 'not-granted',
     })
+  })
+
+  describe('mail adapters and sign-in mail (docs/imap.md)', () => {
+    const ENDPOINT = 'imap.mail.me.com:993'
+    const SENDER = 'login@shop.test'
+    const LINK_ORIGIN = 'https://login.shop.test'
+
+    /** A provider holding the mail account's app-specific password, and each read of it. */
+    function mailCredentials() {
+      const reads: string[] = []
+      const base = testCredentials(disabledOtpReader)
+      const credentials: Credentials = {
+        ...base,
+        providers: () => ({
+          ...base.providers(),
+          'onepassword-service-account': {
+            kind: 'onepassword-service-account',
+            resolve: async (itemRef: string, field: string) => {
+              reads.push(`${itemRef}#${field}`)
+              return SecretValue.fromString(
+                field === 'username' ? DEFAULT_USER.username : DEFAULT_USER.password,
+              )
+            },
+          },
+        }),
+        async status() {
+          return [
+            ...(await base.status()).filter((s) => s.kind !== 'onepassword-service-account'),
+            { kind: 'onepassword-service-account', available: true, unavailableReason: null },
+          ]
+        },
+        async vaultItems(provider) {
+          return provider === 'onepassword-service-account'
+            ? [{ id: 'icloud-mail', title: 'iCloud app password' }]
+            : base.vaultItems(provider)
+        },
+      }
+      return { credentials, reads }
+    }
+
+    const mailManifest = (id: string, sideEffect: 'read' | 'write'): ManifestInput => ({
+      schemaVersion: 1,
+      id,
+      name: id === 'mailbox' ? 'Mailbox' : 'Mail Filer',
+      version: '1.0.0',
+      description: 'Reads mail over IMAP.',
+      runtime: 'protocol',
+      protocols: { imap: { endpoint: ENDPOINT, credential: 'mail', folders: ['INBOX'] } },
+      credentials: {
+        mail: {
+          description: 'Your iCloud app-specific password',
+          kind: 'password',
+          custody: 'kept',
+          use: { protocol: 'imap', endpoint: ENDPOINT },
+        },
+      },
+      tools: [{ name: 'count', title: 'Count', description: 'Counts INBOX.', sideEffect }],
+    })
+    const mailTools = [
+      "import { z } from 'zod'",
+      'export const tools = {',
+      '  count: { input: z.object({}), output: z.unknown(), run: async (ctx) => {',
+      "    const s = await ctx.imap.status('INBOX')",
+      '    return { messages: s.messages }',
+      '  } },',
+      '}',
+    ].join('\n')
+    const mailPackage = (id: string, sideEffect: 'read' | 'write') =>
+      packageOf(parseManifest(mailManifest(id, sideEffect)), { 'src/tools.ts': mailTools })
+
+    // The shop, signing in with a link it mails instead of a Messages code.
+    const SHOP_MAIL: ManifestInput = {
+      ...SHOP,
+      auth: {
+        steps: [
+          { op: 'goto', url: 'https://login.shop.test/login' },
+          { op: 'fill', selector: '#user', value: { secret: 'login', field: 'username' } },
+          { op: 'click', selector: '#send' },
+          {
+            op: 'openMailLink',
+            from: SENDER,
+            subjectContains: 'Sign in',
+            linkOrigin: LINK_ORIGIN,
+            maxAgeSeconds: 600,
+          },
+          { op: 'assertLoggedIn' },
+        ],
+      },
+    } as ManifestInput
+
+    const message = (body: string) => ({
+      raw: [
+        'Authentication-Results: mx.icloud.test; dmarc=pass header.from=shop.test',
+        `From: Shop <${SENDER}>`,
+        'To: nick@icloud.test',
+        'Subject: Sign in to Shop',
+        'Content-Type: text/plain; charset=utf-8',
+        '',
+        body,
+        '',
+      ].join('\r\n'),
+    })
+
+    async function withMail() {
+      const server = await startFakeImap({ mailboxes: { INBOX: [message('old mail')] } })
+      const home = mkdtempSync(join(tmpdir(), 'sa-mail-home-'))
+      dirs.push(home)
+      const hostDir = mkdtempSync(join(tmpdir(), 'sa-mail-host-'))
+      dirs.push(hostDir)
+      const host: ProtocolHostOptions = {
+        nodeBinary: process.execPath,
+        hostScript: await writeProtocolHost(join(hostDir, 'protocol-host.cjs')),
+        home,
+        // Seatbelt only on macOS; the host's own checks are the same either way.
+        withoutSeatbelt: process.platform !== 'darwin',
+        testCa: server.cert ?? undefined,
+        operationTimeoutMs: 10_000,
+      } as ProtocolHostOptions
+      const broker = {
+        lookup: (_n: string, cb: (e: Error | null, a: { address: string; family: number }[]) => void) =>
+          cb(null, [{ address: '127.0.0.1', family: 4 }]),
+        testing: {
+          allowAddresses: ['127.0.0.1'],
+          route: () => ({ address: '127.0.0.1', port: server.port }),
+        },
+      }
+      const { credentials, reads } = mailCredentials()
+      const start = inMemoryToolProcess()
+      const prelude = await buildToolLibrary()
+      const picked = { next: null as PackageFiles | null }
+      const asked: string[] = []
+      const s = await setup({
+        packages: {
+          builtins: [packageOf(parseManifest(SHOP_MAIL), { 'src/tools.ts': echoTools('v1:') })],
+          runtime: { prelude, start },
+          build: buildRecord('0.1.0', prelude),
+          folders: { pick: async () => picked.next },
+        },
+        toolProcess: start,
+        credentials,
+        // The app's own wiring (electron/app.ts), with the broker sent to the fake server.
+        imap: (protocol) => imapBackend({ protocol, host, broker }),
+        mailReader: (account) =>
+          new HostMailReader({
+            host,
+            account: async (ref) => {
+              asked.push(ref)
+              const found = await account(ref)
+              return found === null ? null : { ...found, broker }
+            },
+          }),
+      })
+      const install = async (files: PackageFiles) => {
+        picked.next = files
+        const installed = await s.api.adapters.installFromFolder()
+        expect(installed).toMatchObject({ ok: true })
+        const id = (installed as { adapterId: string }).adapterId
+        const hash = (await s.api.approvals.pending()).find((r) => r.adapterId === id)?.to.hash ?? ''
+        await s.api.approvals.approve(id, hash)
+        return hash
+      }
+      const grantMail = (adapterId: string, adapterHash: string) =>
+        s.api.credentials.make({
+          adapterId,
+          adapterHash,
+          credential: 'mail',
+          provider: 'onepassword-service-account',
+          itemId: 'icloud-mail',
+        })
+      const reader = () => (s.service as unknown as { mail: MailReader }).mail
+      const lookup = (notBefore: Date) =>
+        reader().find(
+          {
+            account: 'mailbox/mail',
+            from: SENDER,
+            subjectContains: 'Sign in',
+            maxAgeSeconds: 600,
+            extract: { linkOrigin: LINK_ORIGIN },
+          },
+          notBefore,
+        )
+      return { s, server, reads, asked, install, grantMail, lookup }
+    }
+
+    it('runs a protocol adapter’s ctx.imap through the protocol host, signed in with its granted password', async () => {
+      const t = await withMail()
+      try {
+        const hash = await t.install(mailPackage('mailbox', 'read'))
+        const count = () =>
+          (t.s.endpoint.caller as ToolCaller).call({
+            adapterId: 'mailbox',
+            tool: 'count',
+            input: {},
+            client: 'Claude Code',
+            callId: `call_mail_${Math.random().toString(36).slice(2)}`,
+            transport: 'http',
+          })
+        // Not granted: refused, and the server never hears a sign-in.
+        expect(await count()).toMatchObject({ status: 'failed', errorClass: 'not-granted' })
+        expect(t.server.logins).toEqual([])
+        await t.grantMail('mailbox', hash)
+        expect(await count()).toMatchObject({ status: 'ok', output: { messages: 1 } })
+        expect(t.server.logins).toEqual([{ username: DEFAULT_USER.username, ok: true }])
+        expect([...t.reads].sort()).toEqual([
+          'op://Valet/icloud-mail#password',
+          'op://Valet/icloud-mail#username',
+        ])
+        // A read tool only looks.
+        const verbs = t.server.commands.map((c) => c.verb)
+        expect(verbs).toContain('STATUS')
+        for (const verb of ['SELECT', 'STORE', 'APPEND', 'EXPUNGE']) expect(verbs).not.toContain(verb)
+        const audit = readFileSync(t.s.paths.audit, 'utf8')
+        expect(audit).not.toContain(DEFAULT_USER.password)
+        // The tunnel's record lands as the connection closes, just after the call.
+        await vi.waitFor(() =>
+          expect(readAudit(t.s.paths.audit)).toContainEqual(
+            expect.objectContaining({ type: 'egress-connection', adapterId: 'mailbox', kind: 'tunnel' }),
+          ),
+        )
+      } finally {
+        await t.s.service.stop()
+        await t.server.close()
+      }
+    }, 60_000)
+
+    it('grants a browser login sign-in mail from a read-only mail account, reads its link, and stops when that account can’t serve it', async () => {
+      const t = await withMail()
+      try {
+        const shop = (await t.s.api.approvals.pending()).find((r) => r.adapterId === 'shop')?.to.hash ?? ''
+        await t.s.api.approvals.approve('shop', shop)
+        const detail = await t.s.api.adapters.get('shop')
+        expect(detail?.mail).toEqual({
+          sender: SENDER,
+          reads: ['link'],
+          requestedOrigins: SHOP.navigation,
+          linkOrigins: [LINK_ORIGIN],
+          grant: null,
+          lapsed: false,
+        })
+        const request = {
+          adapterId: 'shop',
+          adapterHash: shop,
+          secret: MAIL_SECRET,
+          provider: 'mail' as const,
+          itemRef: 'mailbox/mail',
+          origins: [LINK_ORIGIN],
+        }
+        // No mail account yet: nothing to offer, and nothing can be granted.
+        expect(await t.s.api.grants.vaultItems('mail')).toEqual({ status: 'ok', items: [] })
+        await expect(t.s.api.grants.make(request)).rejects.toMatchObject({ errorClass: 'not-found' })
+
+        const mailbox = await t.install(mailPackage('mailbox', 'read'))
+        // Installed, but its password isn't granted: still not an account Valet holds.
+        expect(await t.s.api.grants.vaultItems('mail')).toEqual({ status: 'ok', items: [] })
+        await t.grantMail('mailbox', mailbox)
+        expect(await t.s.api.grants.vaultItems('mail')).toEqual({
+          status: 'ok',
+          items: [{ id: 'mailbox/mail', title: 'Mailbox' }],
+        })
+
+        // Refused: another secret's name, an origin the shop never navigates, an account not offered.
+        await expect(t.s.api.grants.make({ ...request, secret: 'login' })).rejects.toThrow()
+        await expect(t.s.api.grants.make({ ...request, origins: ['https://evil.test'] })).rejects.toThrow()
+        await expect(t.s.api.grants.make({ ...request, itemRef: 'other/mail' })).rejects.toThrow()
+        // Touch ID cancelled: no grant.
+        t.s.presence.answer = false
+        await expect(t.s.api.grants.make(request)).rejects.toThrow()
+        t.s.presence.answer = true
+        const prompts = t.s.presence.prompts.length
+        await t.s.api.grants.make(request)
+        expect(t.s.presence.prompts.slice(prompts)).toEqual([
+          expect.stringMatching(
+            /^let an adapter use your login on login\.shop\.test \(request [0-9A-F]{4}\)$/,
+          ),
+        ])
+        expect((await t.s.api.adapters.get('shop'))?.mail?.grant).toMatchObject({
+          provider: 'mail',
+          itemId: 'mailbox/mail',
+          itemTitle: `${SENDER}, read from Mailbox`,
+          origins: [LINK_ORIGIN],
+        })
+        expect(readAudit(t.s.paths.audit)).toContainEqual(
+          expect.objectContaining({
+            type: 'grant-made',
+            adapterId: 'shop',
+            secret: MAIL_SECRET,
+            provider: 'mail',
+          }),
+        )
+
+        // The lookup: only mail that arrived after the login asked, through the mail account's own
+        // grant, read-only, with nothing marked read.
+        const asked = new Date(Date.now() - 1_000)
+        await expect(t.lookup(asked)).rejects.toMatchObject({ failure: 'not-found' })
+        t.server.deliver('INBOX', message(`Sign in: ${LINK_ORIGIN}/magic?t=abc123`))
+        const link = await t.lookup(asked)
+        expect(link.reveal((v) => v)).toBe(`${LINK_ORIGIN}/magic?t=abc123`)
+        link.dispose()
+        expect(t.server.mailboxes.get('INBOX')?.messages.every((m) => m.flags.size === 0)).toBe(true)
+        expect(t.server.commands.map((c) => c.verb)).not.toContain('SELECT')
+        // Signed in as the mail account's own credential: audited there, never handed to the shop.
+        expect(readAudit(t.s.paths.audit)).toContainEqual(
+          expect.objectContaining({
+            type: 'secret-used',
+            adapterId: 'mailbox',
+            secret: 'mail',
+            callId: null,
+          }),
+        )
+        expect(readFileSync(t.s.paths.audit, 'utf8')).not.toContain('abc123')
+        expect(readFileSync(t.s.paths.audit, 'utf8')).not.toContain(DEFAULT_USER.password)
+
+        // An adapter that may change INBOX, granted the same password: possibly the same mailbox,
+        // where it could plant a sign-in mail. The account stops serving at once.
+        const filer = await t.install(mailPackage('filer', 'write'))
+        await t.grantMail('filer', filer)
+        expect(await t.s.api.grants.vaultItems('mail')).toEqual({ status: 'ok', items: [] })
+        // At once, though a session was still kept from the last lookup.
+        await expect(t.lookup(asked)).rejects.toMatchObject({ failure: 'not-found' })
+        // That session ended, and its connection is recorded as the mail account's.
+        await vi.waitFor(() =>
+          expect(readAudit(t.s.paths.audit)).toContainEqual(
+            expect.objectContaining({
+              type: 'egress-connection',
+              adapterId: 'mailbox',
+              callId: 'sign-in-mail',
+            }),
+          ),
+        )
+        await t.s.api.credentials.revoke('filer', 'mail')
+        expect(await t.s.api.grants.vaultItems('mail')).toMatchObject({
+          items: [{ id: 'mailbox/mail' }],
+        })
+
+        // Revoking the mail account's own password stops sign-in mail too: nothing is copied.
+        const again = await t.lookup(asked)
+        again.dispose()
+        await t.s.api.credentials.revoke('mailbox', 'mail')
+        await expect(t.lookup(asked)).rejects.toMatchObject({ failure: 'not-found' })
+        expect(await t.s.api.grants.vaultItems('mail')).toEqual({ status: 'ok', items: [] })
+
+        // The shop's own grant stays, and is revoked like any login grant.
+        await t.s.api.grants.revoke('shop', MAIL_SECRET)
+        expect((await t.s.api.adapters.get('shop'))?.mail?.grant).toBeNull()
+      } finally {
+        await t.s.service.stop()
+        await t.server.close()
+      }
+    }, 60_000)
+
+    it('never offers a mail account whose own tools may change INBOX', async () => {
+      const t = await withMail()
+      try {
+        const filer = await t.install(mailPackage('filer', 'write'))
+        await t.grantMail('filer', filer)
+        expect(await t.s.api.grants.vaultItems('mail')).toEqual({ status: 'ok', items: [] })
+      } finally {
+        await t.s.service.stop()
+        await t.server.close()
+      }
+    }, 60_000)
   })
 
   describe('drafts an agent submits (docs/authoring-tools.md)', () => {

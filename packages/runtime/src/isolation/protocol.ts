@@ -46,6 +46,8 @@ export const CAPABILITIES = [
   'http.ws.send',
   'http.ws.receive',
   'http.ws.close',
+  // Entrusted credentials (docs/adapter-kinds.md#raw): not-granted unless the runtime is raw.
+  'secrets.get',
   // The protocol host (docs/imap.md): one capability, the operation's name and its arguments.
   'imap.op',
   // Sending mail (workstream G): one message per call of it; GuardedSmtp checks and confirms it.

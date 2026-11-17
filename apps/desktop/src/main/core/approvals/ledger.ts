@@ -74,6 +74,7 @@ export const ledgerSchema = z
               'onepassword-service-account',
               'keychain-copy',
               'messages',
+              'mail',
             ]),
             itemFingerprint: z.string().regex(/^[0-9a-f]{16}$/),
             origins: z.array(z.string().max(300)).min(1).max(50),

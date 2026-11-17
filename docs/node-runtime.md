@@ -1,6 +1,6 @@
 # The Node runtime
 
-Status: **Built, not yet used by any adapter.** This is workstream C of
+Status: **Built, and used by `raw` adapters** (workstream F, [adapter-kinds.md](adapter-kinds.md#as-built-workstream-f)). This is workstream C of
 [adapter-kinds.md](adapter-kinds.md) (F3). It gives `raw` adapters a place to run. Workstream F
 turns `raw` adapters on and wires this runtime into checks, trials and calls. Workstream A's egress
 broker supplies the tunnels. The code is in `packages/node-runtime`.
@@ -168,13 +168,11 @@ x64 under Rosetta when Rosetta is there. A binary signed without the JIT entitle
 To build it for a development package, run `node apps/desktop/scripts/node-runtime.mjs`. A
 development build without it packages without it.
 
-## What is not built here
+## Wiring into adapters
 
-- **Wiring into adapters** is workstream F:
-  - `raw` in the manifest, `endpoints`, read paths and `ctx.secrets`;
-  - the binary's path, `Contents/MacOS/valet-node` beside the app's executable;
-  - registering each call's tunnel ports as Valet's own.
-- **The broker's side of the tunnels** is workstream A.
+Workstream F did this ([adapter-kinds.md](adapter-kinds.md#as-built-workstream-f)): `raw` in the
+manifest, `endpoints`, read paths and `ctx.secrets`; the binary's path; and each call's tunnel ports,
+which own-ports.ts records as Valet's own while they listen.
 
 ## Testing
 

@@ -131,6 +131,4 @@ Every test runs against `smtp-server` on loopback, never a real mail server.
 
 ## Not yet
 
-- **The app registers no SMTP backend yet**, as for IMAP: the protocol host needs the signed Node
-  binary (workstream C's follow-up). Until then an SMTP adapter's sends answer not-granted.
 - The approval card doesn't yet list the manifest's recipients, as it doesn't list IMAP folders.

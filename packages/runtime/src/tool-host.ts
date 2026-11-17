@@ -56,7 +56,9 @@ import {
   manifestSchema,
   NeedsUserError,
   type RequestDeclaration,
+  rawEndpoints,
   runtimeOf,
+  type SecretsAccess,
   type SessionDriver,
   type SettingDeclaration,
   type Stage,
@@ -73,11 +75,11 @@ import {
   uploadBudget,
   ValetError,
 } from '@valet/core'
-import { RunMeter } from '@valet/egress'
+import { type OpenTunnels, type RunContext, RunMeter, type TunnelSet } from '@valet/egress'
 import type { z } from 'zod'
 import type { ApprovalLookup } from './approvals'
 import type { JsonStore } from './breaker-state'
-import { MAX_TARGET_LENGTH, NOTEWORTHY_WAIT_MS, PURPOSE_RANK, plainMethod } from './call-gate'
+import { CallGate, MAX_TARGET_LENGTH, NOTEWORTHY_WAIT_MS, PURPOSE_RANK, plainMethod } from './call-gate'
 import { CallState } from './call-state'
 import { type Clock, type Sleep, systemClock, systemSleep } from './clock'
 import { CredentialGate, type CredentialGateOptions } from './credential-gate'
@@ -189,6 +191,12 @@ export interface RegisteredAdapter {
    */
   readonly credentialGrants?: CredentialGrantSource
   /**
+   * A `raw` adapter's runtime (docs/adapter-kinds.md#raw): its code runs in a Node process of its own
+   * for each call, whose only network is the broker's tunnels for that call. Required for a raw
+   * adapter's tools to run at all; `isolation` is not used for one.
+   */
+  readonly raw?: RawIsolation
+  /**
    * The protocol host behind ctx.imap, for a `protocol` adapter with protocols.imap (docs/imap.md).
    * It signs in with the manifest's kept credential through a CredentialGate over
    * `credentialGrants`. Without it, every ctx.imap call is not-granted.
@@ -200,6 +208,25 @@ export interface RegisteredAdapter {
    */
   readonly smtp?: SmtpBackend
 }
+
+/**
+ * How a raw adapter's calls run. The app builds both from the Node runtime and the egress broker;
+ * the tool host joins them per call, so each call's tunnels carry that call's upload budget, pacing
+ * and audit, and close with it.
+ */
+export interface RawIsolation {
+  /** The prelude and the adapter's Node bundle, as the process evaluates them. */
+  readonly script: string
+  /** A factory for one call's process, whose tunnels are opened through `openTunnels`. */
+  readonly start: (openTunnels: OpenTunnels) => ToolProcessFactory
+  /** The broker's tunnels for one call (EgressBroker.tunnels). `admit` paces each connection. */
+  readonly tunnels: (run: RunContext, options: { readonly admit: () => Promise<void> }) => OpenTunnels
+}
+
+/** ctx.secrets for every adapter that isn't raw, or has no credential grants behind it. */
+export const NO_SECRETS: SecretsAccess = Object.freeze({
+  get: () => Promise.reject(new ValetError('tool-run', 'not-granted')),
+})
 
 export type CredentialGrantSource = Pick<CredentialGateOptions, 'findGrant' | 'resolve'>
 
@@ -381,6 +408,7 @@ export class ToolHost {
       ...(adapter.http === undefined ? {} : { http: adapter.http }),
       ...(adapter.credentials === undefined ? {} : { credentials: adapter.credentials }),
       ...(adapter.credentialGrants === undefined ? {} : { credentialGrants: adapter.credentialGrants }),
+      ...(adapter.raw === undefined ? {} : { raw: adapter.raw }),
       ...(adapter.imap === undefined ? {} : { imap: adapter.imap }),
       ...(adapter.smtp === undefined ? {} : { smtp: adapter.smtp }),
     })
@@ -1008,6 +1036,14 @@ export class ToolHost {
       return fromReportable(toReportable(error, 'navigate'))
     }
 
+    // A raw adapter's process and tunnels for this call. Its code never runs anywhere else: without
+    // its runtime (off macOS, or the Node binary missing) the call is unavailable.
+    let raw: ReturnType<ToolHost['rawFor']> | null = null
+    if (runtimeOf(manifest) === 'raw') {
+      raw = this.rawFor(entry, declaration, state)
+      if (raw === null) return failed('tool-run', 'unavailable')
+    }
+
     const guarded = new GuardedToolPage({
       adapterId: manifest.id,
       manifest,
@@ -1071,16 +1107,19 @@ export class ToolHost {
         if (answer === 'cancelled') controller.abort()
         return answer
       }),
-      ...(entry.isolation?.local === undefined
+      ...(entry.isolation?.local === undefined || raw !== null
         ? {}
         : { local: this.liveLocal(entry.isolation.local, manifest.id, state) }),
+      secrets: raw === null ? NO_SECRETS : raw.secrets,
     }
 
     const isolation = entry.isolation
     const execute =
-      isolation === undefined
-        ? () => implementation.run(ctx, input)
-        : () => runIsolated(isolation.start, isolation.script, ctx, declaration.name, input)
+      raw !== null
+        ? () => runIsolated(raw.start, raw.script, ctx, declaration.name, input)
+        : isolation === undefined
+          ? () => implementation.run(ctx, input)
+          : () => runIsolated(isolation.start, isolation.script, ctx, declaration.name, input)
     // D50: a login this call starts doesn't keep the caller. If it is still running after a few
     // seconds, the caller is answered, tool code is stopped for good, and the login alone runs on
     // under the adapter's lock (see afterSettling).
@@ -1431,7 +1470,8 @@ export class ToolHost {
    */
   private httpFor(entry: Entry, declaration: ToolDeclaration, state: CallState): ToolContext['http'] {
     const manifest = entry.definition.manifest
-    if (entry.http === undefined || runtimeOf(manifest) === 'browser') return NO_HTTP_ACCESS
+    // Only an http adapter: a raw adapter's network is its own sockets through the tunnels.
+    if (entry.http === undefined || runtimeOf(manifest) !== 'http') return NO_HTTP_ACCESS
     return new GuardedHttp({
       adapterId: manifest.id,
       manifest,
@@ -1561,6 +1601,138 @@ export class ToolHost {
       remember: (secret) => state.keepSent(secret),
       callId: state.callId,
     })
+  }
+
+  /** The audit record of one connection the broker made or carried for a call. */
+  private connectionRecorder(adapterId: string, state: CallState): RunContext['record'] {
+    return (c) =>
+      void this.record({
+        type: 'egress-connection',
+        adapterId,
+        callId: state.callId,
+        endpoint: c.endpoint,
+        kind: c.kind,
+        bytesUp: c.bytesUp,
+        bytesDown: c.bytesDown,
+        errorClass: c.errorClass,
+      })
+  }
+
+  /**
+   * One call of a raw adapter (docs/adapter-kinds.md#raw): its process, whose tunnels spend from the
+   * call's upload budget, take one pacing slot and one request from the ceiling per connection, and
+   * are audited; and its ctx.secrets, which hands over an entrusted credential only through a
+   * CredentialGate and narrows the tunnels to that credential's endpoints before it does. Null if
+   * the adapter has no raw runtime registered.
+   */
+  private rawFor(
+    entry: Entry,
+    declaration: ToolDeclaration,
+    state: CallState,
+  ): { start: ToolProcessFactory; script: string; secrets: SecretsAccess } | null {
+    const raw = entry.raw
+    if (raw === undefined) return null
+    const manifest = entry.definition.manifest
+    const gate = new CallGate({
+      adapterId: manifest.id,
+      manifest,
+      sideEffect: declaration.sideEffect,
+      site: entry.site,
+      state,
+      audit: (event) => this.record(event),
+      clock: this.clock,
+    })
+    const recordConnection = this.connectionRecorder(manifest.id, state)
+    const run: RunContext = {
+      meter: new RunMeter(uploadBudget(manifest, declaration.sideEffect)),
+      signal: state.signal,
+      record: (connection) => {
+        recordConnection(connection)
+        // What the broker refused on its own ends the call, as a guard violation does: past the
+        // upload budget, another server's name, or an endpoint the call may no longer reach. Tool
+        // code sees a closed socket, and its output never leaves.
+        const refused = connection.errorClass
+        if (refused === 'upload-budget' || refused === 'sni-mismatch' || refused === 'host-not-allowed')
+          state.violation ??= new ValetError('egress', refused)
+      },
+    }
+    // Each connection is a request: it counts against the run's ceiling and waits for the pace.
+    const admit = async (): Promise<void> => {
+      state.assertLive()
+      state.requests++
+      if (state.requests > manifest.limits.requestsPerRun) {
+        const refusal = new ValetError('request-surface', 'request-ceiling')
+        state.violation ??= refusal
+        throw refusal
+      }
+      await gate.pace()
+    }
+    // Narrowings asked for before the tunnels opened apply as they open; each one only narrows.
+    const narrowings: (readonly string[])[] = []
+    let set: TunnelSet | null = null
+    const narrow = (endpoints: readonly string[]) => {
+      narrowings.push(endpoints)
+      set?.restrict(endpoints)
+    }
+    const openTunnels: OpenTunnels = async (endpoints) => {
+      const known = new Set(rawEndpoints(manifest))
+      // The process asks for exactly the manifest's endpoints; anything else is a wiring bug.
+      if (!endpoints.every((e) => known.has(e))) throw new ValetError('egress', 'host-not-allowed')
+      const opened = await raw.tunnels(run, { admit })(endpoints)
+      set = opened
+      for (const n of narrowings) opened.restrict(n)
+      return opened
+    }
+    return {
+      start: raw.start(openTunnels),
+      script: raw.script,
+      secrets: this.secretsFor(entry, state, narrow),
+    }
+  }
+
+  /**
+   * ctx.secrets for one raw call. Each get goes through a CredentialGate (declared, entrusted, granted
+   * for this hash), which registers the value and its encodings for this call's redaction and audits
+   * `secret-used`; then the tunnels are narrowed to the credential's endpoints, so nothing open to
+   * any other endpoint outlives the hand-over, and only then is the value given.
+   */
+  private secretsFor(
+    entry: Entry,
+    state: CallState,
+    narrow: (endpoints: readonly string[]) => void,
+  ): SecretsAccess {
+    const manifest = entry.definition.manifest
+    const grants = entry.credentialGrants
+    if (grants === undefined) return NO_SECRETS
+    const gate = new CredentialGate({
+      adapterId: manifest.id,
+      adapterHash: entry.bundleHash,
+      credentials: manifest.credentials,
+      findGrant: grants.findGrant,
+      resolve: grants.resolve,
+      audit: this.options.audit,
+      remember: (secret) => state.keepSent(secret),
+      callId: state.callId,
+    })
+    return {
+      get: async (name) => {
+        state.assertLive()
+        if (typeof name !== 'string' || name.length === 0 || name.length > 64)
+          throw new ValetError('tool-run', 'invalid')
+        const given = await state.track(gate.entrusted(name))
+        try {
+          narrow(given.endpoints)
+          state.assertLive()
+          return {
+            value: given.secret.reveal((v) => v),
+            username: given.username === null ? null : given.username.reveal((v) => v),
+          }
+        } finally {
+          given.secret.dispose()
+          given.username?.dispose()
+        }
+      },
+    }
   }
 
   /**

@@ -7,14 +7,16 @@ import {
   type AdapterDefinition,
   type CheckedPackage,
   checkPackage,
+  type DependencyLock,
   defineAdapter,
   type PackageFiles,
+  runtimeOf,
   sha256Hex,
   type ToolImplementation,
   ValetError,
 } from '@valet/core'
 import { describeIsolated, type ToolProcessFactory } from '@valet/runtime'
-import { COMPILER_VERSION, type Compiler, compilePackage } from './compile'
+import { COMPILER_VERSION, type Compiler, compileNodePackage, compilePackage } from './compile'
 import { SchemaError, toolSchemas } from './schemas'
 
 /** What the app gives every load: the library prelude and how to start a tool process. */
@@ -25,6 +27,21 @@ export interface PackageRuntime {
   readonly describeTimeoutMs?: number
   /** Defaults to one shared Compiler over the installed esbuild-wasm. */
   readonly compiler?: Compiler
+  /**
+   * What a `raw` adapter needs to load (docs/node-runtime.md): its dependencies' files, read from
+   * Valet's tarball store and checked against the lockfile again, and the Node runtime to describe
+   * its tools in (a process with no endpoints). Without it, a raw package doesn't load.
+   */
+  readonly raw?: RawPackageRuntime
+}
+
+export interface RawPackageRuntime {
+  /** Package key (`name@version`) to its files, for every package in `lock`. */
+  dependencies(
+    lock: DependencyLock | null,
+  ): Promise<Readonly<Record<string, Readonly<Record<string, string>>>>>
+  /** A Node runtime process with no network at all, for describe and input checks. */
+  readonly start: ToolProcessFactory
 }
 
 /** What the adapter hash doesn't cover, recorded with each version (B's review, point 5). */
@@ -60,21 +77,32 @@ export function buildRecord(appVersion: string, prelude: string): BuildRecord {
 /** Throws PackageError (core) or LoadError. */
 export async function loadPackage(input: PackageFiles, runtime: PackageRuntime): Promise<LoadedPackage> {
   const checked = checkPackage(input)
+  const raw = runtimeOf(checked.manifest) === 'raw'
+  if (raw && runtime.raw === undefined) throw new LoadError('compile', 'this build can’t run raw adapters')
   let compiled: string
   try {
-    compiled = await (runtime.compiler === undefined
-      ? compilePackage(checked.files)
-      : runtime.compiler.compile(checked.files))
+    if (raw) {
+      const packages = await (runtime.raw as RawPackageRuntime).dependencies(checked.dependencies)
+      compiled = await (runtime.compiler === undefined
+        ? compileNodePackage(checked.files, checked.dependencies, packages)
+        : runtime.compiler.compileNode(checked.files, checked.dependencies, packages))
+    } else {
+      compiled = await (runtime.compiler === undefined
+        ? compilePackage(checked.files)
+        : runtime.compiler.compile(checked.files))
+    }
   } catch (error) {
     throw new LoadError(
       'compile',
-      error instanceof Error && 'detail' in error ? String(error.detail) : 'failed',
+      error instanceof Error && 'detail' in error ? String(error.detail) : clipMessage(error),
     )
   }
   const script = `${runtime.prelude}\n;\n${compiled}`
+  // A raw adapter's code is Node code: it is described in the Node runtime, never in the sandbox.
+  const start = raw ? (runtime.raw as RawPackageRuntime).start : runtime.start
   let described: Readonly<Record<string, unknown>>
   try {
-    described = await describeIsolated(runtime.start, script, runtime.describeTimeoutMs)
+    described = await describeIsolated(start, script, runtime.describeTimeoutMs)
   } catch {
     throw new LoadError('describe', 'the tool process gave no usable answer')
   }
@@ -116,6 +144,12 @@ export function schemaProblem(name: string, error: unknown): string {
 /** A package's tools only ever run in the tool process; reaching this is a wiring bug. */
 function outOfProcess(): Promise<never> {
   return Promise.reject(new ValetError('tool-run', 'internal'))
+}
+
+/** A dependency the store can't give (DependencyError), say: its message, which names no file contents. */
+function clipMessage(error: unknown): string {
+  if (error instanceof Error && error.name === 'DependencyError') return clip(error.message)
+  return 'failed'
 }
 
 function clip(text: string): string {

@@ -135,6 +135,11 @@ export interface RunnableDraft {
 export interface CaseRunOptions {
   /** A fresh sandbox process per case (the app: SandboxPool.oneShot()). */
   readonly start: ToolProcessFactory
+  /**
+   * For a raw draft: a fresh Node runtime process per case, with no network at all
+   * (docs/adapter-kinds.md#raw). Without it, a raw draft's cases fail as not runnable here.
+   */
+  readonly rawStart?: ToolProcessFactory
   /** createLocalAccess(declaration, 'none', …): no exception before approval (docs/sandbox.md). */
   readonly local: LocalAccess
   readonly timeoutMs?: number
@@ -253,6 +258,18 @@ export async function runCase(
   const home = homeUnreachable(draft.manifest)
   if (home !== null) return fail(`A live call would fail with egress/host-not-allowed: ${home}.`)
 
+  // A raw draft's code opens its own sockets, which a case has nothing to answer: its cases run in
+  // the Node runtime with no network at all, to test what it does with its input. The network is
+  // what a live trial is for.
+  const raw = runtimeOf(draft.manifest) === 'raw'
+  if (raw) {
+    if (Object.keys(c.pages).length > 0 || c.fetch.length > 0)
+      return fail(
+        'A raw adapter’s case has no network, so no "pages" or "fetch": give the data in the input, and try the network with valet_live_trial.',
+      )
+    if (options.rawStart === undefined) return fail('This build of Valet can’t run raw adapters.')
+  }
+
   const controller = new AbortController()
   const state = new CallState(
     `case-${Math.random().toString(36).slice(2, 10)}`,
@@ -295,23 +312,24 @@ export async function runCase(
   const http = runtimeOf(draft.manifest) !== 'browser'
   const ctx: ToolContext = {
     page: http ? NO_PAGE : browser === null ? watchDom(guarded, domUse) : guarded,
-    http: http
-      ? new GuardedHttp({
-          adapterId: draft.manifest.id,
-          manifest: draft.manifest,
-          sideEffect: declared.sideEffect,
-          unlocks: [],
-          site: OPEN_SITE,
-          state,
-          audit: async () => {},
-          broker: fixtureEgress(fixtures),
-          run: {
-            meter: new RunMeter(uploadBudget(draft.manifest, declared.sideEffect)),
-            signal: controller.signal,
-            record: () => {},
-          },
-        })
-      : NO_HTTP_ACCESS,
+    http:
+      http && !raw
+        ? new GuardedHttp({
+            adapterId: draft.manifest.id,
+            manifest: draft.manifest,
+            sideEffect: declared.sideEffect,
+            unlocks: [],
+            site: OPEN_SITE,
+            state,
+            audit: async () => {},
+            broker: fixtureEgress(fixtures),
+            run: {
+              meter: new RunMeter(uploadBudget(draft.manifest, declared.sideEffect)),
+              signal: controller.signal,
+              record: () => {},
+            },
+          })
+        : NO_HTTP_ACCESS,
     session: { ensure: async (): Promise<EnsureResult> => sessionResult(c.session) },
     confirm: async () => false,
     signal: controller.signal,
@@ -329,7 +347,14 @@ export async function runCase(
   try {
     outcome = await Promise.race([
       // The failure's own words come back too: a case runs the agent's code on its own fixtures.
-      runIsolated(options.start, draft.script, ctx, c.tool, input.data, { detail: true }).then(
+      runIsolated(
+        raw ? (options.rawStart as ToolProcessFactory) : options.start,
+        draft.script,
+        ctx,
+        c.tool,
+        input.data,
+        { detail: true },
+      ).then(
         (value) => ({ ok: true as const, value }),
         (error: unknown) => ({ ok: false as const, error }),
       ),
