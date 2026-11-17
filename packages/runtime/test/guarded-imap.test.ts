@@ -16,7 +16,9 @@ const manifest = parseManifest({
   version: '0.1.0',
   description: 'For GuardedImap unit tests',
   runtime: 'protocol',
-  protocols: { imap: { endpoint: 'imap.mail.me.com:993', credential: 'mail', folders: ['INBOX', 'Receipts'] } },
+  protocols: {
+    imap: { endpoint: 'imap.mail.me.com:993', credential: 'mail', folders: ['INBOX', 'Receipts'] },
+  },
   credentials: {
     mail: {
       description: 'App-specific password',
@@ -29,7 +31,10 @@ const manifest = parseManifest({
   tools: [{ name: 'read_it', title: 'Read', description: 'A read', sideEffect: 'read' }],
 })
 
-function setup(sideEffect: 'read' | 'write' | 'irreversible' = 'read', options: { breakerOpen?: boolean; failOp?: ValetError } = {}) {
+function setup(
+  sideEffect: 'read' | 'write' | 'irreversible' = 'read',
+  options: { breakerOpen?: boolean; failOp?: ValetError } = {},
+) {
   const ops: { op: string; args: readonly unknown[] }[] = []
   const connects: ImapCall[] = []
   let ended = 0
@@ -52,7 +57,12 @@ function setup(sideEffect: 'read' | 'write' | 'irreversible' = 'read', options: 
   }
   const site: SiteGuards = {
     budget: { acquire: async () => {} },
-    breaker: { isOpen: () => options.breakerOpen === true, admit: () => 0, recordSuccess: () => {}, trip: () => {} },
+    breaker: {
+      isOpen: () => options.breakerOpen === true,
+      admit: () => 0,
+      recordSuccess: () => {},
+      trip: () => {},
+    },
   } as unknown as SiteGuards
   const controller = new AbortController()
   const state = new CallState('call-1', controller.signal, () => new SecretRedactionSet())
@@ -86,7 +96,9 @@ describe('GuardedImap', () => {
 
   it('refuses a change from a read tool, audits it, and stays refused', async () => {
     const t = setup('read')
-    await expect(t.imap.move('INBOX', [1], 'Receipts')).rejects.toMatchObject({ errorClass: 'command-not-allowed' })
+    await expect(t.imap.move('INBOX', [1], 'Receipts')).rejects.toMatchObject({
+      errorClass: 'command-not-allowed',
+    })
     expect(t.audits).toEqual([
       expect.objectContaining({
         type: 'request-blocked',
@@ -134,7 +146,9 @@ describe('GuardedImap', () => {
     await expect(t.imap.op('raw', [])).rejects.toMatchObject({ errorClass: 'invalid' })
     await expect(t.imap.op('search', 'INBOX' as never)).rejects.toMatchObject({ errorClass: 'invalid' })
     await expect(t.imap.op('search', [1, 2, 3, 4, 5])).rejects.toMatchObject({ errorClass: 'invalid' })
-    await expect(t.imap.op('status', [{ toString: () => 'INBOX' }])).rejects.toMatchObject({ errorClass: 'invalid' })
+    await expect(t.imap.op('status', [{ toString: () => 'INBOX' }])).rejects.toMatchObject({
+      errorClass: 'invalid',
+    })
     await expect(t.imap.op('__proto__', [])).rejects.toMatchObject({ errorClass: 'invalid' })
     expect(t.ops).toEqual([])
   })

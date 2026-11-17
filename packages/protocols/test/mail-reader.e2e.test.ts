@@ -59,7 +59,12 @@ async function setup(options: { folders?: string[]; password?: string } = {}) {
   return { reader, accounts, server }
 }
 
-const linkQuery = { account: 'icloud-mail/mail', from: SENDER, maxAgeSeconds: 300, extract: { linkOrigin: ORIGIN } }
+const linkQuery = {
+  account: 'icloud-mail/mail',
+  from: SENDER,
+  maxAgeSeconds: 300,
+  extract: { linkOrigin: ORIGIN },
+}
 
 describe('HostMailReader', () => {
   it('finds a link that arrived after the login asked, reusing one session', async () => {
@@ -82,7 +87,12 @@ describe('HostMailReader', () => {
     const t = await setup()
     t.server.deliver('INBOX', { raw: message('Your code: 482913') })
     const found = await t.reader.find(
-      { account: 'icloud-mail/mail', from: SENDER, maxAgeSeconds: 300, extract: { pattern: 'code: (\\d{6})' } },
+      {
+        account: 'icloud-mail/mail',
+        from: SENDER,
+        maxAgeSeconds: 300,
+        extract: { pattern: 'code: (\\d{6})' },
+      },
       new Date(Date.now() - 1_000),
     )
     expect(found.reveal((v) => v)).toBe('482913')
@@ -98,7 +108,9 @@ describe('HostMailReader', () => {
 
   it('knows no account it does not hold', async () => {
     const t = await setup()
-    const error = await t.reader.find({ ...linkQuery, account: 'other/mail' }, new Date()).catch((e: unknown) => e)
+    const error = await t.reader
+      .find({ ...linkQuery, account: 'other/mail' }, new Date())
+      .catch((e: unknown) => e)
     expect(error).toBeInstanceOf(CredentialError)
     expect(error).toMatchObject({ failure: 'not-found' })
   })

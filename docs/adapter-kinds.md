@@ -336,7 +336,7 @@ touches the server.
 
 | Protocol | Library (to confirm in the thread) | Read                                                                                                                                                    | Write                                               | Irreversible                                                                                  |
 | -------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| IMAP     | `imapflow`, `mailparser`           | List folders. Open a folder read-only (`EXAMINE`), so a fetch never marks mail as read. Search. Fetch envelopes, structure, and bodies with `BODY.PEEK` | Set flags, copy, move, append, create folders       | Expunge, delete folders                                                                       |
+| IMAP     | Valet's own ([imap.md](imap.md))   | List folders. Open a folder read-only (`EXAMINE`), so a fetch never marks mail as read. Search. Fetch envelopes, structure, and bodies with `BODY.PEEK` | Set flags, copy, move, append, create folders       | Expunge, delete folders                                                                       |
 | SMTP     | `nodemailer`                       | None                                                                                                                                                    | None                                                | Send, through `confirm()`; `From` fixed to the account; optional recipient allow-list setting |
 | SFTP     | `ssh2`                             | List, stat and read under declared roots                                                                                                                | Write, make folders and rename under declared roots | Remove                                                                                        |
 
@@ -452,6 +452,37 @@ and the profile generator. D, E and G own their own `protocols.*` entries. Each 
 
 Nick was away while these were built and asked each thread to take its own recommendation and
 note it here. Each one can be reversed.
+
+**Workstream D (IMAP and email sign-in, [imap.md](imap.md)):**
+
+- **Valet's own IMAP client, not `imapflow` and `mailparser`.** The client is small (a reader with
+  hard limits, structured commands, and a check of each command against the session's purpose
+  just before it's written). Owning it is what lets the wire itself refuse `BODY[]`, `CLOSE`,
+  plain `EXPUNGE` and anything outside the table, whatever a bug above it does. The libraries
+  would also have needed bundling into the sandboxed host along with their dependencies. MIME is
+  read from the server's `BODYSTRUCTURE` and `ENVELOPE`, so no general MIME parser is needed.
+- **Folder names match exactly**, except INBOX in any case. `Receipts` doesn't cover its
+  subfolders. Patterns were the alternative; they can wait until an adapter needs them.
+- **`\Deleted` counts as irreversible**, whether it's added, removed or set on append, because
+  marking a message deleted is the first half of losing it. Only `UID EXPUNGE` is ever sent, so
+  an expunge removes just the messages a tool names. A server without UIDPLUS can't expunge.
+- **An irreversible IMAP tool needs only its declared side effect.** An `http` adapter's
+  irreversible request also needs the tool to name it. IMAP has no per-request declarations, so
+  the tool's side effect (and the approval that comes with it) is the gate.
+- **No private IMAP hosts yet.** `endpoint` must be a public host name. A home server can follow
+  through `privateHosts` when someone needs one.
+- **Sign-in mail is accepted without Authentication-Results** when the receiving server adds none.
+  When it adds one, the topmost must show DMARC, or DKIM aligned with the sender's domain, as a
+  pass. Refusing mail without the header would break servers that don't add it. iCloud adds it.
+- **One sender per manifest**, so the person approves one address for a site's sign-in mail.
+- **The mail grant's item is `<adapterId>/<credential> <sender>`**, under the reserved secret
+  name `mail`, the same shape as a Messages grant.
+- **Sign-in mail is polled every five seconds**, with one host session per account kept for 30
+  seconds between polls (10 minutes at most), so the server sees one sign-in per login.
+- **The app wiring is a follow-up.** The protocol host needs the signed Node binary (workstream
+  C's follow-up), and the mail grant needs a card in the app alongside secrets v2's grant cards.
+  Until both land, the app registers no IMAP backend or mail reader, so protocol adapters' tools
+  answer not-granted and mail sign-in steps answer unavailable.
 
 **Workstream C (the Node runtime, [node-runtime.md](node-runtime.md)):**
 

@@ -144,8 +144,13 @@ describe('a hostile server', () => {
             : null,
     })
     const { client: c } = await signedIn(server, 'read')
-    expect(await c.run({ verb: 'NOOP', args: [] }).catch((e: unknown) => e)).toMatchObject({ failure: 'no', code: null })
-    expect(await c.run({ verb: 'LIST', args: [{ string: '' }, { atom: '*' }] }).catch((e: unknown) => e)).toMatchObject({
+    expect(await c.run({ verb: 'NOOP', args: [] }).catch((e: unknown) => e)).toMatchObject({
+      failure: 'no',
+      code: null,
+    })
+    expect(
+      await c.run({ verb: 'LIST', args: [{ string: '' }, { atom: '*' }] }).catch((e: unknown) => e),
+    ).toMatchObject({
       failure: 'bad',
       code: 'CLIENTBUG',
     })
@@ -168,10 +173,9 @@ describe('a hostile server', () => {
     await c.open('INBOX', true)
     await c.open('INBOX', false)
     await c.open('INBOX', true)
-    expect(server.commands.filter((x) => x.verb === 'EXAMINE' || x.verb === 'SELECT').map((x) => x.verb)).toEqual([
-      'EXAMINE',
-      'SELECT',
-    ])
+    expect(
+      server.commands.filter((x) => x.verb === 'EXAMINE' || x.verb === 'SELECT').map((x) => x.verb),
+    ).toEqual(['EXAMINE', 'SELECT'])
     expect(await failure(c.open('Nowhere', true))).toBe('no')
     expect(c.selected).toBeNull()
   })

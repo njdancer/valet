@@ -39,7 +39,11 @@ function mail(
   } = {},
 ): MessageInput {
   const headers = [
-    ...(options.auth === null ? [] : [`Authentication-Results: mx.icloud.test; ${options.auth ?? 'dkim=pass header.d=shop.test; dmarc=pass header.from=shop.test'}`]),
+    ...(options.auth === null
+      ? []
+      : [
+          `Authentication-Results: mx.icloud.test; ${options.auth ?? 'dkim=pass header.d=shop.test; dmarc=pass header.from=shop.test'}`,
+        ]),
     ...(options.extraHeaders ?? []),
     `From: ${options.from ?? `Shop <${SENDER}>`}`,
     'To: nick@icloud.test',
@@ -47,7 +51,13 @@ function mail(
   ]
   const raw =
     options.html === undefined
-      ? [...headers, 'Content-Type: text/plain; charset=utf-8', '', options.body ?? `Sign in: ${ORIGIN}/login?token=abc123`, ''].join('\r\n')
+      ? [
+          ...headers,
+          'Content-Type: text/plain; charset=utf-8',
+          '',
+          options.body ?? `Sign in: ${ORIGIN}/login?token=abc123`,
+          '',
+        ].join('\r\n')
       : [...headers, 'Content-Type: text/html; charset=utf-8', '', options.html, ''].join('\r\n')
   return { raw, internalDate: new Date(options.at ?? NOW - 5_000) }
 }
@@ -85,16 +95,27 @@ describe('findSignInMail', () => {
 
   it('reads a link from HTML, entities decoded', async () => {
     const html = `<a href="${ORIGIN}/magic?a=1&amp;b=2">Sign in</a>`
-    expect(await lookup([mail({ html })], linkQuery())).toEqual({ found: true, value: `${ORIGIN}/magic?a=1&b=2` })
+    expect(await lookup([mail({ html })], linkQuery())).toEqual({
+      found: true,
+      value: `${ORIGIN}/magic?a=1&b=2`,
+    })
   })
 
   it('reads a code from the subject or the text', async () => {
-    expect(await lookup([mail({ subject: 'Your code: 482913' })], codeQuery())).toEqual({ found: true, value: '482913' })
+    expect(await lookup([mail({ subject: 'Your code: 482913' })], codeQuery())).toEqual({
+      found: true,
+      value: '482913',
+    })
     expect(await lookup([mail({ body: 'Use code 120044 to sign in.' })], codeQuery())).toEqual({
       found: true,
       value: '120044',
     })
-    expect(await lookup([mail({ html: '<p>code: <b>775533</b></p>' })], codeQuery({ extract: { pattern: 'code: ([0-9]{6})' } }))).toEqual({
+    expect(
+      await lookup(
+        [mail({ html: '<p>code: <b>775533</b></p>' })],
+        codeQuery({ extract: { pattern: 'code: ([0-9]{6})' } }),
+      ),
+    ).toEqual({
       found: true,
       value: '775533',
     })
@@ -105,14 +126,26 @@ describe('findSignInMail', () => {
     ['from the sender and another address', mail({ from: `${SENDER}, evil@attacker.test` })],
     ['from a display name that looks like the sender', mail({ from: `"${SENDER}" <evil@attacker.test>` })],
     ['that failed DMARC', mail({ auth: 'dkim=fail header.d=shop.test; dmarc=fail header.from=shop.test' })],
-    ['signed by another domain', mail({ auth: 'dkim=pass header.d=attacker.test; dmarc=none header.from=shop.test' })],
-    ['vouched for only by a forged, lower header', mail({ auth: 'dmarc=fail header.from=shop.test', extraHeaders: ['Authentication-Results: mx.icloud.test; dmarc=pass header.from=shop.test'] })],
+    [
+      'signed by another domain',
+      mail({ auth: 'dkim=pass header.d=attacker.test; dmarc=none header.from=shop.test' }),
+    ],
+    [
+      'vouched for only by a forged, lower header',
+      mail({
+        auth: 'dmarc=fail header.from=shop.test',
+        extraHeaders: ['Authentication-Results: mx.icloud.test; dmarc=pass header.from=shop.test'],
+      }),
+    ],
     ['that arrived before the login asked', mail({ at: NOW - 60_000 - CLOCK_SKEW_MS - 1_000 })],
     ['older than maxAge', mail({ at: NOW - 601_000 })],
     ['from the future', mail({ at: NOW + CLOCK_SKEW_MS + 60_000 })],
     ['with a link to another origin', mail({ body: 'https://shop.test.attacker.test/login?t=1' })],
     ['with an http link', mail({ body: 'http://shop.test/login?t=1' })],
-    ['with a link carrying user info', mail({ body: 'https://shop.test@attacker.test/login https://x:y@shop.test/login' })],
+    [
+      'with a link carrying user info',
+      mail({ body: 'https://shop.test@attacker.test/login https://x:y@shop.test/login' }),
+    ],
     ['with a link on another port', mail({ body: 'https://shop.test:8443/login' })],
   ])('ignores a message %s', async (_name, message) => {
     expect(await lookup([message], linkQuery())).toEqual({ found: false })
@@ -126,18 +159,29 @@ describe('findSignInMail', () => {
     expect(await lookup([mail({ subject: 'Welcome' })], linkQuery({ subjectContains: 'sign-in' }))).toEqual({
       found: false,
     })
-    expect(await lookup([mail({ subject: 'Your SIGN-IN link' })], linkQuery({ subjectContains: 'sign-in' }))).toMatchObject({
+    expect(
+      await lookup([mail({ subject: 'Your SIGN-IN link' })], linkQuery({ subjectContains: 'sign-in' })),
+    ).toMatchObject({
       found: true,
     })
   })
 
   it('passes over a forged newer message to the real one', async () => {
-    const forged = mail({ auth: 'dmarc=fail header.from=shop.test', body: `${ORIGIN}/login?token=attacker`, at: NOW - 1_000 })
-    expect(await lookup([mail(), forged], linkQuery())).toEqual({ found: true, value: `${ORIGIN}/login?token=abc123` })
+    const forged = mail({
+      auth: 'dmarc=fail header.from=shop.test',
+      body: `${ORIGIN}/login?token=attacker`,
+      at: NOW - 1_000,
+    })
+    expect(await lookup([mail(), forged], linkQuery())).toEqual({
+      found: true,
+      value: `${ORIGIN}/login?token=abc123`,
+    })
   })
 
   it('ignores a code that does not look like one', async () => {
-    expect(await lookup([mail({ body: 'code: 1' })], codeQuery({ extract: { pattern: 'code: (\\d+)' } }))).toEqual({
+    expect(
+      await lookup([mail({ body: 'code: 1' })], codeQuery({ extract: { pattern: 'code: (\\d+)' } })),
+    ).toEqual({
       found: false,
     })
   })
@@ -188,24 +232,32 @@ describe('helpers', () => {
   })
 
   it('unfolds headers and reads only the topmost Authentication-Results', () => {
-    const fields = headerFields('A: 1\r\n  continued\r\nAuthentication-Results: x;\r\n dmarc=pass header.from=mail.shop.test\r\n\r\nBody: no')
+    const fields = headerFields(
+      'A: 1\r\n  continued\r\nAuthentication-Results: x;\r\n dmarc=pass header.from=mail.shop.test\r\n\r\nBody: no',
+    )
     expect(fields).toEqual([
       ['a', '1 continued'],
       ['authentication-results', 'x; dmarc=pass header.from=mail.shop.test'],
     ])
     expect(authenticated(fields, 'mail.shop.test')).toBe(true)
     expect(authenticated(fields, 'shop.test')).toBe(false)
-    expect(authenticated([['authentication-results', 'x; dkim=pass header.i=@shop.test']], 'login.shop.test')).toBe(true)
-    expect(authenticated([['authentication-results', 'x; dkim=pass header.d=evilshop.test']], 'shop.test')).toBe(false)
+    expect(
+      authenticated([['authentication-results', 'x; dkim=pass header.i=@shop.test']], 'login.shop.test'),
+    ).toBe(true)
+    expect(
+      authenticated([['authentication-results', 'x; dkim=pass header.d=evilshop.test']], 'shop.test'),
+    ).toBe(false)
   })
 
   it('finds links in href order, then bare, trimming punctuation', () => {
-    expect(linksIn("<a href='https://a.test/1'>x</a> see https://b.test/2).", 'Go to https://c.test/3.')).toEqual([
-      'https://a.test/1',
-      'https://c.test/3',
-      'https://a.test/1',
-      'https://b.test/2',
-    ])
-    expect(firstLink(['javascript:alert(1)', 'not a url', `${ORIGIN}/${'x'.repeat(3000)}`, `${ORIGIN}/ok`], ORIGIN)).toBe(`${ORIGIN}/ok`)
+    expect(
+      linksIn("<a href='https://a.test/1'>x</a> see https://b.test/2).", 'Go to https://c.test/3.'),
+    ).toEqual(['https://a.test/1', 'https://c.test/3', 'https://a.test/1', 'https://b.test/2'])
+    expect(
+      firstLink(
+        ['javascript:alert(1)', 'not a url', `${ORIGIN}/${'x'.repeat(3000)}`, `${ORIGIN}/ok`],
+        ORIGIN,
+      ),
+    ).toBe(`${ORIGIN}/ok`)
   })
 })

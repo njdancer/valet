@@ -15,36 +15,51 @@ import {
 } from '../src/imap/command'
 
 const text = (segments: ReturnType<typeof encodeCommand>) =>
-  segments.map((s) => ('text' in s ? s.text.toString('latin1') : `<${s.literal.toString('latin1')}>`)).join('')
+  segments
+    .map((s) => ('text' in s ? s.text.toString('latin1') : `<${s.literal.toString('latin1')}>`))
+    .join('')
 
-const state = (purpose: SessionState['purpose'], selected: SessionState['selected'] = null): SessionState => ({
+const state = (
+  purpose: SessionState['purpose'],
+  selected: SessionState['selected'] = null,
+): SessionState => ({
   purpose,
   selected,
 })
 
 describe('encodeCommand', () => {
   it('quotes plain strings and escapes quotes and backslashes', () => {
-    expect(text(encodeCommand('V1', { verb: 'LOGIN', args: [{ string: 'a"b' }, { string: 'c\\d' }] }, false))).toBe(
-      'V1 LOGIN "a\\"b" "c\\\\d"\r\n',
-    )
+    expect(
+      text(encodeCommand('V1', { verb: 'LOGIN', args: [{ string: 'a"b' }, { string: 'c\\d' }] }, false)),
+    ).toBe('V1 LOGIN "a\\"b" "c\\\\d"\r\n')
   })
 
   it('sends anything with a line break, NUL or 8-bit byte as a literal, never inline', () => {
-    const segments = encodeCommand('V2', { verb: 'LOGIN', args: [{ string: 'x\r\nV3 DELETE INBOX' }, { string: 'p' }] }, false)
+    const segments = encodeCommand(
+      'V2',
+      { verb: 'LOGIN', args: [{ string: 'x\r\nV3 DELETE INBOX' }, { string: 'p' }] },
+      false,
+    )
     expect(text(segments)).toBe('V2 LOGIN {18}\r\n<x\r\nV3 DELETE INBOX> "p"\r\n')
     expect(segments.some((s) => 'literal' in s)).toBe(true)
   })
 
   it('writes a non-synchronising literal when the server has LITERAL+', () => {
-    const segments = encodeCommand('V3', { verb: 'APPEND', args: [{ mailbox: 'INBOX' }, { list: [] }, { string: Buffer.from('é') }] }, true)
+    const segments = encodeCommand(
+      'V3',
+      { verb: 'APPEND', args: [{ mailbox: 'INBOX' }, { list: [] }, { string: Buffer.from('é') }] },
+      true,
+    )
     expect(segments.every((s) => 'text' in s)).toBe(true)
     expect(text(segments)).toBe('V3 APPEND "INBOX" () {2+}\r\nÃ©\r\n')
   })
 
   it('sends a long string as a literal', () => {
-    expect(text(encodeCommand('V4', { verb: 'LOGIN', args: [{ string: 'a'.repeat(1001) }, { string: '' }] }, false))).toMatch(
-      /^V4 LOGIN \{1001\}\r\n<a+> ""\r\n$/,
-    )
+    expect(
+      text(
+        encodeCommand('V4', { verb: 'LOGIN', args: [{ string: 'a'.repeat(1001) }, { string: '' }] }, false),
+      ),
+    ).toMatch(/^V4 LOGIN \{1001\}\r\n<a+> ""\r\n$/)
   })
 
   it.each([
@@ -55,7 +70,10 @@ describe('encodeCommand', () => {
     ['a fractional number', { verb: 'LIST', args: [{ number: 1.5 }] }],
     ['an empty UID set', { verb: 'UID FETCH', args: [{ uids: [] }, { list: [] }] }],
     ['a zero UID', { verb: 'UID FETCH', args: [{ uids: [0] }, { list: [] }] }],
-    ['a fetch item with a space outside brackets', { verb: 'UID FETCH', args: [{ uids: [1] }, { list: [{ atom: 'UID FLAGS' }] }] }],
+    [
+      'a fetch item with a space outside brackets',
+      { verb: 'UID FETCH', args: [{ uids: [1] }, { list: [{ atom: 'UID FLAGS' }] }] },
+    ],
   ] as [string, Command][])('refuses %s', (_name, command) => {
     expect(() => encodeCommand('V1', command, false)).toThrow(CommandRefused)
   })
@@ -98,30 +116,93 @@ describe('checkCommand', () => {
   })
 
   it('lets a read session only look', () => {
-    for (const verb of ['CAPABILITY', 'NOOP', 'LOGIN', 'LOGOUT', 'LIST', 'STATUS', 'EXAMINE', 'UNSELECT', 'UID SEARCH']) {
+    for (const verb of [
+      'CAPABILITY',
+      'NOOP',
+      'LOGIN',
+      'LOGOUT',
+      'LIST',
+      'STATUS',
+      'EXAMINE',
+      'UNSELECT',
+      'UID SEARCH',
+    ]) {
       expect(() => checkCommand({ verb, args: [] }, state('read', examined))).not.toThrow()
     }
-    for (const verb of ['SELECT', 'UID STORE', 'UID COPY', 'UID MOVE', 'APPEND', 'CREATE', 'UID EXPUNGE', 'DELETE']) {
+    for (const verb of [
+      'SELECT',
+      'UID STORE',
+      'UID COPY',
+      'UID MOVE',
+      'APPEND',
+      'CREATE',
+      'UID EXPUNGE',
+      'DELETE',
+    ]) {
       expect(() => checkCommand({ verb, args: [] }, state('read', examined))).toThrow(CommandRefused)
     }
   })
 
   it('never sends CLOSE, plain EXPUNGE or anything not in the table, whatever the purpose', () => {
-    for (const verb of ['CLOSE', 'EXPUNGE', 'RENAME', 'SUBSCRIBE', 'STARTTLS', 'AUTHENTICATE', 'COMPRESS', 'IDLE', 'SETACL', 'FETCH', 'STORE', 'COPY', 'SEARCH', 'XYZ']) {
+    for (const verb of [
+      'CLOSE',
+      'EXPUNGE',
+      'RENAME',
+      'SUBSCRIBE',
+      'STARTTLS',
+      'AUTHENTICATE',
+      'COMPRESS',
+      'IDLE',
+      'SETACL',
+      'FETCH',
+      'STORE',
+      'COPY',
+      'SEARCH',
+      'XYZ',
+    ]) {
       expect(() => checkCommand({ verb, args: [] }, state('irreversible', selected))).toThrow(CommandRefused)
     }
   })
 
   it('fetches message data only with BODY.PEEK', () => {
-    expect(() => checkCommand(fetch('UID', 'FLAGS', 'ENVELOPE', 'INTERNALDATE', 'RFC822.SIZE', 'BODYSTRUCTURE'), state('read', examined))).not.toThrow()
-    for (const item of ['BODY.PEEK[]', 'BODY.PEEK[1.2]<0.100>', 'BODY.PEEK[HEADER]', 'BODY.PEEK[2.MIME]', 'BODY.PEEK[TEXT]']) {
+    expect(() =>
+      checkCommand(
+        fetch('UID', 'FLAGS', 'ENVELOPE', 'INTERNALDATE', 'RFC822.SIZE', 'BODYSTRUCTURE'),
+        state('read', examined),
+      ),
+    ).not.toThrow()
+    for (const item of [
+      'BODY.PEEK[]',
+      'BODY.PEEK[1.2]<0.100>',
+      'BODY.PEEK[HEADER]',
+      'BODY.PEEK[2.MIME]',
+      'BODY.PEEK[TEXT]',
+    ]) {
       expect(() => checkCommand(fetch(item), state('read', examined))).not.toThrow()
     }
-    for (const item of ['BODY[]', 'BODY[1]', 'RFC822', 'RFC822.TEXT', 'RFC822.HEADER', 'BINARY[1]', 'BODY.PEEK[0]', 'BODY.PEEK[1.0]', 'BODY.PEEK[HEADER.FIELDS (FROM)]', 'BODY.PEEK[]<0.0>']) {
+    for (const item of [
+      'BODY[]',
+      'BODY[1]',
+      'RFC822',
+      'RFC822.TEXT',
+      'RFC822.HEADER',
+      'BINARY[1]',
+      'BODY.PEEK[0]',
+      'BODY.PEEK[1.0]',
+      'BODY.PEEK[HEADER.FIELDS (FROM)]',
+      'BODY.PEEK[]<0.0>',
+    ]) {
       expect(() => checkCommand(fetch(item), state('irreversible', selected))).toThrow(CommandRefused)
     }
-    expect(() => checkCommand({ verb: 'UID FETCH', args: [{ uids: [1] }] }, state('read'))).toThrow(CommandRefused)
-    expect(() => checkCommand({ verb: 'UID FETCH', args: [{ uids: [1] }, { list: [{ string: 'UID' }] }] }, state('read'))).toThrow(CommandRefused)
+    expect(() => checkCommand({ verb: 'UID FETCH', args: [{ uids: [1] }] }, state('read'))).toThrow(
+      CommandRefused,
+    )
+    expect(() =>
+      checkCommand(
+        { verb: 'UID FETCH', args: [{ uids: [1] }, { list: [{ string: 'UID' }] }] },
+        state('read'),
+      ),
+    ).toThrow(CommandRefused)
   })
 
   it('keeps \\Deleted for an irreversible session, in STORE and APPEND alike', () => {
@@ -133,12 +214,18 @@ describe('checkCommand', () => {
     expect(() => checkCommand(store('\\Deleted'), state('write', selected))).toThrow(/needs-irreversible/)
     expect(() => checkCommand(store('\\DELETED'), state('write', selected))).toThrow(/needs-irreversible/)
     expect(() => checkCommand(store('\\Deleted'), state('irreversible', selected))).not.toThrow()
-    const append: Command = { verb: 'APPEND', args: [{ mailbox: 'INBOX' }, { list: [{ atom: '\\Deleted' }] }, { string: 'x' }] }
+    const append: Command = {
+      verb: 'APPEND',
+      args: [{ mailbox: 'INBOX' }, { list: [{ atom: '\\Deleted' }] }, { string: 'x' }],
+    }
     expect(() => checkCommand(append, state('write'))).toThrow(/needs-irreversible/)
   })
 
   it('changes mail only in a folder opened to write', () => {
-    const store: Command = { verb: 'UID STORE', args: [{ uids: [1] }, { atom: '+FLAGS.SILENT' }, { list: [] }] }
+    const store: Command = {
+      verb: 'UID STORE',
+      args: [{ uids: [1] }, { atom: '+FLAGS.SILENT' }, { list: [] }],
+    }
     expect(() => checkCommand(store, state('write', examined))).toThrow(CommandRefused)
     for (const verb of ['UID COPY', 'UID MOVE', 'UID EXPUNGE']) {
       expect(() => checkCommand({ verb, args: [] }, state('irreversible', examined))).toThrow(CommandRefused)

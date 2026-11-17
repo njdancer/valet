@@ -117,21 +117,51 @@ describe('structure', () => {
       null,
       [s('ATTACHMENT'), [s('FILENAME*'), s("utf-8''%E2%82%AC/..%2Fevil.pdf")]],
     ]
-    const forwarded: Value[] = [s('MESSAGE'), s('RFC822'), null, null, null, s('7BIT'), a('99'), null, null, a('3')]
-    const parts = parseStructure([[textPart('PLAIN'), textPart('HTML'), s('ALTERNATIVE')], pdf, forwarded, s('MIXED')])
+    const forwarded: Value[] = [
+      s('MESSAGE'),
+      s('RFC822'),
+      null,
+      null,
+      null,
+      s('7BIT'),
+      a('99'),
+      null,
+      null,
+      a('3'),
+    ]
+    const parts = parseStructure([
+      [textPart('PLAIN'), textPart('HTML'), s('ALTERNATIVE')],
+      pdf,
+      forwarded,
+      s('MIXED'),
+    ])
     expect(parts.map((p) => [p.part, p.type])).toEqual([
       ['1.1', 'text/plain'],
       ['1.2', 'text/html'],
       ['2', 'application/pdf'],
       ['3', 'message/rfc822'],
     ])
-    expect(parts[2]).toMatchObject({ filename: '€_.._evil.pdf', disposition: 'attachment', size: 2048, encoding: 'base64' })
+    expect(parts[2]).toMatchObject({
+      filename: '€_.._evil.pdf',
+      disposition: 'attachment',
+      size: 2048,
+      encoding: 'base64',
+    })
     expect(bodyParts(parts)).toMatchObject({ plain: { part: '1.1' }, html: { part: '1.2' } })
     expect(parseStructure(textPart('PLAIN'))[0]?.part).toBe('1')
   })
 
   it('treats a named text part as an attachment, not the body', () => {
-    const named: Value[] = [s('TEXT'), s('PLAIN'), [s('NAME'), s('notes.txt')], null, null, null, a('1'), a('1')]
+    const named: Value[] = [
+      s('TEXT'),
+      s('PLAIN'),
+      [s('NAME'), s('notes.txt')],
+      null,
+      null,
+      null,
+      a('1'),
+      a('1'),
+    ]
     expect(bodyParts(parseStructure(named))).toEqual({ plain: null, html: null })
   })
 
@@ -139,7 +169,15 @@ describe('structure', () => {
     let deep: Value = [s('TEXT'), s('PLAIN'), null, null, null, null, a('1'), a('1')]
     for (let i = 0; i < 50; i++) deep = [deep, s('MIXED')]
     expect(parseStructure(deep)).toEqual([])
-    const wide: Value[] = Array.from({ length: 500 }, () => [s('TEXT'), s('PLAIN'), null, null, null, null, a('1')])
+    const wide: Value[] = Array.from({ length: 500 }, () => [
+      s('TEXT'),
+      s('PLAIN'),
+      null,
+      null,
+      null,
+      null,
+      a('1'),
+    ])
     expect(parseStructure([...wide, s('MIXED')])).toHaveLength(200)
     expect(parseStructure(a('x'))).toEqual([])
   })

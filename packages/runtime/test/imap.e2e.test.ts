@@ -2,6 +2,7 @@
 // the call, and the backend signs in through the call's CredentialGate, audited and redacted. The
 // backend here is a fake that records what it was given; packages/protocols tests the real one.
 
+import { join } from 'node:path'
 import {
   type CredentialGrant,
   defineAdapter,
@@ -10,7 +11,6 @@ import {
   type ToolContext,
   tool,
 } from '@valet/core'
-import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import type { ImapBackend, ImapCall } from '../src/guarded-imap'
@@ -52,8 +52,16 @@ const definition = defineAdapter({
   manifest,
   tools: {
     // `do` is for the isolated script's tools (isolation/imap-tools.ts).
-    read_mail: tool({ input: z.object({ do: z.string().optional() }), output: z.unknown(), run: (ctx) => body(ctx) }),
-    file_mail: tool({ input: z.object({ do: z.string().optional() }), output: z.unknown(), run: (ctx) => body(ctx) }),
+    read_mail: tool({
+      input: z.object({ do: z.string().optional() }),
+      output: z.unknown(),
+      run: (ctx) => body(ctx),
+    }),
+    file_mail: tool({
+      input: z.object({ do: z.string().optional() }),
+      output: z.unknown(),
+      run: (ctx) => body(ctx),
+    }),
   },
 })
 
@@ -192,7 +200,13 @@ describe('ctx.imap through the tool host', () => {
       pacingSleep: clock.pacingSleep,
     })
     host.register({ definition, bundleHash: HASH, driver: noBrowserDriver() })
-    const result = await host.call({ adapterId: 'icloud-mail', tool: 'read_mail', input: {}, client: 'claude-code', callId: 'x' })
+    const result = await host.call({
+      adapterId: 'icloud-mail',
+      tool: 'read_mail',
+      input: {},
+      client: 'claude-code',
+      callId: 'x',
+    })
     expect(result).toMatchObject({ status: 'failed', errorClass: 'not-granted' })
   })
 })
@@ -202,7 +216,10 @@ describe('ctx.imap from an isolated tool process', () => {
   const isolated = async () => {
     const processes = inMemory()
     const world = setup({ isolation: { script: await scriptFor(IMAP_TOOLS), start: processes.start } })
-    return { ...world, call: (what: string, name: 'read_mail' | 'file_mail' = 'read_mail') => world.run(name, { do: what }) }
+    return {
+      ...world,
+      call: (what: string, name: 'read_mail' | 'file_mail' = 'read_mail') => world.run(name, { do: what }),
+    }
   }
 
   it('runs operations across the channel, trailing options left out', async () => {

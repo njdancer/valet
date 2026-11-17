@@ -13,7 +13,9 @@ const MAIL: ManifestInput = {
   version: '0.1.0',
   description: 'Reads and files mail in an iCloud account.',
   runtime: 'protocol',
-  protocols: { imap: { endpoint: 'imap.mail.me.com:993', credential: 'mail', folders: ['INBOX', 'Receipts'] } },
+  protocols: {
+    imap: { endpoint: 'imap.mail.me.com:993', credential: 'mail', folders: ['INBOX', 'Receipts'] },
+  },
   credentials: {
     mail: {
       description: 'Your iCloud app-specific password',
@@ -55,9 +57,17 @@ describe('runtime: protocol', () => {
     for (const [field, value, message] of [
       ['egress', ['api.example.com'], 'a protocol adapter reaches only its protocols: no egress hosts'],
       ['navigation', ['https://www.icloud.com'], 'a protocol adapter has no navigation origins'],
-      ['requests', [{ method: 'GET', host: 'x.example.com', path: '/', purpose: 'read' }], 'a protocol adapter declares no HTTP requests'],
+      [
+        'requests',
+        [{ method: 'GET', host: 'x.example.com', path: '/', purpose: 'read' }],
+        'a protocol adapter declares no HTTP requests',
+      ],
       ['cartUrl', 'https://www.icloud.com/cart', 'a protocol adapter has no cartUrl'],
-      ['privateHosts', [{ address: '10.0.0.5', port: 993, scheme: 'https' }], 'a protocol adapter has no privateHosts yet'],
+      [
+        'privateHosts',
+        [{ address: '10.0.0.5', port: 993, scheme: 'https' }],
+        'a protocol adapter has no privateHosts yet',
+      ],
     ] as const) {
       const input = copy()
       input[field] = value
@@ -138,7 +148,9 @@ const SHOP: ManifestInput = {
   home: 'https://www.shop.test/',
   navigation: ['https://www.shop.test'],
   egress: ['www.shop.test'],
-  secrets: { login: { description: 'Shop account', fields: ['username'], origins: ['https://www.shop.test'] } },
+  secrets: {
+    login: { description: 'Shop account', fields: ['username'], origins: ['https://www.shop.test'] },
+  },
   session: {
     cookieDomains: ['www.shop.test'],
     probe: { kind: 'fetch', path: '/api/me', expectStatus: 200 },
@@ -148,7 +160,12 @@ const SHOP: ManifestInput = {
       { op: 'goto', url: 'https://www.shop.test/login' },
       { op: 'fill', selector: '#email', value: { secret: 'login', field: 'username' } },
       { op: 'click', selector: 'button[type=submit]' },
-      { op: 'openMailLink', from: 'login@shop.test', linkOrigin: 'https://www.shop.test', maxAgeSeconds: 600 },
+      {
+        op: 'openMailLink',
+        from: 'login@shop.test',
+        linkOrigin: 'https://www.shop.test',
+        maxAgeSeconds: 600,
+      },
       {
         op: 'when',
         condition: { visible: '#code' },
@@ -218,7 +235,13 @@ describe('email sign-in', () => {
     expect(ref).toBe('icloud-mail/mail login@shop.test')
     expect(parseMailGrantRef(ref)).toEqual({ account: 'icloud-mail/mail', sender: 'login@shop.test' })
     expect(() => mailGrantRef('icloud-mail/mail', 'Shop <login@shop.test>')).toThrow()
-    for (const bad of ['', 'icloud-mail login@shop.test', 'icloud-mail/mail', 'a/b c d', 'Icloud/mail x@y.test'])
+    for (const bad of [
+      '',
+      'icloud-mail login@shop.test',
+      'icloud-mail/mail',
+      'a/b c d',
+      'Icloud/mail x@y.test',
+    ])
       expect(parseMailGrantRef(bad)).toBeNull()
   })
 })

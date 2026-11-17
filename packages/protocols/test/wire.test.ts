@@ -121,7 +121,10 @@ describe('parseResponse', () => {
 
   it('reads a PERMANENTFLAGS code with a list and a \\* flag', () => {
     const r = parse('* OK [PERMANENTFLAGS (\\Seen \\*)] Limited')
-    expect(r).toMatchObject({ kind: 'status', code: [new Atom('PERMANENTFLAGS'), [new Atom('\\Seen'), new Atom('\\*')]] })
+    expect(r).toMatchObject({
+      kind: 'status',
+      code: [new Atom('PERMANENTFLAGS'), [new Atom('\\Seen'), new Atom('\\*')]],
+    })
   })
 
   it('reads FETCH data: strings, literals, NIL, nested lists and section items', () => {

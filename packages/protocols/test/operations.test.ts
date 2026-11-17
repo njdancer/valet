@@ -31,7 +31,10 @@ describe('reading', () => {
     const { ops } = await signedIn(server, 'read')
     const all = await ops.listFolders()
     expect(all.map((f) => f.path).sort()).toEqual(['Entwürfe', 'INBOX', 'Sent Messages'])
-    expect(all.find((f) => f.path === 'Sent Messages')).toMatchObject({ specialUse: '\\Sent', delimiter: '/' })
+    expect(all.find((f) => f.path === 'Sent Messages')).toMatchObject({
+      specialUse: '\\Sent',
+      delimiter: '/',
+    })
     const { ops: some } = await signedIn(server, 'read', ['inbox', 'Entwürfe'])
     expect((await some.listFolders()).map((f) => f.path).sort()).toEqual(['Entwürfe', 'INBOX'])
   })
@@ -48,9 +51,11 @@ describe('reading', () => {
     const { ops } = await signedIn(server, 'read')
     expect(await ops.search('INBOX', undefined, undefined)).toMatchObject({ total: 2, uids: [2, 1] })
     expect(await ops.search('INBOX', { seen: false }, { limit: 1 })).toMatchObject({ total: 1, uids: [1] })
-    expect(await ops.search('INBOX', { or: [{ from: 'shop.test' }, { from: 'cafe@' }] }, null)).toMatchObject({
-      uids: [2, 1],
-    })
+    expect(await ops.search('INBOX', { or: [{ from: 'shop.test' }, { from: 'cafe@' }] }, null)).toMatchObject(
+      {
+        uids: [2, 1],
+      },
+    )
     expect(await ops.search('INBOX', { not: { from: 'shop.test' } }, undefined)).toMatchObject({ uids: [2] })
     expect(await ops.search('INBOX', { subject: 'Café' }, undefined)).toMatchObject({ total: 0 })
     expect(server.commands.find((c) => c.line.includes('CHARSET UTF-8'))).toBeDefined()
@@ -63,7 +68,10 @@ describe('reading', () => {
     const { ops } = await signedIn(server, 'read')
     const { messages } = await ops.fetch('INBOX', [1, 2, 99])
     expect(messages.map((m) => m.uid)).toEqual([2, 1])
-    expect(messages[1]).toMatchObject({ flags: [], envelope: { subject: 'Your order', from: [{ address: 'orders@shop.test' }] } })
+    expect(messages[1]).toMatchObject({
+      flags: [],
+      envelope: { subject: 'Your order', from: [{ address: 'orders@shop.test' }] },
+    })
     expect(server.mailboxes.get('INBOX')?.messages[0]?.flags.has('\\Seen')).toBe(false)
   })
 
@@ -73,7 +81,9 @@ describe('reading', () => {
     const m = await ops.message('INBOX', 2, undefined)
     expect(m.text).toBe('Café menu today')
     expect(m.html).toBe('<p>Café menu today</p>')
-    expect(m.attachments).toEqual([{ part: '2', type: 'application/pdf', filename: 'menu.pdf', size: expect.any(Number) }])
+    expect(m.attachments).toEqual([
+      { part: '2', type: 'application/pdf', filename: 'menu.pdf', size: expect.any(Number) },
+    ])
     expect(m.envelope?.subject).toBe('Menu 🍕')
     const short = await ops.message('INBOX', 1, { maxTextChars: 6 })
     expect(short).toMatchObject({ text: 'Thanks', truncated: true })
@@ -105,7 +115,10 @@ describe('changing mail', () => {
       folder: 'INBOX',
       uids: 1,
     })
-    expect([...(server.mailboxes.get('INBOX')?.messages[0]?.flags ?? [])].sort()).toEqual(['\\Flagged', 'shopping'])
+    expect([...(server.mailboxes.get('INBOX')?.messages[0]?.flags ?? [])].sort()).toEqual([
+      '\\Flagged',
+      'shopping',
+    ])
     expect(await failure(ops.setFlags('INBOX', [1], { add: ['\\Deleted'] }))).toBe('needs-irreversible')
     expect(server.mailboxes.get('INBOX')?.messages[0]?.flags.has('\\Deleted')).toBe(false)
   })
@@ -136,7 +149,9 @@ describe('changing mail', () => {
     expect(server.mailboxes.get('Archive')?.messages[0]?.flags.has('\\Seen')).toBe(true)
     expect(await failure(ops.append('Archive', 'no headers here', undefined))).toBe('invalid')
     expect(await failure(ops.append('Archive', 'X: y\0', undefined))).toBe('invalid')
-    expect(await failure(ops.append('Archive', `X: ${'y'.repeat(LIMITS.appendBytesMax)}`, undefined))).toBe('invalid')
+    expect(await failure(ops.append('Archive', `X: ${'y'.repeat(LIMITS.appendBytesMax)}`, undefined))).toBe(
+      'invalid',
+    )
     expect(await failure(ops.append('Archive', MESSAGE, { flags: ['\\Deleted'] }))).toBe('needs-irreversible')
     const { ops: reader } = await signedIn(server, 'read')
     expect(await failure(reader.append('Archive', MESSAGE, undefined))).toBe('not-allowed')
@@ -156,7 +171,12 @@ describe('changing mail', () => {
 
   it('expunges just the named messages, with UID EXPUNGE', async () => {
     server = await fake({
-      mailboxes: { INBOX: [{ raw: MESSAGE, flags: ['\\Deleted'] }, { raw: MULTIPART, flags: ['\\Deleted'] }] },
+      mailboxes: {
+        INBOX: [
+          { raw: MESSAGE, flags: ['\\Deleted'] },
+          { raw: MULTIPART, flags: ['\\Deleted'] },
+        ],
+      },
     })
     const { ops } = await signedIn(server, 'irreversible')
     expect(await ops.expunge('INBOX', [2])).toEqual({ folder: 'INBOX', removed: 1 })
@@ -242,7 +262,10 @@ describe('search criteria', () => {
     const nested = { not: { not: { not: { seen: true } } } }
     expect(searchTerms(nested)).toHaveLength(2)
     expect(() => searchTerms({ not: nested })).toThrow(ImapError)
-    const many = { ...Object.fromEntries(['from', 'to', 'cc', 'subject', 'body', 'text'].map((k) => [k, 'x'])), seen: true }
+    const many = {
+      ...Object.fromEntries(['from', 'to', 'cc', 'subject', 'body', 'text'].map((k) => [k, 'x'])),
+      seen: true,
+    }
     expect(() => searchTerms({ ...many, or: [many, many] })).toThrow(ImapError)
     expect(searchTerms({ uids: [3, 1, 2], header: { name: 'List-Id', value: 'x' }, larger: 10 })).toEqual([
       { atom: 'UID' },

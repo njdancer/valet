@@ -14,7 +14,18 @@ import { describe, expect, it } from 'vitest'
 import { runAuthFlow } from '../src/run-auth-flow'
 import { MAIL_POLL_MS } from '../src/secret-fill'
 import type { FakeClock } from './fakes'
-import { ACCOUNT_PAGE, EVIL, HASH, LOGIN, LOGIN_PAGE, manifestWithSteps, START, unparsedWithSteps, WWW, world } from './fixtures'
+import {
+  ACCOUNT_PAGE,
+  EVIL,
+  HASH,
+  LOGIN,
+  LOGIN_PAGE,
+  manifestWithSteps,
+  START,
+  unparsedWithSteps,
+  WWW,
+  world,
+} from './fixtures'
 
 const SENDER = 'login@shop.test'
 const ACCOUNT = 'icloud-mail/mail'
@@ -52,7 +63,11 @@ class FakeMailReader implements MailReader {
 
 const CODE_STEPS = manifestWithSteps([
   { op: 'goto', url: LOGIN_PAGE },
-  { op: 'otp', selector: '#otp', source: { mail: { from: SENDER, pattern: 'code: (\\d{6})', maxAgeSeconds: 300 } } },
+  {
+    op: 'otp',
+    selector: '#otp',
+    source: { mail: { from: SENDER, pattern: 'code: (\\d{6})', maxAgeSeconds: 300 } },
+  },
 ])
 
 const LINK_STEPS = manifestWithSteps([
@@ -74,14 +89,26 @@ describe('a code from a sign-in mail', () => {
     w.page.cookies.add('session')
     w.input.manifest = CODE_STEPS
     expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
-    expect(w.page.typed).toMatchObject([{ selector: '#otp', text: '804512', secret: true, allowedOrigins: [LOGIN, WWW] }])
+    expect(w.page.typed).toMatchObject([
+      { selector: '#otp', text: '804512', secret: true, allowedOrigins: [LOGIN, WWW] },
+    ])
     expect(w.clock.sleeps).toEqual([MAIL_POLL_MS, MAIL_POLL_MS])
     expect(w.reader.calls[0]).toEqual({
-      query: { account: ACCOUNT, from: SENDER, subjectContains: undefined, maxAgeSeconds: 300, extract: { pattern: 'code: (\\d{6})' } },
+      query: {
+        account: ACCOUNT,
+        from: SENDER,
+        subjectContains: undefined,
+        maxAgeSeconds: 300,
+        extract: { pattern: 'code: (\\d{6})' },
+      },
       notBefore: new Date(START),
     })
     expect(w.reader.issued.every((s) => s.disposed)).toBe(true)
-    expect(w.audit.events.find((e) => e.type === 'secret-used')).toMatchObject({ secret: MAIL_SECRET, field: 'otp', origin: LOGIN })
+    expect(w.audit.events.find((e) => e.type === 'secret-used')).toMatchObject({
+      secret: MAIL_SECRET,
+      field: 'otp',
+      origin: LOGIN,
+    })
   })
 
   it('refuses a value that does not look like a code', async () => {
@@ -106,7 +133,11 @@ describe('a link from a sign-in mail', () => {
     expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
     expect(w.page.visited).toEqual([LOGIN_PAGE, LINK])
     expect(w.remembered.map((s) => s.reveal((v) => v))).toContain(LINK)
-    expect(w.audit.events.find((e) => e.type === 'secret-used')).toMatchObject({ secret: MAIL_SECRET, field: 'otp', origin: WWW })
+    expect(w.audit.events.find((e) => e.type === 'secret-used')).toMatchObject({
+      secret: MAIL_SECRET,
+      field: 'otp',
+      origin: WWW,
+    })
     expect(w.reader.calls[0]?.query.extract).toEqual({ linkOrigin: WWW })
     expect(w.reader.issued.every((s) => s.disposed)).toBe(true)
   })
