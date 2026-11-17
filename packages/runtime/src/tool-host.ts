@@ -823,6 +823,7 @@ export class ToolHost {
             // Nothing more to stop; the next beginRun replaces the policy.
           }
         }
+        state.disposeSent()
         done()
       }
       if (state.idle) finish()

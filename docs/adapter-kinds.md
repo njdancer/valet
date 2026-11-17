@@ -105,6 +105,46 @@ Taken while Nick was away, each the recommendation. Any can be changed.
    ever comes from a kept credential the runtime adds.
 6. **No signed-in http adapters yet.** An http manifest's probe is `none`; a `fetch` probe through
    `ctx.http` waits for credentials (workstream B).
+7. **Routing headers are refused, on ctx.http and ctx.page.fetch alike**: `Forwarded`, `Via`,
+   `X-Rewrite-URL`, `X-Host`, the client-address headers and the `X-Forwarded-*`, `X-Original-*`,
+   `X-Envoy-*`, `X-Amzn-*` and `CF-*` families. Servers may route by them over the request line.
+8. **Deny segments ignore a format suffix**: `/pay.json` and `/pay.` count as `/pay` everywhere, the
+   browser path included.
+9. **A request carrying a credential goes `accept-encoding: identity` and may not set Range**, an
+   answer to it that is compressed or holds any 12-character piece of the token is refused, and its
+   whole, base64 and JSON-escaped forms are redacted from the call's output and audit targets.
+
+#### Red team (workstream A, 2026-11-17)
+
+An adversarial pass on the broker, ctx.http, the XML reader and http drafts, as an agent that
+writes both the manifest and the code. No critical or high findings. Fixed before merge, each with
+its proof-of-concept kept as a test (`*.redteam.test.ts`):
+
+- Path and host override headers (`X-Original-URL` and the rest) passed to the site (medium).
+- WebDAV `Destination` was an unchecked second target. COPY and MOVE now need one, on the same
+  origin, passing the request surface as if requested itself, and it is sent as checked; no other
+  method may carry one (medium).
+- Credential redaction was an exact match, so a gzipped or Range-split echo got past it, and the
+  final output wasn't redacted for it (medium, latent until secrets v2 is wired).
+- Deny segments missed `pay.json` (medium).
+- A public name answering with one of this Mac's own public addresses was dialled (low; medium for
+  raw tunnels).
+- The XML reader copied namespace scopes per element: quadratic CPU (low).
+- Concurrent socket opens passed the cap of 4 (low).
+- WebSocket subprotocols weren't spent from the upload budget (low).
+- `::ffff:0:a.b.c.d` (SIIT) counted as public; Tailscale's `100.100.100.100` and
+  `fd7a:115c:a1e0::53` could be private hosts although this Mac answers them (low).
+
+Residual risks, accepted for now:
+
+- **Exfiltration to a declared endpoint, up to the upload budget.** By design: the budget, the
+  declared hosts and the card are the limit.
+- **Domain fronting inside a raw tunnel.** The broker checks SNI, not the HTTP Host inside TLS it
+  can't read. Most CDNs now refuse a mismatch; raw adapters are high risk on the card regardless.
+- **Tunnel ports must be registered as Valet's own** by the Node runtime (workstream C), so a raw
+  adapter can't reach another adapter's tunnel.
+- **A credential the server transforms** (hashed, re-encoded some other way) is not recognised.
+  Only an exchange the host's own API chooses to make can do that.
 
 ### F2. Secrets, version 2
 

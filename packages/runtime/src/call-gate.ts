@@ -21,6 +21,32 @@ export const PURPOSE_RANK: Readonly<Record<Purpose, number>> = { read: 0, write:
 /** Headers some servers honour to turn one method into another, which would bypass method matching. */
 export const METHOD_OVERRIDE_HEADERS = ['x-http-method-override', 'x-http-method', 'x-method-override']
 
+/**
+ * Headers some servers and proxies honour over the request line or the connection: a path
+ * (IIS URL Rewrite, Symfony and many rewrite filters route on X-Original-URL), a host or base path
+ * (the forwarding headers) or the client's address. A declaration matches the request line, so
+ * tool code may set none of them. Lower case; the prefixes cover their whole families.
+ */
+const ROUTING_OVERRIDE_NAMES = new Set([
+  ...METHOD_OVERRIDE_HEADERS,
+  'forwarded',
+  'x-rewrite-url',
+  'x-host',
+  'x-real-ip',
+  'x-client-ip',
+  'client-ip',
+  'true-client-ip',
+  'x-cluster-client-ip',
+  'via',
+])
+const ROUTING_OVERRIDE_PREFIXES = ['x-forwarded-', 'x-original-', 'x-envoy-', 'x-amzn-', 'cf-']
+
+/** True for a header name (any case) that could move a request off the line it was checked by. */
+export function isRoutingOverride(name: string): boolean {
+  const lower = name.toLowerCase()
+  return ROUTING_OVERRIDE_NAMES.has(lower) || ROUTING_OVERRIDE_PREFIXES.some((p) => lower.startsWith(p))
+}
+
 export const MAX_TARGET_LENGTH = 300
 
 /** Waits shorter than this aren't worth a line in the trace. */

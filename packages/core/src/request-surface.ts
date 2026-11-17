@@ -105,7 +105,9 @@ export function touchesDeniedSegment(path: string): boolean {
     const decoded = decodeSegment(segment).toLowerCase()
     return (
       DENY_SEGMENTS.includes(segment.toLowerCase()) ||
-      decoded.split(/[/\\]/).some((part) => DENY_SEGMENTS.includes(part))
+      decoded
+        .split(/[/\\]/)
+        .some((part) => DENY_SEGMENTS.includes(part) || DENY_SEGMENTS.includes(bareName(part)))
     )
   })
 }
@@ -218,6 +220,14 @@ export function decideRequest(
     return { allowed: false, reason: 'denied-path' }
   }
   return { allowed: true, declaration, ...endpoint }
+}
+
+/**
+ * A segment without a format suffix or trailing dots and tildes: Rails, Spring's suffix matching and
+ * many PHP routers send "pay.json" or "pay." to the same action as "pay".
+ */
+function bareName(part: string): string {
+  return part.replace(/(\.[a-z0-9]{1,8})+$/i, '').replace(/[.~]+$/, '')
 }
 
 function decodeSegment(segment: string): string {

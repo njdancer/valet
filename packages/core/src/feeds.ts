@@ -80,7 +80,25 @@ interface Open {
   readonly name: string
   readonly attributes: Record<string, string>
   readonly children: (XmlElement | string)[]
-  readonly scope: ReadonlyMap<string, string>
+  readonly scope: Scope
+}
+
+/**
+ * The namespace prefixes in force at an element: its own declarations, then its parent's. Linked
+ * rather than copied, so a document that declares many prefixes costs linear time (depth is capped,
+ * so a lookup walks at most MAX_DEPTH links).
+ */
+interface Scope {
+  readonly own: ReadonlyMap<string, string>
+  readonly parent: Scope | null
+}
+
+function lookupPrefix(scope: Scope | null, prefix: string): string | undefined {
+  for (let at = scope; at !== null; at = at.parent) {
+    const ns = at.own.get(prefix)
+    if (ns !== undefined) return ns
+  }
+  return undefined
 }
 
 /** Reads one XML document. Throws `tool-run/unexpected-shape` on anything it doesn't take. */
@@ -90,7 +108,7 @@ export function parseXml(text: string): XmlElement {
   let elements = 0
   const stack: Open[] = []
   let root: XmlElement | null = null
-  const rootScope = new Map<string, string>([['xml', XML_NS]])
+  const rootScope: Scope = { own: new Map([['xml', XML_NS]]), parent: null }
 
   const readName = (): string => {
     NAME.lastIndex = at
@@ -105,7 +123,7 @@ export function parseXml(text: string): XmlElement {
   const close = (open: Open): XmlElement => {
     const colon = open.name.indexOf(':')
     const prefix = colon === -1 ? '' : open.name.slice(0, colon)
-    const ns = open.scope.get(prefix)
+    const ns = lookupPrefix(open.scope, prefix)
     if (ns === undefined && prefix !== '') fail()
     return Object.freeze({
       name: open.name,
@@ -201,13 +219,14 @@ export function parseXml(text: string): XmlElement {
       at = end + 1
     }
     const parentScope = stack.at(-1)?.scope ?? rootScope
-    let scope: ReadonlyMap<string, string> = parentScope
+    let own: Map<string, string> | null = null
     for (const [attribute, value] of Object.entries(attributes)) {
       if (attribute === 'xmlns' || attribute.startsWith('xmlns:')) {
-        if (scope === parentScope) scope = new Map(parentScope)
-        ;(scope as Map<string, string>).set(attribute === 'xmlns' ? '' : attribute.slice(6), value)
+        own ??= new Map()
+        own.set(attribute === 'xmlns' ? '' : attribute.slice(6), value)
       }
     }
+    const scope: Scope = own === null ? parentScope : { own, parent: parentScope }
     const open: Open = { name, attributes, children: [], scope }
     if (selfClosing) {
       const element = close(open)

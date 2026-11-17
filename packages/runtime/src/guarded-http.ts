@@ -25,11 +25,11 @@ import {
   MAX_SOCKET_WAIT_MS,
   MAX_SOCKETS_PER_CALL,
   type RequestDeclaration,
-  type SecretValue,
+  SecretValue,
   ValetError,
 } from '@valet/core'
 import type { BrokerRequest, ExchangeResult, RunContext } from '@valet/egress'
-import { CallGate, type CallGateOptions, METHOD_OVERRIDE_HEADERS, SURFACE_CLASS } from './call-gate'
+import { CallGate, type CallGateOptions, isRoutingOverride, SURFACE_CLASS } from './call-gate'
 import { REDACTED } from './redaction'
 import { blockCause } from './site-protection'
 
@@ -87,8 +87,16 @@ const REFUSED_HEADERS = new Set([
   'expect',
   'http2-settings',
   'authorization',
-  ...METHOD_OVERRIDE_HEADERS,
 ])
+/** WebDAV's second target: allowed only on COPY and MOVE, and checked like the first (RT-4). */
+const DESTINATION_METHODS = ['COPY', 'MOVE']
+/**
+ * With a kept credential attached, what would let a server hand its value back in a form we can't
+ * see: compressed, or in pieces (RT-2). The request goes with `accept-encoding: identity`.
+ */
+const REFUSED_WITH_CREDENTIAL = ['range', 'if-range', 'accept-encoding']
+/** The shortest piece of a credential that counts as the credential, when it is long enough to cut. */
+const CREDENTIAL_WINDOW = 12
 const REFUSED_PREFIXES = ['proxy-', 'sec-']
 const TOKEN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$/
 /** Visible ASCII, Latin-1 and tabs and spaces: no CR, LF or NUL to split a header with. */
@@ -108,6 +116,8 @@ interface Snapshot {
 export class GuardedHttp implements HttpAccess {
   private readonly gate: CallGate
   private readonly sockets = new Set<EgressSocket>()
+  /** Opens under way, counted before their first await so concurrent opens can't pass the cap. */
+  private opening = 0
 
   constructor(private readonly options: GuardedHttpOptions) {
     this.gate = new CallGate(options)
@@ -124,7 +134,7 @@ export class GuardedHttp implements HttpAccess {
     if (target === null) return this.gate.deny('request-surface', 'host-not-allowed', method, null, url)
     if (snapshot === null) return this.gate.deny('request-surface', 'undeclared-request', method, target, url)
     await this.check(method, target, url, snapshot.headers, false)
-    const headers = await this.withCredential(snapshot, target, url, method)
+    const headers = await this.withCredential(withDestination(snapshot, target), target, url, method)
     const admitted = await this.gate.admit(method, target, url)
     let result: ExchangeResult
     try {
@@ -135,6 +145,7 @@ export class GuardedHttp implements HttpAccess {
       return this.failed(error, method, target, url)
     }
     const text = result.body.toString('utf8')
+    headers.assertPlain(result.headers)
     const cause = blockCause({
       status: result.status,
       contentType: result.headers['content-type'] ?? null,
@@ -150,16 +161,30 @@ export class GuardedHttp implements HttpAccess {
   }
 
   async websocket(url: string, options?: HttpSocketOptions): Promise<HttpSocket> {
-    const { state, manifest, broker, run } = this.options
+    const { state, manifest } = this.options
     state.assertLive()
     const snapshot = snapshotSocket(options)
     const target = resolve(url, manifest.home)
     if (target === null) return this.gate.deny('request-surface', 'host-not-allowed', 'GET', null, url)
     if (snapshot === null) return this.gate.deny('request-surface', 'undeclared-request', 'GET', target, url)
-    await this.check('GET', target, url, snapshot.headers, true)
-    if (this.sockets.size >= MAX_SOCKETS_PER_CALL) {
+    if (this.sockets.size + this.opening >= MAX_SOCKETS_PER_CALL) {
       return this.gate.deny('request-surface', 'request-ceiling', 'GET', target, url)
     }
+    this.opening++
+    try {
+      return await this.open(target, url, snapshot)
+    } finally {
+      this.opening--
+    }
+  }
+
+  private async open(
+    target: URL,
+    url: string,
+    snapshot: NonNullable<ReturnType<typeof snapshotSocket>>,
+  ): Promise<HttpSocket> {
+    const { state, broker, run } = this.options
+    await this.check('GET', target, url, snapshot.headers, true)
     const headers = await this.withCredential(
       { ...snapshot, method: 'GET', body: null, responseEncoding: 'utf8' },
       target,
@@ -267,7 +292,39 @@ export class GuardedHttp implements HttpAccess {
     if (!this.gate.mayUse(decision.declaration)) {
       return this.gate.deny('request-surface', 'denied-path', method, target, raw)
     }
+    await this.checkDestination(method, target, raw, headers, websocket)
     return decision.declaration
+  }
+
+  /**
+   * COPY and MOVE name a second target in Destination, which the server writes to: it must be on
+   * the same origin and pass the request surface as if it were requested itself. No other method
+   * may carry one.
+   */
+  private async checkDestination(
+    method: string,
+    target: URL,
+    raw: string,
+    headers: Readonly<Record<string, string>>,
+    websocket: boolean,
+  ): Promise<void> {
+    const { manifest } = this.options
+    const given = headerOf(headers, 'destination')
+    const wanted = !websocket && DESTINATION_METHODS.includes(method)
+    if (given === undefined && !wanted) return
+    const destination = wanted && given !== undefined ? destinationUrl(given, target) : null
+    if (destination === null)
+      return this.gate.deny('request-surface', 'undeclared-request', method, target, raw)
+    const decision = decideRequest(method, destination.href, manifest.egress, manifest.requests, {
+      privateHosts: manifest.privateHosts ?? [],
+      exactPort: true,
+    })
+    if (!decision.allowed) {
+      return this.gate.deny('request-surface', SURFACE_CLASS[decision.reason], method, destination, raw)
+    }
+    if (!this.gate.mayUse(decision.declaration)) {
+      return this.gate.deny('request-surface', 'denied-path', method, destination, raw)
+    }
   }
 
   private headersAllowed(headers: Readonly<Record<string, string>>): boolean {
@@ -279,7 +336,8 @@ export class GuardedHttp implements HttpAccess {
       const lower = name.toLowerCase()
       if (!TOKEN.test(name) || seen.has(lower)) return false
       seen.add(lower)
-      if (REFUSED_HEADERS.has(lower) || credentialHeaders.includes(lower)) return false
+      if (REFUSED_HEADERS.has(lower) || credentialHeaders.includes(lower) || isRoutingOverride(lower))
+        return false
       if (REFUSED_PREFIXES.some((p) => lower.startsWith(p))) return false
       if (!HEADER_VALUE.test(headers[name] as string)) return false
     }
@@ -303,6 +361,13 @@ export class GuardedHttp implements HttpAccess {
     if (credentials === undefined || target.protocol !== 'https:') {
       return this.gate.deny('tool-run', 'not-granted', method, target, raw)
     }
+    const encoding = values['accept-encoding']
+    if (
+      REFUSED_WITH_CREDENTIAL.some((name) => name !== 'accept-encoding' && values[name] !== undefined) ||
+      (encoding !== undefined && encoding.trim().toLowerCase() !== 'identity')
+    ) {
+      return this.gate.deny('request-surface', 'undeclared-request', method, target, raw)
+    }
     let header: { readonly name: string; readonly value: SecretValue }
     try {
       header = await state.track(credentials.headerFor(snapshot.credential, target.hostname))
@@ -316,7 +381,15 @@ export class GuardedHttp implements HttpAccess {
     const plaintext = header.value.reveal((v) => v)
     if (!HEADER_VALUE.test(plaintext)) return this.gate.deny('tool-run', 'not-granted', method, target, raw)
     values[name] = plaintext
-    return new CredentialUse(values, plaintext)
+    values['accept-encoding'] = 'identity'
+    const use = new CredentialUse(values, plaintext)
+    // The output and audit targets are redacted for it too, whatever tool code does with a body.
+    for (const form of use.forms) {
+      const secret = SecretValue.fromString(form)
+      state.keepSent(secret)
+      secret.dispose()
+    }
+    return use
   }
 
   /** A broker refusal that is the tool's doing is sticky and recorded; anything else just fails. */
@@ -333,29 +406,115 @@ export class GuardedHttp implements HttpAccess {
 
 /** The headers a request goes with, and a credential's value to take out of what comes back. */
 class CredentialUse {
+  /** Every form of the value redacted whole: as sent, its token without the scheme, base64, JSON-escaped. */
+  readonly forms: readonly string[]
+  /** Pieces of the token: a response holding one is refused, as a credential handed back in parts. */
+  private readonly windows: readonly string[]
+
   constructor(
     readonly values: Readonly<Record<string, string>>,
-    private readonly secret: string | null,
-  ) {}
+    secret: string | null,
+  ) {
+    if (secret === null) {
+      this.forms = []
+      this.windows = []
+      return
+    }
+    const token = /^[A-Za-z][A-Za-z0-9-]* +(\S.*)$/.exec(secret)?.[1] ?? secret
+    const bases = [secret, token]
+    const forms = new Set<string>()
+    for (const base of bases) {
+      if (base.length < 8) continue
+      forms.add(base)
+      forms.add(Buffer.from(base, 'utf8').toString('base64'))
+      forms.add(JSON.stringify(base).slice(1, -1))
+    }
+    // Longest first, so a form inside another is never replaced first and left half visible.
+    this.forms = [...forms].sort((a, b) => b.length - a.length)
+    const windows = new Set<string>()
+    if (token.length > CREDENTIAL_WINDOW) {
+      for (let at = 0; at + CREDENTIAL_WINDOW <= token.length; at++)
+        windows.add(token.slice(at, at + CREDENTIAL_WINDOW))
+    }
+    this.windows = [...windows]
+  }
+
+  /** A response with a credential attached must come back as plain bytes, or not at all. */
+  assertPlain(headers: Readonly<Record<string, string>>): void {
+    if (this.forms.length === 0) return
+    const encoding = (headers['content-encoding'] ?? 'identity').trim().toLowerCase()
+    if (encoding !== 'identity' && encoding !== '') throw new ValetError('tool-run', 'unexpected-shape')
+  }
 
   redact(headers: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
-    if (this.secret === null) return headers
+    if (this.forms.length === 0) return headers
     const out: Record<string, string> = {}
-    for (const [name, value] of Object.entries(headers)) out[name] = value.split(this.secret).join(REDACTED)
+    for (const [name, value] of Object.entries(headers)) {
+      const text = this.replaceForms(value)
+      out[name] = this.holdsPiece(text) ? REDACTED : text
+    }
     return out
   }
 
   /**
    * The body as tool code asked for it. Text has the credential's value replaced; bytes that hold it
-   * can't be cut cleanly, so they are refused.
+   * can't be cut cleanly, so they are refused, as is anything still holding a piece of it.
    */
   redactBody(body: Buffer, encoding: LocalEncoding): string {
-    if (this.secret !== null && body.includes(this.secret)) {
-      if (encoding === 'base64') throw new ValetError('tool-run', 'unexpected-shape')
-      return body.toString('utf8').split(this.secret).join(REDACTED)
+    if (this.forms.length === 0)
+      return encoding === 'base64' ? body.toString('base64') : body.toString('utf8')
+    if (encoding === 'base64') {
+      if (this.forms.some((f) => body.includes(f)) || this.windows.some((w) => body.includes(w)))
+        throw new ValetError('tool-run', 'unexpected-shape')
+      return body.toString('base64')
     }
-    return encoding === 'base64' ? body.toString('base64') : body.toString('utf8')
+    const text = this.replaceForms(body.toString('utf8'))
+    if (this.holdsPiece(text)) throw new ValetError('tool-run', 'unexpected-shape')
+    return text
   }
+
+  private replaceForms(text: string): string {
+    let out = text
+    for (const form of this.forms) if (out.includes(form)) out = out.split(form).join(REDACTED)
+    return out
+  }
+
+  private holdsPiece(text: string): boolean {
+    return this.windows.some((w) => text.includes(w))
+  }
+}
+
+/** A header's value by its name in any case. */
+function headerOf(headers: Readonly<Record<string, string>>, name: string): string | undefined {
+  const key = Object.keys(headers).find((k) => k.toLowerCase() === name)
+  return key === undefined ? undefined : headers[key]
+}
+
+/** Destination resolved against the request: the same origin only, without a fragment. */
+function destinationUrl(raw: string, target: URL): URL | null {
+  try {
+    const destination = new URL(raw, target)
+    if (destination.origin !== target.origin || destination.username !== '' || destination.password !== '')
+      return null
+    destination.hash = ''
+    return destination
+  } catch {
+    return null
+  }
+}
+
+/** The request with its Destination written as it was checked, so the server reads what we did. */
+function withDestination(snapshot: Snapshot, target: URL): Snapshot {
+  const given = headerOf(snapshot.headers, 'destination')
+  if (given === undefined) return snapshot
+  const destination = destinationUrl(given, target)
+  if (destination === null) throw new ValetError('request-surface', 'undeclared-request')
+  const headers: Record<string, string> = Object.create(null)
+  for (const [name, value] of Object.entries(snapshot.headers)) {
+    if (name.toLowerCase() !== 'destination') headers[name] = value
+  }
+  headers['destination'] = destination.href
+  return { ...snapshot, headers: Object.freeze(headers) }
 }
 
 function resolve(url: string, home: string): URL | null {

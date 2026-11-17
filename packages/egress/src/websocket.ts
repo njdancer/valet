@@ -50,7 +50,7 @@ export class BrokerSocket {
     return new Promise((resolve, reject) => {
       const handshake = `GET ${options.url.pathname}${options.url.search} HTTP/1.1`
       try {
-        options.spend(handshake.length + 256 + JSON.stringify(options.headers ?? {}).length)
+        options.spend(handshakeSize(handshake, options))
       } catch (error) {
         socket.destroy()
         reject(error)
@@ -187,4 +187,19 @@ export class BrokerSocket {
     this.closedWith = code
     if (this.waiter !== null && this.queue.length === 0) this.waiter({ kind: 'closed', code })
   }
+}
+
+/**
+ * The bytes the opening handshake puts on the wire, at least: the request line, Host, the caller's
+ * headers and subprotocols, and 256 for the ones ws adds itself (Upgrade, Connection, the key,
+ * version and extensions).
+ */
+function handshakeSize(requestLine: string, options: OpenSocketOptions): number {
+  let size = requestLine.length + 2 + `host: ${options.url.host}\r\n`.length + 256 + 2
+  for (const [name, value] of Object.entries(options.headers ?? {})) {
+    size += Buffer.byteLength(`${name}: ${value}\r\n`, 'latin1')
+  }
+  const protocols = options.protocols ?? []
+  if (protocols.length > 0) size += `sec-websocket-protocol: ${protocols.join(', ')}\r\n`.length
+  return size
 }

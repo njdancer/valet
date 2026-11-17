@@ -113,6 +113,11 @@ export async function dial(target: DialTarget, options: DialOptions = {}): Promi
   let address: string
   if (target.kind === 'public') {
     const addresses = await resolvePublic(target.host, lookup, testing)
+    // A public name may still answer with one of this Mac's own public addresses (a global IPv6
+    // one, say): that is this Mac, which is never an endpoint.
+    const own = (options.ownAddresses ?? ownAddresses)()
+    if (addresses.some((a) => isPublicAddress(a) && own.includes(canonicalAddress(a) ?? a)))
+      throw fail('host-not-allowed')
     address = addresses[0] as string
   } else {
     address = target.address

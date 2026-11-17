@@ -24,6 +24,7 @@ const manifest = parseManifest({
     { method: 'GET', host: 'api.example.test', path: '/v1/me', purpose: 'read' },
     { method: 'GET', host: '10.0.0.5:8123', path: '/v1/me', purpose: 'read' },
     { method: 'GET', host: 'api.example.test', path: '/ws', purpose: 'read', websocket: true },
+    { method: 'MOVE', host: 'api.example.test', path: '/dav/:item', purpose: 'write' },
   ],
   tools: [{ name: 'read_it', title: 'Read', description: 'A read', sideEffect: 'read' }],
 })
@@ -35,14 +36,26 @@ const OPEN: SiteGuards = {
 
 const TOKEN = 'tok_9f8e7d6c5b4a'
 
-function setup(options: { answer?: string; socket?: EgressSocket; credentials?: boolean } = {}) {
+function setup(
+  options: {
+    answer?: string
+    answerHeaders?: Record<string, string>
+    socket?: EgressSocket
+    credentials?: boolean
+    sideEffect?: 'read' | 'write'
+  } = {},
+) {
   const sent: { url: string; headers: Readonly<Record<string, string>>; body: Buffer | null }[] = []
   const broker: HttpEgress = {
     fetch: async (url, request) => {
       sent.push({ url: url.href, headers: request.headers, body: request.body })
       return {
         status: 200,
-        headers: { 'content-type': 'application/json', 'x-echo': request.headers['authorization'] ?? '' },
+        headers: {
+          'content-type': 'application/json',
+          'x-echo': request.headers['authorization'] ?? '',
+          ...options.answerHeaders,
+        },
         body: Buffer.from(
           options.answer ?? JSON.stringify({ seen: request.headers['authorization'] ?? null }),
         ),
@@ -59,7 +72,7 @@ function setup(options: { answer?: string; socket?: EgressSocket; credentials?: 
   const http = new GuardedHttp({
     adapterId: manifest.id,
     manifest,
-    sideEffect: 'read',
+    sideEffect: options.sideEffect ?? 'read',
     site: OPEN,
     state,
     audit: async (e) => void audits.push(e),
@@ -184,6 +197,96 @@ describe('GuardedHttp', () => {
     await http.websocket('/ws')
     controller.abort()
     expect(closed).toBe(1)
+  })
+})
+
+describe('GuardedHttp against the red team’s findings', () => {
+  it.each(['x-forwarded-for', 'X-Original-URL', 'forwarded', 'x-real-ip', 'via'])(
+    'refuses %s, which a server may route by over the request line',
+    async (name) => {
+      const { http, sent } = setup()
+      await expect(http.fetch('/v1/me', { headers: { [name]: '/admin' } })).rejects.toMatchObject({
+        errorClass: 'undeclared-request',
+      })
+      expect(sent).toEqual([])
+    },
+  )
+
+  it('checks a MOVE’s Destination like its target, and sends it as checked', async () => {
+    const { http, sent } = setup({ sideEffect: 'write' })
+    await http.fetch('/dav/a', { method: 'MOVE', headers: { Destination: '/dav/b', overwrite: 'F' } })
+    expect(sent[0]?.headers['destination']).toBe('https://api.example.test/dav/b')
+    expect(Object.keys(sent[0]?.headers ?? {}).filter((k) => k.toLowerCase() === 'destination')).toHaveLength(
+      1,
+    )
+  })
+
+  it.each([
+    ['without a Destination', 'MOVE', undefined],
+    ['to another host', 'MOVE', 'https://other.example.test/dav/b'],
+    ['to an undeclared path', 'MOVE', '/v1/me'],
+    ['to an ambiguous path', 'MOVE', '/dav/..%2Fv1'],
+    ['on a method that takes none', 'POST', '/dav/b'],
+  ])('refuses a request %s', async (_name, method, destination) => {
+    const { http, sent } = setup({ sideEffect: 'write' })
+    const path = method === 'POST' ? '/v1/echo' : '/dav/a'
+    await expect(
+      http.fetch(path, { method, headers: destination === undefined ? {} : { destination } }),
+    ).rejects.toBeInstanceOf(ValetError)
+    expect(sent).toEqual([])
+  })
+
+  it('sends a credential only uncompressed and whole, and refuses Range with it', async () => {
+    const { http, sent } = setup({ credentials: true })
+    await http.fetch('/v1/me', { credential: 'token' })
+    expect(sent[0]?.headers['accept-encoding']).toBe('identity')
+    const refused: Record<string, string>[] = [
+      { 'accept-encoding': 'gzip' },
+      { range: 'bytes=0-9' },
+      { 'if-range': 'x' },
+    ]
+    for (const headers of refused) {
+      const again = setup({ credentials: true })
+      await expect(again.http.fetch('/v1/me', { credential: 'token', headers })).rejects.toMatchObject({
+        errorClass: 'undeclared-request',
+      })
+      expect(again.sent).toEqual([])
+    }
+  })
+
+  it('refuses a compressed answer to a request that carried a credential', async () => {
+    const { http } = setup({ credentials: true, answerHeaders: { 'content-encoding': 'gzip' } })
+    await expect(http.fetch('/v1/me', { credential: 'token' })).rejects.toMatchObject({
+      errorClass: 'unexpected-shape',
+    })
+  })
+
+  it('refuses an answer holding a piece of the credential, and redacts its encoded forms', async () => {
+    const piece = setup({ credentials: true, answer: `{"half":"${TOKEN.slice(0, 13)}"}` })
+    await expect(piece.http.fetch('/v1/me', { credential: 'token' })).rejects.toMatchObject({
+      errorClass: 'unexpected-shape',
+    })
+    const encoded = Buffer.from(TOKEN).toString('base64')
+    const forms = setup({ credentials: true, answer: `{"b64":"${encoded}"}` })
+    const response = await forms.http.fetch('/v1/me', { credential: 'token' })
+    expect(response.body).not.toContain(encoded)
+    // And the call's output and audit targets are redacted for it, whatever tool code does next.
+    expect(forms.state.sensitive()(`x ${TOKEN} y`)).toBe(true)
+    expect(forms.state.sensitive()(`x ${encoded} y`)).toBe(true)
+    forms.state.disposeSent()
+  })
+
+  it('never lets concurrent opens pass the socket cap', async () => {
+    let opened = 0
+    const socket: EgressSocket = { send: async () => {}, receive: async () => null, close: () => {} }
+    const { http } = setup({ socket })
+    // Five at once: the fifth is refused before any of them is open, and the refusal is sticky.
+    const tries = await Promise.allSettled(
+      Array.from({ length: 5 }, () => http.websocket('/ws').then(() => opened++)),
+    )
+    expect(opened).toBe(0)
+    expect(tries.map((t) => t.status)).toEqual(Array(5).fill('rejected'))
+    expect(tries.at(-1)).toMatchObject({ reason: { errorClass: 'request-ceiling' } })
   })
 })
 

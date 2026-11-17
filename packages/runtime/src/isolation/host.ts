@@ -175,6 +175,8 @@ function dispatch(
 class SocketTable {
   private next = 1
   private readonly open = new Map<number, HttpSocket>()
+  /** Opens under way: counted before their first await, so concurrent opens can't pass the cap. */
+  opening = 0
 
   add(socket: HttpSocket): number {
     const id = this.next++
@@ -193,7 +195,7 @@ class SocketTable {
   }
 
   get size(): number {
-    return this.open.size
+    return this.open.size + this.opening
   }
 }
 
@@ -214,7 +216,14 @@ async function dispatchHttp(
       if (typeof args[0] !== 'string') throw new ValetError('tool-run', 'invalid')
       // The guard counts what is open; this only keeps the table from growing past it.
       if (sockets.size >= MAX_SOCKETS_PER_CALL) throw new ValetError('request-surface', 'request-ceiling')
-      return { id: sockets.add(await http.websocket(a, b)) }
+      sockets.opening++
+      let socket: HttpSocket
+      try {
+        socket = await http.websocket(a, b)
+      } finally {
+        sockets.opening--
+      }
+      return { id: sockets.add(socket) }
     }
     case 'http.ws.send':
       return sockets.get(args[0]).send(b, c)

@@ -142,7 +142,11 @@ await socket.close()
   they are and are never followed. Bodies are capped at 2 MB each way; at most 4 sockets per call.
 - Refused headers fail the call with \`request-surface/undeclared-request\`: Host, Cookie,
   Authorization, Content-Length, Transfer-Encoding, Connection and other hop-by-hop headers, \`proxy-*\`,
-  \`sec-*\` and method overrides. A refusal ends the call even if the code catches it.
+  \`sec-*\`, method overrides and routing headers (\`Forwarded\`, \`X-Forwarded-*\`, \`X-Original-URL\`
+  and the like). A refusal ends the call even if the code catches it.
+- COPY and MOVE need a \`Destination\` on the same origin that a declaration covers too; no other
+  method may send one. With \`credential\` set, Range and Accept-Encoding are refused (the answer
+  comes uncompressed), and an answer holding any piece of the credential fails the call.
 - \`import { parseFeed, parseXml, xmlChild, xmlChildren, xmlText } from '@valet/core'\`: \`parseFeed(text)\`
   reads RSS, Atom and JSON Feed into \`{ format, title, link, description, items: [{ id, title, link,
   published, updated, summary, content, author }] }\`; \`parseXml(text)\` reads a CalDAV or CardDAV answer

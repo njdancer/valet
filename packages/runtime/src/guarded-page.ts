@@ -37,13 +37,7 @@ import {
   touchesDeniedSegment,
   ValetError,
 } from '@valet/core'
-import {
-  CallGate,
-  type CallGateOptions,
-  headerValue,
-  METHOD_OVERRIDE_HEADERS,
-  SURFACE_CLASS,
-} from './call-gate'
+import { CallGate, type CallGateOptions, headerValue, isRoutingOverride, SURFACE_CLASS } from './call-gate'
 import { blockCause, isHtml, navigationBlocked } from './site-protection'
 
 export interface GuardedPageOptions extends CallGateOptions {
@@ -129,7 +123,7 @@ export class GuardedToolPage implements ToolPage {
     if (target === null) return this.gate.deny('request-surface', 'host-not-allowed', method, null, pathOrUrl)
     if (request === null)
       return this.gate.deny('request-surface', 'undeclared-request', method, target, pathOrUrl)
-    if (METHOD_OVERRIDE_HEADERS.some((name) => headerValue(request.headers, name) !== undefined)) {
+    if (Object.keys(request.headers).some(isRoutingOverride)) {
       return this.gate.deny('request-surface', 'undeclared-request', method, target, pathOrUrl)
     }
     const decision = decideRequest(method, target.href, manifest.egress, manifest.requests)
