@@ -218,10 +218,7 @@
     ],
     "genesis": "d22360668a61ed7e013880917614a970bc660c90f8577052a0a2e8c73a759faa",
     "head": "0f55b4d7b3ea34d7ab4ca781904dd0e8412bc27d539f8a36601d448964d37d30",
-    "devices": [
-      "b887a02cd9e81ffd6419efef5baf00c8",
-      "f7addd0a2f617741576bc62aea41f2b5"
-    ],
+    "devices": ["b887a02cd9e81ffd6419efef5baf00c8", "f7addd0a2f617741576bc62aea41f2b5"],
     "join": {
       "macId": "6c8ab657accdfd409ea04636031b6db5",
       "record": {
