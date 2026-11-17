@@ -1,11 +1,11 @@
-// The hub's pages (relay-hub.md): sign-up, sign-in, your nodes, adding a node, and security. Each is
+// The hub's pages (relay-hub.md): sign-up, sign-in, your Macs, adding a Mac, and security. Each is
 // a fixed shell and one script that talks to the hub's own JSON API. Nothing a Mac or a client sent
 // is ever written into HTML; the script sets text with textContent only.
 
 export type HubPageName = 'home' | 'sign-in' | 'sign-up' | 'link' | 'security' | 'not-found'
 
 const TITLES: Readonly<Record<HubPageName, string>> = {
-  home: 'Your nodes',
+  home: 'Your Macs',
   'sign-in': 'Sign in to Valet',
   'sign-up': 'Set up your Valet account',
   link: 'Add a Mac',
@@ -13,7 +13,8 @@ const TITLES: Readonly<Record<HubPageName, string>> = {
   'not-found': 'Nothing here',
 }
 
-const STYLE = `
+/** The hub's look, shared with the agent sign-in page (oauth.ts). */
+export const HUB_STYLE = `
   :root { color-scheme: light dark; --fg: #1d1d1f; --bg: #f5f5f7; --card: #fff; --muted: #6e6e73;
           --line: #d2d2d7; --accent: #0a5cd6; --bad: #b00020; --good: #1f7a3a; }
   @media (prefers-color-scheme: dark) {
@@ -87,7 +88,7 @@ const BODIES: Readonly<Record<HubPageName, string>> = {
       <button type="submit">Add this Mac</button>
     </form>
     <p class="error" id="error" role="alert"></p>
-    <nav><a href="/">Your nodes</a></nav>`,
+    <nav><a href="/">Your Macs</a></nav>`,
   security: `
     <h2>Passkeys</h2>
     <ul id="passkeys"></ul>
@@ -108,8 +109,8 @@ const BODIES: Readonly<Record<HubPageName, string>> = {
     </form>
     <button class="danger" id="app-remove" hidden>Turn off the authenticator app</button>
     <p class="error" id="error" role="alert"></p>
-    <nav><a href="/">Your nodes</a></nav>`,
-  'not-found': '<p>Nothing here.</p><nav><a href="/">Your nodes</a></nav>',
+    <nav><a href="/">Your Macs</a></nav>`,
+  'not-found': '<p>Nothing here.</p><nav><a href="/">Your Macs</a></nav>',
 }
 
 // One script for every page. It never builds HTML from data: text goes in with textContent.
@@ -182,8 +183,20 @@ function row(list, main, sub, action) {
   if (action) li.append(action)
   list.append(li)
 }
-function button(text, onClick) {
-  const b = document.createElement('button'); b.className = 'danger'; b.textContent = text; b.onclick = guard(onClick); return b
+// Removing takes two clicks: the first asks, and the question goes away by itself after a few seconds.
+function removeButton(what, onRemove) {
+  const b = document.createElement('button'); b.className = 'danger'; b.textContent = 'Remove'
+  let timer = 0
+  b.onclick = guard(async () => {
+    if (b.dataset.asking !== '1') {
+      b.dataset.asking = '1'; b.textContent = 'Remove ' + what + '?'
+      timer = setTimeout(() => { b.dataset.asking = ''; b.textContent = 'Remove' }, 6000)
+      return
+    }
+    clearTimeout(timer)
+    await onRemove()
+  })
+  return b
 }
 
 if (page === 'sign-in') {
@@ -211,7 +224,7 @@ if (page === 'home') {
       const dot = document.createElement('span'); dot.className = 'dot' + (node.online ? ' on' : '')
       main.append(dot, node.name + ' (' + node.slug + ')')
       row(list, main, node.online ? 'Online' : 'Offline, last seen ' + when(node.lastSeenAt),
-        button('Remove', async () => { await recent(() => api('/api/nodes/remove', { macId: node.macId })); await load() }))
+        removeButton(node.name, async () => { await recent(() => api('/api/nodes/remove', { macId: node.macId })); await load() }))
     }
   })
   $('sign-out').onclick = guard(async () => { await api('/api/sign-out', {}); location.href = '/sign-in' })
@@ -238,7 +251,7 @@ if (page === 'security') {
     const list = $('passkeys'); list.textContent = ''
     for (const p of me.passkeys)
       row(list, p.name, 'Added ' + when(p.createdAt) + ', last used ' + when(p.lastUsedAt),
-        button('Remove', async () => { await recent(() => api('/api/passkeys/remove', { id: p.id })); await load() }))
+        removeButton('this passkey', async () => { await recent(() => api('/api/passkeys/remove', { id: p.id })); await load() }))
     $('app-state').textContent = me.app ? 'On.' : 'Off.'
     $('app-start').hidden = me.app; $('app-confirm').hidden = true; $('app-remove').hidden = !me.app
   })
@@ -261,7 +274,7 @@ export function hubPage(name: HubPageName, status: number): Response {
   const nonce = crypto.randomUUID().replace(/-/g, '')
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${TITLES[name]}</title><style>${STYLE}</style></head>
+<title>${TITLES[name]}</title><style>${HUB_STYLE}</style></head>
 <body data-page="${name}"><main><h1>${TITLES[name]}</h1>${BODIES[name]}</main>
 <script nonce="${nonce}">${SCRIPT}</script></body></html>`
   return new Response(html, {

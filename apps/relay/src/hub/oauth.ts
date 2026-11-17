@@ -17,6 +17,7 @@
 // puts nothing a client sent into HTML.
 
 import { z } from 'zod'
+import { HUB_STYLE } from './pages'
 import { linkCode, sha256Hex, token } from './secrets'
 
 export const OAUTH_TIMINGS = {
@@ -598,7 +599,7 @@ function consentPage(
       ? `<h1>Valet</h1><p>${escapeText(text)}</p>`
       : `<h1>Approve this app</h1>
          <p><strong id="client"></strong> wants to use your Valet tools.</p>
-         <p>On your Mac (Valet’s window) or your iPhone, approve it and type this code:</p>
+         <p>In Valet on your Mac, type this code where it asks to approve a connection, then approve:</p>
          <p class="code" id="code"></p>
          <p class="muted" id="state">Waiting for you to approve…</p>`
   const script =
@@ -613,7 +614,10 @@ function consentPage(
     try {
       const r = await fetch('/authorize/status?id=' + encodeURIComponent(d.id), { credentials: 'same-origin' })
       const s = (await r.json()).state
-      if (s === 'approved' || s === 'declined') { location.assign('/authorize/done?id=' + encodeURIComponent(d.id)); return }
+      if (s === 'approved' || s === 'declined') {
+        state.textContent = s === 'approved' ? 'Approved. Taking you back to ' + d.client + '…' : 'Declined. Taking you back…'
+        location.assign('/authorize/done?id=' + encodeURIComponent(d.id)); return
+      }
       if (s === 'gone') { state.textContent = 'This sign-in has expired. Start again from your app.'; return }
     } catch {}
     setTimeout(poll, 2000)
@@ -622,8 +626,8 @@ function consentPage(
 </script>`
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Valet</title>
-<style>:root{color-scheme:light dark}body{font:16px/1.5 -apple-system,system-ui,sans-serif;margin:0;padding:32px 16px}
-main{max-width:32rem;margin:0 auto}.code{font:600 28px ui-monospace,Menlo,monospace;letter-spacing:.1em}.muted{opacity:.7}</style>
+<style>${HUB_STYLE}
+.code{font:600 28px ui-monospace,Menlo,monospace;letter-spacing:.1em}</style>
 </head><body data-consent="${data}"><main>${body}</main>${script}</body></html>`
   return new Response(html, {
     status,

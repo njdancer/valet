@@ -267,6 +267,13 @@ test('signs up on the hub and puts the Mac on the account', async () => {
   await hubPage.fill('#email', 'person@example.com')
   await hubPage.click('#sign-up button[type=submit]')
   await hubPage.waitForURL(`${HUB}/`)
+  // Asking for a code, then cancelling, leaves the Mac as it was.
+  await control.evaluate(() => {
+    window.location.hash = '#/settings/devices'
+  })
+  await control.getByRole('button', { name: 'Connect to your Valet account' }).click()
+  await control.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(control.getByRole('button', { name: 'Connect to your Valet account' })).toBeVisible()
   await linkMac()
   await expect(control.getByText(/device list/i)).toBeVisible()
   await expect(hubPage.getByText(`${MAC_NAME} (test-mac)`)).toBeVisible()
@@ -408,6 +415,7 @@ test('the Mac gets new keys: removed on the hub’s page, added again, and sign-
   const old = hubPage.locator('li', { hasText: `${MAC_NAME} (test-mac)` })
   await expect(old).toContainText('Offline')
   await old.getByRole('button', { name: 'Remove' }).click()
+  await old.getByRole('button', { name: `Remove ${MAC_NAME}?` }).click()
   await expect(old).toHaveCount(0)
   for (const agent of agents)
     await expect(agent.client?.listTools() ?? Promise.reject(new Error('none'))).rejects.toThrow()

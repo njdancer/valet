@@ -171,6 +171,9 @@ function RemoteCard() {
   const approved =
     (agents.status === 'ready' ? agents.data.filter((c) => c.grant !== null).length : 0) +
     (viaHub.status === 'ready' ? viaHub.data.length : 0)
+  const phones = useLoad((a) => a.phones.status(), [], ['phones-changed'])
+  const hub = phones.status === 'ready' ? phones.data.hub : null
+  const hubHost = hub !== null && hub.state === 'linked' ? new URL(hub.url).host : null
   return (
     <Card>
       <CardHeader className="items-center">
@@ -188,9 +191,15 @@ function RemoteCard() {
                 ? approved === 0
                   ? 'No cloud agents approved yet'
                   : `${plural(approved, 'cloud agent')} approved`
-                : 'Cloud agents can’t reach this Mac.'}
+                : approved > 0
+                  ? `Cloud agents can’t use this Mac’s tools until it’s on, including ${plural(approved, 'agent')} you approved.`
+                  : 'Cloud agents can’t reach this Mac.'}
             </Text>
-            {setup.data.hosts.length > 0 ? (
+            {hubHost !== null ? (
+              <Text size="sm" tone="muted">
+                Agents reach it through your Valet account at {hubHost}, and use the tools you turn on here.
+              </Text>
+            ) : setup.data.hosts.length > 0 ? (
               <DescriptionList
                 items={setup.data.hosts.map((h) => ({
                   term: 'Public name',
@@ -350,7 +359,7 @@ function CloudAgentsSection() {
     <Section
       id="cloud-agents"
       title="Cloud agents"
-      description="Agents that reach this Mac over the internet, through remote access. Each one can call only the tools you ticked when you approved it."
+      description="Agents that reach this Mac over the internet. One approved through your Valet account can call the tools you turned on for remote access; one approved on this Mac's own address, only the tools you ticked for it."
     >
       <AskingToConnect />
       {agents.status === 'error' ? <Failed failed what="load the cloud agents" /> : null}
