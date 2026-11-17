@@ -140,7 +140,11 @@ export class Phones implements PhoneOutbox {
       sendJoin: (record) => this.client?.send({ type: 'hub-roster-join', record }) ?? false,
       removed: parts.removedFromAccount,
       now: parts.now,
-      onChange: () => this.options.emit(),
+      onChange: () => {
+        // The phones hear which account they are on once this Mac is on its list.
+        this.channel?.sendStatus()
+        this.options.emit()
+      },
       // Phones on the account's list: trusted here like paired ones, let in by the relay.
       onPhones: (phones) => {
         parts.devices.setAccountPhones(phones)
@@ -231,7 +235,11 @@ export class Phones implements PhoneOutbox {
         void roster.changed().catch(() => undefined)
       },
       macName: this.options.macName,
-      status: parts.status,
+      status: () => {
+        const status = parts.status?.()
+        const account = this.account()
+        return status === undefined || account === null ? status : { ...status, account }
+      },
       statePath: this.options.statePath,
       onChange: () => this.options.emit(),
       ...(this.options.log === undefined ? {} : { log: this.options.log }),
@@ -281,6 +289,13 @@ export class Phones implements PhoneOutbox {
       })),
       pairing: this.channel?.pairing ?? { step: 'idle' },
     }
+  }
+
+  /** The account this Mac is on, for its phones, once the Mac is on the account's list. */
+  private account(): { hub: string; accountId: string } | null {
+    const hub = this.hub
+    if (hub?.state !== 'linked' || this.roster?.view.state !== 'on') return null
+    return { hub: hub.url, accountId: hub.accountId }
   }
 
   /** Asks the hub for a code to join the account (relay-hub.md). False when not connected. */

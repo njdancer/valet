@@ -19,3 +19,6 @@ mise.local.toml
 # The helpers' generated Xcode project (swift-bridge/apps/project.yml)
 swift-bridge/apps/ValetHelpers.xcodeproj/
 swift-bridge/apps/Generated/
+
+# The Node runtime's binary and its verified archives (apps/desktop/scripts/node-runtime.mjs)
+apps/desktop/.node-runtime/

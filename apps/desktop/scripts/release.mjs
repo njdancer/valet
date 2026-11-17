@@ -45,6 +45,13 @@ import { parseArgs } from 'node:util'
 import { loadFeedPublicKey, verifyFeed } from '../src/main/updater/feed-envelope.ts'
 import { buildFeedYaml, hashZip, makeFeed } from './make-feed.mjs'
 import {
+  buildNodeRuntime,
+  NODE_RUNTIME_ENTITLEMENTS,
+  NODE_RUNTIME_PIN,
+  readPin,
+  signNodeRuntime,
+} from './node-runtime.mjs'
+import {
   APP_DIR,
   appPath,
   asarFiles,
@@ -283,6 +290,14 @@ async function release() {
     }
   })
 
+  await step(
+    'Node runtime: the pinned official release, verified, universal, signed on its own',
+    async () => {
+      const { out, pin } = await buildNodeRuntime()
+      signNodeRuntime(pin, dryRun ? '-' : signingIdentity(), out)
+    },
+  )
+
   await step('electron-vite build, with the release feed compiled in', () =>
     run(join(APP_DIR, 'node_modules', '.bin', 'electron-vite'), ['build'], {
       cwd: APP_DIR,
@@ -459,6 +474,7 @@ async function verifyApp(app, arch, feedUrl, expect) {
   for (const name of NATIVE) {
     expect(`${name} ships in Contents/MacOS`, existsSync(join(app, 'Contents', 'MacOS', name)))
   }
+  checkNodeRuntime(app, expect)
   expect(
     'the Messages helper’s launch agent ships',
     existsSync(join(app, 'Contents', 'Library', 'LaunchAgents', 'messages-helper.plist')),
@@ -486,6 +502,61 @@ async function verifyApp(app, arch, feedUrl, expect) {
     return
   }
   await checkRefusals(app, expect)
+}
+
+/**
+ * The Node runtime inside the app: the pinned version, both architectures, its own signature with its
+ * own identifier, the hardened runtime and the JIT entitlement only, and it runs (with V8's JIT)
+ * under that signature on this Mac, and under Rosetta for x64 when Rosetta is there.
+ */
+function checkNodeRuntime(app, expect) {
+  const pin = readPin(readFileSync(NODE_RUNTIME_PIN, 'utf8'))
+  const node = join(app, 'Contents', 'MacOS', 'valet-node')
+  expect('valet-node ships in Contents/MacOS', existsSync(node))
+  if (!existsSync(node)) return
+  const archs = capture('/usr/bin/lipo', ['-archs', node]).stdout.trim().split(/\s+/).sort().join(' ')
+  expect('valet-node is universal', archs === 'arm64 x86_64', archs)
+  const details = capture('/usr/bin/codesign', ['-dv', '--verbose=4', node]).stderr
+  expect('valet-node has its own identifier', details.includes(`Identifier=${pin.identifier}\n`), details)
+  expect(
+    'valet-node has the hardened runtime',
+    /flags=0x[0-9a-f]*\([^)]*runtime[^)]*\)/.test(details),
+    details,
+  )
+  if (dryRun) expect('valet-node signed ad hoc', details.includes('Signature=adhoc'), details)
+  else {
+    expect(
+      'valet-node signed with Developer ID',
+      details.includes('Authority=Developer ID Application:'),
+      details,
+    )
+    expect(
+      'valet-node signed by the team',
+      details.includes(`TeamIdentifier=${process.env.VALET_TEAM_ID}`),
+      details,
+    )
+  }
+  const signedFile = join(work, 'entitlements-node.plist')
+  writeFileSync(signedFile, capture('/usr/bin/codesign', ['-d', '--entitlements', '-', '--xml', node]).stdout)
+  expect(
+    'valet-node’s entitlements are build/entitlements.node.plist',
+    samePlist(plist(signedFile), plist(NODE_RUNTIME_ENTITLEMENTS)),
+  )
+  // Enough work for V8 to compile optimised code, which the hardened runtime allows only with the
+  // JIT entitlement: a binary signed without it dies here.
+  const probe =
+    'let s = 0; for (let i = 0; i < 5e7; i++) s = (s + i * i) % 1000003; console.log(process.version, s)'
+  const runs = [['native', node, ['-e', probe]]]
+  if (capture('/usr/bin/arch', ['-x86_64', '/usr/bin/true']).code === 0)
+    runs.push(['x64 under Rosetta', '/usr/bin/arch', ['-x86_64', node, '-e', probe]])
+  for (const [label, command, args] of runs) {
+    const result = capture(command, args)
+    expect(
+      `valet-node runs with its JIT (${label})`,
+      result.code === 0 && result.stdout.startsWith(`v${pin.version} `),
+      result.stdout + result.stderr,
+    )
+  }
 }
 
 /** The release check from "Command-line switches": every unexpected switch is refused at once. */
