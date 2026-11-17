@@ -397,4 +397,30 @@ describe('the Mac and the account’s device list', () => {
     await t.keeper.received([])
     expect(t.sent).toEqual([])
   })
+
+  it('starts again when added afresh after the account’s list was emptied without it hearing', async () => {
+    const t = await setup()
+    await t.keeper.linked(ACCOUNT)
+    await t.keeper.received([])
+    await t.answer()
+    expect(t.ledger.data.roster).toBeDefined()
+
+    // The hub dropped the list while this Mac wasn't listening (it was removed and missed it).
+    t.hub.splice(0)
+    await t.keeper.received([])
+    expect(t.keeper.view.state).toBe('refused')
+    expect(t.sent).toEqual([])
+    // Hearing the same account again is no reason to forget the pin…
+    await t.keeper.linked(ACCOUNT)
+    await t.keeper.received([])
+    expect(t.sent).toEqual([])
+    // …but being added again with a code it showed is: it starts a new list, under one prompt.
+    await t.keeper.linked(ACCOUNT, true)
+    expect(t.ledger.data.roster).toBeUndefined()
+    await t.keeper.received([])
+    expect(t.sent).toHaveLength(1)
+    await t.answer()
+    expect(t.keeper.view).toEqual({ state: 'on', devices: 1 })
+    expect(t.keeper.roster).not.toBeNull()
+  })
 })

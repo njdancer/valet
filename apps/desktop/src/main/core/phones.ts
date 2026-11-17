@@ -179,8 +179,12 @@ export class Phones implements PhoneOutbox {
             `[relay] ${event.type}${event.type === 'device-online' ? ` ${event.deviceId} ${event.online}` : ''}`,
           )
         if (event.type === 'hub-status') {
+          // Linking, then linked: the person just added this Mac with the code it showed.
+          const fresh = this.hub?.state === 'linking' && event.hub.state === 'linked'
           this.hub = event.hub
-          void roster.linked(event.hub.state === 'linked' ? event.hub.accountId : null).catch(() => undefined)
+          void roster
+            .linked(event.hub.state === 'linked' ? event.hub.accountId : null, fresh)
+            .catch(() => undefined)
           this.options.emit()
           return
         }

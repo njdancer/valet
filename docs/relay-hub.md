@@ -308,7 +308,10 @@ when the person removes, on the hub's page, the Mac whose change was first on th
 drops the list and every grant signed under it (and those grants' tokens), and tells the other
 nodes. The next Mac starts a new list, and agents sign in again. This is how a Mac that lost its
 keys, and so came back with a new id, gets going again: remove the old one, link the new one.
-Removing needs a recent sign-in; it only takes access away.
+Removing needs a recent sign-in; it only takes access away. A Mac that missed being removed
+(it was offline, or it is the same Mac with new keys) still holds a pin on the old list and would
+refuse the empty one; when it is next added with a code it showed (linking, then linked), it
+forgets that pin and starts the new list.
 
 ## Open, for the building agent to propose (not for Nick unless it changes his goal)
 
