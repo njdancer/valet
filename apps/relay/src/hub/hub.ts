@@ -1048,7 +1048,36 @@ export class Hub extends DurableObject<Env> {
       throw new Refusal(404, 'not_found', 'No such node.')
     this.run('DELETE FROM nodes WHERE mac_id = ?', macId)
     await this.tell(macId)
+    // The Mac that started the account's device list is its root: every node trusts only a list it
+    // started itself, or (from 4c) one its own list leads to. With that Mac gone (a Mac that lost
+    // its keys comes back as a new one), the list and the grants signed under it go too, and the
+    // next Mac starts a new list. Taking things away needs no signature; adding still does.
+    if (this.startedBy(node.account_id) === macId) {
+      for (const grant of this.all<{ id: string }>(
+        'SELECT id FROM grants WHERE account_id = ?',
+        node.account_id,
+      ))
+        this.oauth.revokeGrant(grant.id)
+      this.run('DELETE FROM grants WHERE account_id = ?', node.account_id)
+      this.run('DELETE FROM roster WHERE account_id = ?', node.account_id)
+      await this.tellNodes(node.account_id, macId)
+    }
     return Response.json({ ok: true })
+  }
+
+  /** The device that made the first change on the account's list, from a list the hub checked. */
+  private startedBy(accountId: string): string | null {
+    const first = this.one<{ payload: string }>(
+      'SELECT payload FROM roster WHERE account_id = ? AND seq = 0',
+      accountId,
+    )
+    if (first === null) return null
+    try {
+      const by = (JSON.parse(first.payload) as { by?: unknown }).by
+      return typeof by === 'string' ? by : null
+    } catch {
+      return null
+    }
   }
 
   /** Tells a Mac its new status, if it is connected; it hears it again on its next hello anyway. */

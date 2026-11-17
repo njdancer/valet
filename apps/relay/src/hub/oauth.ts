@@ -355,9 +355,10 @@ export class HubOAuth {
       now + OAUTH_TIMINGS.consentMs,
     )
     const page = consentPage('waiting', code, 200, { id, client: client.name })
+    // A __Host- cookie must say Path=/ and Secure and name no Domain, or browsers drop it.
     page.headers.append(
       'set-cookie',
-      `${CONSENT_COOKIE}=${browser}; Path=/authorize; Secure; HttpOnly; SameSite=Lax; Max-Age=${OAUTH_TIMINGS.consentMs / 1000}`,
+      `${CONSENT_COOKIE}=${browser}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${OAUTH_TIMINGS.consentMs / 1000}`,
     )
     return page
   }

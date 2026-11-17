@@ -107,4 +107,45 @@ describe.runIf(process.env['VALET_HUB_BROWSER'] === '1')('the hub in a browser',
     await page.waitForURL(`${origin}/`)
     await page.getByText('Nick’s MacBook Pro (mbp)').waitFor()
   })
+
+  it('keeps an agent’s sign-in waiting in the browser that opened it', async () => {
+    const { chromium } = await import('@playwright/test')
+    const port = 18_000 + Math.floor(Math.random() * 1000)
+    const origin = `http://localhost:${port}`
+    const runtime = await startRelay({ port, hub: { host: 'localhost', origin } })
+    cleanup.push(() => runtime.close())
+    const executablePath = process.env['HUB_CHROMIUM']
+    const browser = await chromium.launch(executablePath === undefined ? {} : { executablePath })
+    cleanup.push(() => browser.close())
+    const page = await (await browser.newContext()).newPage()
+
+    const registered = await fetch(`${origin}/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ redirect_uris: ['http://localhost:1/cb'], client_name: 'Claude' }),
+    })
+    const { client_id: clientId } = (await registered.json()) as { client_id: string }
+    const query = new URLSearchParams({
+      response_type: 'code',
+      client_id: clientId,
+      redirect_uri: 'http://localhost:1/cb',
+      code_challenge: 'c'.repeat(43),
+      code_challenge_method: 'S256',
+      state: 'st',
+    })
+    await page.goto(`${origin}/authorize?${query}`)
+    // The browser kept the consent cookie: its polls say pending, not expired (a `__Host-` cookie
+    // with any other Path is dropped, and every sign-in looked expired at once).
+    const cookies = await page.context().cookies()
+    expect(cookies.map((c) => c.name)).toContain('__Host-valet-consent')
+    await page.waitForTimeout(2_500)
+    expect(await page.locator('#state').textContent()).toBe('Waiting for you to approve…')
+    const id = JSON.parse((await page.locator('body').getAttribute('data-consent')) ?? '{}').id as string
+    const state = await page.evaluate(
+      async (consent) =>
+        ((await (await fetch(`/authorize/status?id=${consent}`)).json()) as { state: string }).state,
+      id,
+    )
+    expect(state).toBe('pending')
+  })
 })

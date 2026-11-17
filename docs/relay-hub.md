@@ -301,6 +301,15 @@ Built in this order: the hub's sign-in for agents and the grant format (3a), the
 - **Not yet:** `list_changed` over an event stream, hub-level tools (which nodes are online), and a
   page on the hub to see and revoke grants. Step 5 retires the per-Mac hosts.
 
+## A Mac that started the list goes
+
+Every node trusts only a device list it started itself (until 4c lets a second Mac join one). So
+when the person removes, on the hub's page, the Mac whose change was first on the list, the hub
+drops the list and every grant signed under it (and those grants' tokens), and tells the other
+nodes. The next Mac starts a new list, and agents sign in again. This is how a Mac that lost its
+keys, and so came back with a new id, gets going again: remove the old one, link the new one.
+Removing needs a recent sign-in; it only takes access away.
+
 ## Open, for the building agent to propose (not for Nick unless it changes his goal)
 
 - Storage: D1 vs a Durable Object per account.

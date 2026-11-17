@@ -612,7 +612,7 @@ describe('agents signing in at the hub', () => {
     )
     mac.client.send({ type: 'hub-roster-append', changes: [genesis] })
     await until(() => mac.rosters.some((r) => r.changes.length === 1))
-    return { runtime, mac, accountId: linked.accountId }
+    return { runtime, mac, browser, accountId: linked.accountId }
   }
 
   /** An agent's browser: registers, opens /authorize, and keeps the consent cookie. */
@@ -930,4 +930,63 @@ describe('agents signing in at the hub', () => {
     await until(() => mac.grants.length > 1)
     expect(((await result('tools/list')) as { tools: unknown[] }).tools).toHaveLength(1)
   }, 30_000)
+
+  it('starts the device list again when the Mac that started it is removed, taking its grants', async () => {
+    const { runtime, mac, browser, accountId } = await account()
+    const a = await agent(runtime)
+    await until(() => mac.consents.some((c) => c.consents.some((x) => x.id === a.consent.id)))
+    mac.client.send({
+      type: 'hub-grant',
+      grant: mac.signGrant(grantFor(accountId, mac.id, a.consent, a.clientId)),
+    })
+    await until(() => mac.grants.some((g) => g.grants.length === 1))
+    const code = new URL((await a.get('/authorize/done')).headers.get('location') ?? '').searchParams.get(
+      'code',
+    )
+    const issued = (await (
+      await a.token({
+        grant_type: 'authorization_code',
+        code: code ?? '',
+        redirect_uri: REDIRECT,
+        code_verifier: a.verifier,
+      })
+    ).json()) as { access_token: string }
+    const mcp = () =>
+      runtime.fetch(`${HUB_ORIGIN}/mcp`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${issued.access_token}` },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }),
+      })
+    expect((await mcp()).status).toBe(200)
+
+    // A second Mac on the account (one that lost its keys comes back as a new one).
+    const second = startMac(runtime)
+    await second.online()
+    second.client.send({ type: 'hub-link-start', name: 'Studio again' })
+    const linking = await second.next('linking')
+    if (linking.state !== 'linking') throw new Error('expected linking')
+    await browser.json('/api/nodes/link', { code: linking.code, slug: 'studio-2' })
+    await second.next('linked')
+    await until(() => second.rosters.some((r) => r.changes.length === 1))
+
+    // The old Mac goes: the list and the grants under it go too, and the agent's token stops working.
+    await browser.json('/api/nodes/remove', { macId: mac.id })
+    await until(() => second.rosters.at(-1)?.changes.length === 0)
+    await until(() => second.grants.at(-1)?.grants.length === 0)
+    expect((await mcp()).status).toBe(401)
+
+    // The new Mac starts its own list.
+    const genesis = second.signRoster(
+      nextRosterChange(
+        null,
+        accountId,
+        second.id,
+        { op: 'add', device: second.device },
+        new Date().toISOString(),
+      ),
+    )
+    second.client.send({ type: 'hub-roster-append', changes: [genesis] })
+    await until(() => second.rosters.at(-1)?.changes.length === 1)
+    expect(second.rosters.at(-1)?.refused).toBeUndefined()
+  })
 })
