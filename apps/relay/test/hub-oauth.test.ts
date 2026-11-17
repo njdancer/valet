@@ -60,11 +60,26 @@ function setup() {
   return { oauth, call, register, client, authorize, token, tick: (ms: number) => (now += ms) }
 }
 
+/**
+ * What a browser needs to keep a `__Host-` cookie (RFC 6265bis 4.1.3.2): Secure, Path=/ and no
+ * Domain. A cookie that misses one is dropped without a word, and the sign-in looks expired.
+ */
+function hostCookie(set: string) {
+  const [pair, ...attributes] = set.split(';').map((p) => p.trim())
+  expect(pair?.startsWith('__Host-')).toBe(true)
+  const lower = attributes.map((a) => a.toLowerCase())
+  expect(lower).toContain('secure')
+  expect(lower).toContain('path=/')
+  expect(lower.some((a) => a.startsWith('domain='))).toBe(false)
+}
+
 /** Opens a consent and returns its id and the browser's cookie. */
 async function open(t: ReturnType<typeof setup>, clientId: string) {
   const page = await t.authorize({ client_id: clientId, state: 's' })
   expect(page.status).toBe(200)
-  const cookie = (page.headers.get('set-cookie') ?? '').split(';')[0] as string
+  const set = page.headers.get('set-cookie') ?? ''
+  hostCookie(set)
+  const cookie = set.split(';')[0] as string
   const consent = t.oauth.openConsents()[0]
   if (consent === undefined) throw new Error('no consent')
   return { id: consent.id, cookie }
