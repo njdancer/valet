@@ -835,6 +835,8 @@ export interface RemoteConsentItem {
   readonly source: string | null
   readonly requestedAt: IsoTime
   readonly expiresAt: IsoTime
+  /** 'hub': an agent signing in through the Valet account (RemoteConsentRequest.via). */
+  readonly via?: 'hub'
 }
 
 /** An approved site with a required setting not chosen yet: "Choose your Woolworths store". */

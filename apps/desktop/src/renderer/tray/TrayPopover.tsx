@@ -328,7 +328,7 @@ export function TrayPopover() {
                 <MenuRow
                   icon={<Lock />}
                   shortcut="mod+alt+shift+L"
-                  hint="If something looks wrong: stops calls and cuts off cloud agents"
+                  hint="Stops calls, cuts off cloud agents"
                   onClick={() => setLockOpen(true)}
                 >
                   Lock down…
@@ -463,7 +463,7 @@ function NeedsYouRow({
     >
       <span className="flex flex-col items-start gap-0.5 py-0.5 whitespace-normal">
         <span className="line-clamp-2 font-medium">{title}</span>
-        {description ? <span className="line-clamp-2 text-sm text-fg-muted">{description}</span> : null}
+        {description ? <span className="line-clamp-3 text-sm text-fg-muted">{description}</span> : null}
         {deadline !== null ? <DeadlineChip until={deadline} now={now} subject={title} /> : null}
       </span>
     </TrayRow>
