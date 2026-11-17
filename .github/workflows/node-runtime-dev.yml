@@ -14,10 +14,16 @@ jobs:
       - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
       - run: pnpm install --frozen-lockfile
       - run: sw_vers; node --version
+      - name: profile probe
+        run: pnpm exec tsx packages/node-runtime/test/probe-profile.ts || true
+      - name: profile probe denials
+        run: |
+          sleep 2
+          log show --last 3m --style compact --predicate 'eventMessage CONTAINS "node(" OR eventMessage CONTAINS "sandbox-exec("' | grep -i deny | sed -E 's/^[0-9: .-]+//' | sort | uniq -c | sort -rn | head -100 || true
       - name: node-runtime tests
         run: |
           pnpm exec vitest run --project node-runtime 2>&1 | tee "$RUNNER_TEMP/out.txt"; exit "${PIPESTATUS[0]}"
       - name: sandbox denials
         if: always()
         run: |
-          log show --last 10m --style compact --predicate 'sender == "Sandbox" OR eventMessage CONTAINS[c] "deny("' | grep -i "deny" | sed -E 's/^[0-9: .-]+//' | sort | uniq -c | sort -rn | head -150
+          log show --last 10m --style compact --predicate 'eventMessage CONTAINS "node(" OR eventMessage CONTAINS "sandbox-exec("' | grep -i "deny" | sed -E 's/^[0-9: .-]+//' | sort | uniq -c | sort -rn | head -150

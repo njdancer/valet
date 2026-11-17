@@ -9,9 +9,11 @@
   },
   "dependencies": {
     "@valet/core": "workspace:*",
-    "@valet/runtime": "workspace:*"
+    "@valet/runtime": "workspace:*",
+    "semver": "7.8.6"
   },
   "devDependencies": {
+    "@types/semver": "^7.8.0",
     "@valet/adapter-store": "workspace:*",
     "zod": "^4.6.7"
   }
