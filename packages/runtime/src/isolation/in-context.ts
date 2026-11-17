@@ -4,7 +4,7 @@
 // they do over the real channel, so a test that passes here passes in the app's tool process.
 // Not used by the app.
 
-import { NeedsUserError, type ToolContext, ValetError } from '@valet/core'
+import { isOperation, NeedsUserError, type ToolContext, ValetError } from '@valet/core'
 import type { ToolProcessFactory } from './host'
 import { dispatchLocal } from './local-dispatch'
 import type { HostMessage, ProcessMessage, WireError } from './protocol'
@@ -45,6 +45,12 @@ async function answer(ctx: ToolContext, capability: string, args: readonly unkno
       return ctx.session.ensure()
     case 'confirm':
       return ctx.confirm(a[0])
+    case 'imap.op': {
+      const [name, list] = args
+      if (ctx.imap === undefined || !isOperation(name) || !Array.isArray(list))
+        throw new ValetError('tool-run', 'invalid')
+      return (ctx.imap[name] as (...a: unknown[]) => Promise<unknown>).apply(ctx.imap, list)
+    }
     default:
       if (capability.startsWith('local.')) return dispatchLocal(ctx.local, capability, args)
       throw new ValetError('tool-run', 'invalid')

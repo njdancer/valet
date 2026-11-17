@@ -23,6 +23,7 @@ import {
   describeDeclaration,
   type Grant,
   type GrantStore,
+  type ImapProtocol,
   type LocalAccess,
   type MacToPhoneMessage,
   MESSAGES_SECRET,
@@ -68,6 +69,7 @@ import {
   AuditLog,
   DEFAULT_LOGIN_BACKOFF,
   type HttpEgress,
+  type ImapBackend,
   JsonFileStore,
   LoginAttemptMarker,
   noBrowserDriver,
@@ -297,6 +299,11 @@ export interface ServiceDeps {
     readonly egress: readonly string[]
     readonly privateHosts?: readonly PrivateHost[] | undefined
   }) => HttpEgress
+  /**
+   * The protocol host behind a protocol adapter's ctx.imap (docs/imap.md), for its protocols.imap.
+   * Without it, every ctx.imap call is not-granted.
+   */
+  readonly imap?: (protocol: ImapProtocol) => ImapBackend
   /** Builds an adapter's driver, with the reporters its refusals outside a run go to. */
   readonly createDriver: (manifest: AdapterManifest, reporters: DriverReporters) => Promise<SessionDriver>
   readonly credentials: Credentials
@@ -1941,9 +1948,14 @@ export class AppService {
       definition: adapter.definition,
       bundleHash: adapter.hash,
       driver,
-      ...(this.deps.egress === undefined || runtimeOf(manifest) === 'browser'
+      ...(this.deps.egress === undefined || runtimeOf(manifest) !== 'http'
         ? {}
         : { http: this.deps.egress(manifest) }),
+      ...(this.deps.imap === undefined ||
+      runtimeOf(manifest) !== 'protocol' ||
+      manifest.protocols?.imap === undefined
+        ? {}
+        : { imap: this.deps.imap(manifest.protocols.imap) }),
       ...(start === undefined || adapter.toolScript === null
         ? {}
         : {

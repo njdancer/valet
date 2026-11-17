@@ -3,6 +3,7 @@
 import { z } from 'zod'
 import type { ErrorClass, NeedsUserReason, Stage } from './errors'
 import type { HttpAccess } from './http-access'
+import type { ImapAccess } from './imap-access'
 import type { LocalAccess } from './local-access'
 import type { AdapterManifest } from './manifest'
 import type { ToolPage } from './page'
@@ -75,6 +76,11 @@ export interface ToolContext {
    * older tests; tool code in the tool process always has it.
    */
   readonly http?: HttpAccess
+  /**
+   * Mail, for a `protocol` adapter with protocols.imap (docs/imap.md). Every call from any other
+   * adapter rejects with `tool-run/not-granted`. Optional like `http`.
+   */
+  readonly imap?: ImapAccess
 }
 
 export interface ToolImplementation<

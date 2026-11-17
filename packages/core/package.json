@@ -16,7 +16,8 @@
     "./hub-phone": "./src/hub-phone.ts",
     "./signing": "./src/signing.ts",
     "./devices": "./src/devices.ts",
-    "./request-surface": "./src/request-surface.ts"
+    "./request-surface": "./src/request-surface.ts",
+    "./imap-policy": "./src/imap-policy.ts"
   },
   "dependencies": {
     "zod": "^4.6.7"

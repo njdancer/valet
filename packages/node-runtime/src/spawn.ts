@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { FORBIDDEN_PATHS, touchesForbiddenPath, ValetError } from '@valet/core'
-import type { HostMessage, ToolChannel, ToolProcessFactory } from '@valet/runtime'
+import type { ToolProcessFactory } from '@valet/runtime'
 import { BOOTSTRAP } from '@valet/runtime/bootstrap'
 import { MAX_MESSAGE_CHARS } from '@valet/runtime/protocol'
 import { nodeRuntimeProfile } from './profile'
@@ -66,7 +66,10 @@ export interface NodeRuntimeOptions {
   /** Tests only, off macOS: run without Seatbelt. The app never sets it. */
   readonly withoutSeatbelt?: boolean
   readonly platform?: NodeJS.Platform
-  /** Tests only: a host script of their own. */
+  /**
+   * A host script other than the runtime's own: the protocol host (packages/protocols) runs Valet's
+   * own client code this way, and tests run probes.
+   */
   readonly hostScript?: string
   /** Tests only: leave Node's permission model off, to probe the profile alone. */
   readonly withoutNodePermission?: boolean
@@ -142,10 +145,35 @@ export function nodeArguments(input: {
  * channel it returns queues what is sent until the process is up.
  */
 export function nodeRuntimeProcess(options: NodeRuntimeOptions): ToolProcessFactory {
+  return sandboxedNode({
+    ...options,
+    boot: (tunnels) => ({ t: 'boot', bootstrap: BOOTSTRAP, tunnels }),
+  }) as ToolProcessFactory
+}
+
+/** A channel to a sandboxed Node process: JSON lines on file descriptor 3, untrusted both ways. */
+export interface NodeChannel {
+  send(message: object): void
+  /** Every message the process sends. Untrusted. */
+  onMessage(listener: (message: unknown) => void): void
+  onExit(listener: () => void): void
+  kill(): void
+}
+
+export interface SandboxedNodeOptions extends NodeRuntimeOptions {
+  /** The first message the process is sent, given the tunnel ports by endpoint. */
+  readonly boot: (tunnels: Readonly<Record<string, number>>) => object
+}
+
+/**
+ * Starts the host script in Node under the profile, as nodeRuntimeProcess does, speaking whatever
+ * the host script speaks after `boot`. The protocol host (packages/protocols) uses it directly.
+ */
+export function sandboxedNode(options: SandboxedNodeOptions): () => NodeChannel {
   const endpoints = options.endpoints.map(parseEndpoint)
   if (process.versions['electron'] !== undefined && options.nodeBinary === process.execPath)
     throw new ValetError('tool-run', 'unavailable')
-  return (): ToolChannel => {
+  return (): NodeChannel => {
     const listeners: ((message: unknown) => void)[] = []
     const exits: (() => void)[] = []
     const queue: string[] = []
@@ -296,7 +324,7 @@ export function nodeRuntimeProcess(options: NodeRuntimeOptions): ToolProcessFact
         }
         if (buffer.length > MAX_LINE_CHARS) exit()
       })
-      write(`${JSON.stringify({ t: 'boot', bootstrap: BOOTSTRAP, tunnels: tunnelMap })}\n`)
+      write(`${JSON.stringify(options.boot(tunnelMap))}\n`)
       for (const line of queue.splice(0)) write(line)
     }
 
@@ -307,7 +335,7 @@ export function nodeRuntimeProcess(options: NodeRuntimeOptions): ToolProcessFact
     })
 
     return {
-      send: (message: HostMessage) => {
+      send: (message: object) => {
         if (exited) return
         const line = `${JSON.stringify(message)}\n`
         if (child === null) queue.push(line)
