@@ -3,7 +3,7 @@ import { defineConfig } from 'vitest/config'
 // CI's check job runs the unit suite on Linux without the updater's test files, which need macOS's
 // ditto (.github/workflows/ci.yml; they run on macOS in the e2e job). With them goes the code only
 // they cover, so the thresholds below hold the rest of the code to the same bar.
-const withoutMacosOnly = process.env.VALET_COVERAGE_WITHOUT_MACOS_ONLY === '1'
+const withoutMacosOnly = process.env['VALET_COVERAGE_WITHOUT_MACOS_ONLY'] === '1'
 
 export default defineConfig({
   test: {
