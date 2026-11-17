@@ -102,6 +102,21 @@ export class HostMailReader implements MailReader {
   }
 
   private async session(ref: MailAccountRef): Promise<Live> {
+    // The account is asked for on every lookup, a kept session too: a grant revoked, or an account
+    // that may now write INBOX, ends its session before anything more is read.
+    const account = await this.options.account(ref).catch(() => null)
+    const folders = account?.protocol.folders
+    const refusal =
+      account === null
+        ? new CredentialError('not-found')
+        : account.mayWriteInbox !== false ||
+            (folders !== undefined && !folders.some((f) => f.toUpperCase() === 'INBOX'))
+          ? new CredentialError('unavailable')
+          : null
+    if (refusal !== null || account === null) {
+      this.drop(ref)
+      throw refusal ?? new CredentialError('not-found')
+    }
     const existing = this.live.get(ref)
     const now = Date.now()
     if (existing !== undefined && now - existing.startedAt < (this.options.maxSessionMs ?? 10 * 60_000)) {
@@ -110,12 +125,6 @@ export class HostMailReader implements MailReader {
       return existing
     }
     if (existing !== undefined) this.drop(ref)
-    const account = await this.options.account(ref)
-    if (account === null) throw new CredentialError('not-found')
-    if (account.mayWriteInbox !== false) throw new CredentialError('unavailable')
-    const folders = account.protocol.folders
-    if (folders !== undefined && !folders.some((f) => f.toUpperCase() === 'INBOX'))
-      throw new CredentialError('unavailable')
     const controller = new AbortController()
     const broker = new EgressBroker(
       { egress: [], endpoints: [account.protocol.endpoint] },

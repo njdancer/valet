@@ -10,9 +10,12 @@ import {
   describeCredentialUse,
   type Grant,
   hasLogin,
+  MAIL_SECRET,
   MESSAGES_SECRET,
+  mailSourcesIn,
   messagesSourcesIn,
   type Purpose,
+  parseMailGrantRef,
   settingToolNames,
 } from '@valet/core'
 import type { SiteHealthSnapshot } from '@valet/runtime'
@@ -23,6 +26,7 @@ import type {
   ApprovalState,
   GrantInfo,
   LoginMissingItem,
+  MailSourceInfo,
   MessagesSourceInfo,
   PendingReview,
   ReviewItem,
@@ -137,10 +141,32 @@ function messagesInfo(state: AdapterState): MessagesSourceInfo[] {
   })
 }
 
+function mailInfo(state: AdapterState): MailSourceInfo | null {
+  const manifest = state.adapter.definition.manifest
+  const sources = mailSourcesIn(manifest.auth.steps)
+  const first = sources[0]
+  if (first === undefined) return null
+  // Only a grant for the sender the manifest names counts (the login checks it again).
+  const grant = grantsForHash(state).find(
+    (g) =>
+      g.provider === 'mail' &&
+      g.secret === MAIL_SECRET &&
+      parseMailGrantRef(g.itemRef)?.sender === first.from,
+  )
+  return {
+    sender: first.from,
+    reads: [...new Set(sources.map((s) => s.kind))],
+    requestedOrigins: [...manifest.navigation],
+    linkOrigins: [...new Set(sources.flatMap((s) => (s.kind === 'link' ? [s.linkOrigin] : [])))],
+    grant: grant === undefined ? null : info(state, grant),
+    lapsed: grant === undefined && lapsedFor(state, MAIL_SECRET, null),
+  }
+}
+
 function secretRequests(state: AdapterState): SecretRequestInfo[] {
   const grants = grantsForHash(state)
   return Object.entries(state.adapter.definition.manifest.secrets).map(([name, request]) => {
-    const grant = grants.find((g) => g.secret === name && g.provider !== 'messages')
+    const grant = grants.find((g) => g.secret === name && g.provider !== 'messages' && g.provider !== 'mail')
     return {
       name,
       description: request.description,
@@ -158,7 +184,9 @@ function lapsedFor(state: AdapterState, secret: string, sender: string | null): 
       g.secret === secret &&
       (secret === MESSAGES_SECRET
         ? g.provider === 'messages' && g.itemRef === sender
-        : g.provider !== 'messages'),
+        : secret === MAIL_SECRET
+          ? g.provider === 'mail'
+          : g.provider !== 'messages' && g.provider !== 'mail'),
   )
 }
 
@@ -244,6 +272,7 @@ export function adapterDetail(state: AdapterState): AdapterDetail {
       targets: [...credentialTargets(c)],
     })),
     messages: messagesInfo(state),
+    mail: mailInfo(state),
     handedOver: state.handedOver,
   }
 }

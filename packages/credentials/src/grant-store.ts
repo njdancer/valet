@@ -18,8 +18,10 @@ import {
   type Grant,
   type GrantStore,
   isBareOrigin,
+  MAIL_SECRET,
   MESSAGES_SECRET,
   type ProviderKind,
+  parseMailGrantRef,
   ValetError,
 } from '@valet/core'
 import { parseItemRef } from './item-ref'
@@ -39,6 +41,7 @@ const PROVIDERS: readonly ProviderKind[] = [
   'onepassword-service-account',
   'onepassword-cli',
   'messages',
+  'mail',
   'fake',
 ]
 const GRANT_KEYS = ['adapterId', 'adapterHash', 'secret', 'provider', 'itemRef', 'origins', 'grantedAt']
@@ -174,13 +177,16 @@ export function isValidGrant(value: unknown): value is Grant {
 }
 
 /**
- * A messages grant is the reserved secret, and its itemRef is a sender handle the reader accepts.
+ * A messages grant is the reserved secret, and its itemRef is a sender handle the reader accepts;
+ * a mail grant likewise, with `<account> <sender>`.
  * Every other grant names a real secret, and a 1Password grant names exactly op://<vault>/<item>,
  * so a reference the providers would refuse anyway is refused when the grant is made.
  */
 function itemRefSuits(provider: ProviderKind, secret: string, itemRef: string): boolean {
   if (provider === 'messages') return secret === MESSAGES_SECRET && parseOtpSender(itemRef) !== null
-  if (secret === MESSAGES_SECRET) return false
+  // Sign-in mail: the reserved name, naming one mail account and one sender (docs/imap.md).
+  if (provider === 'mail') return secret === MAIL_SECRET && parseMailGrantRef(itemRef) !== null
+  if (secret === MESSAGES_SECRET || secret === MAIL_SECRET) return false
   if (provider === 'fake') return true
   return parseItemRef(itemRef) !== null
 }

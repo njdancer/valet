@@ -62,6 +62,7 @@ const PROVIDER = z.enum([
   'onepassword-service-account',
   'onepassword-cli',
   'messages',
+  'mail',
   'fake',
 ])
 const ITEM_REF = z

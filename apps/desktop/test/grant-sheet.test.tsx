@@ -1,12 +1,12 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MESSAGES_SECRET as CORE_MESSAGES_SECRET } from '@valet/core'
+import { MAIL_SECRET as CORE_MAIL_SECRET, MESSAGES_SECRET as CORE_MESSAGES_SECRET } from '@valet/core'
 import { TooltipProvider } from '@valet/ui'
 import { describe, expect, it } from 'vitest'
 import { ControlPanel } from '../src/renderer/control/App'
 import { COLES_HASH, createFakeApi, type FakeApi, WOOLWORTHS_HASH } from '../src/renderer/dev/fake-api'
 import { ApiProvider } from '../src/renderer/lib/api-context'
-import { MESSAGES_SECRET } from '../src/renderer/screens/sites/GrantSheet'
+import { MAIL_SECRET, MESSAGES_SECRET } from '../src/renderer/screens/sites/GrantSheet'
 import type { AdapterDetail, GrantRequest, ValetApi } from '../src/shared/api'
 
 const NOW = Date.parse('2026-11-07T21:48:00+11:00')
@@ -482,5 +482,81 @@ describe('the grant sheet', () => {
     expect(within(dialog).getByRole('link', { name: 'audit log' }).getAttribute('href')).toBe(
       '#/activity/audit?category=secret-use&site=woolworths',
     )
+  })
+})
+
+describe('sign-in mail (docs/imap.md#email-sign-in)', () => {
+  const SENDER = 'login@woolworths.com.au'
+  const AUTH = 'https://auth.woolworths.com.au'
+  /** Woolworths, as if its login read a link from mail; and the mail accounts Valet holds. */
+  function withMail(accounts: readonly { id: string; title: string }[]): FakeApi {
+    const base = withWoolworths(createFakeApi({ now: NOW }), (detail) => ({
+      ...detail,
+      mail: {
+        sender: SENDER,
+        reads: ['link'],
+        requestedOrigins: ['https://www.woolworths.com.au', AUTH],
+        linkOrigins: [AUTH],
+        grant: null,
+        lapsed: false,
+      },
+    }))
+    const vaultItems = base.grants.vaultItems
+    return {
+      ...base,
+      grants: {
+        ...base.grants,
+        vaultItems: async (provider) =>
+          provider === 'mail' ? { status: 'ok', items: [...accounts] } : vaultItems(provider),
+      },
+    }
+  }
+
+  it('matches core’s reserved secret name for mail', () => {
+    expect(MAIL_SECRET).toBe(CORE_MAIL_SECRET)
+  })
+
+  it('shows the sender on the site’s Login card, with the way to allow it', async () => {
+    renderAt('#/sites/woolworths', withMail([]))
+    const label = await screen.findByText('Sign-in links by email')
+    expect(screen.getByText(SENDER)).toBeTruthy()
+    const row = label.closest('div')?.parentElement as HTMLElement
+    expect(within(row).getByRole('link', { name: 'Choose…' }).getAttribute('href')).toBe(
+      '#/sites/woolworths/login/mail',
+    )
+  })
+
+  it('grants a mail account Valet holds, ticking where the link opens', async () => {
+    const user = userEvent.setup()
+    const api = withMail([{ id: 'mailbox/mail', title: 'iCloud Mail' }])
+    renderAt('#/sites/woolworths/login/mail', api)
+    const dialog = await screen.findByRole('dialog', { name: 'Let Woolworths read its sign-in mail' })
+    expect(dialog.textContent).toContain(SENDER)
+    const allow = within(dialog).getByRole('button', { name: 'Allow this sign-in mail' })
+    expect(disabled(allow)).toBe(true)
+    await user.click(await within(dialog).findByRole('radio', { name: /iCloud Mail/ }))
+    expect(origins(dialog).map(([, on]) => on)).toEqual([false, true])
+    const ready = within(dialog).getByRole('button', { name: 'Allow this sign-in mail' })
+    expect(disabled(ready)).toBe(false)
+    await user.click(ready)
+    await waitFor(() =>
+      expect(makes(api)).toEqual([
+        {
+          adapterId: 'woolworths',
+          adapterHash: WOOLWORTHS_HASH,
+          secret: 'mail',
+          provider: 'mail',
+          itemRef: 'mailbox/mail',
+          origins: [AUTH],
+        },
+      ]),
+    )
+  })
+
+  it('says why there is no account to choose, and grants nothing', async () => {
+    renderAt('#/sites/woolworths/login/mail', withMail([]))
+    const dialog = await screen.findByRole('dialog', { name: 'Let Woolworths read its sign-in mail' })
+    expect(await within(dialog).findByText(/No mail account Valet can read sign-in mail from/)).toBeTruthy()
+    expect(disabled(within(dialog).getByRole('button', { name: 'Allow this sign-in mail' }))).toBe(true)
   })
 })
