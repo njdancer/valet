@@ -17,6 +17,7 @@ public let approvalDecisionDomain = "valet/approval-decision/v1"
 let approvalActions: [String: String] = [
   "adapter-install": "approve an adapter",
   "secret-grant": "let an adapter use your login",
+  "credential-grant": "let an adapter use a credential",
   "tool-enable": "turn on a tool",
   "remote-client": "let a remote agent connect",
   "setting": "change a setting",
@@ -88,6 +89,12 @@ func detail(kind: String, subject: [String: Any]) -> String {
   case "secret-grant":
     let hosts = (subject["origins"] as? [String] ?? []).compactMap(hostOf)
     return " on \(hosts.joined(separator: ", "))"
+  case "credential-grant":
+    let targets = subject["targets"] as? [String] ?? []
+    let where_ = targets.count <= 2 ? targets.joined(separator: ", ") : "\(targets.count) \(targets.contains { $0.contains(":") } ? "endpoints" : "hosts")"
+    return subject["custody"] as? String == "entrusted"
+      ? ", handing it to the adapter's code, for \(where_)"
+      : " with \(where_)"
   default:
     return ""
   }

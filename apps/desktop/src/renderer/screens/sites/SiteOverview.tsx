@@ -37,6 +37,7 @@ import {
   SESSION_WORDING,
 } from '../../lib/wording'
 import { matchesOutcome } from '../activity/calls-list'
+import { CredentialsCard } from './CredentialsCard'
 import { sourceWording } from './review/words'
 import type { SiteData } from './SitePage'
 import { ActionError, callers, callsToday, SiteFixButton, SiteText } from './site-ui'
@@ -62,6 +63,10 @@ export function SiteOverview({ data }: { readonly data: SiteData }) {
             <SettingCard key={s.name} adapter={adapter} name={s.name} />
           ))}
           <LoginCard adapter={adapter} />
+          <CredentialsCard
+            adapter={adapter}
+            card={({ title, children }) => <SiteCard title={title}>{children}</SiteCard>}
+          />
           {adapter.cartUrl !== null && approved ? <TrolleyCard adapter={adapter} /> : null}
         </Stack>
         <Stack gap={4}>

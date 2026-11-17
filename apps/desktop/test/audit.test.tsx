@@ -659,7 +659,9 @@ describe('the audit log', () => {
     const copies = fake.fake.calls.filter((c) => c.method === 'app.copyText').map((c) => c.args[0])
     expect(copies).toHaveLength(leaky.length)
     for (const copy of copies) expect(copy).not.toContain(CANARY)
-  })
+    // It opens and copies one record of every audit event type, so it grows with the event list:
+    // about 3 s alone, past vitest's 5 s default under a full CI run's load.
+  }, 30_000)
 
   it('shows a defined audit field only if it holds the kind of value core writes there', async () => {
     const user = userEvent.setup()
