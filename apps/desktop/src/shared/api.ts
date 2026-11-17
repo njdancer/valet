@@ -1399,6 +1399,8 @@ export interface ValetApi {
   }
   readonly approvals: {
     pending(): Promise<readonly PendingReview[]>
+    /** Versions the person turned down (not agents' drafts), which they can review again and approve. */
+    turnedDown(): Promise<readonly PendingReview[]>
     /** Approves exactly this hash; rejects if a different bundle is now pending. */
     approve(adapterId: string, hash: string): Promise<void>
     /** The note, if any, goes to the agent that asked (an agent's draft only). */

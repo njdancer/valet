@@ -3138,6 +3138,19 @@ export class AppService {
     ]
   }
 
+  /**
+   * The versions the person turned down that came with Valet or from a folder, for them to
+   * reconsider: approving one later is still their decision, signed like any approval. An agent's
+   * declined draft isn't here: its request is over, and the agent submits it again.
+   */
+  private turnedDownReviews(states: readonly AdapterState[]): PendingReview[] {
+    return states.flatMap((s) => {
+      if (!s.rejected || s.adapter.source === 'draft') return []
+      const review = pendingReview(s, this.startedAt, { turnedDown: true })
+      return review === null ? [] : [review]
+    })
+  }
+
   private async isStored(adapterId: string, hash: string): Promise<boolean> {
     const state = await this.packages?.versions(adapterId)
     return state?.versions.some((v) => v.hash === hash) ?? false
@@ -3947,6 +3960,7 @@ export class AppService {
       },
       approvals: {
         pending: async () => this.pendingReviews(await this.states()),
+        turnedDown: async () => this.turnedDownReviews(await this.states()),
         approve: async (adapterId, hash) => {
           const adapter = this.requireAdapter(adapterId)
           // An agent's draft: the person approves the agent's own request, so the agent learns

@@ -428,6 +428,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
   ]
   let offered: readonly (SettingChoiceInfo & { readonly postcode: string })[] = []
 
+  let turnedDown: PendingReview[] = []
   let reviews: PendingReview[] = [
     {
       adapterId: 'woolworths',
@@ -1171,9 +1172,14 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         enter('approvals.pending')
         return clone(reviews)
       },
+      async turnedDown() {
+        enter('approvals.turnedDown')
+        return clone(turnedDown)
+      },
       async approve(adapterId, hash) {
         enter('approvals.approve', adapterId, hash)
-        const review = reviews.find((r) => r.adapterId === adapterId)
+        const review =
+          reviews.find((r) => r.adapterId === adapterId) ?? turnedDown.find((r) => r.adapterId === adapterId)
         if (review === undefined || review.to.hash !== hash) throw new Error('stale review')
         const base = adapters.get(adapterId)
         if (base !== undefined) {
@@ -1187,6 +1193,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           })
         }
         reviews = reviews.filter((r) => r !== review)
+        turnedDown = turnedDown.filter((r) => r !== review)
         attention = attention.filter((a) => !(a.kind === 'review' && a.adapterId === adapterId))
         emit({ type: 'approvals-changed' })
         emit({ type: 'adapters-changed' })
@@ -1198,6 +1205,12 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         const review = reviews.find((r) => r.adapterId === adapterId)
         if (review === undefined || review.to.hash !== hash) throw new Error('stale review')
         reviews = reviews.filter((r) => r !== review)
+        // A first install turned down: the adapter reads as turned down and can be reviewed again.
+        const base = adapters.get(adapterId)
+        if (review.from === null && review.source !== 'agent' && base !== undefined) {
+          adapters.set(adapterId, { ...base, approval: 'rejected' })
+          turnedDown = [...turnedDown, review]
+        }
         attention = attention.filter((a) => !(a.kind === 'review' && a.adapterId === adapterId))
         emit({ type: 'approvals-changed' })
         emit({ type: 'adapters-changed' })

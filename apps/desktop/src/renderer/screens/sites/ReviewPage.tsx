@@ -73,7 +73,14 @@ export function ReviewPage({
   readonly adapterId: string
   readonly exits?: ReviewExits
 }) {
-  const reviews = useLoad((api) => api.approvals.pending(), [], ['approvals-changed'])
+  const reviews = useLoad(
+    async (api) => {
+      const [pending, turnedDown] = await Promise.all([api.approvals.pending(), api.approvals.turnedDown()])
+      return { pending, turnedDown }
+    },
+    [],
+    ['approvals-changed'],
+  )
   const closeHref = exits?.closed ?? href.site(adapterId)
   // Held above the list: once approved, the review leaves the pending list, but the seal stays.
   const [sealed, setSealed] = useState<{ name: string; version: string; next: HashRoute } | null>(null)
@@ -123,7 +130,9 @@ export function ReviewPage({
       </Page>
     )
   }
-  const review = reviews.data.find((r) => r.adapterId === adapterId)
+  // Waiting first; else a version the person turned down, which they may reconsider.
+  const waiting = reviews.data.pending.find((r) => r.adapterId === adapterId)
+  const review = waiting ?? reviews.data.turnedDown.find((r) => r.adapterId === adapterId)
   if (review === undefined) {
     return (
       <Page>
@@ -149,6 +158,7 @@ export function ReviewPage({
     <Review
       key={review.to.hash}
       review={review}
+      turnedDown={waiting === undefined}
       exits={exits}
       closeHref={closeHref}
       onApproved={(next) => setSealed({ name: review.name, version: review.to.version, next })}
@@ -229,11 +239,14 @@ function ReviewHeader({
 
 function Review({
   review,
+  turnedDown,
   exits,
   closeHref,
   onApproved,
 }: {
   readonly review: PendingReview
+  /** The person turned this version down before; approving it now is reconsidering. */
+  readonly turnedDown: boolean
   readonly exits: ReviewExits | undefined
   readonly closeHref: HashRoute
   readonly onApproved: (next: HashRoute) => void
@@ -342,6 +355,11 @@ function Review({
         exits={exits}
       />
       <PageBody>
+        {turnedDown ? (
+          <Banner tone="warning" title={`You turned down ${review.name} ${review.to.version}`}>
+            Its tools stay off until you approve it. If you’ve changed your mind, review it again below.
+          </Banner>
+        ) : null}
         {review.diff.sandbox.unsandboxed ? (
           <Banner tone="danger" title="Runs without the sandbox: it can reach anything you can on this Mac">
             That includes your other sites’ logins that Valet holds. Its author says why:{' '}
@@ -528,7 +546,11 @@ function Review({
       </PageBody>
 
       <ActionBar className="flex-wrap gap-y-2">
-        {request === null ? (
+        {turnedDown ? (
+          <Button asChild>
+            <a href={closeHref}>Keep it turned down</a>
+          </Button>
+        ) : request === null ? (
           <Button onClick={reject} disabled={action.busy}>
             Turn down
           </Button>

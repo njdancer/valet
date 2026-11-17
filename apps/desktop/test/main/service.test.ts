@@ -539,6 +539,18 @@ describe('first run', () => {
     await s.api.approvals.reject('shop', s.adapter.hash)
     expect((await s.api.adapters.list())[0]?.approval).toBe('rejected')
     expect(await s.api.attention.list()).toEqual([])
+    expect(await s.api.approvals.pending()).toEqual([])
+  })
+
+  it('offers a turned-down version again, and approving it then turns it on', async () => {
+    const s = await setup()
+    expect(await s.api.approvals.turnedDown()).toEqual([])
+    await s.api.approvals.reject('shop', s.adapter.hash)
+    const again = await s.api.approvals.turnedDown()
+    expect(again.map((r) => [r.adapterId, r.to.hash])).toEqual([['shop', s.adapter.hash]])
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    expect((await s.api.adapters.list())[0]?.approval).toBe('approved')
+    expect(await s.api.approvals.turnedDown()).toEqual([])
   })
 })
 

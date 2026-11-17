@@ -184,6 +184,7 @@ const HANDLERS: Readonly<
   'drafts.endSession': entry(z.tuple([DRAFT]), (api, [id]) => api.drafts.endSession(id)),
   'adapters.installFromFolder': entry(none, (api) => api.adapters.installFromFolder()),
   'approvals.pending': entry(none, (api) => api.approvals.pending()),
+  'approvals.turnedDown': entry(none, (api) => api.approvals.turnedDown()),
   'approvals.approve': entry(z.tuple([ADAPTER_ID, HASH]), (api, [id, hash]) =>
     api.approvals.approve(id, hash),
   ),

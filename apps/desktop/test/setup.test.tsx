@@ -243,13 +243,18 @@ describe('first-run setup', () => {
     await waitFor(() => expect(window.location.hash).toBe('#/setup/approve'))
   })
 
-  it('rejecting the adapter goes back to setup, which says its tools stay off', async () => {
+  it('turning the adapter down goes back to setup, which says its tools stay off and offers it again', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW, firstRun: true })
     renderAt('#/setup/approve/review', api)
     await user.click(await screen.findByRole('button', { name: 'Turn down' }))
     await waitFor(() => expect(window.location.hash).toBe('#/setup/approve'))
-    await screen.findByText('Nothing is waiting for review.')
+    await screen.findByText(/You turned down Woolworths .*until you approve it/)
+    // Not a dead end: the person can change their mind.
+    await user.click(screen.getByRole('link', { name: /^Review Woolworths again/ }))
+    await screen.findByText(/^You turned down Woolworths/)
+    await user.click(await screen.findByRole('button', { name: 'Approve Woolworths' }))
+    await waitFor(() => expect(called(api, 'approvals.approve')).toHaveLength(1))
   })
 
   it('a grant sheet opened from setup closes back to setup', async () => {

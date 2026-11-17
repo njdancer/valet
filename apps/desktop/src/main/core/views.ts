@@ -222,9 +222,11 @@ export function pendingReview(
     readonly request?: ReviewRequestInfo | null
     readonly requestedAt?: string
     readonly staged?: boolean
+    /** A version the person turned down, offered again for them to reconsider. */
+    readonly turnedDown?: boolean
   } = {},
 ): PendingReview | null {
-  if (state.approved || state.rejected) return null
+  if (state.approved || (state.rejected && extra.turnedDown !== true)) return null
   const manifest = state.adapter.definition.manifest
   const before = state.previous
   const origin = state.adapter.source ?? 'builtin'

@@ -341,6 +341,7 @@ describe('every channel', () => {
     'drafts.openFolder': ['dr-abcdefgh23'],
     'drafts.endSession': ['dr-abcdefgh23'],
     'approvals.pending': [],
+    'approvals.turnedDown': [],
     'approvals.approve': ['woolworths', HASH64],
     'approvals.reject': ['woolworths', HASH64, 'It only needs one page.'],
     'grants.list': [],

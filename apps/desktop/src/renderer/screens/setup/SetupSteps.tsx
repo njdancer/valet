@@ -297,11 +297,18 @@ export function ApproveStep({
           </Text>
         </div>
       ) : (
-        <Text tone="muted">
-          {adapter.approval === 'rejected'
-            ? `You turned down ${adapter.name} ${adapter.version}. Its tools stay off MCP.`
-            : 'Nothing is waiting for review.'}
-        </Text>
+        <div className="flex flex-wrap items-center gap-3">
+          {adapter.approval === 'rejected' ? (
+            <Button variant="primary" size="lg" asChild>
+              <a href={href.setupReview()}>Review {adapter.name} again…</a>
+            </Button>
+          ) : null}
+          <Text tone="muted">
+            {adapter.approval === 'rejected'
+              ? `You turned down ${adapter.name} ${adapter.version}. Its tools stay off MCP until you approve it.`
+              : 'Nothing is waiting for review.'}
+          </Text>
+        </div>
       )}
     </>
   )
