@@ -450,9 +450,9 @@ Taken while Nick was away, each the recommendation. Any can be changed.
 8. **A trial never gets a credential**, and never reaches a private host: unapproved code is never
    entrusted with anything.
 9. **A raw process's stderr is dropped**, not logged: it can hold anything the adapter printed.
-10. **Credential grants aren't wired into the app yet.** `ServiceDeps.credentialGrants` is the seam;
-    granting a credential in the app is workstream B's follow-up. Until then, `ctx.secrets.get` is
-    `not-granted` in the app (the tool host and its tests have it end to end).
+10. **Entrusted credentials use B's grants as they are.** A raw adapter's registration takes the same
+    `credentialKeeper.sourceFor(id, hash)` as every other kind, so an entrusted credential is
+    granted in the app like a kept one, and carries over to an update only on B's terms.
 11. **A raw adapter with an entrusted credential keeps no read-write files** (found by the red team
     below). Narrowing and redaction are per call, so a folder that outlives the call would carry the
     secret to a later call that never asked for it. Its per-call temporary folder is removed after
@@ -633,3 +633,12 @@ note it here. Each one can be reversed.
 - **B: usernames aren't redacted** from tool output. Only the secret is, so a mail adapter's
   `from` and `to` fields survive. A username is not a secret, and redacting it made mail and
   SFTP adapters unusable.
+- **B: a key Valet makes is never handed to adapter code.** Valet-made SSH keys are offered only
+  for `kept` credentials. If an adapter wants the raw key, the person brings their own key from
+  1Password.
+- **B: a Valet-made key is tied to one adapter and one credential.** Its public line ends
+  `valet.<adapter>.<credential>`, and a grant refuses a key made for anything else. So the
+  server's authorized_keys line names what it lets in, and revoking deletes the key.
+- **B: a grant carries over an update only when the update keeps the session.** That needs the
+  person's signed approval of the update. A rollback never carries a grant, and revoking a carried
+  grant also drops its carry record.

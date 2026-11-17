@@ -46,7 +46,7 @@ import {
   type ToolDeclaration,
   ValetError,
 } from '@valet/core'
-import { FileGrantStore } from '@valet/credentials'
+import { FileCredentialGrantStore, FileGrantStore } from '@valet/credentials'
 import type { OpenTunnels, RunContext } from '@valet/egress'
 import {
   type AdminReader,
@@ -68,7 +68,6 @@ import { addDependency, diskTarballStore } from '@valet/node-runtime'
 import {
   ApprovalStore,
   AuditLog,
-  type CredentialGrantSource,
   DEFAULT_LOGIN_BACKOFF,
   type HttpEgress,
   type ImapBackend,
@@ -169,6 +168,7 @@ import {
   MCP_SERVER_NAME,
   TYPING_DELAY_MS,
 } from './constants'
+import { CredentialKeeper } from './credential-grants'
 import type { Credentials } from './credentials'
 import {
   type AskOutcome,
@@ -313,11 +313,6 @@ export interface ServiceDeps {
   readonly raw?: {
     start(manifest: AdapterManifest, openTunnels: OpenTunnels): ToolProcessFactory
   }
-  /**
-   * The grants and provider behind manifests' credentials (secrets v2). Each call gets its own
-   * CredentialGate over them. Without it, every credential is not-granted.
-   */
-  readonly credentialGrants?: CredentialGrantSource
   /**
    * The protocol host behind a protocol adapter's ctx.imap (docs/imap.md), for its protocols.imap.
    * Without it, every ctx.imap call is not-granted.
@@ -497,6 +492,8 @@ export class AppService {
   private readonly audit: ObservedAudit
   private readonly approvals: ApprovalStore
   private readonly grants: FileGrantStore
+  /** Credential grants (secrets v2): made, signed, carried and looked up for each call. */
+  readonly credentialKeeper: CredentialKeeper
   private readonly markers: LoginAttemptMarker
   private readonly settings: SettingsStore
   private readonly adapterSettings: AdapterSettingsStore
@@ -664,6 +661,51 @@ export class AppService {
     this.audit = new ObservedAudit(new AuditLog(paths.audit, clock), (record) => this.observe(record))
     this.approvals = new ApprovalStore(paths.approvals, this.audit)
     this.grants = new FileGrantStore({ path: paths.grants })
+    this.credentialKeeper = new CredentialKeeper({
+      store: new FileCredentialGrantStore({ path: paths.credentialGrants }),
+      adapter: (adapterId) => {
+        const adapter = this.adapter(adapterId)
+        return adapter === null ? null : { hash: adapter.hash, manifest: adapter.definition.manifest }
+      },
+      approve: (subject) => this.approveHere('credential-grant', subject),
+      honoured: (kind, matches) => this.approvalBroker?.honoured(kind, matches) ?? null,
+      revokeEvidence: async (matches) => {
+        await this.approvalBroker?.revoke('credential-grant', matches)
+      },
+      carried: () => {
+        const ledger = this.ledger
+        return ledger === null || ledger.tampered !== null ? null : (ledger.data.carriedCredentials ?? [])
+      },
+      recordCarried: async (adapterId, records) => {
+        const ledger = this.ledger
+        if (ledger === null) throw new ValetError('config', 'unavailable')
+        await ledger.commit((draft) => {
+          // Only the latest carry per adapter matters; older ones name hashes no longer approved.
+          draft.carriedCredentials = [
+            ...(draft.carriedCredentials ?? []).filter((c) => c.adapterId !== adapterId),
+            ...records.map((r) => ({ ...r, targets: [...r.targets] })),
+          ].slice(-500)
+        })
+      },
+      dropCarried: async (matches) => {
+        const ledger = this.ledger
+        if (ledger === null) return
+        await ledger.commit(
+          (draft) => {
+            if (draft.carriedCredentials !== undefined)
+              draft.carriedCredentials = draft.carriedCredentials.filter((c) => !matches(c))
+          },
+          { tightening: true },
+        )
+      },
+      providers: () => deps.credentials.providers(),
+      keys: deps.credentials.valetKeys?.() ?? null,
+      available: () => this.available(),
+      vaultItems: (provider) => deps.credentials.vaultItems(provider),
+      copyItem: (itemRef, fields) => deps.credentials.copyItem(itemRef, fields),
+      audit: this.audit,
+      now: deps.now,
+    })
     this.markers = new LoginAttemptMarker(paths.loginMarkers, clock)
     this.settings = new SettingsStore(paths.settings)
     this.adapterSettings = new AdapterSettingsStore(paths.adapterSettings)
@@ -1728,6 +1770,16 @@ export class AppService {
           next.secret === older.secret &&
           (next.secret !== MESSAGES_SECRET || next.itemFingerprint === older.itemFingerprint),
       },
+      // A credential grant (secrets v2): stored by credentialKeeper.make once signed; each call's
+      // gate reads this evidence. Stale once the version it names isn't the one installed.
+      'credential-grant': {
+        precheck: (subject) => this.adapter(subject.adapterId)?.hash === subject.adapterHash,
+        // One grant per credential and version: a new one replaces the evidence of the last.
+        supersedes: (next, older) =>
+          next.adapterId === older.adapterId &&
+          next.adapterHash === older.adapterHash &&
+          next.credential === older.credential,
+      },
       // Valet's own settings, or an adapter's setting picked on the card (E's admin tools ask;
       // the person's own paths ask too, through changeValetSetting).
       setting: {
@@ -1969,8 +2021,9 @@ export class AppService {
       definition: adapter.definition,
       bundleHash: adapter.hash,
       driver,
+      // Each call's CredentialGate finds this version's signed grants (secrets v2).
+      credentialGrants: this.credentialKeeper.sourceFor(manifest.id, adapter.hash),
       ...(this.deps.egress === undefined || kind !== 'http' ? {} : { http: this.deps.egress(manifest) }),
-      ...(this.deps.credentialGrants === undefined ? {} : { credentialGrants: this.deps.credentialGrants }),
       ...(this.deps.imap === undefined ||
       runtimeOf(manifest) !== 'protocol' ||
       manifest.protocols?.imap === undefined
@@ -2006,7 +2059,8 @@ export class AppService {
       definition: adapter.definition,
       bundleHash: adapter.hash,
       driver,
-      ...(this.deps.credentialGrants === undefined ? {} : { credentialGrants: this.deps.credentialGrants }),
+      // Entrusted credentials come through this version's signed grants (secrets v2).
+      credentialGrants: this.credentialKeeper.sourceFor(manifest.id, adapter.hash),
       ...(raw === undefined || tunnels === undefined || adapter.toolScript === null
         ? {}
         : {
@@ -2128,6 +2182,8 @@ export class AppService {
       // Waiting requests about it end; its approvals and their evidence go.
       await this.approvalBroker?.withdrawAdapter(adapterId).catch(() => 0)
       await this.approvalBroker?.revoke('adapter-install', (s) => s.adapterId === adapterId).catch(() => 0)
+      // Its credential grants, their evidence, and Valet-made keys nothing else uses.
+      await this.credentialKeeper.revokeAdapter(adapterId).catch(() => undefined)
       await this.ledger
         ?.commit(
           (draft) => {
@@ -2261,13 +2317,18 @@ export class AppService {
   }
 
   /**
-   * Whether a new version of the adapter would inherit a signed-in session: it has grants, or its
+   * Whether a new version of the adapter would inherit a signed-in session: it has grants (logins or
+   * credentials), or its
    * tool partition holds any cookie on the cookie domains of the version in use. Fails closed: a
    * partition that can't be read counts as holding one.
    */
   private async inheritsSession(adapterId: string): Promise<boolean> {
     const grants = await this.grants.list().catch(() => [] as readonly Grant[])
-    return grants.some((g) => g.adapterId === adapterId) || (await this.holdsSession(adapterId))
+    if (grants.some((g) => g.adapterId === adapterId)) return true
+    // Credential grants (secrets v2) carry the same way, so the card says so. Fails closed.
+    const credentials = await this.credentialKeeper.list().catch(() => null)
+    if (credentials === null || credentials.some((g) => g.adapterId === adapterId)) return true
+    return this.holdsSession(adapterId)
   }
 
   /** The partition half of inheritsSession. */
@@ -2740,6 +2801,8 @@ export class AppService {
     // Before the snapshot moves on: the grants kept are the approved version's.
     const previous = await this.snapshots.get(adapterId).catch(() => null)
     await this.carryGrants(adapterId, adapterHash, previous?.hash === adapterHash ? null : previous)
+    if (previous !== null && previous.hash !== adapterHash && snapshotIntact(previous))
+      await this.credentialKeeper.carry(adapterId, adapterHash, previous).catch(() => undefined)
     const at = new Date(this.deps.now()).toISOString()
     await this.snapshots.put(adapterId, adapter, at)
     this.approvedAt.set(`${adapterId}:${adapterHash}`, at)
@@ -4357,6 +4420,25 @@ export class AppService {
           await this.copyGrantItem(grant, adapter.definition.manifest)
           await this.releaseLoginHold(adapterId)
           this.emit('grants-changed')
+        },
+      },
+      credentials: {
+        list: () => this.credentialKeeper.list(),
+        make: async (request) => {
+          const info = await this.oneAtATime(request.adapterId, () => this.credentialKeeper.make(request))
+          this.emit('grants-changed')
+          return info
+        },
+        revoke: async (adapterId, credential) => {
+          await this.oneAtATime(adapterId, () => this.credentialKeeper.revoke(adapterId, credential))
+          this.emit('grants-changed')
+        },
+        generateKey: async (adapterId, credential) => {
+          const { itemRef, publicKey, fingerprint, createdAt } = await this.credentialKeeper.generateKey(
+            adapterId,
+            credential,
+          )
+          return { itemRef, publicKey, fingerprint, createdAt }
         },
       },
       runs: {

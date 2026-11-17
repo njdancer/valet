@@ -29,9 +29,11 @@ import {
   type PackageFiles,
   packageOf,
   parseManifest,
+  SecretValue,
   type SessionDriver,
   ValetError,
 } from '@valet/core'
+import { MemoryKeychain, ValetKeys } from '@valet/credentials'
 import { EgressBroker, type OpenTunnels } from '@valet/egress'
 import { startFakeApi } from '@valet/fake-http-api'
 import {
@@ -3734,6 +3736,7 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     sandbox?: ServiceDeps['sandbox'],
     trialDriver?: ServiceDeps['trialDriver'],
     egress?: ServiceDeps['egress'],
+    credentials?: Credentials,
     raw?: { readonly runtime: RawPackageRuntime; readonly deps: ServiceDeps['raw'] },
   ) {
     const start = inMemoryToolProcess()
@@ -3756,6 +3759,7 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
       ...(sandbox === undefined ? {} : { sandbox }),
       ...(trialDriver === undefined ? {} : { trialDriver }),
       ...(egress === undefined ? {} : { egress }),
+      ...(credentials === undefined ? {} : { credentials }),
       ...(raw === undefined ? {} : { raw: raw.deps }),
     })
     const hashOf = (files: PackageFiles) => checkPackage(files).adapterHash
@@ -3954,7 +3958,7 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
         '}',
       ].join('\n')
       const files = packageOf(parseManifest(rawManifest), { 'src/tools.ts': tools })
-      const s = await withPackages(files, undefined, 'answers', undefined, undefined, egress, {
+      const s = await withPackages(files, undefined, 'answers', undefined, undefined, egress, undefined, {
         runtime: {
           dependencies: (lock) => loadDependencies(lock, memoryTarballStore()),
           start: rawProcess([], async () => ({
@@ -4016,6 +4020,264 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     const s = await withPackages(files)
     // Without the Node runtime the package doesn't even load.
     expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: false })
+  })
+
+  describe('credentials (secrets v2)', () => {
+    const SECRET_TOKEN = 'ntk_4f3e2d1c0b9a8f7e6d5c'
+    /** A provider that answers one item's token, and records each read. */
+    function tokenCredentials() {
+      const reads: string[] = []
+      const keys = new ValetKeys({ keychain: new MemoryKeychain(), service: 'valet.test.key' })
+      const base = testCredentials(disabledOtpReader)
+      const credentials: Credentials = {
+        ...base,
+        providers: () => ({
+          ...base.providers(),
+          'onepassword-service-account': {
+            kind: 'onepassword-service-account',
+            resolve: async (itemRef: string, field: string) => {
+              reads.push(`${itemRef}#${field}`)
+              return SecretValue.fromString(SECRET_TOKEN)
+            },
+          },
+        }),
+        async status() {
+          return [
+            ...(await base.status()).filter((s) => s.kind !== 'onepassword-service-account'),
+            { kind: 'onepassword-service-account', available: true, unavailableReason: null },
+          ]
+        },
+        async vaultItems(provider) {
+          return provider === 'onepassword-service-account'
+            ? [{ id: 'notes-token', title: 'Notes API token' }]
+            : base.vaultItems(provider)
+        },
+        valetKeys: () => keys,
+      }
+      return { credentials, reads, keys }
+    }
+
+    function brokerFor(api: Awaited<ReturnType<typeof startFakeApi>>): ServiceDeps['egress'] {
+      return (manifest) =>
+        new EgressBroker(
+          { egress: manifest.egress, privateHosts: manifest.privateHosts ?? [] },
+          {
+            lookup: (_name, cb) => cb(null, [{ address: '127.0.0.1', family: 4 }]),
+            testing: {
+              allowAddresses: ['127.0.0.1'],
+              ca: api.cert as string,
+              route: () => ({ address: '127.0.0.1', port: api.port }),
+            },
+          },
+        )
+    }
+
+    const notesManifest = (version: string, hosts: string[]): ManifestInput => ({
+      schemaVersion: 1,
+      id: 'notes',
+      name: 'Notes',
+      version,
+      description: 'Reads notes from an API with a token.',
+      runtime: 'http',
+      egress: ['api.example.test', 'files.example.test'],
+      requests: [
+        { method: 'GET', host: 'api.example.test', path: '/v1/items', purpose: 'read' },
+        { method: 'GET', host: 'api.example.test', path: '/v1/echo', purpose: 'read' },
+      ],
+      credentials: {
+        api: {
+          description: 'The Notes API token',
+          kind: 'token',
+          custody: 'kept',
+          use: { header: { name: 'authorization', format: 'Bearer {value}' }, hosts },
+        },
+      },
+      tools: [{ name: 'fetch', title: 'Fetch', description: 'Fetches a path.', sideEffect: 'read' }],
+    })
+    const notesTools = [
+      "import { z } from 'zod'",
+      'export const tools = {',
+      '  fetch: { input: z.object({ path: z.string() }), output: z.unknown(), run: async (ctx, a) => {',
+      "    const r = await ctx.http.fetch(a.path, { credential: 'api' })",
+      '    return { status: r.status, body: r.body }',
+      '  } },',
+      '}',
+    ].join('\n')
+    const notesPackage = (version: string, hosts: string[]) =>
+      packageOf(parseManifest(notesManifest(version, hosts)), { 'src/tools.ts': notesTools })
+
+    it('grants a kept token with Touch ID, sends it only as the header, and revokes it', async () => {
+      const api = await startFakeApi()
+      try {
+        const { credentials, reads } = tokenCredentials()
+        const s = await withPackages(
+          notesPackage('1.0.0', ['api.example.test']),
+          undefined,
+          'answers',
+          undefined,
+          undefined,
+          brokerFor(api),
+          credentials,
+        )
+        let n = 0
+        const fetch = (path: string) =>
+          (s.endpoint.caller as ToolCaller).call({
+            adapterId: 'notes',
+            tool: 'fetch',
+            input: { path: `https://api.example.test${path}` },
+            client: 'Claude Code',
+            callId: `call_notes_${++n}`,
+            transport: 'http',
+          })
+        expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true, adapterId: 'notes' })
+        const review = (await s.api.approvals.pending()).find((r) => r.adapterId === 'notes')
+        const hash = review?.to.hash ?? ''
+        // The review names the credential, where it goes and who holds it.
+        expect(JSON.stringify(review)).toContain('api.example.test')
+        await s.api.approvals.approve('notes', hash)
+
+        // Not granted yet: refused, and nothing reaches the API with a credential.
+        const sent = () => api.seen.filter((r) => r.headers['authorization'] !== undefined)
+        expect(await fetch('/v1/items')).toMatchObject({ status: 'failed', errorClass: 'not-granted' })
+        expect(sent()).toEqual([])
+        expect(reads).toEqual([])
+
+        const request = {
+          adapterId: 'notes',
+          adapterHash: hash,
+          credential: 'api',
+          provider: 'onepassword-service-account' as const,
+          itemId: 'notes-token',
+        }
+        // An item the provider doesn't list, a version not installed, a host not declared: refused.
+        await expect(s.api.credentials.make({ ...request, itemId: 'other' })).rejects.toThrow()
+        await expect(s.api.credentials.make({ ...request, adapterHash: 'f'.repeat(64) })).rejects.toThrow()
+        await expect(s.api.credentials.make({ ...request, targets: ['evil.example.test'] })).rejects.toThrow()
+        // Touch ID cancelled: no grant.
+        s.presence.answer = false
+        await expect(s.api.credentials.make(request)).rejects.toThrow()
+        expect(await s.api.credentials.list()).toEqual([])
+        s.presence.answer = true
+        const prompts = s.presence.prompts.length
+        const made = await s.api.credentials.make(request)
+        expect(made).toMatchObject({
+          credential: 'api',
+          custody: 'kept',
+          provider: 'onepassword-service-account',
+          itemTitle: 'Notes API token',
+          targets: ['api.example.test'],
+          signed: true,
+        })
+        // The Touch ID prompt names the use, from the Mac's own facts.
+        expect(s.presence.prompts.slice(prompts)).toEqual([
+          expect.stringMatching(
+            /^let an adapter use a credential with api\.example\.test \(request [0-9A-F]{4}\)$/,
+          ),
+        ])
+
+        expect(await fetch('/v1/items')).toMatchObject({ status: 'ok', output: { status: 200 } })
+        expect(sent().map((r) => r.headers['authorization'])).toEqual([`Bearer ${SECRET_TOKEN}`])
+        expect(reads).toEqual(['op://Valet/notes-token#token'])
+        // An API that echoes the header back never hands the token to the tool's caller.
+        const echoed = await fetch('/v1/echo')
+        expect(JSON.stringify(echoed)).not.toContain(SECRET_TOKEN)
+        const audit = readAudit(s.paths.audit)
+        expect(audit).toContainEqual(
+          expect.objectContaining({
+            type: 'credential-granted',
+            adapterId: 'notes',
+            credential: 'api',
+            custody: 'kept',
+            targets: ['api.example.test'],
+          }),
+        )
+        expect(audit).toContainEqual(
+          expect.objectContaining({
+            type: 'secret-used',
+            adapterId: 'notes',
+            secret: 'api',
+            field: 'token',
+            origin: 'api.example.test',
+            custody: 'kept',
+            callId: 'call_notes_2',
+          }),
+        )
+        expect(readFileSync(s.paths.audit, 'utf8')).not.toContain(SECRET_TOKEN)
+        expect(readFileSync(s.paths.credentialGrants, 'utf8')).not.toContain(SECRET_TOKEN)
+
+        await s.api.credentials.revoke('notes', 'api')
+        expect(await s.api.credentials.list()).toEqual([])
+        const before = sent().length
+        expect(await fetch('/v1/items')).toMatchObject({ status: 'failed', errorClass: 'not-granted' })
+        expect(sent().length).toBe(before)
+        expect(readAudit(s.paths.audit)).toContainEqual(
+          expect.objectContaining({ type: 'credential-revoked', adapterId: 'notes', credential: 'api' }),
+        )
+      } finally {
+        await api.close()
+      }
+    })
+
+    it('carries a grant to an update that widens nothing, and not to one that adds a host', async () => {
+      const api = await startFakeApi()
+      try {
+        const { credentials } = tokenCredentials()
+        const s = await withPackages(
+          notesPackage('1.0.0', ['api.example.test']),
+          undefined,
+          'answers',
+          undefined,
+          undefined,
+          brokerFor(api),
+          credentials,
+        )
+        const fetch = (callId: string) =>
+          (s.endpoint.caller as ToolCaller).call({
+            adapterId: 'notes',
+            tool: 'fetch',
+            input: { path: 'https://api.example.test/v1/items' },
+            client: 'Claude Code',
+            callId,
+            transport: 'http',
+          })
+        await s.api.adapters.installFromFolder()
+        const v1 = s.hashOf(notesPackage('1.0.0', ['api.example.test']))
+        await s.api.approvals.approve('notes', v1)
+        await s.api.credentials.make({
+          adapterId: 'notes',
+          adapterHash: v1,
+          credential: 'api',
+          provider: 'onepassword-service-account',
+          itemId: 'notes-token',
+        })
+        expect(await fetch('c1')).toMatchObject({ status: 'ok' })
+
+        // v2 changes nothing about the credential: its review says it takes the grant, and it does.
+        s.picked.next = notesPackage('1.1.0', ['api.example.test'])
+        await s.api.adapters.installFromFolder()
+        const v2 = s.hashOf(notesPackage('1.1.0', ['api.example.test']))
+        const review2 = (await s.api.approvals.pending()).find((r) => r.to.hash === v2)
+        expect(review2?.takesSession).toBe(true)
+        await s.api.approvals.approve('notes', v2)
+        expect(await fetch('c2')).toMatchObject({ status: 'ok' })
+        expect(await s.api.credentials.list()).toContainEqual(
+          expect.objectContaining({ adapterHash: v2, credential: 'api', signed: true }),
+        )
+        expect(readAudit(s.paths.audit)).toContainEqual(
+          expect.objectContaining({ type: 'credential-granted', adapterHash: v2, carriedFrom: v1 }),
+        )
+
+        // v3 would also send it to another host: the grant stays behind, and the call is refused.
+        s.picked.next = notesPackage('1.2.0', ['api.example.test', 'files.example.test'])
+        await s.api.adapters.installFromFolder()
+        const v3 = s.hashOf(notesPackage('1.2.0', ['api.example.test', 'files.example.test']))
+        await s.api.approvals.approve('notes', v3)
+        expect(await fetch('c3')).toMatchObject({ status: 'failed', errorClass: 'not-granted' })
+        expect((await s.api.credentials.list()).some((g) => g.adapterHash === v3)).toBe(false)
+      } finally {
+        await api.close()
+      }
+    })
   })
 
   it('installs from a folder: the new version waits for approval, says it takes the session, and can be rolled back', async () => {

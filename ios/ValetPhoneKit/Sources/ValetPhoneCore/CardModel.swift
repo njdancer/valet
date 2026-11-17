@@ -186,6 +186,22 @@ public enum CardModel {
       row("Typed only on", s.origins.joined(separator: ", "), .strong)
       row("Fields", s.fields.joined(separator: ", "), .neutral)
       details.append(CardDetail(label: "Item fingerprint", value: s.itemFingerprint, isClaim: false))
+    case let .credentialGrant(s):
+      kindWord = "Credential"
+      title = "Let \(site(s.adapterId)) use a credential"
+      faceIDReason = "Let \(s.adapterId) use a credential"
+      let targets = s.targets.joined(separator: ", ")
+      if s.custody == "entrusted" {
+        // The adapter's own code holds the value: the strongest thing a grant can do.
+        risks.append((.strong, "\(s.adapterId)'s own code gets the value, for \(targets). Use one you can revoke."))
+      } else {
+        risks.append((.strong, "Valet uses it for \(s.adapterId) with \(targets). The adapter never sees it."))
+      }
+      row("Uses", "\(providerName(s.provider)) item \u{201C}\(isolate(s.itemTitle))\u{201D}", .strong, claim: true)
+      row(s.custody == "entrusted" ? "Handed over for" : "Sent only to", targets, .strong)
+      row("Kind", s.kind == "ssh-key" ? "SSH key" : s.kind, .neutral)
+      details.append(CardDetail(label: "What Valet does with it", value: s.description, isClaim: false))
+      details.append(CardDetail(label: "Item fingerprint", value: s.itemFingerprint, isClaim: false))
     case let .toolEnable(s):
       let tool = "\(s.adapterId).\(s.tool)"
       if s.scope == "remote" {
@@ -430,6 +446,7 @@ public enum CardModel {
     case "keychain-copy": return "Keychain copy of"
     case "onepassword-service-account", "onepassword-desktop": return "1Password"
     case "messages": return "Messages"
+    case "valet-key": return "Valet-made"
     default: return provider
     }
   }

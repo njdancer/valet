@@ -78,6 +78,21 @@ const TOOL_NAME = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)
 const CONSENT_ID = z.union([OPAQUE_ID, z.string().regex(/^hub:[A-Za-z0-9_-]{10,40}$/)])
 const REMOTE_CLIENT_ID = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/)
 
+const CREDENTIAL = z.string().regex(/^[a-z][a-z0-9_]{0,39}$/)
+const credentialRequest = z
+  .object({
+    adapterId: ADAPTER_ID,
+    adapterHash: HASH,
+    credential: CREDENTIAL,
+    provider: z.enum(['keychain-copy', 'onepassword-service-account', 'onepassword-desktop', 'valet-key']),
+    itemId: z.string().regex(/^(?:[A-Za-z0-9_-]{1,64}|valet-key:[0-9a-f-]{36})$/),
+    targets: z
+      .array(z.string().regex(/^[a-z0-9.:-]{1,106}$/))
+      .min(1)
+      .max(20)
+      .optional(),
+  })
+  .strict()
 const grantRequest = z
   .object({
     adapterId: ADAPTER_ID,
@@ -200,6 +215,14 @@ const HANDLERS: Readonly<
   'grants.make': entry(z.tuple([grantRequest]), (api, [request]) => api.grants.make(request)),
   'grants.revoke': entry(z.tuple([ADAPTER_ID, SECRET]), (api, [id, secret]) => api.grants.revoke(id, secret)),
   'grants.resync': entry(z.tuple([ADAPTER_ID, SECRET]), (api, [id, secret]) => api.grants.resync(id, secret)),
+  'credentials.list': entry(none, (api) => api.credentials.list()),
+  'credentials.make': entry(z.tuple([credentialRequest]), (api, [request]) => api.credentials.make(request)),
+  'credentials.revoke': entry(z.tuple([ADAPTER_ID, CREDENTIAL]), (api, [id, credential]) =>
+    api.credentials.revoke(id, credential),
+  ),
+  'credentials.generateKey': entry(z.tuple([ADAPTER_ID, CREDENTIAL]), (api, [id, credential]) =>
+    api.credentials.generateKey(id, credential),
+  ),
   'runs.list': entry(z.union([none, z.tuple([runsQuery])]), (api, args) =>
     args.length === 0 ? api.runs.list() : api.runs.list(stripUndefined(args[0])),
   ),
