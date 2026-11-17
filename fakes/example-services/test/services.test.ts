@@ -309,9 +309,17 @@ describe('the hub', () => {
     expect(await refused(open(undefined, '/elsewhere'))).toBe(404)
   })
 
-  it('answers plain requests with a pointer to the socket', async () => {
-    const reply = await call(HUB_ADDRESS, '/api/states', { port: services.hubPort })
-    expect(reply.status).toBe(404)
+  it('serves states over REST with the same token', async () => {
+    const at = { port: services.hubPort }
+    expect((await call(HUB_ADDRESS, '/api/states', at)).status).toBe(401)
+    const auth = { ...at, headers: { authorization: `Bearer ${HUB_TOKEN}` } }
+    const states = await call(HUB_ADDRESS, '/api/states', auth)
+    expect(JSON.parse(states.body)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ entity_id: 'light.porch' })]),
+    )
+    expect((await call(HUB_ADDRESS, '/api/services/light/turn_on', { ...auth, method: 'POST' })).status).toBe(
+      404,
+    )
   })
 
   it('lists states and changes them', async () => {

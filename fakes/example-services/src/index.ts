@@ -127,7 +127,10 @@ export async function startExampleServices(): Promise<ExampleServices> {
   const hub = createHttpsServer({ key: cert.key, cert: cert.cert }, (req, res) =>
     collect(req, (body) => {
       record(req, body)
-      plain(res, 404, 'use the WebSocket API')
+      // A read-only REST API beside the socket, as hubs have: the same token, as a Bearer header.
+      if (req.headers.authorization !== `Bearer ${HUB_TOKEN}`) return plain(res, 401, '401: Unauthorized')
+      if (req.method === 'GET' && req.url === '/api/states') return json(res, entities)
+      return plain(res, 404, 'Not found')
     }),
   )
   hub.on('connection', track)

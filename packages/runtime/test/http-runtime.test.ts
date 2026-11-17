@@ -374,6 +374,11 @@ describe('ctx.http in an isolated tool', () => {
     })
   })
 
+  it('closes a closed socket as nothing, and calls one closed unavailable', async () => {
+    const w = await isolated()
+    expect(await w.call('close-twice')).toEqual({ status: 'ok', output: 'unavailable' })
+  })
+
   it('reads a feed with the tool library’s parser', async () => {
     const w = await isolated()
     expect(await w.call('feed')).toEqual({ status: 'ok', output: ['First & foremost', 'Second'] })

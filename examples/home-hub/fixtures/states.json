@@ -1,0 +1,50 @@
+[
+  {
+    "entity_id": "light.kitchen",
+    "state": "off",
+    "attributes": {
+      "friendly_name": "Kitchen light",
+      "brightness": 0
+    },
+    "last_changed": "2026-11-17T07:00:00Z"
+  },
+  {
+    "entity_id": "light.porch",
+    "state": "on",
+    "attributes": {
+      "friendly_name": "Porch light",
+      "brightness": 180
+    },
+    "last_changed": "2026-11-17T06:00:00Z"
+  },
+  {
+    "entity_id": "sensor.living_room_temperature",
+    "state": "21.5",
+    "attributes": {
+      "friendly_name": "Living room temperature",
+      "unit_of_measurement": "°C"
+    },
+    "last_changed": "2026-11-17T08:55:00Z"
+  },
+  {
+    "entity_id": "lock.front_door",
+    "state": "locked",
+    "attributes": {
+      "friendly_name": "Front door"
+    },
+    "last_changed": "2026-11-17T05:00:00Z"
+  },
+  {
+    "entity_id": "media_player.lounge",
+    "state": "idle",
+    "attributes": {
+      "friendly_name": "Lounge speaker"
+    },
+    "last_changed": "2026-11-17T05:00:00Z"
+  },
+  {
+    "entity_id": "Not An Id",
+    "state": "on",
+    "attributes": {}
+  }
+]

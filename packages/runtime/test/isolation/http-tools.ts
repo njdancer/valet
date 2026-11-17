@@ -24,6 +24,18 @@ export const tools = {
         await socket.close()
         return message
       }
+      if (input.do === 'close-twice') {
+        // Closing again is nothing; using it after is unavailable, not a bad id.
+        const socket = await http(ctx).websocket('/ws/echo')
+        await socket.close()
+        await socket.close()
+        try {
+          await socket.send('late')
+          return 'sent'
+        } catch (error) {
+          return (error as { errorClass?: string }).errorClass
+        }
+      }
       if (input.do === 'feed') {
         const feed = parseFeed((await http(ctx).fetch('/feed.xml')).body)
         return feed.items.map((i) => i.title)

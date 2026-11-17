@@ -1,0 +1,355 @@
+{
+  "cases": [
+    {
+      "name": "what the hub knows, leaving out what this adapter doesn't show",
+      "tool": "list_devices",
+      "input": {},
+      "fetch": [
+        {
+          "method": "GET",
+          "url": "https://192.168.1.20:8123/api/states",
+          "status": 200,
+          "body": "fixtures/states.json"
+        }
+      ],
+      "expect": {
+        "output": {
+          "devices": [
+            {
+              "id": "light.kitchen",
+              "kind": "light",
+              "name": "Kitchen light",
+              "state": "off",
+              "unit": null,
+              "changed": "2026-11-17T07:00:00Z"
+            },
+            {
+              "id": "light.porch",
+              "kind": "light",
+              "name": "Porch light",
+              "state": "on",
+              "unit": null,
+              "changed": "2026-11-17T06:00:00Z"
+            },
+            {
+              "id": "sensor.living_room_temperature",
+              "kind": "sensor",
+              "name": "Living room temperature",
+              "state": "21.5",
+              "unit": "°C",
+              "changed": "2026-11-17T08:55:00Z"
+            },
+            {
+              "id": "lock.front_door",
+              "kind": "lock",
+              "name": "Front door",
+              "state": "locked",
+              "unit": null,
+              "changed": "2026-11-17T05:00:00Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "only the lights",
+      "tool": "list_devices",
+      "input": {
+        "kind": "light"
+      },
+      "fetch": [
+        {
+          "method": "GET",
+          "url": "https://192.168.1.20:8123/api/states",
+          "status": 200,
+          "body": "fixtures/states.json"
+        }
+      ],
+      "expect": {
+        "output": {
+          "devices": [
+            {
+              "id": "light.kitchen",
+              "kind": "light",
+              "name": "Kitchen light",
+              "state": "off",
+              "unit": null,
+              "changed": "2026-11-17T07:00:00Z"
+            },
+            {
+              "id": "light.porch",
+              "kind": "light",
+              "name": "Porch light",
+              "state": "on",
+              "unit": null,
+              "changed": "2026-11-17T06:00:00Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a token the hub refuses",
+      "tool": "list_devices",
+      "input": {},
+      "fetch": [
+        {
+          "method": "GET",
+          "url": "https://192.168.1.20:8123/api/states",
+          "status": 401,
+          "contentType": "text/plain",
+          "body": {
+            "inline": "401: Unauthorized"
+          }
+        }
+      ],
+      "expect": {
+        "error": {
+          "stage": "tool-run",
+          "errorClass": "auth-failed"
+        }
+      }
+    },
+    {
+      "name": "switching a light on, skipping the event between request and result",
+      "tool": "switch_light",
+      "input": {
+        "light": "light.kitchen",
+        "on": true
+      },
+      "sockets": [
+        {
+          "url": "https://192.168.1.20:8123/api/websocket",
+          "steps": [
+            {
+              "server": {
+                "type": "auth_ok",
+                "ha_version": "2026.11.0"
+              }
+            },
+            {
+              "client": {
+                "id": 1,
+                "type": "call_service",
+                "domain": "light",
+                "service": "turn_on",
+                "target": {
+                  "entity_id": "light.kitchen"
+                }
+              }
+            },
+            {
+              "server": {
+                "type": "event",
+                "event": {
+                  "event_type": "state_changed",
+                  "data": {
+                    "entity_id": "light.kitchen"
+                  }
+                }
+              }
+            },
+            {
+              "server": {
+                "id": 1,
+                "type": "result",
+                "success": true,
+                "result": {
+                  "context": {
+                    "id": "ctx-1"
+                  }
+                }
+              }
+            },
+            {
+              "client": {
+                "id": 2,
+                "type": "get_states"
+              }
+            },
+            {
+              "server": {
+                "id": 2,
+                "type": "result",
+                "success": true,
+                "result": [
+                  {
+                    "entity_id": "light.kitchen",
+                    "state": "on",
+                    "attributes": {
+                      "friendly_name": "Kitchen light",
+                      "brightness": 0
+                    },
+                    "last_changed": "2026-11-17T09:00:00Z"
+                  },
+                  {
+                    "entity_id": "light.porch",
+                    "state": "on",
+                    "attributes": {
+                      "friendly_name": "Porch light",
+                      "brightness": 180
+                    },
+                    "last_changed": "2026-11-17T06:00:00Z"
+                  },
+                  {
+                    "entity_id": "sensor.living_room_temperature",
+                    "state": "21.5",
+                    "attributes": {
+                      "friendly_name": "Living room temperature",
+                      "unit_of_measurement": "°C"
+                    },
+                    "last_changed": "2026-11-17T08:55:00Z"
+                  },
+                  {
+                    "entity_id": "lock.front_door",
+                    "state": "locked",
+                    "attributes": {
+                      "friendly_name": "Front door"
+                    },
+                    "last_changed": "2026-11-17T05:00:00Z"
+                  },
+                  {
+                    "entity_id": "media_player.lounge",
+                    "state": "idle",
+                    "attributes": {
+                      "friendly_name": "Lounge speaker"
+                    },
+                    "last_changed": "2026-11-17T05:00:00Z"
+                  },
+                  {
+                    "entity_id": "Not An Id",
+                    "state": "on",
+                    "attributes": {}
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "output": {
+          "light": "light.kitchen",
+          "state": "on"
+        }
+      }
+    },
+    {
+      "name": "a light the hub doesn't have",
+      "tool": "switch_light",
+      "input": {
+        "light": "light.attic",
+        "on": false
+      },
+      "sockets": [
+        {
+          "url": "https://192.168.1.20:8123/api/websocket",
+          "steps": [
+            {
+              "server": {
+                "type": "auth_ok"
+              }
+            },
+            {
+              "client": {
+                "id": 1,
+                "type": "call_service",
+                "service": "turn_off",
+                "target": {
+                  "entity_id": "light.attic"
+                }
+              }
+            },
+            {
+              "server": {
+                "id": 1,
+                "type": "result",
+                "success": false,
+                "error": {
+                  "code": "not_found",
+                  "message": "Entity not found"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "error": {
+          "stage": "tool-input",
+          "errorClass": "not-found"
+        }
+      }
+    },
+    {
+      "name": "the hub refuses the token on the socket",
+      "tool": "switch_light",
+      "input": {
+        "light": "light.kitchen",
+        "on": true
+      },
+      "sockets": [
+        {
+          "url": "https://192.168.1.20:8123/api/websocket",
+          "steps": [
+            {
+              "server": {
+                "type": "auth_invalid",
+                "message": "Invalid access token"
+              }
+            },
+            {
+              "close": 4001
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "error": {
+          "stage": "tool-run",
+          "errorClass": "auth-failed"
+        }
+      }
+    },
+    {
+      "name": "the hub goes away mid-request",
+      "tool": "switch_light",
+      "input": {
+        "light": "light.kitchen",
+        "on": true
+      },
+      "sockets": [
+        {
+          "url": "https://192.168.1.20:8123/api/websocket",
+          "steps": [
+            {
+              "server": {
+                "type": "auth_ok"
+              }
+            },
+            {
+              "client": {
+                "id": 1,
+                "type": "call_service",
+                "domain": "light",
+                "service": "turn_on",
+                "target": {
+                  "entity_id": "light.kitchen"
+                }
+              }
+            },
+            {
+              "close": 1001
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "error": {
+          "stage": "tool-run",
+          "errorClass": "unavailable"
+        }
+      }
+    }
+  ]
+}

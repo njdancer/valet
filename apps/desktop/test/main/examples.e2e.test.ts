@@ -270,3 +270,17 @@ describe('iCloud Contacts (http, CardDAV, a kept password)', () => {
     await expectPasses(await fromExample('icloud-contacts'))
   }, 60_000)
 })
+
+describe('the home hub (http, a pinned private host, a WebSocket and a kept token)', () => {
+  it('passes its check and every case, the socket scripted by its cases', async () => {
+    await expectPasses(await fromExample('home-hub'))
+  }, 60_000)
+
+  it('never reaches the hub in a live trial', async () => {
+    const h = await fromExample('home-hub')
+    const before = services.seen.length
+    const report = await h.authoring.liveTrial(AGENT, h.draftId, 'list_devices', {})
+    expect(report).toMatchObject({ ok: false })
+    expect(services.seen.length).toBe(before)
+  }, 60_000)
+})
