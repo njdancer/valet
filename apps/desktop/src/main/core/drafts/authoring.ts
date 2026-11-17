@@ -9,6 +9,10 @@ import {
   type AdapterManifest,
   type AuditEvent,
   bundleHash,
+  DEPENDENCY_LOCK,
+  type DependencyLock,
+  dependencyLockSchema,
+  EMPTY_LOCK,
   homeUnreachable,
   type PackageFiles,
   type PermissionChange,
@@ -25,6 +29,7 @@ import {
   type Captured,
   type CheckReport,
   type ClientIdentity,
+  type DependencyReport,
   type DiffReport,
   type DraftDetail,
   type DraftList,
@@ -35,6 +40,7 @@ import {
   type SubmitReport,
   type TrialReport,
 } from '@valet/mcp-server'
+import { type AddResult, DependencyError } from '@valet/node-runtime'
 import type { ToolProcessFactory } from '@valet/runtime'
 import { isPublicAddress, NO_LOCAL_ACCESS } from '@valet/sandbox'
 import { type CaseBrowser, type CaseRun, readCases, runCase, runCases } from './cases'
@@ -60,13 +66,15 @@ import {
 } from './research'
 import { siteInputType, siteMethod, siteMime, siteRole, siteTag } from './site-text'
 import { DRAFT_LIMITS, DraftError, type DraftRecord, type DraftStore, type TrialSummary } from './store'
-import { blankDraft } from './template'
+import { blankDraft, blankHttpDraft } from './template'
 import { runTrial, type SignedInTrial, TRIAL_LIMITS, type TrialDeps, type TrialResult } from './trial'
 
 /** A whole check's time, so a submit answers inside an MCP client's usual timeout. */
 export const CHECK_BUDGET_MS = 45_000
 export const CHECKS_PER_CLIENT_PER_HOUR = 20
 export const NOTIFY_PER_CLIENT_PER_HOUR = 10
+/** Each one asks the npm registry for packages, so they are paced like checks. */
+export const DEPENDENCIES_PER_CLIENT_PER_HOUR = 30
 
 export interface InstalledVersion {
   readonly manifest: AdapterManifest
@@ -183,6 +191,13 @@ export interface AuthoringDeps {
   ) => Promise<CaseBrowser>
   /** Live trials (PR 2b); without them valet_live_trial says this build has none. */
   readonly trials?: TrialDeps & { readonly signedIn: ResearchDeps['signedIn'] }
+  /**
+   * npm dependencies for raw drafts (docs/node-runtime.md#dependencies): resolves, fetches and keeps
+   * the tarballs. Without it valet_add_dependency says this build can't.
+   */
+  readonly dependencies?: {
+    add(lock: DependencyLock, name: string, range: string | undefined): Promise<AddResult>
+  }
 }
 
 interface CheckOutcome {
@@ -195,6 +210,7 @@ interface CheckOutcome {
 export class DraftAuthoring implements Authoring {
   private readonly checks = new Map<string, number[]>()
   private readonly notifies = new Map<string, number[]>()
+  private readonly dependencyAdds = new Map<string, number[]>()
   /** One check at a time in all; a client waiting behind another's is told so. */
   private checking: Promise<unknown> = Promise.resolve()
   private readonly checkingClients = new Set<string>()
@@ -217,6 +233,7 @@ export class DraftAuthoring implements Authoring {
       readonly from: 'blank' | 'installed'
       readonly name?: string
       readonly repairId?: string
+      readonly runtime?: 'browser' | 'http'
     },
   ): Promise<DraftDetail> {
     const client = clientKey(viewer)
@@ -251,7 +268,10 @@ export class DraftAuthoring implements Authoring {
         throw new AuthoringRefusal(
           `${request.adapterId} is installed already. Start from "installed" to update it, or pick another id.`,
         )
-      files = blankDraft(request.adapterId, request.name ?? request.adapterId)
+      files =
+        request.runtime === 'http'
+          ? blankHttpDraft(request.adapterId, request.name ?? request.adapterId)
+          : blankDraft(request.adapterId, request.name ?? request.adapterId)
     }
     this.notifyLimit(client)
     const record = await this.wrap(() =>
@@ -430,6 +450,72 @@ export class DraftAuthoring implements Authoring {
     const removed = await this.wrap(() => this.deps.store.remove(draftId, path))
     this.written.delete(`${draftId}:${path}`)
     return { path, removed }
+  }
+
+  async addDependency(
+    viewer: ClientIdentity,
+    draftId: string,
+    request: { readonly name: string; readonly range?: string },
+  ): Promise<DependencyReport> {
+    const record = await this.own(viewer, draftId)
+    const dependencies = this.deps.dependencies
+    if (dependencies === undefined)
+      throw new AuthoringRefusal('This build of Valet can’t add npm dependencies.')
+    const files = await this.wrap(() => this.deps.store.files(draftId))
+    let runtime: unknown
+    try {
+      runtime = (JSON.parse(files['manifest.json'] ?? '') as { runtime?: unknown }).runtime
+    } catch {
+      throw new AuthoringRefusal('Not added: manifest.json isn’t JSON yet.')
+    }
+    if (runtime !== 'raw')
+      throw new AuthoringRefusal(
+        'Not added: only a raw adapter (runtime "raw" in manifest.json) has npm dependencies. Browser, http and protocol adapters run in Valet’s own sandbox and import only zod, @valet/core and their own files.',
+      )
+    let lock: DependencyLock = EMPTY_LOCK
+    const lockText = files[DEPENDENCY_LOCK]
+    if (lockText !== undefined) {
+      let parsed: ReturnType<typeof dependencyLockSchema.safeParse>
+      try {
+        parsed = dependencyLockSchema.safeParse(JSON.parse(lockText))
+      } catch {
+        throw new AuthoringRefusal(`Not added: ${DEPENDENCY_LOCK} isn’t JSON. Delete it to start again.`)
+      }
+      if (!parsed.success)
+        throw new AuthoringRefusal(
+          `Not added: ${DEPENDENCY_LOCK} isn’t valid (${parsed.error.issues[0]?.message ?? 'invalid'}). Delete it to start again.`,
+        )
+      lock = parsed.data
+    }
+    const client = clientKey(viewer)
+    const now = this.deps.now()
+    const recent = (this.dependencyAdds.get(client) ?? []).filter((t) => now - t < 3_600_000)
+    if (recent.length >= DEPENDENCIES_PER_CLIENT_PER_HOUR)
+      throw new AuthoringRefusal(
+        `Not added: you have added ${DEPENDENCIES_PER_CLIENT_PER_HOUR} dependencies this hour. Try again later.`,
+      )
+    this.dependencyAdds.set(client, [...recent, now])
+    let result: AddResult
+    try {
+      result = await dependencies.add(lock, request.name, request.range)
+    } catch (error) {
+      if (error instanceof DependencyError) throw new AuthoringRefusal(`Not added: ${error.message}.`)
+      throw error
+    }
+    const text = `${JSON.stringify(result.lock, null, 2)}\n`
+    await this.wrap(() => this.deps.store.write(draftId, DEPENDENCY_LOCK, text))
+    this.written.set(`${draftId}:${DEPENDENCY_LOCK}`, sha256Hex(text))
+    const at = result.resolved.lastIndexOf('@')
+    return {
+      name: result.resolved.slice(0, at),
+      version: result.resolved.slice(at + 1),
+      range: result.lock.dependencies[request.name]?.range ?? '*',
+      packages: Object.keys(result.lock.packages).length,
+      added: [...result.added],
+      removed: [...result.removed],
+      warnings: [...result.warnings],
+      draftStatus: record.status,
+    }
   }
 
   async deleteDraft(viewer: ClientIdentity, draftId: string) {

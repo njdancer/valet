@@ -81,6 +81,16 @@ function authoring(overrides: Partial<Authoring> = {}): Authoring & { writes: st
       return { path, bytes: content.length, draftStatus: 'editing' }
     },
     deleteFile: async (_v, _d, path) => ({ path, removed: true }),
+    addDependency: async (_v, _d, request) => ({
+      name: request.name,
+      version: '1.2.3',
+      range: request.range ?? '*',
+      packages: 2,
+      added: [`${request.name}@1.2.3`, 'helper@1.0.0'],
+      removed: [],
+      warnings: [],
+      draftStatus: 'editing',
+    }),
     check: async () => ({
       ok: true,
       packageHash: null,
@@ -204,6 +214,32 @@ describe('authoring tools', () => {
     expect(tool('valet_live_trial').input.parse({ draftId: DRAFT, tool: 'get_quote' })).toMatchObject({
       input: {},
     })
+  })
+
+  it('adds an npm dependency to a raw draft only with Ask for changes', async () => {
+    const off = reader({
+      access: () => ({ seeValet: true, allActivity: false, askForChanges: false, name: 'Claude Desktop' }),
+    })
+    const args = { draftId: DRAFT, name: 'imapflow', range: '^1.0.0' }
+    expect(
+      (await runAuthoringTool(tool('valet_add_dependency'), off, authoring(), args, LOCAL)).isError,
+    ).toBe(true)
+    const on = await runAuthoringTool(tool('valet_add_dependency'), reader(), authoring(), args, LOCAL)
+    expect(JSON.parse(text(on))).toMatchObject({
+      name: 'imapflow',
+      version: '1.2.3',
+      range: '^1.0.0',
+      packages: 2,
+    })
+    // The range is optional, and the name is bounded before the app sees it.
+    expect(tool('valet_add_dependency').input.parse({ draftId: DRAFT, name: 'x' })).toEqual({
+      draftId: DRAFT,
+      name: 'x',
+    })
+    expect(() =>
+      tool('valet_add_dependency').input.parse({ draftId: DRAFT, name: 'x'.repeat(215) }),
+    ).toThrow()
+    expect(tool('valet_add_dependency').annotations.openWorldHint).toBe(true)
   })
 
   it('treats a missing Ask for changes as off', async () => {

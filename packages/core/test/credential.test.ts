@@ -10,8 +10,8 @@ import {
   describeCredentialUse,
   isCredentialHeaderName,
   isDisplayText,
+  isEndpoint,
   manifestSchema,
-  parseEndpoint,
   runtimeOf,
   USES_BY_RUNTIME,
 } from '../src'
@@ -41,15 +41,13 @@ const messages = (value: unknown) => {
   return result.success ? [] : result.error.issues.map((i) => i.message)
 }
 
-describe('parseEndpoint', () => {
-  it.each([
-    ['imap.mail.me.com:993', { host: 'imap.mail.me.com', port: 993 }],
-    ['192.168.1.20:8123', { host: '192.168.1.20', port: 8123 }],
-    ['[fd00::1]:22', { host: '[fd00::1]', port: 22 }],
-    ['nas.local.example:65535', { host: 'nas.local.example', port: 65535 }],
-  ])('accepts %s', (value, expected) => {
-    expect(parseEndpoint(value)).toEqual(expected)
-  })
+describe('isEndpoint', () => {
+  it.each(['imap.mail.me.com:993', '192.168.1.20:8123', 'fd00::1:22', 'nas.local.example:65535'])(
+    'accepts %s, as the runtime writes it',
+    (value) => {
+      expect(isEndpoint(value)).toBe(true)
+    },
+  )
 
   it.each([
     'imap.mail.me.com',
@@ -65,12 +63,15 @@ describe('parseEndpoint', () => {
     '01.2.3.4:22',
     '[fd00::1:22',
     '[FD00::1]:22',
+    '[fd00::1]:22',
+    'FD00::1:22',
+    'fd00:0::1:22',
     '[::ffff:1.2.3.4]:22x',
     'host name.com:22',
     'imap.mail.me.com:993\n',
     'imap.mail.me.com.:993',
   ])('refuses %j', (value) => {
-    expect(parseEndpoint(value)).toBeNull()
+    expect(isEndpoint(value)).toBe(false)
   })
 })
 

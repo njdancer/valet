@@ -10,10 +10,15 @@
 // - a phone of this Mac's that another device on the list removed is removed here too (that only
 //   ever tightens).
 //
-// The Mac pins the list's first change, and only one it signed itself: a hub can't hand it a list
-// some other key started. A list started elsewhere (another Mac's account) waits until a device on
-// it adds this Mac (step 4c). Nothing here trusts a phone the Mac didn't pair: that comes with the
-// phone's own sign-in (step 4c).
+// The Mac pins the list's first change. Normally only one it signed itself: a hub can't hand it a
+// list some other key started. The one exception (step 4c): right after the person added this Mac
+// to the account with the code it showed, it asks to join the account's list (its own device
+// record, signed), and pins that list once a device on it, a phone, adds this Mac with exactly its
+// keys. That is trust on first use, bounded by the person having just typed this Mac's code on the
+// hub's page while signed in.
+//
+// Once on a list, the Mac trusts every phone on it for approvals, as if it had paired it
+// (`onPhones`), and stops trusting one the moment the list drops it.
 
 import {
   nextRosterChange,
@@ -42,6 +47,8 @@ export type RosterState =
   | 'needs-you'
   /** Another device started this account's list, and hasn't added this Mac. */
   | 'not-added'
+  /** This Mac asked to join the account's list: a phone on it adds it. */
+  | 'joining'
   /** The list the hub sent doesn't check: nothing on it is used. */
   | 'refused'
 
@@ -63,12 +70,23 @@ export interface RosterKeeperOptions {
   readonly removed: (deviceId: string, by: string) => Promise<void>
   readonly now: () => number
   readonly onChange: () => void
+  /** The phones on the verified list, each with when it was added: trusted here until dropped. */
+  readonly onPhones?: (phones: readonly AccountPhone[]) => void
+  /** Asks to join a list another device started; false when not connected. */
+  readonly sendJoin?: (record: SignedText) => boolean
   readonly log?: (line: string) => void
+}
+
+export interface AccountPhone {
+  readonly device: RosterDevice
+  /** When the change that added it was made. */
+  readonly addedAt: string
 }
 
 /** The prompt's reason for a software signer; the Secure Enclave helper writes its own. */
 const REASONS = {
   start: 'put this Mac and its iPhones on your Valet account',
+  join: 'join your Valet account',
   add: 'add an iPhone to your Valet account',
   remove: 'remove a device from your Valet account',
 } as const
@@ -85,6 +103,10 @@ export class RosterKeeper {
   private busy: Promise<void> = Promise.resolve()
   /** The list as last verified with this Mac on it; null otherwise. */
   private verified: Roster | null = null
+  /** This Mac's own record, signed once per launch, for asking to join. */
+  private joinRecord: SignedText | null = null
+  /** The phones last handed to `onPhones`, by id, so an unchanged list says nothing. */
+  private phonesKey = ''
 
   constructor(private readonly options: RosterKeeperOptions) {}
 
@@ -103,11 +125,19 @@ export class RosterKeeper {
    * on the account (it was removed while offline, or it lost its keys and came back new): the
    * account's current list decides, and a Mac never joins another's list without a signature.
    */
-  async linked(accountId: string | null, fresh = false): Promise<void> {
-    if (fresh && accountId !== null && this.options.ledger.data.roster !== undefined) {
-      this.options.log?.('[roster] added to the account again: forgetting the list pinned before')
+  linked(accountId: string | null, fresh = false): Promise<void> {
+    // In turn with the lists the hub sends: the list right after a status belongs to it.
+    return this.queue(() => this.link(accountId, fresh))
+  }
+
+  private async link(accountId: string | null, fresh: boolean): Promise<void> {
+    if (fresh && accountId !== null) {
+      if (this.options.ledger.data.roster !== undefined)
+        this.options.log?.('[roster] added to the account again: forgetting the list pinned before')
+      const at = new Date(this.options.now()).toISOString()
       await this.options.ledger.commit((draft) => {
         delete draft.roster
+        draft.rosterJoin = { account: accountId, at }
       })
       this.account = null
     }
@@ -118,10 +148,13 @@ export class RosterKeeper {
     this.declined = false
     this.stuck = false
     this.set(accountId === null ? 'off' : 'waiting', 0)
+    if (accountId === null) this.phones(null)
     // Left the account: a later one starts its own pin.
-    if (accountId === null && this.options.ledger.data.roster !== undefined)
+    const data = this.options.ledger.data
+    if (accountId === null && (data.roster !== undefined || data.rosterJoin !== undefined))
       await this.options.ledger.commit((draft) => {
         delete draft.roster
+        delete draft.rosterJoin
       })
   }
 
@@ -178,22 +211,34 @@ export class RosterKeeper {
     if (!check.ok) return this.refuse(`the hub's list doesn't check (${check.reason} at ${check.at})`)
     const roster = check.roster
     if (roster.account !== account) return this.refuse('the hub sent another account’s list')
-    if (pin === undefined) {
-      // Pin only a list this Mac started: its own first change, adding itself.
-      if (firstSigner(chain) !== macId) {
+    const joining = ledger.data.rosterJoin?.account === account
+    if (pin === undefined && firstSigner(chain) !== macId) {
+      // A list another device started: pin it only once it lists this Mac with exactly its keys,
+      // and only while the person's fresh link lets this Mac join (trust on first use).
+      const listed = roster.devices.get(macId)
+      if (!joining || listed === undefined) {
         this.verified = null
-        return this.set('not-added', roster.devices.size)
+        this.phones(null)
+        if (!joining) return this.set('not-added', roster.devices.size)
+        return this.askToJoin(roster)
       }
+      const own = this.options.devices.mac
+      if (listed.transportKey !== own.transportKey || listed.agreementKey !== own.agreementKey)
+        return this.refuse('the list adds this Mac with keys that aren’t its own')
+      this.options.log?.('[roster] a device on the account added this Mac: pinning its list')
     }
-    if (pin === undefined || pin.seq !== roster.seq || pin.head !== roster.head)
+    if (pin === undefined || pin.seq !== roster.seq || pin.head !== roster.head || joining)
       await ledger.commit((draft) => {
         draft.roster = { account, genesis: roster.genesis, seq: roster.seq, head: roster.head }
+        delete draft.rosterJoin
       })
     if (!roster.devices.has(macId)) {
       this.verified = null
+      this.phones(null)
       return this.set('not-added', roster.devices.size)
     }
     this.verified = roster
+    this.phones(roster, chain)
 
     // Phones of this Mac's that another device took off the list.
     const removedBy = lastRemovals(chain)
@@ -209,6 +254,53 @@ export class RosterKeeper {
     if (changes.length === 0) return this.set('on', roster.devices.size)
     const removing = changes.some((c) => c.op === 'remove')
     await this.sign(this.after(roster, changes), removing ? REASONS.remove : REASONS.add)
+  }
+
+  /**
+   * Sends this Mac's own record to the hub, for a phone on the list to add. Only a list with a
+   * phone on it can take a new Mac: a Mac never adds another Mac.
+   */
+  private async askToJoin(roster: Roster): Promise<void> {
+    const hasPhone = [...roster.devices.values()].some((d) => d.role === 'phone')
+    if (!hasPhone || this.options.sendJoin === undefined) return this.set('not-added', roster.devices.size)
+    if (this.joinRecord === null) {
+      if (this.declined) return this.set('needs-you', roster.devices.size)
+      const mac = this.options.devices.mac
+      const payload = JSON.stringify({
+        ...mac,
+        name: this.options.macName.slice(0, 60),
+        pairedAt: new Date(this.options.now()).toISOString(),
+      })
+      const signature = await this.options.channel
+        .signApproval(SIGNING_DOMAINS.deviceRecord, payload, REASONS.join)
+        .catch(() => null)
+      if (signature === null) {
+        this.declined = true
+        return this.set('needs-you', roster.devices.size)
+      }
+      this.joinRecord = { payload, signature }
+    }
+    this.options.sendJoin(this.joinRecord)
+    this.set('joining', roster.devices.size)
+  }
+
+  /** Hands on the phones of a verified list (or none), when they changed. */
+  private phones(roster: Roster | null, chain: readonly SignedText[] = []): void {
+    const addedAt = new Map<string, string>()
+    for (const signed of chain) {
+      const change = parse(signed)
+      if (change?.change.op === 'add') addedAt.set(change.change.device.deviceId, change.at)
+    }
+    const phones: AccountPhone[] =
+      roster === null
+        ? []
+        : [...roster.devices.values()]
+            .filter((d) => d.role === 'phone')
+            .map((device) => ({ device, addedAt: addedAt.get(device.deviceId) ?? new Date(0).toISOString() }))
+    const key = phones.map((p) => `${p.device.deviceId}:${p.device.name}`).join(',')
+    if (key === this.phonesKey) return
+    this.phonesKey = key
+    this.options.onPhones?.(phones)
   }
 
   /** What the list lacks: phones paired here, and phones removed here that it still has. */
@@ -279,6 +371,7 @@ export class RosterKeeper {
 
   private refuse(why: string): void {
     this.verified = null
+    this.phones(null)
     this.options.log?.(`[roster] ${why}`)
     this.set('refused', 0)
   }

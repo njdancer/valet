@@ -5,6 +5,8 @@
 // one of those)? And is it an address on the person's own network that a manifest may name as a
 // private host (an IP literal, never a name, so DNS can't redirect it)?
 
+import { isHostname } from './origins'
+
 /** Four bytes, or null unless `value` is a dotted quad in plain decimal with no leading zeros. */
 export function parseIPv4(value: string): number[] | null {
   const parts = value.split('.')
@@ -136,6 +138,8 @@ const NOT_PUBLIC_V4: readonly Range[] = [
 const NOT_PUBLIC_V6: readonly Range[] = [
   v6('::', 128),
   v6('::1', 128),
+  // IPv4-translated (SIIT, RFC 2765): a translator on the path reaches the embedded IPv4 address.
+  v6('::ffff:0:0:0', 96),
   v6('64:ff9b::', 96),
   v6('64:ff9b:1::', 48),
   v6('100::', 64),
@@ -184,16 +188,47 @@ const PRIVATE_HOST_RANGES_V4: readonly Range[] = [
 ]
 const PRIVATE_HOST_RANGES_V6: readonly Range[] = [v6('fc00::', 7)]
 
+/**
+ * Addresses in those ranges that a VPN client on this Mac answers itself (Tailscale's resolver and
+ * service address), so a private host there would be this Mac, which is never one.
+ */
+const SERVED_BY_THIS_MAC_V4: readonly Range[] = [v4('100.100.100.100', 32)]
+const SERVED_BY_THIS_MAC_V6: readonly Range[] = [v6('fd7a:115c:a1e0::53', 128)]
+
 /** True for an address, in its canonical form, that a manifest may declare as a private host. */
 export function isPrivateHostAddress(address: string): boolean {
   if (canonicalAddress(address) !== address) return false
   const four = parseIPv4(address)
-  if (four !== null) return PRIVATE_HOST_RANGES_V4.some((r) => inRange(four, r))
+  if (four !== null)
+    return (
+      PRIVATE_HOST_RANGES_V4.some((r) => inRange(four, r)) &&
+      !SERVED_BY_THIS_MAC_V4.some((r) => inRange(four, r))
+    )
   const six = parseIPv6(address)
-  return six !== null && PRIVATE_HOST_RANGES_V6.some((r) => inRange(six, r))
+  return (
+    six !== null &&
+    PRIVATE_HOST_RANGES_V6.some((r) => inRange(six, r)) &&
+    !SERVED_BY_THIS_MAC_V6.some((r) => inRange(six, r))
+  )
 }
 
 /** `address:port` as a URL's host would say it: IPv6 in brackets. */
 export function hostPort(address: string, port: number): string {
   return `${address.includes(':') ? `[${address}]` : address}:${port}`
+}
+
+/**
+ * `host:port` as the runtime writes a raw adapter's endpoint: lower case, an IP literal canonical
+ * and without brackets, a port from 1 to 65535. Null if it isn't one.
+ */
+export function parseEndpoint(value: string): { readonly host: string; readonly port: number } | null {
+  if (typeof value !== 'string') return null
+  const match = /^(.+):(\d{1,5})$/.exec(value)
+  if (match === null) return null
+  const host = (match[1] as string).toLowerCase()
+  const port = Number(match[2])
+  if (port < 1 || port > 65_535) return null
+  const literal = canonicalAddress(host)
+  if (literal !== null) return literal === host ? { host, port } : null
+  return isHostname(host) ? { host, port } : null
 }

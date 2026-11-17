@@ -38,6 +38,9 @@ export default defineConfig({
         'apps/relay/src/mac-relay.ts',
         'apps/relay/src/push-relay.ts',
         'apps/relay/src/env.ts',
+        // The Node runtime's host script runs only inside the sandboxed child process, out of reach
+        // of this process's coverage; test/runtime.test.ts and test/redteam drive every part of it.
+        'packages/node-runtime/src/host/**',
         // The hub's Durable Object and the glue that reaches it (docs/relay-hub.md): covered by
         // test/hub.test.ts, which runs them in workerd, as above.
         'apps/relay/src/hub/hub.ts',

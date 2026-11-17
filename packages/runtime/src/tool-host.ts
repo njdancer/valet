@@ -45,6 +45,7 @@ import {
   type AuditSink,
   type BlockedRequest,
   confirmActionSchema,
+  credentialHeaderNames,
   defineAdapter,
   type EnsureResult,
   type ErrorClass,
@@ -52,6 +53,7 @@ import {
   manifestSchema,
   NeedsUserError,
   type RequestDeclaration,
+  runtimeOf,
   type SessionDriver,
   type SettingDeclaration,
   type Stage,
@@ -65,20 +67,19 @@ import {
   type ToolRunPolicy,
   toReportable,
   unlockedBy,
+  uploadBudget,
   ValetError,
 } from '@valet/core'
+import { RunMeter } from '@valet/egress'
 import type { z } from 'zod'
 import type { ApprovalLookup } from './approvals'
 import type { JsonStore } from './breaker-state'
+import { MAX_TARGET_LENGTH, NOTEWORTHY_WAIT_MS, PURPOSE_RANK, plainMethod } from './call-gate'
 import { CallState } from './call-state'
 import { type Clock, type Sleep, systemClock, systemSleep } from './clock'
-import {
-  GuardedToolPage,
-  MAX_TARGET_LENGTH,
-  NOTEWORTHY_WAIT_MS,
-  PURPOSE_RANK,
-  plainMethod,
-} from './guarded-page'
+import { CredentialGate, type CredentialGateOptions } from './credential-gate'
+import { GuardedHttp, type HttpCredentials, type HttpEgress, NO_HTTP_ACCESS } from './guarded-http'
+import { GuardedToolPage } from './guarded-page'
 import { checkInputIsolated, runIsolated, type ToolProcessFactory } from './isolation/host'
 import type { LoginMarkerStore } from './login-marker'
 import { KeyedMutex } from './mutex'
@@ -163,7 +164,25 @@ export interface RegisteredAdapter {
    * validate input and output here. Without it, tool code runs in this process.
    */
   readonly isolation?: ToolIsolation
+  /**
+   * The egress broker for an adapter whose runtime isn't browser (docs/adapter-kinds.md), built
+   * from its manifest's endpoints. Without it, every ctx.http call is not-granted.
+   */
+  readonly http?: HttpEgress
+  /**
+   * Kept credentials ctx.http may add as a header, from a fixed source (tests). An adapter given
+   * `credentialGrants` uses a CredentialGate instead. Without either, naming one is not-granted.
+   */
+  readonly credentials?: HttpCredentials
+  /**
+   * The grants and provider behind the manifest's credentials (secrets v2). Each call gets its own
+   * CredentialGate over them, which checks the grant for this bundle hash, registers the value for
+   * the call's redaction and audits the use before ctx.http may send it.
+   */
+  readonly credentialGrants?: CredentialGrantSource
 }
+
+export type CredentialGrantSource = Pick<CredentialGateOptions, 'findGrant' | 'resolve'>
 
 export interface ToolIsolation {
   readonly script: string
@@ -329,6 +348,9 @@ export class ToolHost {
       applied: new Map(),
       cache: new ReadCache(this.clock),
       ...(adapter.isolation === undefined ? {} : { isolation: adapter.isolation }),
+      ...(adapter.http === undefined ? {} : { http: adapter.http }),
+      ...(adapter.credentials === undefined ? {} : { credentials: adapter.credentials }),
+      ...(adapter.credentialGrants === undefined ? {} : { credentialGrants: adapter.credentialGrants }),
     })
   }
 
@@ -815,6 +837,7 @@ export class ToolHost {
             // Nothing more to stop; the next beginRun replaces the policy.
           }
         }
+        state.disposeSent()
         done()
       }
       if (state.idle) finish()
@@ -981,6 +1004,7 @@ export class ToolHost {
         return (await state.track(asking)) === 'approved'
       },
       signal: controller.signal,
+      http: this.httpFor(entry, declaration, state),
       ...(entry.isolation?.local === undefined
         ? {}
         : { local: this.liveLocal(entry.isolation.local, manifest.id, state) }),
@@ -1297,6 +1321,43 @@ export class ToolHost {
   }
 
   /**
+   * ctx.http for one call: the broker behind the call's checks, with the run's own upload budget,
+   * and each connection it makes recorded. Not-granted for a browser adapter or without a broker.
+   */
+  private httpFor(entry: Entry, declaration: ToolDeclaration, state: CallState): ToolContext['http'] {
+    const manifest = entry.definition.manifest
+    if (entry.http === undefined || runtimeOf(manifest) === 'browser') return NO_HTTP_ACCESS
+    return new GuardedHttp({
+      adapterId: manifest.id,
+      manifest,
+      sideEffect: declaration.sideEffect,
+      unlocks: unlockedBy(manifest.requests, declaration.unlocks),
+      site: entry.site,
+      state,
+      audit: (event) => this.record(event),
+      clock: this.clock,
+      broker: entry.http,
+      ...this.credentialsFor(entry, state),
+      credentialHeaders: [...credentialHeaderNames(manifest)],
+      run: {
+        meter: new RunMeter(uploadBudget(manifest, declaration.sideEffect)),
+        signal: state.signal,
+        record: (c) =>
+          void this.record({
+            type: 'egress-connection',
+            adapterId: manifest.id,
+            callId: state.callId,
+            endpoint: c.endpoint,
+            kind: c.kind,
+            bytesUp: c.bytesUp,
+            bytesDown: c.bytesDown,
+            errorClass: c.errorClass,
+          }),
+      },
+    })
+  }
+
+  /**
    * `local` for one call: each capability refused once the call is over, tracked like a capability
    * call so the call waits for it, and audited with its outcome (never its path or body).
    */
@@ -1329,6 +1390,29 @@ export class ToolHost {
       run: wrap('run', (a, o) => local.run(a, o)),
       appleScript: wrap('appleScript', (id, source) => local.appleScript(id, source)),
     }
+  }
+
+  /**
+   * The credentials one call's ctx.http may add: a CredentialGate over the adapter's grants, for
+   * this bundle hash and call. Its audit is the log itself, not record(): a use that can't be
+   * audited is refused rather than sent.
+   */
+  private credentialsFor(entry: Entry, state: CallState): { credentials?: HttpCredentials } {
+    const manifest = entry.definition.manifest
+    if (entry.credentialGrants !== undefined) {
+      const gate = new CredentialGate({
+        adapterId: manifest.id,
+        adapterHash: entry.bundleHash,
+        credentials: manifest.credentials,
+        findGrant: entry.credentialGrants.findGrant,
+        resolve: entry.credentialGrants.resolve,
+        audit: this.options.audit,
+        remember: (secret) => state.keepSent(secret),
+        callId: state.callId,
+      })
+      return { credentials: { headerFor: (credential, host) => gate.headerFor(credential, host) } }
+    }
+    return entry.credentials === undefined ? {} : { credentials: entry.credentials }
   }
 
   private async record(event: AuditEvent): Promise<void> {

@@ -9,6 +9,7 @@
 // kind may make, what a grant of one may cover, and the words a card uses to say so.
 
 import { z } from 'zod'
+import { parseEndpoint } from './addresses'
 import { MESSAGES_SECRET } from './credentials'
 import type { RuntimeKind } from './manifest'
 import { isHostname } from './origins'
@@ -85,22 +86,12 @@ export function isCredentialHeaderName(value: string): boolean {
 }
 
 /**
- * One endpoint, `host:port`: a lower-case DNS name, an IPv4 literal or a bracketed IPv6 literal,
- * and a port from 1 to 65535 with no leading zero. Returns null for anything else.
+ * One endpoint exactly as the runtime writes it (addresses.ts parseEndpoint): `host:port`, lower
+ * case, an IPv6 literal canonical and without brackets, no leading zero in the port.
  */
-export function parseEndpoint(value: string): { readonly host: string; readonly port: number } | null {
-  const match = /^(\[[0-9a-f:.]{2,45}\]|[^:[\]]+):([1-9][0-9]{0,4})$/.exec(value)
-  if (match === null) return null
-  const [, host, portText] = match as unknown as [string, string, string]
-  const port = Number(portText)
-  if (port > 65_535) return null
-  if (host.startsWith('[')) return isIpv6(host.slice(1, -1)) ? { host, port } : null
-  if (isIpv4(host)) return { host, port }
-  return isHostname(host) && host === host.toLowerCase() ? { host, port } : null
-}
-
 export function isEndpoint(value: string): boolean {
-  return parseEndpoint(value) !== null
+  const endpoint = typeof value === 'string' ? parseEndpoint(value) : null
+  return endpoint !== null && `${endpoint.host}:${endpoint.port}` === value
 }
 
 /** A host a header may be sent to: a lower-case DNS name or an IPv4 literal (a private host). */
@@ -113,15 +104,6 @@ function isIpv4(value: string): boolean {
   return (
     parts.length === 4 && parts.every((part) => /^(0|[1-9][0-9]{0,2})$/.test(part) && Number(part) <= 255)
   )
-}
-
-function isIpv6(value: string): boolean {
-  // Lower case and canonical enough to compare as text: URL parsing gives the canonical form.
-  try {
-    return new URL(`https://[${value}]/`).hostname === `[${value}]`
-  } catch {
-    return false
-  }
 }
 
 /**

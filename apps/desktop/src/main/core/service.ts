@@ -30,10 +30,12 @@ import {
   type NeedsUserReason,
   needsYouTitle,
   type PackageFiles,
+  type PrivateHost,
   type ProviderKind,
   parseManifest,
   plainName,
   type Requester,
+  runtimeOf,
   type SecretField,
   type SecretValue,
   type SessionDriver,
@@ -59,12 +61,15 @@ import {
   type ToolCall,
   type ToolCaller,
 } from '@valet/mcp-server'
+import { addDependency, diskTarballStore } from '@valet/node-runtime'
 import {
   ApprovalStore,
   AuditLog,
   DEFAULT_LOGIN_BACKOFF,
+  type HttpEgress,
   JsonFileStore,
   LoginAttemptMarker,
+  noBrowserDriver,
   pruneOlderThan,
   type RuntimeDiagnostic,
   SecretRedactionSet,
@@ -275,6 +280,14 @@ export interface ServiceDeps {
     forAdapter(adapterHash: string): ToolProcessFactory
     local(manifest: AdapterManifest): LocalAccess
   }
+  /**
+   * The egress broker for an adapter whose runtime isn't browser (docs/adapter-kinds.md), built
+   * from its manifest's endpoints. Without it, ctx.http is not granted.
+   */
+  readonly egress?: (endpoints: {
+    readonly egress: readonly string[]
+    readonly privateHosts?: readonly PrivateHost[] | undefined
+  }) => HttpEgress
   /** Builds an adapter's driver, with the reporters its refusals outside a run go to. */
   readonly createDriver: (manifest: AdapterManifest, reporters: DriverReporters) => Promise<SessionDriver>
   readonly credentials: Credentials
@@ -1463,7 +1476,9 @@ export class AppService {
     const signer = this.deps.approvalKeys.signer
     const devices = this.deviceStore
     if (signer.rotateChannel === undefined || devices === null) throw new ValetError('config', 'not-found')
-    for (const phone of devices.activePhones()) {
+    // Phones paired here only: one on the account's list stays on it (revoking it here would
+    // take it off the account).
+    for (const phone of devices.activePhones().filter((p) => !devices.isAccountPhone(p.deviceId))) {
       this.phones.unpair(phone.deviceId)
       await devices.revoke(phone.deviceId, 'mac-ui', new Date(this.deps.now()).toISOString())
       await this.audit.append({ type: 'device-revoked', deviceId: phone.deviceId, by: 'mac-ui' })
@@ -1852,6 +1867,8 @@ export class AppService {
 
   private async driverFor(adapter: BuiltinAdapter): Promise<SessionDriver> {
     const id = adapter.definition.manifest.id
+    // An adapter that opens no pages gets no browser at all: ctx.http is its only way out.
+    if (runtimeOf(adapter.definition.manifest) !== 'browser') return noBrowserDriver()
     return this.deps.createDriver(adapter.definition.manifest, {
       onBlocked: this.blocked.betweenRuns(id),
       onAuthBlocked: this.blocked.authPartition(id),
@@ -1870,6 +1887,9 @@ export class AppService {
       definition: adapter.definition,
       bundleHash: adapter.hash,
       driver,
+      ...(this.deps.egress === undefined || runtimeOf(manifest) === 'browser'
+        ? {}
+        : { http: this.deps.egress(manifest) }),
       ...(start === undefined || adapter.toolScript === null
         ? {}
         : {
@@ -2773,6 +2793,11 @@ export class AppService {
       },
       notify: (text) => this.notifier.draftActivity(text),
       now: this.deps.now,
+      // Raw drafts' npm packages, kept by integrity in Valet's own folder (docs/node-runtime.md).
+      dependencies: {
+        add: (lock, name, range) =>
+          addDependency(lock, name, range, diskTarballStore(join(this.deps.paths.dir, 'npm-tarballs'))),
+      },
       ...(this.deps.scratch === undefined ? {} : { research: this.scratchSessions(this.deps.scratch) }),
       ...(this.deps.fixtureBrowser === undefined ? {} : { caseBrowser: this.deps.fixtureBrowser }),
       ...(this.deps.trialDriver === undefined
@@ -2796,6 +2821,12 @@ export class AppService {
               // The installed adapters' own budget and breaker for the host.
               guards: (host: string) => this.runtime().siteGuards(host),
               signedIn: () => this.signedInDomains(),
+              ...(this.deps.egress === undefined
+                ? {}
+                : {
+                    egress: (endpoints: { readonly egress: readonly string[] }) =>
+                      (this.deps.egress as NonNullable<ServiceDeps['egress']>)({ egress: endpoints.egress }),
+                  }),
             },
           }),
     })

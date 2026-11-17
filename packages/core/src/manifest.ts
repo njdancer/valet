@@ -2,7 +2,7 @@
 // what a person reviews and approves, and what the runtime enforces. See docs/security-model.md.
 
 import { z } from 'zod'
-import { hostPort, isPrivateHostAddress } from './addresses'
+import { canonicalAddress, hostPort, isPrivateHostAddress, parseEndpoint } from './addresses'
 import { type CredentialDeclaration, credentialDeclarationSchema, credentialIssues } from './credential'
 import { MESSAGES_SECRET } from './credentials'
 import { type ERROR_CLASSES, NEEDS_USER_REASONS, type NeedsUserReason } from './errors'
@@ -383,9 +383,10 @@ export const manifestSchema = z
     /**
      * The site's home page, opened in the tool partition before tool code runs. A browser adapter
      * must give it; an `http` adapter must not, and parsing sets it to its first endpoint, which is
-     * then only the name its pacing and breaker are kept under (nothing opens it).
+     * then only what relative URLs resolve against and the name its pacing and breaker are kept
+     * under (nothing opens it). Only a private http host's derived home is plain http.
      */
-    home: z.url({ protocol: /^https$/ }).optional(),
+    home: z.url({ protocol: /^https?$/ }).optional(),
     /**
      * The site's own cart page, which Valet opens in the person's own browser so they can check out
      * there (Valet never places orders). Must be on a navigation origin. Optional.
@@ -407,6 +408,26 @@ export const manifestSchema = z
      * (docs/adapter-kinds.md#f1-the-egress-broker). Each is a high-risk line on the approval card.
      */
     privateHosts: z.array(privateHostSchema).max(10).optional(),
+    /**
+     * `raw` adapters only: the exact `host:port` pairs its tunnels may reach, as parseEndpoint
+     * writes them (docs/adapter-kinds.md#f1-the-egress-broker). Private ones go in privateHosts.
+     */
+    endpoints: z
+      .array(
+        z
+          .string()
+          .max(260)
+          .refine((v) => {
+            const parsed = parseEndpoint(v)
+            return (
+              parsed !== null &&
+              canonicalAddress(parsed.host) === null &&
+              `${parsed.host}:${parsed.port}` === v
+            )
+          }, 'an endpoint is host:port, in lower case, with a host name (private addresses go in privateHosts)'),
+      )
+      .max(20)
+      .optional(),
     /** Left out, with session and auth, for a site that needs no login. */
     secrets: z.record(name, secretRequestSchema).default({}),
     session: z
@@ -671,6 +692,15 @@ export const manifestSchema = z
  * What an `http` adapter's `home` is set to: its first endpoint as an https URL. Nothing opens it;
  * the runtime keys the site's pacing and breaker by its host, and the app shows it.
  */
+function homeIsDerived(manifest: {
+  readonly home?: string | undefined
+  readonly egress: readonly string[]
+  readonly privateHosts?: readonly PrivateHost[] | undefined
+}): boolean {
+  if (manifest.egress.length === 0 && (manifest.privateHosts ?? []).length === 0) return false
+  return manifest.home === endpointHome(manifest)
+}
+
 function endpointHome(manifest: {
   readonly egress: readonly string[]
   readonly privateHosts?: readonly PrivateHost[] | undefined
@@ -680,7 +710,8 @@ function endpointHome(manifest: {
   const first = manifest.privateHosts?.[0]
   // runtimeIssues refuses a manifest with neither, so this is never reached with one.
   if (first === undefined) throw new Error('an http adapter needs an endpoint')
-  return `https://${first.address.includes(':') ? `[${first.address}]` : first.address}/`
+  // Relative URLs resolve against it, so it carries the host's own scheme and port.
+  return new URL(`${first.scheme ?? 'https'}://${hostPort(first.address, first.port)}/`).href
 }
 
 /**
@@ -695,6 +726,7 @@ function runtimeIssues(manifest: {
   readonly navigation: readonly string[]
   readonly egress: readonly string[]
   readonly privateHosts?: readonly PrivateHost[] | undefined
+  readonly endpoints?: readonly string[] | undefined
   readonly requests: readonly {
     readonly method: string
     readonly host?: string | undefined
@@ -711,8 +743,10 @@ function runtimeIssues(manifest: {
   if (!AVAILABLE_RUNTIMES.includes(kind)) return [`runtime ${kind} is not available yet`]
   const issues: string[] = []
   const nonBrowser = (field: string) => `${field} is only for adapters whose runtime is not browser`
+  if (manifest.endpoints !== undefined) issues.push('endpoints is only for raw adapters')
   if (kind === 'browser') {
     if (manifest.home === undefined) issues.push('a browser adapter needs home')
+    else if (!manifest.home.startsWith('https:')) issues.push('home must be https')
     if (manifest.navigation.length === 0)
       issues.push('a browser adapter needs at least one navigation origin')
     if (manifest.egress.length === 0) issues.push('a browser adapter needs at least one egress host')
@@ -729,7 +763,9 @@ function runtimeIssues(manifest: {
     return issues
   }
   // http
-  if (manifest.home !== undefined) issues.push('an http adapter has no home: it opens no pages')
+  // Parsing sets home to the first endpoint, so a parsed manifest parses again unchanged.
+  if (manifest.home !== undefined && !homeIsDerived(manifest))
+    issues.push('an http adapter has no home: it opens no pages')
   if (manifest.navigation.length > 0) issues.push('an http adapter has no navigation origins')
   if (manifest.cartUrl !== undefined) issues.push('an http adapter has no cartUrl')
   for (const host of manifest.egress)

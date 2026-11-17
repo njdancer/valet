@@ -63,7 +63,7 @@ describe('isValidCredentialGrant', () => {
       isValidCredentialGrant({
         ...grant,
         custody: 'entrusted',
-        targets: ['192.168.1.20:8123', '[fd00::1]:22'],
+        targets: ['192.168.1.20:8123', 'fd00::1:22'],
       }),
     ).toBe(true)
     expect(

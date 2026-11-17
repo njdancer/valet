@@ -1253,7 +1253,7 @@ export type PairingView =
     }
 
 export interface RosterStatus {
-  readonly state: 'off' | 'waiting' | 'on' | 'needs-you' | 'not-added' | 'refused'
+  readonly state: 'off' | 'waiting' | 'on' | 'needs-you' | 'not-added' | 'joining' | 'refused'
   readonly devices: number
 }
 

@@ -9,6 +9,10 @@
 //   4. Connections lists the agent approved through the account, and removes it everywhere.
 //   5. The Mac gets new keys (as after the 2026-11-17 key loss): removed on the hub's page, added
 //      again, and a sign-in works again.
+//   6. A phone on the account (step 4c): paired once, it goes on the account's device list and
+//      reads the account at the hub. The Mac loses its keys again; the phone adds the new Mac, and
+//      nobody pairs again: the phone's approvals reach the new Mac, and the agent's sign-in, which
+//      the old Mac approved, still works.
 //
 // Nothing here is mocked between the parts: every bug the first live sign-in found sat between them.
 
@@ -26,11 +30,16 @@ import type {
   OAuthTokens,
 } from '@modelcontextprotocol/sdk/shared/auth.js'
 import { type Browser, type BrowserContext, chromium, expect, type Page, test } from '@playwright/test'
+import { joinRecordDevice, pairingCode, pairingOfferId, pairingSealKey } from '@valet/core'
+import { HubPhone } from '../../relay/test/hub-phone'
+import { Phone } from '../../relay/test/phone'
 import {
   appDir,
   appWindows,
   CONTROL,
+  callToolOnce,
   chooseStore,
+  connectMcp,
   type Launched,
   launch,
   tempDir,
@@ -259,6 +268,19 @@ async function approveOnMac(code: string): Promise<void> {
   await expect(sheet.getByText('Approved. Your browser carries on to the connector by itself.')).toBeVisible()
 }
 
+/** What cloud agents may use carries over a key loss, or is turned on again the same way. */
+async function keepToolForAgents(): Promise<void> {
+  const setup = await control.evaluate(() => window.valet?.remote.setup())
+  if (!setup?.tools.some((t) => t.enabled && t.ref === 'woolworths.search_products')) {
+    const pending = await control.evaluate(() => window.valet?.approvals.pending())
+    const hash = pending?.find((p) => p.adapterId === 'woolworths')?.to.hash
+    if (hash !== undefined)
+      await control.evaluate((h) => window.valet?.approvals.approve('woolworths', h), hash)
+    await control.evaluate(() => window.valet?.remote.setEnabled(true))
+    await control.evaluate(() => window.valet?.remote.setTool('woolworths', 'search_products', true))
+  }
+}
+
 const toolNames = async (client: Client) => (await client.listTools()).tools.map((t) => t.name).sort()
 
 test('signs up on the hub and puts the Mac on the account', async () => {
@@ -425,19 +447,147 @@ test('the Mac gets new keys: removed on the hub’s page, added again, and sign-
   await expect(control.getByText(/doesn’t check|Couldn’t/i)).toHaveCount(0)
   expect((await control.evaluate(() => window.valet?.app.status()))?.lockedDown).toBe(false)
 
-  // What cloud agents may use carries over, or is turned on again the same way.
-  const setup = await control.evaluate(() => window.valet?.remote.setup())
-  if (!setup?.tools.some((t) => t.enabled && t.ref === 'woolworths.search_products')) {
-    const pending = await control.evaluate(() => window.valet?.approvals.pending())
-    const hash = pending?.find((p) => p.adapterId === 'woolworths')?.to.hash
-    if (hash !== undefined)
-      await control.evaluate((h) => window.valet?.approvals.approve('woolworths', h), hash)
-    await control.evaluate(() => window.valet?.remote.setEnabled(true))
-    await control.evaluate(() => window.valet?.remote.setTool('woolworths', 'search_products', true))
-  }
+  await keepToolForAgents()
 
   const again = new Agent('Claude (again)')
   await approveOnMac(await again.startSignIn())
   const client = await again.finishSignIn()
   expect(await toolNames(client)).toEqual(['test-mac__woolworths_search_products'])
+})
+
+let phone: Phone
+let hubPhone: HubPhone
+const closers: (() => void)[] = []
+test.afterAll(() => {
+  for (const close of closers) close()
+})
+
+async function until<T>(check: () => T | null | undefined | false, ms = 20_000): Promise<T> {
+  const deadline = Date.now() + ms
+  for (;;) {
+    const value = check()
+    if (value) return value
+    if (Date.now() > deadline) throw new Error('timed out')
+    await new Promise((r) => setTimeout(r, 50))
+  }
+}
+
+const devicesLine = (n: number) =>
+  `Your account’s device list has ${n} devices, each added by one already on it.`
+
+test('a phone paired once goes on the account’s device list, and reads the account at the hub', async () => {
+  await control.evaluate(() => {
+    window.location.hash = '#/settings/devices'
+  })
+  await control.getByRole('button', { name: 'Pair an iPhone' }).click()
+  const qr = control.locator('svg[data-pairing-qr]')
+  await qr.waitFor()
+  const text = (await qr.getAttribute('data-pairing-qr')) ?? ''
+  const offerText = Buffer.from(text.slice('valet-pair:'.length), 'base64url').toString()
+  const offer = JSON.parse(offerText)
+  const offerId = pairingOfferId(offer.secret)
+  const key = pairingSealKey(offer.secret, offer.macId)
+  phone = new Phone(RELAY_CONNECT, offer.macId, offer.macAgreementKey, RELAY_ORIGIN, (c) => closers.push(c))
+  await phone.dial(() => undefined)
+  const reply = phone.sendPairingReply(offer, offerId, key, 'Test iPhone')
+  const challenge = await until(() => phone.frames.find((f) => f['type'] === 'pairing-challenge'))
+  const code = pairingCode(offer.secret, offer.macId, offerText, reply, challenge['macNonce'] as string)
+  const dialog = control.getByRole('dialog')
+  await dialog.getByRole('button', { name: `${code.slice(0, 3)} ${code.slice(3)}` }).click()
+  await expect(dialog.getByText(/Test iPhone gets Valet’s approvals now/)).toBeVisible()
+  await dialog.getByRole('button', { name: 'Done' }).click()
+  // The Mac puts it on the account's list by itself (the e2e build's Touch ID says yes).
+  await expect(control.getByText(devicesLine(2))).toBeVisible()
+
+  hubPhone = new HubPhone(phone, HUB, (path, body) =>
+    fetch(`${HUB}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  )
+  const account = await hubPhone.account()
+  expect([...HubPhone.roster(account).devices.keys()]).toEqual([offer.macId, phone.deviceId])
+  expect(account.nodes).toMatchObject([{ slug: 'test-mac', name: MAC_NAME, online: true }])
+  expect(account.joining).toEqual([])
+})
+
+test('the Mac loses its keys again: the phone adds the new Mac, and nobody pairs again', async () => {
+  // An agent the old Mac approved, which should outlive it.
+  const claude = new Agent('Claude (outlives the Mac)')
+  await approveOnMac(await claude.startSignIn())
+  await claude.finishSignIn()
+  phone.socket?.close()
+
+  await launched.close()
+  rmSync(join(userData, 'dev-approval-keys.json'))
+  await startApp()
+  await control.evaluate(() => {
+    window.location.hash = '#/settings/devices'
+  })
+  await expect(control.getByRole('button', { name: 'Connect to your Valet account' })).toBeVisible({
+    timeout: 30_000,
+  })
+  // Removing the old Mac on the hub's page keeps the account's list now: the phone carries it on.
+  await hubPage.goto(`${HUB}/`)
+  const old = hubPage.locator('li', { hasText: `${MAC_NAME} (test-mac)` })
+  await expect(old).toContainText('Offline')
+  await old.getByRole('button', { name: 'Remove' }).click()
+  await old.getByRole('button', { name: `Remove ${MAC_NAME}?` }).click()
+  await expect(old).toHaveCount(0)
+  expect((await hubPhone.account()).changes).toHaveLength(2)
+
+  // The new Mac is added with its code, and asks to join; the phone sees it waiting, and adds it.
+  await linkMac()
+  await expect(control.getByText(/Waiting for your iPhone/)).toBeVisible()
+  await expect.poll(async () => (await hubPhone.account()).joining.length, { timeout: 20_000 }).toBe(1)
+  const asked = (await hubPhone.account()).joining[0]
+  if (asked === undefined) throw new Error('the new Mac never asked to join')
+  const newMac = joinRecordDevice(asked.record, { macId: asked.macId })
+  expect(newMac).toMatchObject({ role: 'mac', name: MAC_NAME })
+  if (newMac === null) throw new Error('a join record that does not check')
+  const added = await hubPhone.addWaitingMacs()
+  expect(added.refused).toBeUndefined()
+  expect([...HubPhone.roster(added).devices.keys()]).toContain(newMac.deviceId)
+  await expect(control.getByText(devicesLine(3))).toBeVisible()
+  await expect(control.getByText('Test iPhone', { exact: true })).toBeVisible()
+  expect((await control.evaluate(() => window.valet?.app.status()))?.lockedDown).toBe(false)
+
+  // The phone reaches the new Mac with the keys it already had, and gets its status.
+  const again = new Phone(
+    RELAY_CONNECT,
+    newMac.deviceId,
+    newMac.agreementKey,
+    RELAY_ORIGIN,
+    (c) => closers.push(c),
+    phone,
+  )
+  await again.dial((nonce) => again.hello(nonce))
+  await until(() => again.frames.find((f) => f['type'] === 'ready'))
+  await until(() => again.messages.find((m) => m['type'] === 'status'))
+
+  // An agent's request on this Mac reaches the phone, and its approval comes back.
+  const local = await connectMcp(control, userData, 'Claude Code')
+  const set = await callToolOnce(local, 'valet_set_setting', { setting: 'traceRetentionDays', value: 9 })
+  expect(set.isError, set.text).toBe(false)
+  const card = await until(() => again.messages.find((m) => m['type'] === 'approval-request'))
+  await again.send({ type: 'ack', ackSeq: card['seq'] })
+  await again.send({
+    type: 'approval-decision',
+    decision: again.approve(String(card['requestText']), newMac.deviceId),
+  })
+  await expect
+    .poll(async () => (await control.evaluate(() => window.valet?.settings.get()))?.traceRetentionDays, {
+      timeout: 20_000,
+    })
+    .toBe(9)
+  await local.close()
+
+  // The agent the old Mac approved still works, through the new one: its approver is still on the list.
+  await keepToolForAgents()
+  await expect
+    .poll(async () => (await claude.client?.listTools().catch(() => null))?.tools.map((t) => t.name), {
+      timeout: 30_000,
+    })
+    .toEqual(['test-mac__woolworths_search_products'])
 })
