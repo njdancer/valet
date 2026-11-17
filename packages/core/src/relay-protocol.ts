@@ -543,6 +543,13 @@ export const macToRelaySchema = z.discriminatedUnion('type', [
    * may ask; taking access away needs no signature.
    */
   z.object({ type: z.literal('hub-grant-revoke'), grantId: z.string().regex(/^[0-9a-f]{64}$/) }).strict(),
+  /**
+   * Ask to join the account's device list when another device started it (relay-hub.md, step 4c):
+   * this Mac's own device record, signed by its approval key, so a phone on the list can check the
+   * three keys it would add are this Mac's. The hub keeps it for the account's phones to read; a
+   * phone signs the add.
+   */
+  z.object({ type: z.literal('hub-roster-join'), record: signedTextSchema }).strict(),
 ])
 export type MacToRelay = z.infer<typeof macToRelaySchema>
 

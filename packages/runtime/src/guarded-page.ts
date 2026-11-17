@@ -26,76 +26,40 @@
 // by the browser driver (SessionDriver.beginRun), which reports what it refuses to the tool host.
 
 import {
-  type AdapterManifest,
-  type AuditEvent,
   ambiguousPath,
   decideRequest,
   declarationOnHost,
-  type ErrorClass,
   type FetchInit,
   type FetchResult,
   hostAllowed,
-  type Purpose,
   pathMatches,
-  type RequestDeclaration,
-  type Stage,
   type ToolPage,
   touchesDeniedSegment,
   ValetError,
 } from '@valet/core'
-import type { CallState } from './call-state'
-import type { Clock } from './clock'
-import {
-  type BlockCause,
-  blockCause,
-  breakerRefusal,
-  isHtml,
-  navigationBlocked,
-  type SiteGuards,
-  siteRefusal,
-} from './site-protection'
+import { CallGate, type CallGateOptions, headerValue, isRoutingOverride, SURFACE_CLASS } from './call-gate'
+import { blockCause, isHtml, navigationBlocked } from './site-protection'
 
-export const PURPOSE_RANK: Readonly<Record<Purpose, number>> = { read: 0, write: 1, irreversible: 2 }
-
-/** Headers some servers honour to turn one method into another, which would bypass method matching. */
-const METHOD_OVERRIDE_HEADERS = ['x-http-method-override', 'x-http-method', 'x-method-override']
-
-export const MAX_TARGET_LENGTH = 300
-
-export interface GuardedPageOptions {
-  readonly adapterId: string
-  readonly manifest: AdapterManifest
-  /** The running tool's declared side effect. A request may not do more than its tool declares. */
-  readonly sideEffect: Purpose
-  /**
-   * The irreversible declarations the running tool names (C15), the manifest's own objects. An
-   * irreversible declaration not among them is refused to this tool whatever its side effect.
-   */
-  readonly unlocks?: readonly RequestDeclaration[]
+export interface GuardedPageOptions extends CallGateOptions {
   readonly inner: ToolPage
-  readonly site: SiteGuards
-  readonly state: CallState
-  /** Appends an audit event. Must not throw. */
-  readonly audit: (event: AuditEvent) => Promise<void>
-  /** Times the wait for the site's next request slot, so a long one can be recorded. */
-  readonly clock?: Clock
 }
 
-/** Waits shorter than this aren't worth a line in the trace. */
-export const NOTEWORTHY_WAIT_MS = 1000
-
 export class GuardedToolPage implements ToolPage {
-  constructor(private readonly options: GuardedPageOptions) {}
+  private readonly gate: CallGate
+
+  constructor(private readonly options: GuardedPageOptions) {
+    this.gate = new CallGate(options)
+  }
 
   async goto(url: string): Promise<void> {
     const { state, manifest, sideEffect, inner, site } = this.options
     state.assertLive()
     const target = resolve(url, manifest.home)
     if (target === null || target.protocol !== 'https:' || !hostAllowed(target.hostname, manifest.egress)) {
-      return this.deny('egress', 'host-not-allowed', 'GET', target, url)
+      return this.gate.deny('egress', 'host-not-allowed', 'GET', target, url)
     }
     if (ambiguousPath(target.pathname)) {
-      return this.deny('request-surface', 'ambiguous-path', 'GET', target, url)
+      return this.gate.deny('request-surface', 'ambiguous-path', 'GET', target, url)
     }
     // The first GET declaration matching the path, as core's decideRequest picks it.
     const declared = manifest.requests.find(
@@ -108,22 +72,16 @@ export class GuardedToolPage implements ToolPage {
       touchesDeniedSegment(target.pathname) &&
       (sideEffect !== 'irreversible' || declared?.purpose !== 'irreversible')
     ) {
-      return this.deny('request-surface', 'denied-path', 'GET', target, url)
+      return this.gate.deny('request-surface', 'denied-path', 'GET', target, url)
     }
-    if (declared !== undefined && !this.mayUse(declared)) {
-      return this.deny('request-surface', 'denied-path', 'GET', target, url)
+    if (declared !== undefined && !this.gate.mayUse(declared)) {
+      return this.gate.deny('request-surface', 'denied-path', 'GET', target, url)
     }
-    const admitted = await this.admit('GET', target, url)
+    const admitted = await this.gate.admit('GET', target, url)
     await state.track(inner.goto(target.href))
     const cause = await state.track(navigationBlocked(inner))
-    if (cause !== null) this.siteBlocked(cause)
+    if (cause !== null) this.gate.siteBlocked(cause)
     site.breaker.recordSuccess(admitted)
-  }
-
-  /** Within the tool's side effect, and for an irreversible declaration, one the tool names. */
-  private mayUse(declared: RequestDeclaration): boolean {
-    if (PURPOSE_RANK[declared.purpose] > PURPOSE_RANK[this.options.sideEffect]) return false
-    return declared.purpose !== 'irreversible' || (this.options.unlocks ?? []).includes(declared)
   }
 
   currentUrl(): string {
@@ -134,7 +92,7 @@ export class GuardedToolPage implements ToolPage {
   async click(selector: string): Promise<void> {
     const { state, inner } = this.options
     state.assertLive()
-    await this.pace()
+    await this.gate.pace()
     await state.track(inner.click(selector))
   }
 
@@ -162,22 +120,23 @@ export class GuardedToolPage implements ToolPage {
     const target = resolve(pathOrUrl, manifest.home)
     const request = snapshotInit(init)
     const method = request === null ? 'INVALID' : request.method
-    if (target === null) return this.deny('request-surface', 'host-not-allowed', method, null, pathOrUrl)
-    if (request === null) return this.deny('request-surface', 'undeclared-request', method, target, pathOrUrl)
-    if (METHOD_OVERRIDE_HEADERS.some((name) => headerValue(request.headers, name) !== undefined)) {
-      return this.deny('request-surface', 'undeclared-request', method, target, pathOrUrl)
+    if (target === null) return this.gate.deny('request-surface', 'host-not-allowed', method, null, pathOrUrl)
+    if (request === null)
+      return this.gate.deny('request-surface', 'undeclared-request', method, target, pathOrUrl)
+    if (Object.keys(request.headers).some(isRoutingOverride)) {
+      return this.gate.deny('request-surface', 'undeclared-request', method, target, pathOrUrl)
     }
     const decision = decideRequest(method, target.href, manifest.egress, manifest.requests)
     if (!decision.allowed) {
-      return this.deny('request-surface', SURFACE_CLASS[decision.reason], method, target, pathOrUrl)
+      return this.gate.deny('request-surface', SURFACE_CLASS[decision.reason], method, target, pathOrUrl)
     }
-    if (!this.mayUse(decision.declaration)) {
-      return this.deny('request-surface', 'denied-path', method, target, pathOrUrl)
+    if (!this.gate.mayUse(decision.declaration)) {
+      return this.gate.deny('request-surface', 'denied-path', method, target, pathOrUrl)
     }
-    const admitted = await this.admit(method, target, pathOrUrl)
+    const admitted = await this.gate.admit(method, target, pathOrUrl)
     const result = await state.track(inner.fetch(target.href, request))
     const cause = blockCause(result)
-    if (cause !== null) this.siteBlocked(cause)
+    if (cause !== null) this.gate.siteBlocked(cause)
     site.breaker.recordSuccess(admitted)
     // HTML where an API answer was expected: an error page or a redirect to a login page. Not a
     // block, so the site's breaker (shared with other adapters) stays closed.
@@ -186,86 +145,6 @@ export class GuardedToolPage implements ToolPage {
     }
     return result
   }
-
-  /**
-   * Counts the request against the ceiling and waits for the site's rate budget. Returns the
-   * breaker's admission token for recordSuccess().
-   */
-  private async admit(method: string, target: URL, raw: unknown): Promise<number> {
-    const { state, manifest } = this.options
-    state.requests++
-    if (state.requests > manifest.limits.requestsPerRun) {
-      return this.deny('request-surface', 'request-ceiling', method, target, raw)
-    }
-    return this.pace()
-  }
-
-  /** Waits for the site's rate budget, refusing while its breaker is open. */
-  private async pace(): Promise<number> {
-    const { state, site } = this.options
-    if (site.breaker.isOpen()) {
-      state.blocked = true
-      throw breakerRefusal()
-    }
-    const { clock, adapterId, audit } = this.options
-    const before = clock?.now() ?? 0
-    await site.budget.acquire(state.signal)
-    const waitedMs = (clock?.now() ?? 0) - before
-    if (waitedMs >= NOTEWORTHY_WAIT_MS) {
-      await audit({ type: 'call-waited', adapterId, callId: state.callId, reason: 'pace', waitedMs })
-    }
-    state.assertLive()
-    // The breaker can open while we wait our turn.
-    if (site.breaker.isOpen()) {
-      state.blocked = true
-      throw breakerRefusal()
-    }
-    return site.breaker.admit()
-  }
-
-  /** The site refused us: trip its breaker and end the call. */
-  private siteBlocked(cause: BlockCause): never {
-    const { state, site } = this.options
-    state.blocked = true
-    site.breaker.trip(cause, state.callId)
-    throw siteRefusal(cause)
-  }
-
-  private async deny(
-    stage: Stage,
-    errorClass: ErrorClass,
-    method: string,
-    target: URL | null,
-    raw: unknown,
-  ): Promise<never> {
-    const { state, adapterId, audit } = this.options
-    const error = new ValetError(stage, errorClass)
-    state.violation ??= error
-    await audit({
-      type: 'request-blocked',
-      adapterId,
-      method: plainMethod(method),
-      target: state.redactTarget(describeTarget(target), raw),
-      reason: errorClass,
-      initiator: 'tool',
-      partition: 'tool',
-      callId: state.callId,
-    })
-    throw error
-  }
-}
-
-const SURFACE_CLASS = {
-  'host-not-allowed': 'host-not-allowed',
-  'bad-url': 'host-not-allowed',
-  undeclared: 'undeclared-request',
-  'denied-path': 'denied-path',
-  'ambiguous-path': 'ambiguous-path',
-} as const satisfies Record<string, ErrorClass>
-
-/** An HTTP method as it may appear in the audit log; anything else is recorded as INVALID. */
-export function plainMethod(method: unknown): string {
-  return typeof method === 'string' && /^[A-Z]{1,10}$/.test(method) ? method : 'INVALID'
 }
 
 function resolve(pathOrUrl: string, home: string): URL | null {
@@ -275,12 +154,6 @@ function resolve(pathOrUrl: string, home: string): URL | null {
   } catch {
     return null
   }
-}
-
-/** Origin and path only: query strings and fragments can carry data. */
-function describeTarget(target: URL | null): string {
-  if (target === null) return '(unparseable)'
-  return `${target.origin}${target.pathname}`.slice(0, MAX_TARGET_LENGTH)
 }
 
 interface RequestSnapshot {
@@ -319,11 +192,6 @@ function snapshotInit(init: FetchInit | undefined): RequestSnapshot | null {
   } catch {
     return null
   }
-}
-
-function headerValue(headers: Readonly<Record<string, string>>, name: string): string | undefined {
-  const key = Object.keys(headers).find((k) => k.toLowerCase() === name)
-  return key === undefined ? undefined : headers[key]
 }
 
 /** page.fetch is for site APIs, so expect JSON unless the tool explicitly accepts something else. */

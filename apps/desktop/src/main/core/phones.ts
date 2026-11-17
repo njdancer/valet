@@ -137,9 +137,16 @@ export class Phones implements PhoneOutbox {
       channel: keysOps,
       macName: this.options.macName,
       send: (changes) => this.client?.send({ type: 'hub-roster-append', changes: [...changes] }) ?? false,
+      sendJoin: (record) => this.client?.send({ type: 'hub-roster-join', record }) ?? false,
       removed: parts.removedFromAccount,
       now: parts.now,
       onChange: () => this.options.emit(),
+      // Phones on the account's list: trusted here like paired ones, let in by the relay.
+      onPhones: (phones) => {
+        parts.devices.setAccountPhones(phones)
+        this.channel?.devicesChanged()
+        this.options.emit()
+      },
       ...(this.options.log === undefined ? {} : { log: this.options.log }),
     })
     const agents = new HubAgents({

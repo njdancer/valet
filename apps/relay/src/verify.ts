@@ -68,3 +68,12 @@ export function verifyHubGrantSignature(
 ): Promise<boolean> {
   return verifyDomain(publicKey, SIGNING_DOMAINS.hubGrant, payload, signature)
 }
+
+/** A Mac's approval signature over its own device record, when it asks to join a list (roster.ts). */
+export function verifyDeviceRecordSignature(
+  publicKey: string,
+  payload: string,
+  signature: string,
+): Promise<boolean> {
+  return verifyDomain(publicKey, SIGNING_DOMAINS.deviceRecord, payload, signature)
+}

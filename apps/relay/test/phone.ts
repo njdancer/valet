@@ -23,11 +23,13 @@ export function p256() {
 }
 
 /** A phone over a real WebSocket, as the iPhone app speaks to the relay. */
+export type PhoneKeys = Pick<Phone, 'approval' | 'transport' | 'agreement'>
+
 export class Phone {
-  readonly approval = p256()
-  readonly transport = p256()
-  readonly agreement = p256()
-  readonly deviceId = keyId(this.approval.spki)
+  readonly approval: ReturnType<typeof p256>
+  readonly transport: ReturnType<typeof p256>
+  readonly agreement: ReturnType<typeof p256>
+  readonly deviceId: string
   readonly frames: Record<string, unknown>[] = []
   readonly messages: Record<string, unknown>[] = []
   socket: WebSocket | null = null
@@ -42,7 +44,14 @@ export class Phone {
     /** The relay's origin, named in its challenges. */
     private readonly origin: string,
     private readonly onClose: (close: () => void) => void = () => undefined,
-  ) {}
+    /** The same phone's keys, to reach another Mac (the account's list, relay-hub.md step 4c). */
+    keys?: PhoneKeys,
+  ) {
+    this.approval = keys?.approval ?? p256()
+    this.transport = keys?.transport ?? p256()
+    this.agreement = keys?.agreement ?? p256()
+    this.deviceId = keyId(this.approval.spki)
+  }
 
   agree = async (peer: KeyObject) => diffieHellman({ privateKey: this.agreement.privateKey, publicKey: peer })
 

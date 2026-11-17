@@ -71,6 +71,81 @@ Each entry is an IP literal, so DNS can't be redirected. It is never a port Vale
 for an adapter's hash, not just 30 minutes of authoring. A kept secret is never sent over
 unencrypted `http`.
 
+#### As built (workstream A)
+
+- `@valet/egress` is the broker: `EgressBroker(endpoints, options)` with `fetch(url, request, run)`,
+  `websocket(url, options, run)` and `tunnels(run, { admit, plainTcp })`. A `RunContext` is
+  `{ meter, signal, record }`: one `RunMeter` per call holds its upload budget, and `record` writes
+  each connection's `egress-connection` audit event with bytes up and down.
+- `packages/runtime/src/guarded-http.ts` is `ctx.http`. It shares the request checks with the
+  page's fetch (`call-gate.ts`): the request surface with private hosts and exact ports, the
+  tool's side effect and unlocks, the ceiling, the site's pace and breaker (a 429 or a 403 HTML
+  page trips it, as in the browser), and a sticky `request-blocked` refusal.
+- An `http` adapter gets `noBrowserDriver()`: no browser window at all; `ctx.page` refuses
+  everything with `tool-run/not-granted`.
+- Drafts: `valet_create_draft` takes `runtime: "http"` for a blank http draft. Cases answer
+  `ctx.http` from the case's `fetch` list through the real guard. Live trials of an http draft go
+  through the broker with read-only rules and reach the draft's public hosts only.
+
+#### Decisions for Nick's review (workstream A)
+
+Taken while Nick was away, each the recommendation. Any can be changed.
+
+1. **Bodies are capped at 2 MB, not 4 MB.** A response crosses into the sandbox as JSON text, and
+   the channel's message limit is 4 million characters; 2 MB still fits once written as base64.
+2. **Feeds are a library function, not a capability.** Tool code imports `parseFeed` from
+   `@valet/core`. It's pure JS, so it runs in the sandbox either way, and it needs no grant.
+3. **A WebSocket message doesn't count as a request.** Opening a socket does (ceiling and pace).
+   Counting every message would end a ticker after a few ticks; bytes sent are bounded by the
+   upload budget instead.
+4. **Live trials of a draft never reach its private hosts**, even with a `private-network`
+   authoring grant. Cases cover them; the first real call is after the person approves the
+   adapter, whose card lists each private host as a high-risk line.
+5. **Authorization is refused outright** in tool code's headers. Once secrets v2 lands, it only
+   ever comes from a kept credential the runtime adds.
+6. **No signed-in http adapters yet.** An http manifest's probe is `none`; a `fetch` probe through
+   `ctx.http` waits for credentials (workstream B).
+7. **Routing headers are refused, on ctx.http and ctx.page.fetch alike**: `Forwarded`, `Via`,
+   `X-Rewrite-URL`, `X-Host`, the client-address headers and the `X-Forwarded-*`, `X-Original-*`,
+   `X-Envoy-*`, `X-Amzn-*` and `CF-*` families. Servers may route by them over the request line.
+8. **Deny segments ignore a format suffix**: `/pay.json` and `/pay.` count as `/pay` everywhere, the
+   browser path included.
+9. **A request carrying a credential goes `accept-encoding: identity` and may not set Range**, an
+   answer to it that is compressed or holds any 12-character piece of the token is refused, and its
+   whole, base64 and JSON-escaped forms are redacted from the call's output and audit targets.
+
+#### Red team (workstream A, 2026-11-17)
+
+An adversarial pass on the broker, ctx.http, the XML reader and http drafts, as an agent that
+writes both the manifest and the code. No critical or high findings. Fixed before merge, each with
+its proof-of-concept kept as a test (`*.redteam.test.ts`):
+
+- Path and host override headers (`X-Original-URL` and the rest) passed to the site (medium).
+- WebDAV `Destination` was an unchecked second target. COPY and MOVE now need one, on the same
+  origin, passing the request surface as if requested itself, and it is sent as checked; no other
+  method may carry one (medium).
+- Credential redaction was an exact match, so a gzipped or Range-split echo got past it, and the
+  final output wasn't redacted for it (medium, latent until secrets v2 is wired).
+- Deny segments missed `pay.json` (medium).
+- A public name answering with one of this Mac's own public addresses was dialled (low; medium for
+  raw tunnels).
+- The XML reader copied namespace scopes per element: quadratic CPU (low).
+- Concurrent socket opens passed the cap of 4 (low).
+- WebSocket subprotocols weren't spent from the upload budget (low).
+- `::ffff:0:a.b.c.d` (SIIT) counted as public; Tailscale's `100.100.100.100` and
+  `fd7a:115c:a1e0::53` could be private hosts although this Mac answers them (low).
+
+Residual risks, accepted for now:
+
+- **Exfiltration to a declared endpoint, up to the upload budget.** By design: the budget, the
+  declared hosts and the card are the limit.
+- **Domain fronting inside a raw tunnel.** The broker checks SNI, not the HTTP Host inside TLS it
+  can't read. Most CDNs now refuse a mismatch; raw adapters are high risk on the card regardless.
+- **Tunnel ports must be registered as Valet's own** by the Node runtime (workstream C), so a raw
+  adapter can't reach another adapter's tunnel.
+- **A credential the server transforms** (hashed, re-encoded some other way) is not recognised.
+  Only an exchange the host's own API chooses to make can do that.
+
 ### F2. Secrets, version 2
 
 The rule in security-model.md, "adapter code never obtains a secret's value", becomes:
@@ -150,16 +225,19 @@ The manifest gets `credentials`, next to the existing `secrets`, which keep mean
   or `frameOrigins`. `session.probe` is `none`, or a `fetch` probe that runs through `ctx.http`.
 - `ctx.http.fetch(url, { method, headers, body, credential? })` returns
   `{ status, headers, body }`. Redirects come back unfollowed. Valet refuses the `host`,
-  `cookie` and hop-by-hop headers, and the header a named credential fills. Responses are capped
-  at 4 MB, with 30 s time limits.
+  `cookie` and hop-by-hop headers, and the header a named credential fills. Bodies are capped at
+  2 MB each way (so a body still fits the tool channel as base64), with 30 s time limits.
 - WebDAV verbs (`PROPFIND`, `REPORT`, `MKCOL`, `MKCALENDAR`, `COPY`, `MOVE`) are added to the
   request methods, so CalDAV and CardDAV (iCloud calendars and contacts) work. `PROPFIND` and
   `REPORT` may be declared `read`.
 - `ctx.http.websocket(url, { credential?, protocols? })` opens a socket on a declared `GET`
-  path. Each message counts against the run's ceiling and upload budget. Each message is capped
-  in size, and the socket closes when the call ends.
-- `ctx.feeds.parse(text)` parses RSS, Atom and JSON Feed into one shape. It's a pure-JS parser
-  bundled into the sandbox prelude, so parsing never happens in the main process.
+  path marked `websocket: true`. Opening it counts against the run's ceiling and takes a pacing
+  slot; each message sent is spent from the upload budget. Messages are capped at 1 MB, at most
+  four sockets are open per call, and they close when the call ends.
+- `parseFeed(text)` (imported from `@valet/core` in tool code) parses RSS, Atom and JSON Feed into
+  one shape, and `parseXml(text)` reads CalDAV and CardDAV answers with namespaces resolved. Both
+  are pure JS in the tool library the sandbox loads, so parsing never happens in the main
+  process, and neither takes a DOCTYPE, so no entity tricks.
 - The authoring guide's API-as-home workaround (#111, #112) is kept for browser adapters that
   also call an API, and dropped as the advice for pure APIs.
 
