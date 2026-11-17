@@ -40,7 +40,7 @@ import { href, navigate } from '../../lib/router'
 import { PROVIDER_WORDING } from '../../lib/wording'
 import { MAIL_SECRET, MESSAGES_SECRET, type Target, targetFor } from './grant/target'
 
-export { MESSAGES_SECRET, targetFor }
+export { MAIL_SECRET, MESSAGES_SECRET, targetFor }
 
 /** Vault providers. The test provider is offered only when the main process reports it (demo mode). */
 // The Keychain copy first: D6 made it the way Valet gets the person's own 1Password item.
