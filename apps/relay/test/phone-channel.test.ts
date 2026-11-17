@@ -99,7 +99,7 @@ async function startMac(relay: Runtime) {
     listener: () => null,
     consent: () => ({ state: 'declined' }),
     onEvent: (event) => {
-      if (event.type !== 'hub-status') channel?.handle(event)
+      if (!event.type.startsWith('hub-')) channel?.handle(event as never)
     },
     backoff: { minMs: 50, maxMs: 200 },
   })

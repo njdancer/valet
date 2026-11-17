@@ -190,6 +190,117 @@ test/hub-browser.test.ts` in `apps/relay` drives the pages in Chromium with a vi
 there. Set `HUB_HOST = "valet.dncr.me"`, add a Workers Custom Domain for `valet.dncr.me`, run
 `wrangler secret put HUB_SETUP_SECRET`, deploy, then open `https://valet.dncr.me/sign-up`.
 
+## Step 4 as being built: the account's device list
+
+Nick chose (2026-11-15) to build step 4 before steps 2 and 3, so the hub never lets an agent in
+without a grant your phone signed.
+
+**The list is a chain of signed changes** (`packages/core/src/roster.ts`). Each change adds or
+removes one device (its id, role, name and three public keys), names the change before it by
+hash, and is signed by the approval key of a device already on the list (Face ID or Touch ID). The
+first change is a device adding itself. Limits: 32 devices, 512 changes, never zero devices.
+
+- **The hub keeps it and can't change it.** It stores the chain per account, accepts an append
+  from a linked Mac (`hub-roster-append`) only if the whole chain still checks (WebCrypto in the
+  Worker), and sends the whole chain (`hub-roster`) to every node of the account after a change,
+  after a hello and after joining. A change built on an old head is refused as a conflict.
+- **Each node trusts only its own check.** It refuses a chain that forks, reorders, drops changes
+  or goes back to a head it has already seen (`verifyRoster` with `pinned` and `known`).
+- **The Mac starts the list, without re-pairing**
+  (`apps/desktop/src/main/core/approvals/roster-keeper.ts`). On an account whose list is empty, the Mac writes the first change (itself,
+  with its three keys) and one add for each phone it already paired, all signed under one Touch ID
+  prompt ("put this Mac and its iPhones on your Valet account"), and sends them as one
+  `hub-roster-append` the hub keeps all together or not at all. Each phone's keys are the ones the
+  Mac verified when it paired. After that the Mac keeps the list in step: a phone paired here is
+  added, a phone removed in Settings is removed (each one more prompt), and a phone of this Mac's
+  that another device took off the list is revoked here too.
+- **What the Mac pins.** Only a list whose first change it signed itself: the trusted ledger
+  keeps that hash with the latest head and count it saw. A hub can't hand the Mac a list some other
+  key started; such a list shows "Another device started your account's device list" and the Mac
+  signs nothing on it. Leaving the account forgets the pin, so a fresh start pins again.
+- **The Secure Enclave helper checks each change before the prompt**
+  (`swift-bridge/Sources/ValetHelperKit/ChannelSigning.swift`): up to 9 at once, all by this Mac,
+  for one account, numbered one after another and each naming the hash of the one before. The
+  Mac adds itself (with its own keys) only as the very first change, and otherwise adds iPhones
+  or removes other devices. It never adds another Mac and never removes itself; the helper writes
+  the prompt's reason itself.
+- **Settings › Devices** shows the list's state under "Valet account": how many devices it has,
+  "Try again" after a cancelled prompt, or why it isn't used.
+- **Not yet trusted from the list:** a phone this Mac didn't pair. That comes with step 4c, where
+  the iPhone signs in to the hub with the QR shortcut, can sign adds and removes itself, and each
+  Mac registers every phone on the list with its own relay object. A Mac joining an account whose
+  list another device started waits for that device to add it (also 4c), and a Mac whose keys are
+  renewed (only keys made before they worked while locked) needs its entry replaced then too.
+
+Why a chain and not a list re-signed each time: removing a device must not need the device
+being removed, and a node that saw a removal must never be shown a list without it again.
+
+## Step 3 as being built: agents' grants
+
+Built in this order: the hub's sign-in for agents and the grant format (3a), then the Mac's part
+(3b), then the aggregated MCP (step 2), so no agent is ever served without a signed grant.
+
+- **The hub is an OAuth 2.1 server for MCP clients** (`apps/relay/src/hub/oauth.ts`): metadata for
+  `<hub>/mcp`, Dynamic Client Registration (public clients, https or loopback redirects, at most
+  100), the code flow with PKCE S256 and resource indicators, codes good once for a minute,
+  access tokens for an hour, rotating refresh tokens (a reuse ends everything from that sign-in).
+  Tokens are stored as hashes, each tied to the grant that approved it.
+- **`/authorize` never decides.** It shows the browser a code and tells every node of the account
+  (`hub-consents`). The person approves on a device and types that code there, as for today's
+  remote consents. The agent's browser polls and, holding the cookie `/authorize` set, collects
+  its code once a grant is in. No sign-in to the hub is needed on that page: the device's
+  signature is what counts, and the code ties it to that browser.
+- **A grant** (`packages/core/src/hub-grant.ts`, domain `valet/hub-grant/v1`) names the account,
+  the sign-in, the agent and its redirect host (claims, shown as such), the scope
+  `remote-tools`, and at most 90 days. It is signed by the approval key of a device on the
+  account's list. The hub keeps it only after checking the list and the signature with WebCrypto,
+  and only for a sign-in still waiting from that agent. Every node hears all grants
+  (`hub-grants`) and serves an agent only for one it checked against the list it verified itself.
+- **What `remote-tools` gives:** on each Mac, the tools it already lets remote agents use, behind
+  its own approvals, pacing and lockdown. Nothing wider. Valet's own admin and authoring tools stay
+  per-Mac decisions, as today.
+- **The Mac's part (3b)** (`apps/desktop/src/main/core/approvals/hub-agents.ts`). The hub's
+  waiting sign-ins appear in the same "Approve a connection" sheet as the Mac's own, marked
+  "Through: your Valet account", with the same notification. There are no tools to tick: the
+  sheet says what the agent gets instead. The code typed picks the sign-in; approving signs the
+  grant with Touch ID (the Secure Enclave helper checks it is this Mac's, for `remote-tools`, for
+  at most 90 days, and writes the prompt's reason) and sends it. Grants last 30 days. Declining
+  tells the hub. The Mac holds the hub's grants and honours only those that check against the
+  device list it verified, and serves agents with them from step 2 (below).
+- **Taking access away needs no signature.** The hub can drop a grant (and its tokens), and a Mac
+  can stop honouring one; neither can add one.
+- **Who signs:** any device on the list. Nick chose whether that includes the Mac's Touch ID or only
+  the phone (see the thread); the format allows both.
+
+## Step 2 as built: one MCP address
+
+- **`<hub>/mcp`** (`apps/relay/src/hub/mcp.ts`) takes an access token from the hub's OAuth server
+  whose grant the hub still holds, and answers `initialize`, `ping`, `tools/list` and `tools/call`
+  itself, as plain JSON. It is stateless towards the agent: no session id and no event stream, so
+  `list_changed` is not sent yet (clients that list tools again on their own see changes).
+- **Calls use the existing `http-request` framing.** The hub sends each node a POST to its own
+  `/mcp`, through that Mac's relay object, with `hub: { grantId }` and no credential. The Mac's
+  relay client serves it only if `HubAgents` checks that grant against the device list the Mac
+  verified; it then supplies its own token, minted in memory for client `hub-<grant>`, and the
+  request goes to the same remote listener, policy, approvals, pacing and audit as any remote
+  agent's. Anything else gets a 403 from the Mac. A public request can't set `hub`: the front door
+  builds every forwarded request itself.
+- **What an agent through the hub gets on a Mac:** every tool that Mac turned on for remote agents,
+  at the side effect it had then, and none of Valet's own admin or authoring tools. A grant the
+  hub stops sending ends its tokens and sessions on the Mac.
+- **Names:** `<node slug>__<the node's tool name>` (for example `studio__woolworths_view_cart`),
+  skipping any name that would pass 64 characters. Titles and descriptions name the node.
+- **Offline nodes:** online means the Mac's object heard a frame within `HUB_OFFLINE_AFTER_S`
+  (default 90). An offline node's tools stay listed for `HUB_GRACE_S` (default 120) after it
+  went quiet or closed, and a call fails fast with "<name> is offline, so nothing was sent. Try
+  again shortly." After that its tools leave the list until it is back. A call to a name that
+  isn't there gets a tool error saying to list the tools again.
+- **Towards each node** the hub keeps one MCP session per grant, and the node's last tool list for
+  that grant (what an offline node shows during its grace), both in memory only: never stored.
+  A node that forgot the session (a restart) gets a new one on the next request.
+- **Not yet:** `list_changed` over an event stream, hub-level tools (which nodes are online), and a
+  page on the hub to see and revoke grants. Step 5 retires the per-Mac hosts.
+
 ## Open, for the building agent to propose (not for Nick unless it changes his goal)
 
 - Storage: D1 vs a Durable Object per account.

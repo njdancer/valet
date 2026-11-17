@@ -90,6 +90,7 @@ import type {
   HashRoute,
   PendingReview,
   RemoteConsentItem,
+  RemoteConsentRequest,
   RemoteSetup,
   RemoteSetupTool,
   RepairItem,
@@ -110,6 +111,7 @@ import {
   adapterSettingSubject,
   DeviceStore,
   grantSubject,
+  type HubConsent,
   installSubject,
   itemFingerprint,
   type KindHandlers,
@@ -573,6 +575,8 @@ export class AppService {
         setRelayHost: (host) => this.remote.setRelayHost(host),
         relayListener: () => this.remote.relayListener(),
         relayConsent: (id, query, source) => this.remote.relayConsent(id, query, source),
+        hubAuthorization: (grantId) => this.remote.hubAuthorization(grantId),
+        hubGrantsChanged: (live) => this.remote.hubGrantsChanged(live),
       },
     })
     const { paths } = deps
@@ -709,23 +713,15 @@ export class AppService {
       info: { name: 'valet', version: deps.version },
       now: deps.now,
       changed: () => {
-        if (this.remote.status().pendingConsents === 0) this.notifier.remoteConsent(0)
+        if (this.remote.status().pendingConsents + this.hubConsents().length === 0)
+          this.notifier.remoteConsent(0)
         this.emit('app-changed')
         this.emit('remote-changed')
         this.emit('attention-changed')
       },
       // One notification and the one sheet that lists every waiting request, never a window per
       // request (relay.md), so a flood can't bury the screen.
-      consentRequested: () => {
-        const requests = this.remote.consentView().requests
-        const soonest = Math.min(...requests.map((r) => r.expiresAt))
-        this.notifier.remoteConsent(
-          requests.length,
-          Number.isFinite(soonest) ? new Date(soonest).toISOString() : undefined,
-        )
-        this.scheduleConsentSweep()
-        deps.ui.openControlPanel(href.approveConnection())
-      },
+      consentRequested: () => this.consentRequested(),
       consentEnded: (request, answer) => {
         if (answer !== 'expired') return
         this.missed.add({
@@ -1190,15 +1186,55 @@ export class AppService {
   }
 
   private consentItems(): RemoteConsentItem[] {
-    return this.remote.consentView().requests.map((r) => ({
+    return this.consentRequests().map((r) => ({
       kind: 'remote-consent',
       id: r.id,
       clientHost: r.clientHost,
       clientName: r.clientName,
       source: r.source,
+      requestedAt: r.requestedAt,
+      expiresAt: r.expiresAt,
+    }))
+  }
+
+  /** Agents' sign-ins waiting at the hub (relay-hub.md, step 3); none while not connected. */
+  private hubConsents(): HubConsent[] {
+    return this.phones?.hubAgents?.consents() ?? []
+  }
+
+  /**
+   * Every connection waiting for the person: the Mac's own, then those through the hub. A hub
+   * sign-in's id is `hub:<id>`, so declining knows where to send it.
+   */
+  private consentRequests(): RemoteConsentRequest[] {
+    const own = this.remote.consentView().requests.map((r) => ({
+      ...r,
       requestedAt: new Date(r.requestedAt).toISOString(),
       expiresAt: new Date(r.expiresAt).toISOString(),
     }))
+    const hub = this.hubConsents().map((c) => ({
+      id: `hub:${c.id}`,
+      clientId: c.clientId,
+      clientHost: c.host,
+      clientName: c.clientName,
+      source: c.source === '' ? null : c.source,
+      requestedAt: new Date(c.seenAt).toISOString(),
+      expiresAt: new Date(c.expiresAt).toISOString(),
+      via: 'hub' as const,
+    }))
+    return [...own, ...hub]
+  }
+
+  /** A connection began waiting: one notification for all of them, and the one sheet. */
+  private consentRequested(): void {
+    const requests = this.consentRequests()
+    const soonest = Math.min(...requests.map((r) => Date.parse(r.expiresAt)))
+    this.notifier.remoteConsent(
+      requests.length,
+      Number.isFinite(soonest) ? new Date(soonest).toISOString() : undefined,
+    )
+    this.scheduleConsentSweep()
+    this.deps.ui.openControlPanel(href.approveConnection())
   }
 
   /** Missed items drop off after 24 hours even with no window open to read them. */
@@ -1400,7 +1436,7 @@ export class AppService {
           this.tidyDraftsSoon()
         },
       })
-      await this.openPhones(this.approvalBroker, devices)
+      await this.openPhones(this.approvalBroker, devices, ledger)
     } catch {
       this.approvalBroker = null
       this.deps.diagnostics?.({ type: 'approvals-unavailable' })
@@ -1435,7 +1471,11 @@ export class AppService {
   }
 
   /** Starts the relay connection and the phone channel, once the broker is open. */
-  private async openPhones(broker: ApprovalBroker, devices: DeviceStore): Promise<void> {
+  private async openPhones(
+    broker: ApprovalBroker,
+    devices: DeviceStore,
+    ledger: TrustedLedger,
+  ): Promise<void> {
     try {
       await this.phones.setRelay(await this.relaySetup())
       await this.phones.open({
@@ -1453,6 +1493,7 @@ export class AppService {
             if (await devices.revoke(deviceId, by, new Date(this.deps.now()).toISOString())) {
               this.phones.unpair(deviceId)
               await this.audit.append({ type: 'device-revoked', deviceId, by })
+              void this.phones.rosterChanged().catch(() => undefined)
             }
           },
         },
@@ -1469,6 +1510,23 @@ export class AppService {
           await this.refreshPhoneStatus()
         },
         status: () => this.phoneStatus ?? undefined,
+        hubConsents: (opened) => {
+          if (opened) this.consentRequested()
+          else if (this.remote.status().pendingConsents + this.hubConsents().length === 0)
+            this.notifier.remoteConsent(0)
+          this.emit('remote-changed')
+          this.emit('attention-changed')
+        },
+        ledger,
+        removedFromAccount: async (deviceId, by) => {
+          if (await devices.revoke(deviceId, by, new Date(this.deps.now()).toISOString())) {
+            this.phones.unpair(deviceId)
+            await this.audit.append({ type: 'device-revoked', deviceId, by })
+            this.emit('phones-changed')
+            await this.refreshPhoneStatus()
+          }
+        },
+        now: this.deps.now,
       })
       await this.refreshPhoneStatus()
     } catch {
@@ -3789,6 +3847,8 @@ export class AppService {
           await this.audit.append({ type: 'device-revoked', deviceId, by: 'mac-ui' })
           this.emit('phones-changed')
           await this.refreshPhoneStatus()
+          // Off the account's list too; a cancelled prompt leaves "Try again" in Settings.
+          void this.phones.rosterChanged().catch(() => undefined)
         },
         renewKeys: () => this.renewKeys(),
         joinHub: async () => {
@@ -3804,6 +3864,7 @@ export class AppService {
         leaveHub: async () => {
           if (!this.phones.leaveHub()) throw new ValetError('config', 'not-found')
         },
+        retryRoster: () => this.phones.rosterChanged(),
       },
       adapters: {
         list: async () => (await this.states()).map(adapterSummary),
@@ -4256,11 +4317,7 @@ export class AppService {
         consents: async () => {
           const view = this.remote.consentView()
           return {
-            requests: view.requests.map((r) => ({
-              ...r,
-              requestedAt: new Date(r.requestedAt).toISOString(),
-              expiresAt: new Date(r.expiresAt).toISOString(),
-            })),
+            requests: this.consentRequests(),
             tools: view.tools.map((t) => {
               const manifest = this.adapter(t.adapterId)?.definition.manifest
               const declaration = manifest?.tools.find((d) => d.name === t.tool)
@@ -4275,6 +4332,21 @@ export class AppService {
         approveConsent: async (code, tools, capabilities = []) => {
           const consent = this.remote.consentFor(code)
           const typed = normaliseCode(code)
+          // A sign-in through the hub: the grant covers what each Mac lets remote agents use.
+          const agents = this.phones.hubAgents
+          const viaHub = consent === null ? (agents?.matching(code) ?? null) : null
+          if (agents !== null && agents !== undefined && viaHub !== null) {
+            if (!(await agents.approve(viaHub))) throw new ValetError('config', 'not-found')
+            await this.audit.append({
+              type: 'remote-consent',
+              clientId: `hub:${viaHub.clientId}`,
+              clientHost: viaHub.host,
+              source: viaHub.source === '' ? null : viaHub.source,
+              tools: [],
+              answer: 'approved',
+            })
+            return 'approved'
+          }
           // A wrong code goes straight through, so it counts against the three tries.
           if (consent === null || typed === null) return this.remote.approveConsent(code, tools)
           const on = new Set(this.remote.status().tools)
@@ -4288,9 +4360,15 @@ export class AppService {
           return 'approved'
         },
         declineConsent: async (id) => {
+          if (id.startsWith('hub:')) {
+            if (this.phones.hubAgents?.decline(id.slice(4)) !== true)
+              throw new ValetError('config', 'not-found')
+            return
+          }
           if (!this.remote.declineConsent(id)) throw new ValetError('config', 'not-found')
         },
         declineAllConsents: async () => {
+          this.phones.hubAgents?.declineAll()
           this.remote.declineAllConsents()
         },
         clients: async () =>

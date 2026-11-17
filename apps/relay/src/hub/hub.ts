@@ -14,13 +14,25 @@ import {
   verifyRegistrationResponse,
 } from '@simplewebauthn/server'
 import { KEY_ID } from '@valet/core/devices'
-import { type HubStatus, hubNodeNameSchema, hubNodeSlugSchema } from '@valet/core/relay-protocol'
+import { hubConsentIdSchema, signedHubGrantSchema, verifyHubGrant } from '@valet/core/hub-grant'
+import {
+  HUB_MAX_GRANTS,
+  HUB_MAX_OPEN_CONSENTS,
+  type HubStatus,
+  hubNodeNameSchema,
+  hubNodeSlugSchema,
+} from '@valet/core/relay-protocol'
+import { type Roster, signedRosterChangeSchema, verifyRoster } from '@valet/core/roster'
 import { z } from 'zod'
+import type { HubAnswer } from '../core'
 import { fromBase64url, toBase64url } from '../encoding'
 import type { Env } from '../env'
 import { logFailure } from '../log'
+import { verifyHubGrantSignature, verifyRosterSignature } from '../verify'
 import { WindowCounter } from '../window'
 import { macStub } from './link'
+import { HubMcp, type HubNode } from './mcp'
+import { HubOAuth } from './oauth'
 import { type HubPageName, hubPage } from './pages'
 import {
   checkPassword,
@@ -138,17 +150,49 @@ const BODIES = {
   internalPresence: z.object({ macId: z.string().regex(KEY_ID), online: z.boolean() }).strict(),
   internalLink: z.object({ macId: z.string().regex(KEY_ID), name: hubNodeNameSchema }).strict(),
   internalMac: z.object({ macId: z.string().regex(KEY_ID) }).strict(),
+  internalRoster: z
+    .object({ macId: z.string().regex(KEY_ID), changes: z.array(signedRosterChangeSchema).min(1).max(8) })
+    .strict(),
+  internalGrant: z.object({ macId: z.string().regex(KEY_ID), grant: signedHubGrantSchema }).strict(),
+  internalDecline: z.object({ macId: z.string().regex(KEY_ID), consentId: hubConsentIdSchema }).strict(),
 } as const
 
 export class Hub extends DurableObject<Env> {
   private readonly sql: SqlStorage
   private readonly wrongCodes = new WindowCounter(HUB_CAPS.wrongCodes, 10 * 60_000, Date.now, 64)
   private readonly appSignIns = new WindowCounter(HUB_CAPS.appSignIns, 10 * 60_000, Date.now, 256)
+  private readonly oauth: HubOAuth
+  private readonly mcp: HubMcp
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
     this.sql = ctx.storage.sql
+    this.oauth = new HubOAuth(
+      {
+        all: (q, ...b) => this.all(q, ...b),
+        one: (q, ...b) => this.one(q, ...b),
+        run: (q, ...b) => this.run(q, ...b),
+      },
+      () => this.origin,
+    )
+    this.mcp = new HubMcp({
+      forward: (macId, grantId, body, headers, signal) =>
+        macStub(this.env, macId).forward(
+          {
+            method: 'POST',
+            path: '/mcp',
+            query: '',
+            headers,
+            body,
+            source: '',
+            stream: false,
+            hub: { grantId },
+          },
+          signal,
+        ),
+    })
     this.migrate()
+    this.oauth.migrate()
   }
 
   private migrate(): void {
@@ -178,6 +222,14 @@ export class Hub extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS link_requests (
         code TEXT PRIMARY KEY, mac_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
         expires_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS grants (
+        id TEXT PRIMARY KEY, account_id TEXT NOT NULL, client_id TEXT NOT NULL, payload TEXT NOT NULL,
+        signature TEXT NOT NULL, expires_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS roster (
+        account_id TEXT NOT NULL, seq INTEGER NOT NULL, payload TEXT NOT NULL, signature TEXT NOT NULL,
+        PRIMARY KEY (account_id, seq)
       );
     `)
   }
@@ -210,6 +262,12 @@ export class Hub extends DurableObject<Env> {
     return (Number.isFinite(seconds) && seconds > 0 ? seconds : 90) * 1000
   }
 
+  /** How long an offline node's tools stay listed, failing fast. */
+  private get graceMs(): number {
+    const seconds = Number(this.env.HUB_GRACE_S ?? '120')
+    return (Number.isFinite(seconds) && seconds >= 0 ? seconds : 120) * 1000
+  }
+
   // ---------- Entry ----------
 
   override async fetch(request: Request): Promise<Response> {
@@ -217,6 +275,8 @@ export class Hub extends DurableObject<Env> {
     try {
       if (url.origin === 'https://hub.internal')
         return Response.json(await this.internal(url.pathname, request))
+      if (url.pathname === '/mcp') return await this.agentMcp(request)
+      if (this.oauth.handles(url.pathname)) return await this.agentSignIn(request, url)
       return await this.public(request, url)
     } catch (error) {
       if (error instanceof z.ZodError)
@@ -236,7 +296,7 @@ export class Hub extends DurableObject<Env> {
 
   // ---------- From Macs' objects ----------
 
-  private async internal(path: string, request: Request): Promise<HubStatus> {
+  private async internal(path: string, request: Request): Promise<HubAnswer> {
     const body = await request.json()
     const now = Date.now()
     this.sweep(now)
@@ -244,16 +304,17 @@ export class Hub extends DurableObject<Env> {
       case '/node/presence': {
         const { macId, online } = BODIES.internalPresence.parse(body)
         this.run('UPDATE nodes SET online = ?, last_seen_at = ? WHERE mac_id = ?', online ? 1 : 0, now, macId)
-        return this.statusOf(macId)
+        return this.answer(macId, true)
       }
       case '/node/link-start': {
         const { macId, name } = BODIES.internalLink.parse(body)
-        if (this.node(macId) !== null) return this.statusOf(macId)
+        if (this.node(macId) !== null) return this.answer(macId, false)
         if (this.one('SELECT 1 FROM accounts LIMIT 1') === null)
-          return { state: 'unlinked', url: this.origin, problem: 'unavailable' }
+          return { status: { state: 'unlinked', url: this.origin, problem: 'unavailable' } }
         this.run('DELETE FROM link_requests WHERE mac_id = ?', macId)
         const open = this.one<{ n: number }>('SELECT COUNT(*) AS n FROM link_requests')?.n ?? 0
-        if (open >= HUB_CAPS.openLinks) return { state: 'unlinked', url: this.origin, problem: 'too-many' }
+        if (open >= HUB_CAPS.openLinks)
+          return { status: { state: 'unlinked', url: this.origin, problem: 'too-many' } }
         const code = linkCode()
         this.run(
           'INSERT INTO link_requests (code, mac_id, name, expires_at) VALUES (?, ?, ?, ?)',
@@ -262,16 +323,167 @@ export class Hub extends DurableObject<Env> {
           name,
           now + HUB_TIMINGS.linkCodeMs,
         )
-        return this.statusOf(macId)
+        return this.answer(macId, false)
       }
       case '/node/unlink': {
         const { macId } = BODIES.internalMac.parse(body)
         this.run('DELETE FROM nodes WHERE mac_id = ?', macId)
         this.run('DELETE FROM link_requests WHERE mac_id = ?', macId)
-        return this.statusOf(macId)
+        return this.answer(macId, false)
+      }
+      case '/node/roster-append': {
+        const { macId, changes } = BODIES.internalRoster.parse(body)
+        const node = this.node(macId)
+        if (node === null)
+          return { ...this.answer(macId, false), roster: { changes: [], refused: 'not-linked' } }
+        const refused = await this.appendRoster(node.account_id, changes)
+        if (refused !== null)
+          return { ...this.answer(macId, true), roster: { changes: this.chain(node.account_id), refused } }
+        await this.tellNodes(node.account_id, macId)
+        return this.answer(macId, true)
+      }
+      case '/node/grant': {
+        const { macId, grant } = BODIES.internalGrant.parse(body)
+        const node = this.node(macId)
+        if (node === null) return this.answer(macId, false)
+        if (await this.keepGrant(node.account_id, grant, now)) await this.tellNodes(node.account_id, macId)
+        return this.answer(macId, true)
+      }
+      case '/node/consent-decline': {
+        const { macId, consentId } = BODIES.internalDecline.parse(body)
+        const node = this.node(macId)
+        if (node === null) return this.answer(macId, false)
+        this.oauth.decline(consentId)
+        await this.tellNodes(node.account_id, macId)
+        return this.answer(macId, true)
       }
       default:
         throw new Refusal(404, 'not_found', 'Nothing here.')
+    }
+  }
+
+  // ---------- Agents signing in (oauth.ts) and their grants (hub-grant.ts) ----------
+
+  private async agentSignIn(request: Request, url: URL): Promise<Response> {
+    const source = request.headers.get('cf-connecting-ip') ?? ''
+    const response = await this.oauth.fetch(request, url, source)
+    // A new sign-in waits for the person: every node of the account shows it.
+    if (url.pathname === '/authorize' && response.status === 200) {
+      const account = this.one<{ id: string }>('SELECT id FROM accounts LIMIT 1')
+      if (account !== null) await this.tellNodes(account.id, '')
+    }
+    return response
+  }
+
+  /** The one MCP address (mcp.ts), for an agent whose token's grant the hub still holds. */
+  private async agentMcp(request: Request): Promise<Response> {
+    const agent = await this.oauth.authenticate(request)
+    if (agent === null) return this.oauth.unauthorized()
+    const grant = this.one<{ account_id: string; client_id: string; payload: string }>(
+      'SELECT account_id, client_id, payload FROM grants WHERE id = ? AND expires_at > ?',
+      agent.grantId,
+      Date.now(),
+    )
+    if (grant === null || grant.client_id !== agent.clientId) return this.oauth.unauthorized()
+    let clientName = 'An agent'
+    try {
+      const parsed = JSON.parse(grant.payload) as { clientName?: unknown }
+      if (typeof parsed.clientName === 'string') clientName = parsed.clientName
+    } catch {
+      // The grant was checked when kept; its name is only for the Mac's list of sessions.
+    }
+    const nodes = await this.nodes(grant.account_id)
+    const now = Date.now()
+    const listed: HubNode[] = nodes.map((n) => ({
+      macId: n.macId,
+      slug: n.slug,
+      name: n.name,
+      online: n.online,
+      listed: !n.online && now < n.offlineAt + this.graceMs,
+    }))
+    return this.mcp.handle(request, { grantId: agent.grantId, clientName }, listed)
+  }
+
+  /**
+   * Keeps a grant if a device on the account's list signed it, for a sign-in still waiting, and
+   * lets that sign-in's browser collect its code. False if anything doesn't check.
+   */
+  private async keepGrant(
+    accountId: string,
+    signed: { payload: string; signature: string },
+    now: number,
+  ): Promise<boolean> {
+    const roster = await this.verifiedRoster(accountId)
+    if (roster === null) return false
+    const signatures: { key: string; payload: string; signature: string }[] = []
+    const check = verifyHubGrant(signed, roster, now, (key, payload, signature) => {
+      signatures.push({ key, payload, signature })
+      return true
+    })
+    if (!check.ok) return false
+    for (const s of signatures)
+      if (!(await verifyHubGrantSignature(s.key, s.payload, s.signature))) return false
+    const consent = this.oauth.consent(check.grant.consentId)
+    if (consent === null || consent.clientId !== check.grant.clientId) return false
+    const count =
+      this.one<{ n: number }>('SELECT COUNT(*) AS n FROM grants WHERE account_id = ?', accountId)?.n ?? 0
+    if (count >= HUB_MAX_GRANTS) return false
+    this.run(
+      'INSERT OR REPLACE INTO grants (id, account_id, client_id, payload, signature, expires_at) VALUES (?, ?, ?, ?, ?, ?)',
+      check.id,
+      accountId,
+      check.grant.clientId,
+      signed.payload,
+      signed.signature,
+      Date.parse(check.grant.expiresAt),
+    )
+    return this.oauth.approve(check.grant.consentId, check.id)
+  }
+
+  /** The account's device list, checked here with WebCrypto; null if it doesn't check or is empty. */
+  private async verifiedRoster(accountId: string): Promise<Roster | null> {
+    const chain = this.chain(accountId)
+    if (chain.length === 0) return null
+    const signatures: { key: string; payload: string; signature: string }[] = []
+    const check = verifyRoster(chain, {
+      verify: (key, payload, signature) => {
+        signatures.push({ key, payload, signature })
+        return true
+      },
+    })
+    if (!check.ok || check.roster.account !== accountId) return null
+    for (const s of signatures) if (!(await verifyRosterSignature(s.key, s.payload, s.signature))) return null
+    return check.roster
+  }
+
+  private grantsOf(accountId: string): { payload: string; signature: string }[] {
+    return this.all<{ payload: string; signature: string }>(
+      'SELECT payload, signature FROM grants WHERE account_id = ? AND expires_at > ? ORDER BY expires_at LIMIT ?',
+      accountId,
+      Date.now(),
+      HUB_MAX_GRANTS,
+    )
+  }
+
+  /** A Mac's status, with the account's device list if it is linked and `roster` is asked for. */
+  private answer(macId: string, roster: boolean): HubAnswer {
+    const status = this.statusOf(macId)
+    const node = status.state === 'linked' ? this.node(macId) : null
+    if (!roster || node === null) return { status }
+    const consents = this.oauth.openConsents().map((c) => ({
+      id: c.id,
+      clientId: c.clientId,
+      clientName: c.clientName,
+      host: c.host,
+      source: c.source,
+      code: c.code,
+      expiresAt: new Date(c.expiresAt).toISOString(),
+    }))
+    return {
+      status,
+      roster: { changes: this.chain(node.account_id) },
+      consents: consents.slice(0, HUB_MAX_OPEN_CONSENTS),
+      grants: this.grantsOf(node.account_id).map((g) => ({ payload: g.payload, signature: g.signature })),
     }
   }
 
@@ -280,7 +492,14 @@ export class Hub extends DurableObject<Env> {
     if (node !== null) {
       const account = this.one<AccountRow>('SELECT * FROM accounts WHERE id = ?', node.account_id)
       if (account !== null)
-        return { state: 'linked', url: this.origin, account: account.email, slug: node.slug, name: node.name }
+        return {
+          state: 'linked',
+          url: this.origin,
+          accountId: account.id,
+          account: account.email,
+          slug: node.slug,
+          name: node.name,
+        }
     }
     const request = this.one<{ code: string; expires_at: number }>(
       'SELECT code, expires_at FROM link_requests WHERE mac_id = ? AND expires_at > ?',
@@ -319,7 +538,10 @@ export class Hub extends DurableObject<Env> {
 
     if (request.method === 'GET') {
       if (path === '/api/me') return this.me(this.need(session), now)
-      if (path === '/api/nodes') return Response.json({ nodes: await this.nodes(this.need(session).account) })
+      if (path === '/api/nodes')
+        return Response.json({
+          nodes: (await this.nodes(this.need(session).account.id)).map(({ offlineAt: _, ...n }) => n),
+        })
       throw new Refusal(404, 'not_found', 'Nothing here.')
     }
     if (request.method !== 'POST') throw new Refusal(405, 'method_not_allowed', 'Not allowed.')
@@ -726,19 +948,26 @@ export class Hub extends DurableObject<Env> {
 
   // ---------- Nodes ----------
 
-  private async nodes(account: AccountRow) {
-    const rows = this.all<NodeRow>('SELECT * FROM nodes WHERE account_id = ? ORDER BY linked_at', account.id)
+  /**
+   * The account's nodes, each online if its object heard from it within HUB_OFFLINE_AFTER_S, and
+   * when it went (or goes) offline: a socket that closed counts from its close, one that went
+   * quiet from its last frame plus that time.
+   */
+  private async nodes(accountId: string) {
+    const rows = this.all<NodeRow>('SELECT * FROM nodes WHERE account_id = ? ORDER BY linked_at', accountId)
     const now = Date.now()
     return Promise.all(
       rows.map(async (node) => {
         let online = false
         let lastSeenAt = node.last_seen_at
+        let offlineAt = node.last_seen_at
         try {
           // The Mac's object knows when it last heard a ping, even after the hub missed a close.
           const presence = await macStub(this.env, node.mac_id).presence()
           if (presence.connected && presence.lastFrameAt !== undefined) {
             lastSeenAt = Math.max(lastSeenAt, presence.lastFrameAt)
             online = now - presence.lastFrameAt < this.offlineAfterMs
+            offlineAt = presence.lastFrameAt + this.offlineAfterMs
           }
         } catch (error) {
           logFailure('hub presence', error)
@@ -750,6 +979,7 @@ export class Hub extends DurableObject<Env> {
           linkedAt: iso(node.linked_at),
           online,
           lastSeenAt: iso(lastSeenAt),
+          offlineAt,
         }
       }),
     )
@@ -824,10 +1054,66 @@ export class Hub extends DurableObject<Env> {
   /** Tells a Mac its new status, if it is connected; it hears it again on its next hello anyway. */
   private async tell(macId: string): Promise<void> {
     try {
-      await macStub(this.env, macId).tell(this.statusOf(macId))
+      await macStub(this.env, macId).tell(this.answer(macId, true))
     } catch (error) {
       logFailure('hub tell', error)
     }
+  }
+
+  // ---------- The account's device list (roster.ts) ----------
+
+  private chain(accountId: string): { payload: string; signature: string }[] {
+    return this.all<{ payload: string; signature: string }>(
+      'SELECT payload, signature FROM roster WHERE account_id = ? ORDER BY seq',
+      accountId,
+    ).map((r) => ({ payload: r.payload, signature: r.signature }))
+  }
+
+  /**
+   * Keeps the changes, all or none, if the whole chain still checks with them: each signed by a
+   * device on the list (or, first, by the device adding itself), naming this account and the head
+   * before it. The hub checks so it never hands out a broken chain; nodes check again, and trust
+   * only their own check.
+   */
+  private async appendRoster(
+    accountId: string,
+    changes: readonly { payload: string; signature: string }[],
+  ): Promise<'conflict' | 'invalid' | null> {
+    const kept = this.chain(accountId)
+    const chain = [...kept, ...changes]
+    const signatures: { key: string; payload: string; signature: string }[] = []
+    const check = verifyRoster(chain, {
+      verify: (key, payload, signature) => {
+        signatures.push({ key, payload, signature })
+        return true
+      },
+    })
+    if (!check.ok) return check.reason === 'broken-chain' && check.at === kept.length ? 'conflict' : 'invalid'
+    if (check.roster.account !== accountId) return 'invalid'
+    for (const s of signatures)
+      if (!(await verifyRosterSignature(s.key, s.payload, s.signature))) return 'invalid'
+    // Another change may have landed while the signatures were checked.
+    if (
+      (this.one<{ n: number }>('SELECT COUNT(*) AS n FROM roster WHERE account_id = ?', accountId)?.n ??
+        0) !== kept.length
+    )
+      return 'conflict'
+    // One synchronous run of inserts: nothing else runs in the object between them.
+    for (const [i, change] of changes.entries())
+      this.run(
+        'INSERT INTO roster (account_id, seq, payload, signature) VALUES (?, ?, ?, ?)',
+        accountId,
+        kept.length + i,
+        change.payload,
+        change.signature,
+      )
+    return null
+  }
+
+  /** Every node of the account hears the new list; the one that sent it hears it in its answer. */
+  private async tellNodes(accountId: string, except: string): Promise<void> {
+    const nodes = this.all<{ mac_id: string }>('SELECT mac_id FROM nodes WHERE account_id = ?', accountId)
+    await Promise.all(nodes.filter((n) => n.mac_id !== except).map((n) => this.tell(n.mac_id)))
   }
 
   private freeSlug(accountId: string, base: string): string {

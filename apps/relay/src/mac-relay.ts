@@ -3,10 +3,11 @@
 // answers "ping" without waking (relay.md, "Shape").
 
 import { DurableObject } from 'cloudflare:workers'
-import type { HubStatus, RelayStoredState } from '@valet/core/relay-protocol'
+import type { RelayStoredState } from '@valet/core/relay-protocol'
 import {
   type ConsentAnswer,
   type ForwardRequest,
+  type HubAnswer,
   RelayCore,
   type RelaySocket,
   type Role,
@@ -80,7 +81,7 @@ export class MacRelay extends DurableObject<Env> {
         return Response.json(await core.consent(id, query, source))
       }
       case '/hub-status': {
-        core.hubStatus((await request.json()) as HubStatus)
+        core.hubStatus((await request.json()) as HubAnswer)
         return new Response(null, { status: 204 })
       }
       case '/presence': {

@@ -23,7 +23,7 @@ import {
 } from '@valet/ui'
 import QRCode from 'qrcode'
 import { useEffect, useMemo, useState } from 'react'
-import type { HubView, PairingView, PhonesStatus } from '../../../shared/api'
+import type { HubView, PairingView, PhonesStatus, RosterStatus } from '../../../shared/api'
 import { useAction, useApi, useLoad } from '../../lib/api-context'
 import { Failed } from '../connections/shared'
 
@@ -81,7 +81,7 @@ export function DevicesSection() {
           {s !== null && s.available ? <RelayLine status={s} /> : null}
           {s !== null && s.worksLocked === false ? <RenewKeys phones={s.phones.length} /> : null}
           {s !== null && s.relay === 'online' && s.hub !== null && s.hub.state !== 'off' ? (
-            <HubAccount hub={s.hub} />
+            <HubAccount hub={s.hub} roster={s.roster} />
           ) : null}
           <RelaySetting paired={s?.phones.length ?? 0} />
           <AgentHostSetting />
@@ -249,7 +249,13 @@ const HUB_PROBLEM: Record<NonNullable<Extract<HubView, { state: 'unlinked' }>['p
  * This Mac at the Valet hub (docs/relay-hub.md): one address for agents that reaches every Mac on
  * your account. Joining shows a code, typed on the hub's page by someone signed in to the account.
  */
-function HubAccount({ hub }: { readonly hub: Exclude<HubView, { state: 'off' }> }) {
+function HubAccount({
+  hub,
+  roster,
+}: {
+  readonly hub: Exclude<HubView, { state: 'off' }>
+  readonly roster: RosterStatus
+}) {
   const api = useApi()
   const action = useAction()
   const [confirming, setConfirming] = useState(false)
@@ -278,6 +284,7 @@ function HubAccount({ hub }: { readonly hub: Exclude<HubView, { state: 'off' }> 
           </Value>
         </div>
       ) : null}
+      {hub.state === 'linked' && roster.state !== 'off' ? <RosterLine roster={roster} /> : null}
       {hub.state === 'unlinked' && hub.problem !== undefined ? (
         <Text tone="muted">{HUB_PROBLEM[hub.problem]}</Text>
       ) : null}
@@ -316,6 +323,38 @@ function HubAccount({ hub }: { readonly hub: Exclude<HubView, { state: 'off' }> 
         ) : null}
       </Inline>
       <Failed failed={action.failed} what="reach the hub" />
+    </Stack>
+  )
+}
+
+const ROSTER_LINE: Record<Exclude<RosterStatus['state'], 'off' | 'on'>, string> = {
+  waiting: 'Putting this Mac and its iPhones on your account’s device list…',
+  'needs-you':
+    'Touch ID was cancelled, so this Mac and its iPhones aren’t on your account’s device list yet.',
+  'not-added': 'Another device started your account’s device list. Add this Mac from that device.',
+  refused: 'The device list the hub sent doesn’t check, so Valet isn’t using it.',
+}
+
+/** The account's device list (relay-hub.md, step 4): every device on it signs who joins. */
+function RosterLine({ roster }: { readonly roster: RosterStatus }) {
+  const api = useApi()
+  const action = useAction()
+  if (roster.state === 'off') return null
+  return (
+    <Stack gap={2}>
+      <Text tone="muted">
+        {roster.state === 'on'
+          ? `Your account’s device list has ${roster.devices} ${roster.devices === 1 ? 'device' : 'devices'}, each added by one already on it.`
+          : ROSTER_LINE[roster.state]}
+      </Text>
+      {roster.state === 'needs-you' ? (
+        <div>
+          <Button loading={action.busy} onClick={() => void action.run(() => api.phones.retryRoster())}>
+            Try again
+          </Button>
+        </div>
+      ) : null}
+      <Failed failed={action.failed} what="update the device list" />
     </Stack>
   )
 }
