@@ -116,7 +116,7 @@ describe('remote access', () => {
 })
 
 describe('approve a connection', () => {
-  it('lists the request by its claimed host, never a code, and warns before anything else', async () => {
+  it('lists the request by its claimed host, never a code, with the code field first and no alarm', async () => {
     const api = createFakeApi({ now: NOW })
     renderPage(api, <ApproveConnectionSheet armDelayMs={0} />)
     const request = await screen.findByTestId('consent-request')
@@ -125,11 +125,11 @@ describe('approve a connection', () => {
     expect(request.textContent).toContain('“Claude”')
     expect(within(request).getByText('not verified')).toBeTruthy()
     expect(document.body.textContent).not.toContain('ABCD')
-    const note = screen.getByRole('note')
-    expect(note.textContent).toContain('started by someone else. Decline it.')
-    // The warning comes before the code field.
+    // One request is the person's own nearly always: no "someone else started it" alarm (Nick, 17 Nov).
+    expect(screen.queryByRole('note')).toBeNull()
+    // The code field comes before the request.
     const field = screen.getByRole('textbox', { name: 'Code from your browser' })
-    expect(note.compareDocumentPosition(field) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(field.compareDocumentPosition(request) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('approves only once a whole code is typed, with only the tools the person ticked', async () => {
@@ -226,7 +226,18 @@ describe('approve a connection', () => {
     }
     renderPage(api, <ApproveConnectionSheet armDelayMs={0} />)
     expect(await screen.findByText(/2 cloud agents are asking/)).toBeTruthy()
-    expect(screen.getAllByTestId('consent-request')).toHaveLength(2)
+    const rows = screen.getAllByTestId('consent-request')
+    expect(rows).toHaveLength(2)
+    // Code first, then the warning, then one short row per request with its details folded away.
+    const field = screen.getByRole('textbox', { name: 'Code from your browser' })
+    const note = screen.getByRole('note')
+    expect(note.textContent).toContain('started by someone else. Decline it.')
+    expect(field.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(note.compareDocumentPosition(rows[0] as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(rows[1]?.textContent).toContain('evil.example')
+    expect(rows[1]?.textContent).not.toContain('203.0.113.24')
+    await user.click(within(rows[1] as HTMLElement).getByRole('button', { name: 'Details' }))
+    expect(rows[1]?.textContent).toContain('203.0.113.24')
     await user.click(screen.getByRole('button', { name: 'Decline evil.example' }))
     expect(called(fake, 'remote.declineConsent')).toEqual([['cs_two']])
     await user.click(screen.getByRole('button', { name: 'Decline all' }))
