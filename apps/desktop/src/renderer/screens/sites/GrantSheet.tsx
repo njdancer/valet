@@ -38,7 +38,7 @@ import { useAction, useApi, useLoad } from '../../lib/api-context'
 import { hostOf, plural } from '../../lib/format'
 import { href, navigate } from '../../lib/router'
 import { PROVIDER_WORDING } from '../../lib/wording'
-import { MESSAGES_SECRET, type Target, targetFor } from './grant/target'
+import { MAIL_SECRET, MESSAGES_SECRET, type Target, targetFor } from './grant/target'
 
 export { MESSAGES_SECRET, targetFor }
 
@@ -159,15 +159,21 @@ function GrantForm({
   const initialProvider: ProviderKind =
     target.kind === 'messages'
       ? 'messages'
-      : target.existing !== null &&
-          ONEPASSWORD.includes(target.existing.provider) &&
-          available(target.existing.provider)
-        ? target.existing.provider
-        : (ONEPASSWORD.find(available) ?? 'onepassword-service-account')
+      : target.kind === 'mail'
+        ? 'mail'
+        : target.existing !== null &&
+            ONEPASSWORD.includes(target.existing.provider) &&
+            available(target.existing.provider)
+          ? target.existing.provider
+          : (ONEPASSWORD.find(available) ?? 'onepassword-service-account')
   const [provider, setProvider] = useState<ProviderKind>(initialProvider)
   const [query, setQuery] = useState('')
   const [item, setItem] = useState<string | null>(
-    target.kind === 'messages' ? (target.existing?.itemId ?? target.senders[0] ?? null) : null,
+    target.kind === 'messages'
+      ? (target.existing?.itemId ?? target.senders[0] ?? null)
+      : target.kind === 'mail'
+        ? (target.existing?.itemId ?? null)
+        : null,
   )
   // Pre-tick what an earlier grant allowed, but only where the manifest still asks for it.
   const [origins, setOrigins] = useState<readonly string[]>(() => {
@@ -179,7 +185,9 @@ function GrantForm({
     (a) =>
       target.kind === 'messages'
         ? Promise.resolve<VaultListing>({ status: 'ok', items: [] })
-        : a.grants.vaultItems(provider),
+        : target.kind === 'mail'
+          ? a.grants.vaultItems('mail')
+          : a.grants.vaultItems(provider),
     [provider, target.kind],
     ['grants-changed'],
   )
@@ -206,7 +214,9 @@ function GrantForm({
     item === null
       ? target.kind === 'messages'
         ? 'Choose the sender first'
-        : 'Choose a 1Password item first'
+        : target.kind === 'mail'
+          ? 'Choose a mail account first'
+          : 'Choose a 1Password item first'
       : chosen.length === 0
         ? 'Tick at least one web address'
         : undefined
@@ -217,7 +227,7 @@ function GrantForm({
       api.grants.make({
         adapterId: adapter.id,
         adapterHash: adapter.hash,
-        secret: target.kind === 'messages' ? MESSAGES_SECRET : secret,
+        secret: target.kind === 'messages' ? MESSAGES_SECRET : target.kind === 'mail' ? MAIL_SECRET : secret,
         provider,
         itemRef: item,
         origins: chosen,
@@ -237,6 +247,13 @@ function GrantForm({
           <>
             {adapter.name}’s login may ask for a one-time code. Valet reads it from Messages, only from the
             sender below and only during a login, and types it on the web addresses you tick.
+          </>
+        ) : target.kind === 'mail' ? (
+          <>
+            {adapter.name}’s login emails a <strong className="font-semibold text-fg">{target.fields}</strong>
+            . Valet looks for it in a mail account it already reads, only mail from{' '}
+            <Code>{target.senders[0]}</Code> that arrives during a login, and uses it only on the web
+            addresses you tick. Nothing is marked read.
           </>
         ) : (
           <>
@@ -267,7 +284,11 @@ function GrantForm({
             disabled={why !== undefined}
             disabledReason={why}
           >
-            {target.kind === 'messages' ? 'Allow these codes' : 'Use this login'}
+            {target.kind === 'messages'
+              ? 'Allow these codes'
+              : target.kind === 'mail'
+                ? 'Allow this sign-in mail'
+                : 'Use this login'}
           </Button>
         </>
       }
@@ -393,6 +414,30 @@ function GrantForm({
               </Text>
             </Group>
           </>
+        ) : target.kind === 'mail' ? (
+          <Group title="Mail account">
+            {items.status === 'loading' ? (
+              <Stack gap={2} aria-hidden="true">
+                <Skeleton className="h-5 w-2/3" />
+              </Stack>
+            ) : vaultItems.length === 0 ? (
+              <Banner tone="warning" title="No mail account Valet can read sign-in mail from">
+                Install a mail adapter, grant it your mail password, and keep its tools read-only for INBOX:
+                an adapter that can change INBOX could plant a fake sign-in mail.
+              </Banner>
+            ) : (
+              <RadioGroup aria-label="Mail account" value={item ?? ''} onValueChange={setItem}>
+                {vaultItems.map((v) => (
+                  <RadioOption
+                    key={v.id}
+                    value={v.id}
+                    label={v.title}
+                    description="Looks only in INBOX, only during a login. The adapter’s code never sees it."
+                  />
+                ))}
+              </RadioGroup>
+            )}
+          </Group>
         ) : (
           <Group title="Sender the adapter declared">
             <RadioGroup aria-label="Sender" value={item ?? ''} onValueChange={setItem}>
@@ -431,7 +476,7 @@ function GrantForm({
                 checked={origins.includes(origin)}
                 onChange={(on) => toggle(origin, on)}
                 hint={
-                  target.kind === 'messages'
+                  target.kind === 'messages' || target.kind === 'mail'
                     ? target.suggestedOrigins.includes(origin)
                       ? 'Where the sign-in form is'
                       : 'Visited during sign-in. Leave off unless codes are typed here.'
@@ -451,7 +496,13 @@ function GrantForm({
 
         <div className="grid grid-cols-2 gap-4 rounded-md bg-sunken p-3 ring-[0.5px] ring-line-subtle ring-inset max-[520px]:grid-cols-1">
           <Facts
-            title={target.kind === 'messages' ? 'With these codes, it can' : 'With this login, it can'}
+            title={
+              target.kind === 'messages'
+                ? 'With these codes, it can'
+                : target.kind === 'mail'
+                  ? 'With this sign-in mail, it can'
+                  : 'With this login, it can'
+            }
             ok
             items={[
               `have Valet type it into the sign-in form on ${where}`,

@@ -21,7 +21,7 @@ import { DEFAULT_SANDBOX } from '@valet/core'
 import { KeychainHelper, KeychainTokenSource, messagesHelperSocketPath } from '@valet/credentials'
 import { EgressBroker } from '@valet/egress'
 import { startEndpoint } from '@valet/mcp-server'
-import { imapBackend, type ProtocolHostOptions } from '@valet/protocols'
+import { HostMailReader, imapBackend, type ProtocolHostOptions } from '@valet/protocols'
 import { createLocalAccess } from '@valet/sandbox'
 import { app, clipboard, dialog, protocol, session, shell } from 'electron'
 import { href } from '../../renderer/lib/routes'
@@ -465,9 +465,13 @@ async function main(): Promise<void> {
     // broker's own DNS, and never this Mac's own addresses (docs/adapter-kinds.md#f1-the-egress-broker).
     egress: (endpoints) =>
       new EgressBroker({ egress: endpoints.egress, privateHosts: endpoints.privateHosts ?? [] }),
+    // The same host reads sign-in mail (docs/imap.md#email-sign-in), in the account a grant names.
     ...(protocolHost === null
       ? {}
-      : { imap: (protocol) => imapBackend({ protocol, host: protocolHost }) }),
+      : {
+          imap: (protocol) => imapBackend({ protocol, host: protocolHost }),
+          mailReader: (account) => new HostMailReader({ host: protocolHost, account }),
+        }),
     // Demo mode keeps only the shop on this machine: the other built-ins (no login, public data)
     // reach their real sites.
     createDriver: (manifest, reporters) =>

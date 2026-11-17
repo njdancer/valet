@@ -51,6 +51,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@valet/fake-http-api": "workspace:*",
+    "@valet/fake-imap": "workspace:*",
     "@valet/fake-onepassword": "workspace:*",
     "@valet/fake-woolworths-site": "workspace:*",
     "@valet/ui": "workspace:*",

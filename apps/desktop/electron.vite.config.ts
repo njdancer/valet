@@ -26,10 +26,10 @@ import { resolve } from 'node:path'
 import tailwind from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'electron-vite'
+import { protocolHost } from './protocol-host-plugin'
 import { sandboxPreload } from './sandbox-preload'
 import { feedDefines } from './src/main/core/feed-defines'
 import { toolLibrary } from './tool-library'
-import { protocolHost } from './protocol-host-plugin'
 import { contentSecurityPolicy } from './vite.config'
 
 const here = import.meta.dirname
