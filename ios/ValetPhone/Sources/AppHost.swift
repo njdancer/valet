@@ -70,14 +70,15 @@ final class AppHost {
               keys.presence = presence
               return keys
             }
-          )
+          ),
+          hub: URLSessionHubTransport()
         )
         model.connect()
         return
       }
     #endif
     model = PhoneModel(
-      transport: WebSocketRelayTransport(), store: KeychainPhoneStore(), keys: .system
+      transport: WebSocketRelayTransport(), store: KeychainPhoneStore(), keys: .system, hub: URLSessionHubTransport()
     )
     model.connect()
   }
