@@ -36,6 +36,7 @@ final class CoreVectorTests: XCTestCase {
     let pairing: Pairing
     let envelopeInfo: Info
     let displayText: [Display]
+    let permissionAreas: [String]
   }
 
   func vectors() throws -> Vectors {
@@ -106,6 +107,11 @@ final class CoreVectorTests: XCTestCase {
   func testEnvelopeInfoMatchesCore() throws {
     let i = try vectors().envelopeInfo
     XCTAssertEqual(Hex.encode(try ChannelSeal.info(from: i.from, to: i.to)), i.info)
+  }
+
+  /// An install line in an area the phone doesn't know fails the whole card, so the lists match.
+  func testPermissionAreasMatchCore() throws {
+    XCTAssertEqual(PermissionChange.areas, try vectors().permissionAreas)
   }
 
   func testDisplayTextAgreesWithCore() throws {

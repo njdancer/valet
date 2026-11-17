@@ -79,6 +79,7 @@ const REMOVALS_ONLY: PendingReview = {
       unchanged: [],
     },
     secrets: { added: [], removed: [], unchanged: [] },
+    credentials: { added: [], removed: [], unchanged: [] },
     secretFills: { added: [], removed: [], unchanged: [] },
     authSteps: {
       added: [],
@@ -198,6 +199,7 @@ describe('reviewing an update', () => {
         to: { version: '0.4.1', hash: 'ff'.repeat(32) },
         diff: {
           ...swapped.diff,
+          credentials: { added: [], removed: [], unchanged: [] },
           secretFills: {
             added: [{ selector: '#headerSearch', secret: 'login', field: 'password' }],
             removed: [],
@@ -350,6 +352,7 @@ describe('reviewing an update', () => {
           ],
           unchanged: [],
         },
+        credentials: { added: [], removed: [], unchanged: [] },
         secretFills: {
           added: [{ selector: '#rw-email', secret: 'rewards', field: 'username' }],
           removed: [{ selector: '#old', secret: 'legacy', field: 'password' }],

@@ -399,6 +399,7 @@ public enum CardModel {
     case "probe": return "How it checks you're signed in"
     case "runtime": return "What kind of adapter it is"
     case "private-network": return "Devices on your network"
+    case "credential": return "Credentials it uses"
     default: return area
     }
   }
@@ -410,6 +411,7 @@ public enum CardModel {
     case "sandbox-mode": return "Runs without the sandbox: it can reach anything you can on this Mac."
     case "sandbox-exception": return "Adds a sandbox exception. See what changes below."
     case "secret", "secret-origins", "auth-frames": return "Changes where your password is typed. See below."
+    case "credential": return "Uses a password, token or key of yours. See below."
     case "side-effect": return "A tool can now do more than it could. See below."
     case "tool": return "Changes its tools. See below."
     case "egress", "navigation": return "Reaches more of the web. See below."

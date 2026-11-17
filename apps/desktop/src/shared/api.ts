@@ -254,6 +254,23 @@ export interface SecretDiffEntry {
   readonly origins: readonly string[]
 }
 
+/**
+ * A credential Valet uses for the adapter outside a browser login (secrets v2). `text` is Valet's
+ * own sentence for it, from the declaration's fields; `description` is the author's words.
+ */
+export interface CredentialDiffEntry {
+  readonly name: string
+  readonly description: string
+  readonly kind: 'password' | 'token' | 'ssh-key'
+  readonly custody: 'kept' | 'entrusted'
+  readonly use: 'protocol' | 'header' | 'entrusted'
+  readonly targets: readonly string[]
+  /** Valet's sentence, then each target on its own when the sentence doesn't name them. */
+  readonly items: readonly string[]
+  /** A header credential's format, e.g. "Bearer {value}"; null otherwise. */
+  readonly format: string | null
+}
+
 /** Which selector an auth step types which secret field into. */
 export interface SecretFillEntry {
   readonly selector: string
@@ -307,6 +324,7 @@ export interface PermissionDiff {
   readonly tools: ListDiff<ToolDiffEntry>
   readonly secrets: ListDiff<SecretDiffEntry>
   readonly secretFills: ListDiff<SecretFillEntry>
+  readonly credentials: ListDiff<CredentialDiffEntry>
   /** Every other login step: goto, click, waitFor, when/retry, otp, needsUser, fail, and so on. */
   readonly authSteps: ListDiff<AuthStepEntry>
   readonly messagesSources: ListDiff<{ readonly sender: string }>

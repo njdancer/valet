@@ -1,9 +1,11 @@
 // Output redaction. Before a tool result leaves the process, any string that contains a session
 // value (a cookie, or a handed-off storage value) or a secret resolved during the call is replaced
-// whole. Matching is exact substring matching: no normalisation, so an encoded copy of a secret is
-// not caught.
+// whole. Session values match as they are. A secret also matches in its common encodings
+// (secret-forms.ts: base64, hex, URL encoding, reversed and more), so a copy an adapter or a server
+// encoded is caught too; an arbitrary transform is not.
 
 import { SecretValue, ValetError } from '@valet/core'
+import { encodedForms, type SecretForm } from './secret-forms'
 
 export const REDACTED = '[redacted]'
 
@@ -19,6 +21,8 @@ export const MIN_SESSION_VALUE_LENGTH = 8
  */
 export class SecretRedactionSet {
   private readonly secrets: SecretValue[] = []
+  /** Each registered secret's encoded forms, matched beside it. */
+  private readonly forms: SecretForm[] = []
   private ended = false
   /** Set when a secret arrived that could not be kept; every string then counts as sensitive. */
   private incomplete = false
@@ -32,7 +36,16 @@ export class SecretRedactionSet {
       this.incomplete = true
       return
     }
+    let forms: SecretForm[]
+    try {
+      forms = encodedForms(secret)
+    } catch {
+      // Unreachable for a live SecretValue; if it happens, fail closed as for one we couldn't hold.
+      this.incomplete = true
+      return
+    }
     this.secrets.push(secret.clone())
+    this.forms.push(...forms)
   }
 
   /** Something was filled that wasn't registered: every string now counts as sensitive. */
@@ -40,21 +53,78 @@ export class SecretRedactionSet {
     this.incomplete = true
   }
 
-  /** True when `text` contains a registered secret. */
+  /**
+   * True when `text` contains a registered secret or one of its forms, as it is or once decoded
+   * (normalisedViews: percent, entity and backslash escapes, Unicode compatibility forms, hidden
+   * characters and white space).
+   */
   occursIn(text: string): boolean {
     if (this.incomplete) return true
-    return this.secrets.some((secret) => secret.occursIn(text))
+    if (this.secrets.length === 0) return false
+    return normalisedViews(text).some(
+      (view) =>
+        this.secrets.some((secret) => secret.occursIn(view)) ||
+        this.forms.some((form) => form.value.occursIn(view, { ignoreCase: form.ignoreCase })),
+    )
   }
 
-  /** Zeroes every clone. Later registrations are ignored. */
+  /** Zeroes every clone and form. Later registrations are ignored. */
   dispose(): void {
     this.ended = true
     for (const secret of this.secrets.splice(0)) secret.dispose()
+    for (const form of this.forms.splice(0)) form.value.dispose()
   }
 
   get size(): number {
     return this.secrets.length
   }
+}
+
+/**
+ * `text` as it is, and as the ways a server or an adapter commonly re-encodes text would undo:
+ * NFKC (full-width letters), without format characters (zero-width spaces), with percent escapes
+ * (either case, up to three times over), HTML numeric entities, \\uXXXX and \\/ escapes decoded,
+ * and with all white space removed (wrapped base64, a rewrapped key). Red team B4.
+ */
+export function normalisedViews(text: string): string[] {
+  const views = new Set([text])
+  let decoded = text.normalize('NFKC').replace(/\p{Cf}/gu, '')
+  views.add(decoded)
+  for (let round = 0; round < 3; round++) {
+    const next = decodeEscapes(decoded)
+    if (next === decoded) break
+    decoded = next
+    views.add(decoded)
+  }
+  for (const view of [...views]) {
+    const compact = view.replace(/\s+/g, '')
+    if (compact !== view) views.add(compact)
+    if (view.includes('+')) views.add(view.replaceAll('+', ' '))
+  }
+  return [...views]
+}
+
+function decodeEscapes(text: string): string {
+  return decodePercent(
+    text
+      .replace(/&#x([0-9a-f]{1,6});?/gi, (m, hex: string) => fromCode(Number.parseInt(hex, 16), m))
+      .replace(/&#([0-9]{1,7});?/g, (m, dec: string) => fromCode(Number.parseInt(dec, 10), m))
+      .replace(/\\u([0-9a-f]{4})/gi, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)))
+      .replace(/\\\//g, '/'),
+  )
+}
+
+function fromCode(code: number, fallback: string): string {
+  return code <= 0x10ffff ? String.fromCodePoint(code) : fallback
+}
+
+/** Percent escapes decoded as UTF-8, run by run; a run that isn't UTF-8 is decoded as Latin-1. */
+function decodePercent(text: string): string {
+  return text.replace(/(?:%[0-9a-f]{2})+/gi, (run) => {
+    const bytes = Buffer.from(run.replaceAll('%', ''), 'hex')
+    const utf8 = bytes.toString('utf8')
+    return utf8.includes('\ufffd') ? bytes.toString('latin1') : utf8
+  })
 }
 
 export type Sensitive = (text: string) => boolean
@@ -97,7 +167,12 @@ export function redactString(text: string, sensitive: Sensitive): string {
 export function redactOutput(value: unknown, sensitive: Sensitive): unknown {
   const plain = toPlainJson(value)
   const redacted = redactDeep(plain, sensitive)
-  if (redacted !== undefined && sensitive(JSON.stringify(redacted))) {
+  if (redacted === undefined) return redacted
+  // The whole once more, and every string run together: a secret split across two values or
+  // items is in neither alone (red team B4). The marker itself is taken out first, so a short
+  // secret that happens to be part of "[redacted]" doesn't fail every call (red team B5).
+  const unmarked = (text: string) => text.replaceAll(REDACTED, '\u0001')
+  if (sensitive(unmarked(JSON.stringify(redacted))) || sensitive(unmarked(stringsOf(redacted).join('')))) {
     throw new ValetError('tool-output', 'internal')
   }
   return redacted
@@ -125,6 +200,18 @@ function refuseBinary(this: unknown, key: string, value: unknown): unknown {
   const raw = Object.getOwnPropertyDescriptor(this, key)?.value
   if (raw instanceof ArrayBuffer || ArrayBuffer.isView(raw)) throw new Error('binary output')
   return value
+}
+
+/** Every string in JSON data, keys included, in order. */
+function stringsOf(value: unknown, out: string[] = []): string[] {
+  if (typeof value === 'string') out.push(value)
+  else if (Array.isArray(value)) for (const item of value) stringsOf(item, out)
+  else if (value !== null && typeof value === 'object')
+    for (const [key, item] of Object.entries(value)) {
+      out.push(key)
+      stringsOf(item, out)
+    }
+  return out
 }
 
 /**

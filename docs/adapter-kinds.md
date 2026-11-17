@@ -186,6 +186,90 @@ The manifest gets `credentials`, next to the existing `secrets`, which keep mean
   "Valet signs in to imap.mail.me.com with your iCloud app password. The adapter never sees it."
   Or: "This adapter is given your Home Assistant token, and can use it only with 192.168.1.20."
 
+#### As built (workstream B)
+
+**Built**, except granting a credential in the app (the approval card and Mac screen), which is
+B's follow-up. Where each part lives, for the workstreams that use it:
+
+- **Declaration.** `packages/core/src/credential.ts`: `credentialDeclarationSchema`, and
+  `credentialIssues(credentials, runtime, secretNames)`, which `manifestSchema` runs with
+  `runtimeOf(manifest)`. Each runtime may declare only its own use: `http` a header, `protocol` a
+  protocol sign-in, `raw` an entrusted credential, `browser` none (its logins are `secrets`). A
+  credential may not share a name with a secret. Until A's `runtime` field lands, every manifest is
+  a browser adapter, so any `credentials` are refused.
+  - Endpoints are `host:port`: a lower-case DNS name, an IPv4 literal or a bracketed IPv6 literal.
+    Header hosts are a lower-case DNS name or an IPv4 literal (a private host). Neither has
+    wildcards. The broker (A) decides which of them are reachable.
+  - A header credential fills one header from an allow-list: `authorization`, `x-api-key`,
+    `api-key`, `apikey`, `x-auth-token`, `x-access-token`, `private-token`, or a vendor's own
+    `x-<vendor>-key` or `x-<vendor>-token` (never one starting `x-forwarded`, `x-original`,
+    `x-rewrite`, `x-http-method`, `x-method`, `x-real`, `x-client`, `x-host` or `x-proxy`). Its
+    format is the placeholder alone or after one scheme word (`Bearer {value}`, `Token {value}`,
+    `Basic {basic}`), so it can't carry a path or words for a card. `{basic}` is RFC 7617
+    `username:password` in base64, for a password credential only. The filled value must be
+    printable ASCII. `credentialHeaderNames(manifest)` lists the names tool code must never set.
+  - Hosts are at most 100 characters and credential names at most 40, so a card never cuts one.
+    `messages` is reserved.
+  - Fields per kind: a password is `username` and `password`, a token is `token`, an SSH key is
+    `ssh-key` and an optional `username`. 1Password references: `token` reads an API Credential
+    item's `credential` field, `ssh-key` reads an SSH Key item's `private key` in OpenSSH format.
+    A Keychain copy can hold all four.
+- **Grants.** `CredentialGrant` (core) and `FileCredentialGrantStore` (`packages/credentials`),
+  in their own file beside the secret grants, with the same file rules (`SecureJsonFile`). A grant
+  names the adapter, hash, credential, kind, custody, provider, item and targets (a non-empty
+  subset of the declaration's). `credentialCarriesOver` (desktop `grants.ts`) keeps a grant across
+  an approved update only when the credential's kind, custody, protocol or header are unchanged
+  and its targets are the same or fewer.
+- **Valet-made SSH keys.** `ValetKeys` (`packages/credentials/src/valet-key.ts`, provider
+  `valet-key`) makes an Ed25519 key in OpenSSH's own format, writes the private half straight to
+  Keychain service `valet.key`, and keeps the public line and fingerprint in the item's comment.
+  Grant references are `valet-key:<uuid>`.
+- **Handing a credential out.** `CredentialGate` (`packages/runtime/src/credential-gate.ts`) is
+  the only way a non-browser adapter's credential leaves its provider:
+  - `headerFor(credential, host)` for A's `ctx.http`: returns `{ name, value }` for that one
+    request;
+  - `signIn(credential, protocol, endpoint)` for the protocol host (D, E, G): returns the username
+    (or null) and the secret;
+  - `entrusted(credential)` for F's `ctx.secrets`: returns the value and the endpoints it may
+    reach, narrowed to the grant's.
+
+  Each checks the declaration, the use, the target and the grant (same adapter, hash, kind and
+  custody, targets within the declaration's) before resolving anything. It then registers every
+  value for output redaction, audits `secret-used` with the target and `custody`, and only then
+  hands it over. If either step fails, nothing is handed over.
+- **Redaction.** `packages/runtime/src/secret-forms.ts` adds each secret's encoded forms to the
+  run's redaction set: base64 and base64url at all three alignments (so a secret inside a longer
+  string encoded as a whole is still found), of the UTF-8, UTF-16LE and Latin-1 bytes, and twice
+  over; hex; percent, URL, form and `URLSearchParams` encoding; JSON and `\uXXXX` escapes; the
+  value and its reverse in any case; for an SSH key each line and the body joined; and for a value
+  of 24 characters or more, 16-character windows every 8, so any 24 characters of it in a row are
+  caught however the rest was cut or rewrapped. Each string is also matched after decoding
+  (`normalisedViews`: NFKC, format characters removed, percent escapes up to three deep, HTML
+  entities, `\u` and `\/` escapes, white space removed). `redactOutput` finally checks the
+  whole output and every string run together, and fails the call if a secret is still there (a
+  secret split across two values). Forms shorter than 6 characters are dropped, and a username is
+  never registered, so mail addresses and paths survive. It applies to browser secrets too.
+- **Residual risks (red team, 2026-11-17).** Redaction is a backstop for what a hostile `raw`
+  adapter does with an entrusted value: a transform it doesn't list (ROT13, octal, XOR, a cipher,
+  hex with separators, one character per call) is not caught. The boundaries are the endpoints and
+  the upload budget (A, F). Two duties fall on the workstreams that call the gate:
+  - **A:** a server can echo a kept header (a debug endpoint returning `Authorization`).
+    `ctx.http` must redact responses, headers and bodies, against the run's set before they reach
+    QuickJS, or the adapter would see a kept value.
+  - **F:** a raw adapter process lives across calls, so an entrusted value it was given in one call
+    can come back in a later one. Its values belong in a redaction set that lives as long as the
+    process, not the call.
+- **Cards.** `describeCredentialUse` builds one sentence from the declaration's structured fields
+  only, never the author's description. The Mac's install lines use the new `credential` area,
+  always `high` and never `critical`, so a `raw` adapter is approved on the phone or the Mac like
+  everything else. The phone parses the new area (and the `auth-steps` and `probe` areas it was
+  missing), and a shared test vector now keeps the two lists equal.
+- **Audit.** `secret-used` gains `custody` for credentials, with `origin` holding the target.
+  New events `credential-granted`, `credential-revoked` and `key-generated` are defined for the
+  follow-up.
+- **Mail sign-in sources** (above) fit the secret-grant shape of a Messages sender, not a
+  credential grant: the mail account they read is a kept `imap` credential granted as here.
+
 ### F3. The Node runtime (for `raw`)
 
 - **Binary.** It's a separate Node binary, signed under its own identifier, with no
@@ -385,3 +469,16 @@ note it here. Each one can be reversed.
   (the heap alone is capped at 256 MB), found by the red team.
 - **Shipping the signed Node binary is a follow-up.** It touches the release signing setup, so it
   gets its own pull request. Until then nothing uses the runtime: `raw` stays refused (workstream F).
+
+**Workstream B (secrets v2):**
+
+- **B: entrusted passwords are allowed, with a warning.** A `raw` adapter may be entrusted a
+  `password` as well as a `token`, because app-specific passwords (iCloud's) are passwords. The
+  card adds "Use a token or app password you can revoke." The alternative was to refuse entrusted
+  passwords outright.
+- **B: credential headers come from an allow-list**, not a deny-list: `authorization`, the common
+  API-key headers and `x-<vendor>-key`/`-token`. A site needing another header name waits for a
+  change to the list.
+- **B: usernames aren't redacted** from tool output. Only the secret is, so a mail adapter's
+  `from` and `to` fields survive. A username is not a secret, and redacting it made mail and
+  SFTP adapters unusable.

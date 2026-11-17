@@ -5,7 +5,7 @@
 import {
   CredentialError,
   type CredentialProvider,
-  type SecretField,
+  type ItemField,
   SecretValue,
   type TokenSource,
 } from '@valet/core'
@@ -106,7 +106,7 @@ export class OnePasswordServiceAccountProvider implements CredentialProvider, Va
     )
   }
 
-  async resolve(itemRef: string, field: SecretField): Promise<SecretValue> {
+  async resolve(itemRef: string, field: ItemField): Promise<SecretValue> {
     const ref = parseItemRef(itemRef)
     if (ref === null) throw new CredentialError('not-found')
     const reference = secretReference(ref, field, 'totp')

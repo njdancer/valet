@@ -7,6 +7,9 @@ import {
   type AuthStep,
   type Condition,
   canonicalJson,
+  credentialCardItems,
+  credentialsOf,
+  credentialTargets,
   DEFAULT_SANDBOX,
   describeDeclaration,
   describeException,
@@ -23,9 +26,11 @@ import {
   toolHints,
   unlockedBy,
   uploadBudget,
+  useKind,
 } from '@valet/core'
 import type {
   AuthStepEntry,
+  CredentialDiffEntry,
   FileChange,
   LimitsInfo,
   ListDiff,
@@ -122,6 +127,23 @@ function secrets(manifest: AdapterManifest): SecretDiffEntry[] {
     description: request.description,
     fields: [...request.fields],
     origins: [...request.origins],
+  }))
+}
+
+/**
+ * Each credential, with Valet's sentence for it. The whole declaration is in the entry (the header
+ * format too, through the sentence and `use`), so any change to one reads as removed and added.
+ */
+export function credentialEntries(manifest: AdapterManifest): CredentialDiffEntry[] {
+  return Object.entries(credentialsOf(manifest)).map(([name, credential]) => ({
+    name,
+    description: credential.description,
+    kind: credential.kind,
+    custody: credential.custody,
+    use: useKind(credential.use),
+    targets: [...credentialTargets(credential)],
+    items: credentialCardItems(name, credential),
+    format: 'header' in credential.use ? credential.use.header.format : null,
   }))
 }
 
@@ -263,6 +285,7 @@ export function permissionDiff(before: AdapterManifest | null, after: AdapterMan
     tools: pick(tools),
     secrets: pick(secrets),
     secretFills: pick((m) => secretFills(m.auth.steps)),
+    credentials: pick(credentialEntries),
     authSteps: pick((m) => authStepEntries(m.auth.steps)),
     messagesSources: pick(senders),
     settings: pick(settings),
@@ -314,6 +337,7 @@ export function addsPermissions(diff: PermissionDiff): boolean {
     diff.tools,
     diff.secrets,
     diff.secretFills,
+    diff.credentials,
     diff.authSteps,
     diff.messagesSources,
     // A new setting runs a tool on the person's behalf before each call; a changed one runs another.
