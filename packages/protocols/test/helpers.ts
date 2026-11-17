@@ -1,8 +1,8 @@
 import { connect } from 'node:tls'
+import type { ImapPurpose as Purpose } from '@valet/core/imap-policy'
 import { DEFAULT_USER, type FakeImap, type FakeImapOptions, startFakeImap } from '@valet/fake-imap'
 import { type ClientOptions, ImapClient } from '../src/imap/client'
-import { Operations, type FolderRule } from '../src/imap/operations'
-import type { ImapPurpose as Purpose } from '@valet/core/imap-policy'
+import { type FolderRule, Operations } from '../src/imap/operations'
 
 export const MESSAGE = [
   'From: "Shop" <orders@shop.test>',
@@ -97,7 +97,10 @@ export function builtHost(): Promise<string> {
 }
 
 /** Host options for tests: this Node, Seatbelt on macOS only, and the fake's certificate trusted. */
-export async function hostOptions(server: FakeImap, extra: Partial<ProtocolHostOptions> = {}): Promise<ProtocolHostOptions> {
+export async function hostOptions(
+  server: FakeImap,
+  extra: Partial<ProtocolHostOptions> = {},
+): Promise<ProtocolHostOptions> {
   const home = await mkdtemp(join(tmpdir(), 'valet-home-'))
   return {
     nodeBinary: process.execPath,
@@ -119,13 +122,23 @@ export function brokerTo(server: FakeImap) {
   }
 }
 
-export function run(budget = 64 * 1024): RunContext & { records: ConnectionRecord[]; controller: AbortController } {
+export function run(
+  budget = 64 * 1024,
+): RunContext & { records: ConnectionRecord[]; controller: AbortController } {
   const controller = new AbortController()
   const records: ConnectionRecord[] = []
-  return { meter: new RunMeter(budget), signal: controller.signal, record: (r) => records.push(r), records, controller }
+  return {
+    meter: new RunMeter(budget),
+    signal: controller.signal,
+    record: (r) => records.push(r),
+    records,
+    controller,
+  }
 }
 
-export const signIn = (user = DEFAULT_USER) => async () => ({
-  username: SecretValue.fromString(user.username),
-  secret: SecretValue.fromString(user.password),
-})
+export const signIn =
+  (user = DEFAULT_USER) =>
+  async () => ({
+    username: SecretValue.fromString(user.username),
+    secret: SecretValue.fromString(user.password),
+  })

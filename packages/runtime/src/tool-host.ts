@@ -1360,7 +1360,8 @@ export class ToolHost {
   private imapFor(entry: Entry, declaration: ToolDeclaration, state: CallState): ToolContext['imap'] {
     const manifest = entry.definition.manifest
     const imap = manifest.protocols?.imap
-    if (entry.imap === undefined || imap === undefined || runtimeOf(manifest) !== 'protocol') return NO_IMAP_ACCESS
+    if (entry.imap === undefined || imap === undefined || runtimeOf(manifest) !== 'protocol')
+      return NO_IMAP_ACCESS
     const grants = entry.credentialGrants
     return new GuardedImap({
       adapterId: manifest.id,
@@ -1460,7 +1461,6 @@ export class ToolHost {
    * audited is refused rather than sent.
    */
   private credentialsFor(entry: Entry, state: CallState): { credentials?: HttpCredentials } {
-    const manifest = entry.definition.manifest
     if (entry.credentialGrants !== undefined) {
       const gate = this.gateFor(entry, entry.credentialGrants, state)
       return { credentials: { headerFor: (credential, host) => gate.headerFor(credential, host) } }

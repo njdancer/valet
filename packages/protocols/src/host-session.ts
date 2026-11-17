@@ -5,10 +5,10 @@
 // tunnel closed.
 
 import { type SecretValue, ValetError } from '@valet/core'
+import type { Operation, ImapPurpose as Purpose } from '@valet/core/imap-policy'
 import { type NodeChannel, type OpenTunnels, sandboxedNode } from '@valet/node-runtime'
 import { isPlainJson } from '@valet/runtime/protocol'
 import type { ImapFailure } from './imap/client'
-import type { ImapPurpose as Purpose, Operation } from '@valet/core/imap-policy'
 import type { SignInQuery, SignInResult } from './imap/signin'
 
 export interface ProtocolHostOptions {
@@ -208,7 +208,8 @@ export class ImapHostSession {
   private onMessage(message: unknown): void {
     if (this.ended !== null) return
     if (!isPlainJson(message) || message === null || typeof message !== 'object' || Array.isArray(message)) {
-      return this.broken()
+      this.broken()
+      return
     }
     const m = message as Record<string, unknown>
     if (m['t'] === 'ready' && this.ready !== null) {
@@ -217,9 +218,11 @@ export class ImapHostSession {
       ready.resolve(undefined)
       return
     }
-    if (m['t'] !== 'result' || typeof m['id'] !== 'number') return this.broken()
-    const pending = this.pending.get(m['id'])
-    if (pending === undefined) return this.broken()
+    const pending = m['t'] === 'result' && typeof m['id'] === 'number' ? this.pending.get(m['id']) : undefined
+    if (pending === undefined || typeof m['id'] !== 'number') {
+      this.broken()
+      return
+    }
     this.pending.delete(m['id'])
     if (m['ok'] === true) pending.resolve(m['value'] ?? null)
     else pending.reject(hostError(m['failure'], m['code']))

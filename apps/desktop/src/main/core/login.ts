@@ -386,6 +386,9 @@ export function createAuthRunner(options: AuthRunnerOptions): AuthRunner {
         grants: options.grants,
         providers: options.credentials.providers(),
         otpReader: options.credentials.otpReader(),
+        ...(options.credentials.mailReader === undefined
+          ? {}
+          : { mailReader: options.credentials.mailReader() }),
         // The login's navigations and its probe wait on the site's budget, as tool calls do (D55).
         probe: authProbe(manifest, page, () => request.pace()),
         paceNavigation: () => request.pace(),

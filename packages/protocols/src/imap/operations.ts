@@ -5,16 +5,21 @@
 // Arguments arrive from tool code (through the main process, which checked them once already), so
 // every one is checked again here as if it were hostile.
 
-import { decodeCharset, decodeTransfer, truncate, visibleOnly, cleanBody } from './decode'
+import {
+  type FolderRule,
+  folderAllowed,
+  type Operation,
+  type ImapPurpose as Purpose,
+} from '@valet/core/imap-policy'
+import { type ImapClient, ImapError } from './client'
 import { decodeMailbox } from './command'
-import { ImapClient, ImapError } from './client'
-import { type FolderRule, folderAllowed, type Operation, type ImapPurpose as Purpose } from '@valet/core/imap-policy'
+import { cleanBody, decodeCharset, decodeTransfer, hasControl, truncate, visibleOnly } from './decode'
 
 export type { FolderRule }
+
+import type { Arg } from './command'
 import { bodyParts, type Envelope, type Part, parseEnvelope, parseStructure } from './structure'
 import { Atom, list, number, text, type Value } from './wire'
-import type { Arg } from './command'
-
 
 export interface OperationOptions {
   readonly folders: FolderRule
@@ -76,7 +81,7 @@ export function invalid(): ImapError {
 
 function folderName(value: unknown): string {
   if (typeof value !== 'string' || value.length === 0 || value.length > LIMITS.folderChars) throw invalid()
-  if (/[\u0000-\u001f\u007f*%]/.test(value)) throw invalid()
+  if (hasControl(value) || /[*%]/.test(value)) throw invalid()
   return value
 }
 
@@ -130,7 +135,10 @@ function strings(values: readonly Value[]): string[] {
 }
 
 /** The value of a response code like `[UIDVALIDITY 3857529045]`, from a list of untagged responses. */
-function codeNumber(responses: readonly { kind: string; code?: Value[] | null }[], name: string): number | null {
+function codeNumber(
+  responses: readonly { kind: string; code?: Value[] | null }[],
+  name: string,
+): number | null {
   for (const r of responses) {
     const code = r.kind === 'status' ? r.code : null
     if (code && code[0] instanceof Atom && code[0].value.toUpperCase() === name) {
@@ -274,9 +282,17 @@ export class Operations {
     const folder = this.folder(folderArg)
     const result = await this.client.run({
       verb: 'STATUS',
-      args: [{ mailbox: folder }, { list: ['MESSAGES', 'UNSEEN', 'UIDNEXT', 'UIDVALIDITY'].map((atom) => ({ atom })) }],
+      args: [
+        { mailbox: folder },
+        { list: ['MESSAGES', 'UNSEEN', 'UIDNEXT', 'UIDVALIDITY'].map((atom) => ({ atom })) },
+      ],
     })
-    const values: Record<string, number | null> = { MESSAGES: null, UNSEEN: null, UIDNEXT: null, UIDVALIDITY: null }
+    const values: Record<string, number | null> = {
+      MESSAGES: null,
+      UNSEEN: null,
+      UIDNEXT: null,
+      UIDVALIDITY: null,
+    }
     for (const r of result.untagged) {
       if (r.kind !== 'data' || r.name !== 'STATUS') continue
       const items = r.values[1]
@@ -323,7 +339,10 @@ export class Operations {
     const uidValidity = await this.look(folder)
     const result = await this.client.run({
       verb: 'UID SEARCH',
-      args: [...(utf8 ? [{ atom: 'CHARSET' }, { atom: 'UTF-8' }] : []), ...(terms.length === 0 ? [{ atom: 'ALL' }] : terms)],
+      args: [
+        ...(utf8 ? [{ atom: 'CHARSET' }, { atom: 'UTF-8' }] : []),
+        ...(terms.length === 0 ? [{ atom: 'ALL' }] : terms),
+      ],
     })
     const uids: number[] = []
     for (const r of result.untagged) {
@@ -343,7 +362,13 @@ export class Operations {
     const folder = this.folder(folderArg)
     const uids = uidList(uidsArg, LIMITS.fetchMax)
     await this.look(folder)
-    const items = await fetchByUid(this.client, uids, ['UID', 'FLAGS', 'INTERNALDATE', 'RFC822.SIZE', 'ENVELOPE'])
+    const items = await fetchByUid(this.client, uids, [
+      'UID',
+      'FLAGS',
+      'INTERNALDATE',
+      'RFC822.SIZE',
+      'ENVELOPE',
+    ])
     const messages: MessageSummary[] = []
     for (const uid of [...uids].sort((a, b) => b - a)) {
       const map = items.get(uid)
@@ -354,14 +379,11 @@ export class Operations {
   }
 
   private async structure(uid: number): Promise<{ summary: MessageSummary; parts: Part[] } | null> {
-    const items = await fetchByUid(this.client, [uid], [
-      'UID',
-      'FLAGS',
-      'INTERNALDATE',
-      'RFC822.SIZE',
-      'ENVELOPE',
-      'BODYSTRUCTURE',
-    ])
+    const items = await fetchByUid(
+      this.client,
+      [uid],
+      ['UID', 'FLAGS', 'INTERNALDATE', 'RFC822.SIZE', 'ENVELOPE', 'BODYSTRUCTURE'],
+    )
     const map = items.get(uid)
     const summary = map === undefined ? null : summaryOf(map)
     if (map === undefined || summary === null) return null
@@ -369,7 +391,11 @@ export class Operations {
   }
 
   /** A text part, decoded, at most `maxChars` characters, fetched with a byte cap to match. */
-  private async partText(uid: number, part: Part, maxChars: number): Promise<{ text: string; truncated: boolean }> {
+  private async partText(
+    uid: number,
+    part: Part,
+    maxChars: number,
+  ): Promise<{ text: string; truncated: boolean }> {
     // Encoded bytes needed for maxChars characters of UTF-8 in base64, with room for line breaks.
     const cap = Math.min(maxChars * 6 + 1024, 8 * 1024 * 1024)
     const items = await fetchByUid(this.client, [uid], ['UID', `BODY.PEEK[${part.part}]<0.${cap}>`])
@@ -450,7 +476,12 @@ export class Operations {
     return { folder, uids: uids.length }
   }
 
-  private async transfer(verb: 'UID COPY' | 'UID MOVE', folderArg: unknown, uidsArg: unknown, toArg: unknown) {
+  private async transfer(
+    verb: 'UID COPY' | 'UID MOVE',
+    folderArg: unknown,
+    uidsArg: unknown,
+    toArg: unknown,
+  ) {
     const folder = this.folder(folderArg)
     const uids = uidList(uidsArg, LIMITS.storeMax)
     const to = this.folder(toArg)
@@ -492,14 +523,17 @@ export class Operations {
     if (!this.client.has('UIDPLUS')) throw new ImapError('unsupported')
     await this.change(folder)
     const result = await this.client.run({ verb: 'UID EXPUNGE', args: [{ uids }] })
-    const removed = result.untagged.filter((r) => r.kind === 'data' && (r.name === 'EXPUNGE' || r.name === 'VANISHED')).length
+    const removed = result.untagged.filter(
+      (r) => r.kind === 'data' && (r.name === 'EXPUNGE' || r.name === 'VANISHED'),
+    ).length
     return { folder, removed }
   }
 
   async deleteFolder(folderArg: unknown) {
     const folder = this.folder(folderArg)
     if (folder === 'INBOX') throw invalid()
-    if (this.client.selected?.folder === folder) await this.client.run({ verb: 'UNSELECT', args: [] }).catch(() => undefined)
+    if (this.client.selected?.folder === folder)
+      await this.client.run({ verb: 'UNSELECT', args: [] }).catch(() => undefined)
     await this.client.run({ verb: 'DELETE', args: [{ mailbox: folder }] })
     return { folder }
   }
@@ -518,8 +552,21 @@ export function imapDate(value: unknown): string {
   return `${d}-${MONTHS[m - 1]}-${y}`
 }
 
-const TEXT_KEYS = { from: 'FROM', to: 'TO', cc: 'CC', subject: 'SUBJECT', body: 'BODY', text: 'TEXT' } as const
-const DATE_KEYS = { since: 'SINCE', before: 'BEFORE', on: 'ON', sentSince: 'SENTSINCE', sentBefore: 'SENTBEFORE' } as const
+const TEXT_KEYS = {
+  from: 'FROM',
+  to: 'TO',
+  cc: 'CC',
+  subject: 'SUBJECT',
+  body: 'BODY',
+  text: 'TEXT',
+} as const
+const DATE_KEYS = {
+  since: 'SINCE',
+  before: 'BEFORE',
+  on: 'ON',
+  sentSince: 'SENTSINCE',
+  sentBefore: 'SENTBEFORE',
+} as const
 const FLAG_KEYS = {
   seen: ['SEEN', 'UNSEEN'],
   flagged: ['FLAGGED', 'UNFLAGGED'],
@@ -551,7 +598,8 @@ export function searchTerms(value: unknown, depth = 0, count = { n: 0 }): Arg[] 
   for (const [key, v] of Object.entries(criteria)) {
     if (v === undefined) continue
     if (Object.hasOwn(TEXT_KEYS, key)) {
-      if (typeof v !== 'string' || v.length === 0 || v.length > LIMITS.searchTextChars || /[\r\n\0]/.test(v)) throw invalid()
+      if (typeof v !== 'string' || v.length === 0 || v.length > LIMITS.searchTextChars || /[\r\n\0]/.test(v))
+        throw invalid()
       term({ atom: TEXT_KEYS[key as keyof typeof TEXT_KEYS] }, { string: v })
     } else if (Object.hasOwn(DATE_KEYS, key)) {
       term({ atom: DATE_KEYS[key as keyof typeof DATE_KEYS] }, { atom: imapDate(v) })

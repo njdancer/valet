@@ -14,8 +14,8 @@
 import {
   type AuditEvent,
   type ErrorClass,
-  folderAllowed,
   type FolderRule,
+  folderAllowed,
   IMAP_PURPOSE_RANK,
   type ImapAccess,
   type ImapPurpose,
@@ -101,15 +101,18 @@ export class GuardedImap implements ImapAccess {
   status = (folder: string) => this.op('status', [folder]) as ReturnType<ImapAccess['status']>
   search: ImapAccess['search'] = (folder, criteria, options) =>
     this.op('search', [folder, criteria, options]) as ReturnType<ImapAccess['search']>
-  fetch: ImapAccess['fetch'] = (folder, uids) => this.op('fetch', [folder, uids]) as ReturnType<ImapAccess['fetch']>
+  fetch: ImapAccess['fetch'] = (folder, uids) =>
+    this.op('fetch', [folder, uids]) as ReturnType<ImapAccess['fetch']>
   message: ImapAccess['message'] = (folder, uid, options) =>
     this.op('message', [folder, uid, options]) as ReturnType<ImapAccess['message']>
   attachment: ImapAccess['attachment'] = (folder, uid, part, options) =>
     this.op('attachment', [folder, uid, part, options]) as ReturnType<ImapAccess['attachment']>
   setFlags: ImapAccess['setFlags'] = (folder, uids, change) =>
     this.op('setFlags', [folder, uids, change]) as ReturnType<ImapAccess['setFlags']>
-  copy: ImapAccess['copy'] = (folder, uids, to) => this.op('copy', [folder, uids, to]) as ReturnType<ImapAccess['copy']>
-  move: ImapAccess['move'] = (folder, uids, to) => this.op('move', [folder, uids, to]) as ReturnType<ImapAccess['move']>
+  copy: ImapAccess['copy'] = (folder, uids, to) =>
+    this.op('copy', [folder, uids, to]) as ReturnType<ImapAccess['copy']>
+  move: ImapAccess['move'] = (folder, uids, to) =>
+    this.op('move', [folder, uids, to]) as ReturnType<ImapAccess['move']>
   append: ImapAccess['append'] = (folder, message, options) =>
     this.op('append', [folder, message, options]) as ReturnType<ImapAccess['append']>
   createFolder: ImapAccess['createFolder'] = (folder) =>
@@ -123,7 +126,8 @@ export class GuardedImap implements ImapAccess {
   async op(name: unknown, args: readonly unknown[]): Promise<unknown> {
     const { state } = this.options
     state.assertLive()
-    if (!isOperation(name) || !Array.isArray(args) || args.length > 4) throw new ValetError('tool-run', 'invalid')
+    if (!isOperation(name) || !Array.isArray(args) || args.length > 4)
+      throw new ValetError('tool-run', 'invalid')
     const needed: Purpose = operationPurpose(name, args)
     if (IMAP_PURPOSE_RANK[needed] > IMAP_PURPOSE_RANK[this.options.sideEffect]) {
       return this.deny('request-surface', 'command-not-allowed', name)

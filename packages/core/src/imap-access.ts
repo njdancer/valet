@@ -111,7 +111,10 @@ export interface ImapAccess {
     readonly uids: readonly number[]
   }>
   /** read. Envelopes and flags for at most 100 messages. Never marks them read. */
-  fetch(folder: string, uids: readonly number[]): Promise<{ readonly folder: string; readonly messages: readonly ImapSummary[] }>
+  fetch(
+    folder: string,
+    uids: readonly number[],
+  ): Promise<{ readonly folder: string; readonly messages: readonly ImapSummary[] }>
   /** read. One message's text. Never marks it read. */
   message(folder: string, uid: number, options?: { readonly maxTextChars?: number }): Promise<ImapMessage>
   /** read. One part's bytes as base64, at most maxBytes (default 1 MB, at most 1.5 MB). */
@@ -129,11 +132,23 @@ export interface ImapAccess {
     readonly truncated: boolean
   }>
   /** write, or irreversible when it names \Deleted. */
-  setFlags(folder: string, uids: readonly number[], change: ImapFlagChange): Promise<{ readonly folder: string; readonly uids: number }>
+  setFlags(
+    folder: string,
+    uids: readonly number[],
+    change: ImapFlagChange,
+  ): Promise<{ readonly folder: string; readonly uids: number }>
   /** write. Both folders must be allowed. */
-  copy(folder: string, uids: readonly number[], to: string): Promise<{ readonly folder: string; readonly to: string; readonly uids: number }>
+  copy(
+    folder: string,
+    uids: readonly number[],
+    to: string,
+  ): Promise<{ readonly folder: string; readonly to: string; readonly uids: number }>
   /** write. Both folders must be allowed. Needs the server's MOVE. */
-  move(folder: string, uids: readonly number[], to: string): Promise<{ readonly folder: string; readonly to: string; readonly uids: number }>
+  move(
+    folder: string,
+    uids: readonly number[],
+    to: string,
+  ): Promise<{ readonly folder: string; readonly to: string; readonly uids: number }>
   /** write. A whole RFC 5322 message, at most 1 MB. */
   append(
     folder: string,
@@ -143,7 +158,10 @@ export interface ImapAccess {
   /** write. */
   createFolder(folder: string): Promise<{ readonly folder: string }>
   /** irreversible. Removes just these messages, if marked \Deleted (UID EXPUNGE; needs UIDPLUS). */
-  expunge(folder: string, uids: readonly number[]): Promise<{ readonly folder: string; readonly removed: number }>
+  expunge(
+    folder: string,
+    uids: readonly number[],
+  ): Promise<{ readonly folder: string; readonly removed: number }>
   /** irreversible. Never INBOX. */
   deleteFolder(folder: string): Promise<{ readonly folder: string }>
 }

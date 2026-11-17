@@ -10,6 +10,8 @@ const STEP_WHY: Readonly<Record<AuthStepEntry['op'], string>> = {
   click: 'The login clicks this. A click can accept terms or confirm something on the site.',
   fill: 'The login types into this field.',
   otp: 'The login types a one-time code here.',
+  openMailLink:
+    'The login opens a sign-in link the site mailed you. Valet finds it; the adapter never sees it.',
   pause: 'The login pauses here.',
   when: 'The login branches on this.',
   retry: 'The login repeats these steps.',

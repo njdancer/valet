@@ -38,7 +38,11 @@ export function header(headers: readonly [string, string][], name: string): stri
 }
 
 /** `text/plain; charset="utf-8"` as its type, subtype and parameters. */
-export function contentType(value: string | null): { type: string; subtype: string; params: Map<string, string> } {
+export function contentType(value: string | null): {
+  type: string
+  subtype: string
+  params: Map<string, string>
+} {
   const params = new Map<string, string>()
   if (value === null) return { type: 'text', subtype: 'plain', params: new Map([['charset', 'us-ascii']]) }
   const [main = '', ...rest] = value.split(';')
@@ -46,7 +50,13 @@ export function contentType(value: string | null): { type: string; subtype: stri
   for (const part of rest) {
     const eq = part.indexOf('=')
     if (eq === -1) continue
-    params.set(part.slice(0, eq).trim().toLowerCase(), part.slice(eq + 1).trim().replace(/^"|"$/g, ''))
+    params.set(
+      part.slice(0, eq).trim().toLowerCase(),
+      part
+        .slice(eq + 1)
+        .trim()
+        .replace(/^"|"$/g, ''),
+    )
   }
   return { type, subtype, params }
 }
@@ -150,7 +160,11 @@ export function bodyStructure(node: MimeNode): string {
   if (node.type === 'text') fields.push(String(node.body.toString('latin1').split('\r\n').length))
   if (node.type === 'message' && node.subtype === 'rfc822') {
     const inner = parseMime(node.body)
-    fields.push(envelope(inner), bodyStructure(inner), String(node.body.toString('latin1').split('\r\n').length))
+    fields.push(
+      envelope(inner),
+      bodyStructure(inner),
+      String(node.body.toString('latin1').split('\r\n').length),
+    )
   }
   fields.push('NIL', disposition, 'NIL', 'NIL')
   return `(${fields.join(' ')})`

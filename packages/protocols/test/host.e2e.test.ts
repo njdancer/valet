@@ -2,12 +2,12 @@
 // macOS), reaching the fake server only through the egress broker's tunnel, signed in just in
 // time, and refusing what its purpose doesn't allow at every layer.
 
+import { ValetError } from '@valet/core'
 import type { FakeImap } from '@valet/fake-imap'
 import { DEFAULT_USER } from '@valet/fake-imap'
-import { ValetError } from '@valet/core'
 import { afterEach, describe, expect, it } from 'vitest'
-import { imapBackend } from '../src/imap-backend'
 import { ImapHostSession } from '../src/host-session'
+import { imapBackend } from '../src/imap-backend'
 import { brokerTo, fake, hostOptions, mac, run, signIn } from './helpers'
 
 let server: FakeImap | null = null
@@ -61,7 +61,9 @@ describe('the protocol host', () => {
   it('refuses a write from a read session in the host itself', async () => {
     const b = await backend()
     const connection = await b.connect(call('read'))
-    await expect(connection.operation('setFlags', ['INBOX', [1], { add: ['\\Flagged'] }])).rejects.toMatchObject({
+    await expect(
+      connection.operation('setFlags', ['INBOX', [1], { add: ['\\Flagged'] }]),
+    ).rejects.toMatchObject({
       errorClass: 'command-not-allowed',
     })
     await expect(connection.operation('move', ['INBOX', [1], 'Archive'])).rejects.toMatchObject({
@@ -78,7 +80,9 @@ describe('the protocol host', () => {
     await expect(writer.operation('setFlags', ['INBOX', [1], { add: ['\\Deleted'] }])).rejects.toMatchObject({
       errorClass: 'command-not-allowed',
     })
-    await expect(writer.operation('expunge', ['INBOX', [1]])).rejects.toMatchObject({ errorClass: 'command-not-allowed' })
+    await expect(writer.operation('expunge', ['INBOX', [1]])).rejects.toMatchObject({
+      errorClass: 'command-not-allowed',
+    })
     await writer.end()
     expect([...(server?.mailboxes.get('INBOX')?.messages[0]?.flags ?? [])]).toEqual(['\\Flagged'])
 
@@ -92,11 +96,15 @@ describe('the protocol host', () => {
   it('keeps to the manifest’s folders', async () => {
     const b = await backend(['INBOX'])
     const connection = await b.connect(call('write'))
-    expect(((await connection.operation('listFolders', [])) as { path: string }[]).map((f) => f.path)).toEqual(['INBOX'])
+    expect(
+      ((await connection.operation('listFolders', [])) as { path: string }[]).map((f) => f.path),
+    ).toEqual(['INBOX'])
     await expect(connection.operation('copy', ['INBOX', [1], 'Archive'])).rejects.toMatchObject({
       errorClass: 'command-not-allowed',
     })
-    await expect(connection.operation('status', ['Archive'])).rejects.toMatchObject({ errorClass: 'command-not-allowed' })
+    await expect(connection.operation('status', ['Archive'])).rejects.toMatchObject({
+      errorClass: 'command-not-allowed',
+    })
     await connection.end()
     expect(server?.commands.some((c) => c.line.includes('Archive'))).toBe(false)
   })
@@ -105,7 +113,10 @@ describe('the protocol host', () => {
     const b = await backend()
     const r = run()
     await expect(
-      b.connect({ ...call('read', r), signIn: signIn({ username: DEFAULT_USER.username, password: 'wrong' }) }),
+      b.connect({
+        ...call('read', r),
+        signIn: signIn({ username: DEFAULT_USER.username, password: 'wrong' }),
+      }),
     ).rejects.toMatchObject({ stage: 'credential', errorClass: 'auth-failed' })
   })
 

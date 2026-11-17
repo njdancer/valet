@@ -92,7 +92,16 @@ export interface FakeImap {
 
 export const DEFAULT_USER: FakeUser = { username: 'nick@icloud.test', password: 'abcd-efgh-ijkl-mnop' }
 
-const BEFORE = ['IMAP4rev1', 'SASL-IR', 'AUTH=PLAIN', 'AUTH=ATOKEN', 'XAPPLEPUSHSERVICE', 'ID', 'UIDPLUS', 'LITERAL+']
+const BEFORE = [
+  'IMAP4rev1',
+  'SASL-IR',
+  'AUTH=PLAIN',
+  'AUTH=ATOKEN',
+  'XAPPLEPUSHSERVICE',
+  'ID',
+  'UIDPLUS',
+  'LITERAL+',
+]
 const AFTER = [
   'IMAP4rev1',
   'SASL-IR',
@@ -125,7 +134,9 @@ function parseDate(value: string): Date | null {
 }
 
 function toMessage(uid: number, input: MessageInput): FakeMessage {
-  const raw = Buffer.isBuffer(input.raw) ? input.raw : Buffer.from(input.raw.replace(/\r?\n/g, '\r\n'), 'utf8')
+  const raw = Buffer.isBuffer(input.raw)
+    ? input.raw
+    : Buffer.from(input.raw.replace(/\r?\n/g, '\r\n'), 'utf8')
   return {
     uid,
     flags: new Set(input.flags ?? []),
@@ -383,7 +394,9 @@ export async function startFakeImap(options: FakeImapOptions = {}): Promise<Fake
       const tokens = tokenize(bytes.subarray(space + 1))
       let verb = str(tokens.shift()).toUpperCase()
       if (verb === 'UID') verb = `UID ${str(tokens.shift()).toUpperCase()}`
-      const line = bytes.toString('latin1').replace(/\{(\d+)\+?\}\r\n[\s\S]*$/, (m) => m.slice(0, m.indexOf('}') + 1))
+      const line = bytes
+        .toString('latin1')
+        .replace(/\{(\d+)\+?\}\r\n[\s\S]*$/, (m) => m.slice(0, m.indexOf('}') + 1))
       const seen: SeenCommand = { tag, verb, line, connection }
       commands.push(seen)
       const hostile = options.hostile?.({ command: seen, authenticated, selected: selected?.name ?? null })
@@ -441,7 +454,9 @@ export async function startFakeImap(options: FakeImapOptions = {}): Promise<Fake
           selected = { name: name.toUpperCase() === 'INBOX' ? 'INBOX' : name, readOnly: verb === 'EXAMINE' }
           write(`* ${b.messages.length} EXISTS\r\n* 0 RECENT\r\n`)
           write('* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n')
-          write(`* OK [UIDVALIDITY ${b.uidValidity}] UIDs valid\r\n* OK [UIDNEXT ${b.uidNext}] Predicted next UID\r\n`)
+          write(
+            `* OK [UIDVALIDITY ${b.uidValidity}] UIDs valid\r\n* OK [UIDNEXT ${b.uidNext}] Predicted next UID\r\n`,
+          )
           return ok(`[${verb === 'EXAMINE' ? 'READ-ONLY' : 'READ-WRITE'}] ${verb} completed`)
         }
         case 'UNSELECT':
@@ -449,7 +464,8 @@ export async function startFakeImap(options: FakeImapOptions = {}): Promise<Fake
           return ok()
         case 'CLOSE': {
           const b = box()
-          if (b !== null && selected?.readOnly === false) b.messages = b.messages.filter((m) => !m.flags.has('\\Deleted'))
+          if (b !== null && selected?.readOnly === false)
+            b.messages = b.messages.filter((m) => !m.flags.has('\\Deleted'))
           selected = null
           return ok()
         }
@@ -470,7 +486,10 @@ export async function startFakeImap(options: FakeImapOptions = {}): Promise<Fake
           if (b === undefined) return no('[TRYCREATE] No such mailbox')
           const flags = Array.isArray(tokens[1]) ? tokens[1].map(str) : []
           const last = tokens[tokens.length - 1]
-          const raw = last !== undefined && typeof last === 'object' && !Array.isArray(last) ? last.literal : Buffer.alloc(0)
+          const raw =
+            last !== undefined && typeof last === 'object' && !Array.isArray(last)
+              ? last.literal
+              : Buffer.alloc(0)
           const message = toMessage(b.uidNext++, { raw, flags })
           b.messages.push(message)
           return ok(`[APPENDUID ${b.uidValidity} ${message.uid}] APPEND completed`)
@@ -518,9 +537,11 @@ export async function startFakeImap(options: FakeImapOptions = {}): Promise<Fake
                   const node = sectionNode(m.mime, path as string)
                   data = node === null ? Buffer.alloc(0) : sub === 'MIME' ? node.headerBytes : node.body
                 }
-                if (origin !== undefined) data = data.subarray(Number(origin), Number(origin) + Number(length))
+                if (origin !== undefined)
+                  data = data.subarray(Number(origin), Number(origin) + Number(length))
                 if (kind !== 'BODY.PEEK' && !selected.readOnly) m.flags.add('\\Seen')
-                const name = kind === 'RFC822' ? 'RFC822' : `BODY[${spec}]${origin === undefined ? '' : `<${origin}>`}`
+                const name =
+                  kind === 'RFC822' ? 'RFC822' : `BODY[${spec}]${origin === undefined ? '' : `<${origin}>`}`
                 parts.push(`${name} {${data.length}}\r\n${data.toString('latin1')}`)
               }
             }
@@ -548,7 +569,8 @@ export async function startFakeImap(options: FakeImapOptions = {}): Promise<Fake
           if (target === undefined) return no('[TRYCREATE] No such mailbox')
           if (verb === 'UID MOVE' && selected.readOnly) return no('Mailbox is read-only')
           const moving = b.messages.filter((m) => uidMatches(set, m.uid, max))
-          for (const m of moving) target.messages.push({ ...m, uid: target.uidNext++, flags: new Set(m.flags) })
+          for (const m of moving)
+            target.messages.push({ ...m, uid: target.uidNext++, flags: new Set(m.flags) })
           if (verb === 'UID MOVE') {
             for (const m of moving) write(`* ${b.messages.indexOf(m) + 1} EXPUNGE\r\n`)
             b.messages = b.messages.filter((m) => !moving.includes(m))
@@ -559,7 +581,9 @@ export async function startFakeImap(options: FakeImapOptions = {}): Promise<Fake
         case 'EXPUNGE': {
           if (selected.readOnly) return no('Mailbox is read-only')
           const set = verb === 'UID EXPUNGE' ? str(tokens[0]) : null
-          const gone = b.messages.filter((m) => m.flags.has('\\Deleted') && (set === null || uidMatches(set, m.uid, max)))
+          const gone = b.messages.filter(
+            (m) => m.flags.has('\\Deleted') && (set === null || uidMatches(set, m.uid, max)),
+          )
           for (const m of gone) write(`* ${b.messages.indexOf(m) + 1} EXPUNGE\r\n`)
           b.messages = b.messages.filter((m) => !gone.includes(m))
           return ok()
@@ -583,7 +607,9 @@ export async function startFakeImap(options: FakeImapOptions = {}): Promise<Fake
   if (options.plain === true) {
     server = createTcpServer((socket) => serve(socket, ++connections))
   } else {
-    const generated = await generateTestCertificate(options.hosts ?? ['imap.mail.me.com', 'imap.example.test'])
+    const generated = await generateTestCertificate(
+      options.hosts ?? ['imap.mail.me.com', 'imap.example.test'],
+    )
     cert = generated.cert
     server = createTlsServer({ key: generated.key, cert: generated.cert }, (socket: TLSSocket) => {
       servernames.push((socket as TLSSocket & { servername?: string | false }).servername || null)

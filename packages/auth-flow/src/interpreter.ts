@@ -26,7 +26,7 @@ import {
   remainingMs,
 } from './context'
 import { probeLoggedIn } from './probe'
-import { fillMessagesOtp, fillSecret } from './secret-fill'
+import { fillMailOtp, fillMessagesOtp, fillSecret, openMailLink } from './secret-fill'
 
 /** How often waitFor re-checks its condition. */
 export const POLL_MS = 250
@@ -105,9 +105,14 @@ async function runStep(ctx: FlowContext, step: AuthStep): Promise<void> {
     case 'otp':
       if ('secret' in step.source) {
         await fillSecret(ctx, step.selector, { secret: step.source.secret, field: 'otp' })
+      } else if ('mail' in step.source) {
+        await fillMailOtp(ctx, step.selector, step.source.mail)
       } else {
         await fillMessagesOtp(ctx, step.selector, step.source.messages)
       }
+      return
+    case 'openMailLink':
+      await openMailLink(ctx, step)
       return
     case 'pause':
       await pause(ctx, Math.min(step.ms, remainingMs(ctx)))

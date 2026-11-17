@@ -98,7 +98,10 @@ function params(value: Value | undefined): Map<string, string> {
   return out
 }
 
-function disposition(value: Value | undefined): { kind: 'inline' | 'attachment' | null; params: Map<string, string> } {
+function disposition(value: Value | undefined): {
+  kind: 'inline' | 'attachment' | null
+  params: Map<string, string>
+} {
   if (!Array.isArray(value)) return { kind: null, params: new Map() }
   const kind = lower(value[0])
   return {

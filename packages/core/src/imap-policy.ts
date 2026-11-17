@@ -43,7 +43,8 @@ export const VERB_PURPOSE: Readonly<Record<string, Purpose>> = {
  */
 const PLAIN_ITEMS = new Set(['UID', 'FLAGS', 'ENVELOPE', 'INTERNALDATE', 'RFC822.SIZE', 'BODYSTRUCTURE'])
 /** BODY.PEEK[section]<partial>: a part number, optionally .MIME, .HEADER or .TEXT; or HEADER or TEXT. */
-const PEEK = /^BODY\.PEEK\[(?:(?:[1-9]\d{0,3})(?:\.[1-9]\d{0,3}){0,9}(?:\.(?:MIME|HEADER|TEXT))?|HEADER|TEXT)?\](?:<\d{1,10}\.[1-9]\d{0,9}>)?$/
+const PEEK =
+  /^BODY\.PEEK\[(?:(?:[1-9]\d{0,3})(?:\.[1-9]\d{0,3}){0,9}(?:\.(?:MIME|HEADER|TEXT))?|HEADER|TEXT)?\](?:<\d{1,10}\.[1-9]\d{0,9}>)?$/
 
 export function checkFetchItem(item: string): boolean {
   return PLAIN_ITEMS.has(item) || PEEK.test(item)

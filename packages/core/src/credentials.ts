@@ -16,10 +16,60 @@ export type ProviderKind =
   | 'messages'
   /** An SSH key Valet generated for one credential; its private half never leaves the Keychain. */
   | 'valet-key'
+  /**
+   * Sign-in mail (docs/imap.md#email-sign-in): itemRef names the mail account and the sender the
+   * person approved (mailGrantRef), origins are where a code may be typed or a link may open.
+   */
+  | 'mail'
   | 'fake'
 
 /** The secret name a manifest's Messages OTP source is granted under. Reserved in manifests. */
 export const MESSAGES_SECRET = 'messages'
+
+/** The secret name a manifest's sign-in mail is granted under. Reserved in manifests. */
+export const MAIL_SECRET = 'mail'
+
+/**
+ * A mail account Valet holds: a protocol adapter's kept IMAP credential, as
+ * `<adapterId>/<credential>`. Sign-in lookups run as that adapter's credential, read-only.
+ */
+export type MailAccountRef = string
+
+const MAIL_ACCOUNT = /^[a-z][a-z0-9-]{1,63}\/[a-z][a-z0-9_]{0,63}$/
+const MAIL_ADDRESS = /^[a-z0-9._%+-]{1,64}@[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63})+$/
+
+/** The itemRef of a mail grant: the account, a space, and the approved sender's address. */
+export function mailGrantRef(account: MailAccountRef, sender: string): string {
+  if (!MAIL_ACCOUNT.test(account) || !MAIL_ADDRESS.test(sender))
+    throw new Error('not a mail account or sender')
+  return `${account} ${sender}`
+}
+
+/** A mail grant's account and sender, or null if its itemRef isn't one. */
+export function parseMailGrantRef(
+  itemRef: string,
+): { readonly account: MailAccountRef; readonly sender: string } | null {
+  const [account, sender, ...rest] = itemRef.split(' ')
+  if (account === undefined || sender === undefined || rest.length > 0) return null
+  return MAIL_ACCOUNT.test(account) && MAIL_ADDRESS.test(sender) ? { account, sender } : null
+}
+
+/** One sign-in mail lookup. Valet runs it, read-only, in the protocol host. */
+export interface MailSignInQuery {
+  readonly account: MailAccountRef
+  readonly from: string
+  readonly subjectContains?: string | undefined
+  readonly maxAgeSeconds: number
+  readonly extract: { readonly pattern: string } | { readonly linkOrigin: string }
+}
+
+/**
+ * Reads sign-in codes and links from mail. Throws CredentialError('not-found') until one arrives,
+ * after `notBefore`. The value is the code or the link; the caller disposes it.
+ */
+export interface MailReader {
+  find(query: MailSignInQuery, notBefore: Date): Promise<SecretValue>
+}
 
 export interface Grant {
   readonly adapterId: string

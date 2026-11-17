@@ -264,6 +264,11 @@ export const PROVIDER_WORDING: Readonly<
     title: 'Messages',
     detail: 'Reads one-time codes that arrive by SMS from one sender you approve. Needs Full Disk Access.',
   },
+  mail: {
+    title: 'Sign-in mail',
+    detail:
+      'Finds sign-in links and codes in mail from one sender you approve, in a mail account Valet already reads. It only looks: nothing is marked read.',
+  },
   'valet-key': {
     title: 'SSH key made by Valet',
     detail:

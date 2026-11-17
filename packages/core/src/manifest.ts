@@ -4,9 +4,10 @@
 import { z } from 'zod'
 import { canonicalAddress, hostPort, isPrivateHostAddress, parseEndpoint } from './addresses'
 import { type CredentialDeclaration, credentialDeclarationSchema, credentialIssues } from './credential'
-import { MESSAGES_SECRET } from './credentials'
+import { MAIL_SECRET, MESSAGES_SECRET } from './credentials'
 import { type ERROR_CLASSES, NEEDS_USER_REASONS, type NeedsUserReason } from './errors'
 import { hostAllowed, isBareOrigin, isHostname, isHostPattern } from './origins'
+import { type Protocols, protocolIssues, protocolsSchema } from './protocols'
 import { isScreenedPattern } from './regex-screen'
 import {
   BROWSER_METHODS,
@@ -15,7 +16,6 @@ import {
   READ_ONLY_WEBDAV,
   REQUEST_METHODS,
 } from './request-surface'
-import { type Protocols, protocolIssues, protocolsSchema } from './protocols'
 import { sandboxDeclarationSchema } from './sandbox'
 
 const name = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, 'lower snake_case, at most 64 characters')
@@ -76,8 +76,32 @@ export const conditionSchema: z.ZodType<Condition> = z.lazy(() =>
   ]),
 )
 
+/** A sender's mail address as a sign-in mail source names it: one address, lower case. */
+const mailSender = z
+  .string()
+  .max(254)
+  .regex(/^[a-z0-9._%+-]{1,64}@[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63})+$/, 'one mail address, in lower case')
+
 export const otpSourceSchema = z.union([
   z.object({ secret: name }).strict(),
+  z
+    .object({
+      /**
+       * A code from a sign-in mail (docs/imap.md#email-sign-in). Valet looks it up itself, read-only,
+       * in the mail account the person binds this source to; adapter code never sees the mail.
+       */
+      mail: z
+        .object({
+          /** The sender's address; the person approves it when granting. */
+          from: mailSender,
+          subjectContains: z.string().min(1).max(100).optional(),
+          /** First capture group (or the whole match) is the code. */
+          pattern: screenedRegex(200),
+          maxAgeSeconds: z.number().int().min(10).max(1800),
+        })
+        .strict(),
+    })
+    .strict(),
   z
     .object({
       messages: z
@@ -117,6 +141,18 @@ export type AuthStep =
       readonly value: { readonly literal: string } | SecretRef
     }
   | { readonly op: 'otp'; readonly selector: string; readonly source: OtpSource }
+  | {
+      /**
+       * Opens the sign-in link a site mailed, in the auth partition (docs/imap.md#email-sign-in).
+       * Valet finds it itself, read-only; adapter code never sees it.
+       */
+      readonly op: 'openMailLink'
+      readonly from: string
+      readonly subjectContains?: string
+      /** The link must be https on exactly this origin, which must be a navigation origin. */
+      readonly linkOrigin: string
+      readonly maxAgeSeconds: number
+    }
   | { readonly op: 'pause'; readonly ms: number }
   | {
       readonly op: 'when'
@@ -142,6 +178,15 @@ export const authStepSchema: z.ZodType<AuthStep> = z.lazy(() =>
       })
       .strict(),
     z.object({ op: z.literal('otp'), selector, source: otpSourceSchema }).strict(),
+    z
+      .object({
+        op: z.literal('openMailLink'),
+        from: mailSender,
+        subjectContains: z.string().min(1).max(100).optional(),
+        linkOrigin: origin,
+        maxAgeSeconds: z.number().int().min(10).max(1800),
+      })
+      .strict(),
     z.object({ op: z.literal('pause'), ms: z.number().int().min(0).max(30_000) }).strict(),
     z
       .object({
@@ -654,8 +699,23 @@ export const manifestSchema = z
         })
       }
     }
-    if (Object.hasOwn(manifest.secrets, MESSAGES_SECRET)) {
-      ctx.addIssue({ code: 'custom', message: `secret name ${MESSAGES_SECRET} is reserved` })
+    for (const reserved of [MESSAGES_SECRET, MAIL_SECRET]) {
+      if (Object.hasOwn(manifest.secrets, reserved)) {
+        ctx.addIssue({ code: 'custom', message: `secret name ${reserved} is reserved` })
+      }
+    }
+    const mailSources = mailSourcesIn(manifest.auth.steps)
+    for (const source of mailSources) {
+      if (source.kind === 'link' && !manifest.navigation.includes(source.linkOrigin)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `openMailLink linkOrigin ${source.linkOrigin} is not in navigation`,
+        })
+      }
+    }
+    // One grant covers a manifest's mail sign-in, for one sender: the person approves that sender.
+    if (new Set(mailSources.map((s) => s.from)).size > 1) {
+      ctx.addIssue({ code: 'custom', message: 'every mail sign-in step names the same sender' })
     }
     for (const ref of secretRefsIn(manifest.auth.steps)) {
       const request = Object.hasOwn(manifest.secrets, ref.secret) ? manifest.secrets[ref.secret] : undefined
@@ -918,6 +978,44 @@ export function messagesSourcesIn(
   const visit = (list: readonly AuthStep[]): void => {
     for (const step of list) {
       if (step.op === 'otp' && 'messages' in step.source) sources.push(step.source.messages)
+      if (step.op === 'when') {
+        visit(step.steps)
+        if (step.otherwise) visit(step.otherwise)
+      }
+      if (step.op === 'retry') visit(step.steps)
+    }
+  }
+  visit(steps)
+  return sources
+}
+
+/** A sign-in mail source: a code to type, or a link to open. */
+export type MailSource =
+  | {
+      readonly kind: 'code'
+      readonly from: string
+      readonly subjectContains?: string | undefined
+      readonly pattern: string
+      readonly maxAgeSeconds: number
+    }
+  | {
+      readonly kind: 'link'
+      readonly from: string
+      readonly subjectContains?: string | undefined
+      readonly linkOrigin: string
+      readonly maxAgeSeconds: number
+    }
+
+/** The sign-in mail sources an auth flow uses, nested steps included. They need the mail grant. */
+export function mailSourcesIn(steps: readonly AuthStep[]): MailSource[] {
+  const sources: MailSource[] = []
+  const visit = (list: readonly AuthStep[]): void => {
+    for (const step of list) {
+      if (step.op === 'otp' && 'mail' in step.source) sources.push({ kind: 'code', ...step.source.mail })
+      if (step.op === 'openMailLink') {
+        const { op: _op, ...rest } = step
+        sources.push({ kind: 'link', ...rest })
+      }
       if (step.op === 'when') {
         visit(step.steps)
         if (step.otherwise) visit(step.otherwise)

@@ -48,7 +48,10 @@ const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', '
 
 /** INTERNALDATE (`17-Nov-2026 15:53:51 +0000`) as epoch ms, or null. */
 export function internalDateMs(value: string | null): number | null {
-  const m = value === null ? null : /^\s?(\d{1,2})-([A-Za-z]{3})-(\d{4}) (\d{2}):(\d{2}):(\d{2}) ([+-])(\d{2})(\d{2})$/.exec(value)
+  const m =
+    value === null
+      ? null
+      : /^\s?(\d{1,2})-([A-Za-z]{3})-(\d{4}) (\d{2}):(\d{2}):(\d{2}) ([+-])(\d{2})(\d{2})$/.exec(value)
   if (m === null || m === undefined) return null
   const month = MONTHS.indexOf((m[2] as string).toLowerCase())
   if (month === -1) return null
@@ -99,7 +102,8 @@ const ENTITIES: Readonly<Record<string, string>> = { amp: '&', lt: '<', gt: '>',
 function decodeEntities(value: string): string {
   return value.replace(/&(#x[0-9a-f]{1,6}|#\d{1,7}|[a-z]{2,6});/gi, (whole, body: string) => {
     if (body.startsWith('#')) {
-      const code = body[1] === 'x' || body[1] === 'X' ? Number.parseInt(body.slice(2), 16) : Number(body.slice(1))
+      const code =
+        body[1] === 'x' || body[1] === 'X' ? Number.parseInt(body.slice(2), 16) : Number(body.slice(1))
       return Number.isInteger(code) && code > 0 && code < 0x110000 ? String.fromCodePoint(code) : whole
     }
     return ENTITIES[body.toLowerCase()] ?? whole
@@ -110,7 +114,9 @@ function decodeEntities(value: string): string {
 export function linksIn(html: string | null, plain: string | null): string[] {
   const out: string[] = []
   if (html !== null) {
-    for (const m of html.slice(0, MAX_SCANNED_CHARS * 5).matchAll(/href\s*=\s*(?:"([^"]{1,4096})"|'([^']{1,4096})')/gi)) {
+    for (const m of html
+      .slice(0, MAX_SCANNED_CHARS * 5)
+      .matchAll(/href\s*=\s*(?:"([^"]{1,4096})"|'([^']{1,4096})')/gi)) {
       out.push(decodeEntities((m[1] ?? m[2] ?? '').trim()))
     }
   }
@@ -133,7 +139,8 @@ export function firstLink(candidates: readonly string[], origin: string): string
     } catch {
       continue
     }
-    if (url.protocol !== 'https:' || url.origin !== origin || url.username !== '' || url.password !== '') continue
+    if (url.protocol !== 'https:' || url.origin !== origin || url.username !== '' || url.password !== '')
+      continue
     return url.href
   }
   return null
@@ -156,7 +163,9 @@ export function firstCode(pattern: string, texts: readonly string[]): string | n
 }
 
 function stripTags(html: string): string {
-  return decodeEntities(html.replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ')
+  return decodeEntities(
+    html.replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]*>/g, ' '),
+  ).replace(/\s+/g, ' ')
 }
 
 function checkQuery(query: SignInQuery): void {
@@ -165,7 +174,8 @@ function checkQuery(query: SignInQuery): void {
     typeof query === 'object' &&
     typeof query.from === 'string' &&
     /^[a-z0-9._%+-]{1,64}@[a-z0-9.-]{1,253}$/.test(query.from) &&
-    (query.subjectContains === undefined || (typeof query.subjectContains === 'string' && query.subjectContains.length <= 200)) &&
+    (query.subjectContains === undefined ||
+      (typeof query.subjectContains === 'string' && query.subjectContains.length <= 200)) &&
     Number.isSafeInteger(query.after) &&
     Number.isSafeInteger(query.now) &&
     Number.isInteger(query.maxAgeSeconds) &&
@@ -173,8 +183,12 @@ function checkQuery(query: SignInQuery): void {
     query.maxAgeSeconds <= 1800 &&
     query.extract !== null &&
     typeof query.extract === 'object' &&
-    (('pattern' in query.extract && typeof query.extract.pattern === 'string' && query.extract.pattern.length <= 200) ||
-      ('linkOrigin' in query.extract && typeof query.extract.linkOrigin === 'string' && /^https:\/\/[a-z0-9.-]+(:\d+)?$/.test(query.extract.linkOrigin)))
+    (('pattern' in query.extract &&
+      typeof query.extract.pattern === 'string' &&
+      query.extract.pattern.length <= 200) ||
+      ('linkOrigin' in query.extract &&
+        typeof query.extract.linkOrigin === 'string' &&
+        /^https:\/\/[a-z0-9.-]+(:\d+)?$/.test(query.extract.linkOrigin)))
   if (!ok) throw new ImapError('invalid')
 }
 
@@ -219,7 +233,15 @@ export async function findSignInMail(client: ImapClient, query: SignInQuery): Pr
     verb: 'UID FETCH',
     args: [
       { uids: newest },
-      { list: ['UID', 'INTERNALDATE', 'ENVELOPE', 'BODYSTRUCTURE', `BODY.PEEK[HEADER]<0.${MAX_HEADER_BYTES}>`].map((atom) => ({ atom })) },
+      {
+        list: [
+          'UID',
+          'INTERNALDATE',
+          'ENVELOPE',
+          'BODYSTRUCTURE',
+          `BODY.PEEK[HEADER]<0.${MAX_HEADER_BYTES}>`,
+        ].map((atom) => ({ atom })),
+      },
     ],
   })
   const fromDomain = query.from.slice(query.from.indexOf('@') + 1)
@@ -254,7 +276,10 @@ export async function findSignInMail(client: ImapClient, query: SignInQuery): Pr
       if (part === null) return null
       const got = await client.run({
         verb: 'UID FETCH',
-        args: [{ uids: [candidate.uid] }, { list: [{ atom: 'UID' }, { atom: `BODY.PEEK[${part.part}]<0.${MAX_TEXT_BYTES}>` }] }],
+        args: [
+          { uids: [candidate.uid] },
+          { list: [{ atom: 'UID' }, { atom: `BODY.PEEK[${part.part}]<0.${MAX_TEXT_BYTES}>` }] },
+        ],
       })
       for (const r of got.untagged) {
         if (r.kind !== 'data' || r.name !== 'FETCH') continue
@@ -262,7 +287,8 @@ export async function findSignInMail(client: ImapClient, query: SignInQuery): Pr
           const map = items(r.values)
           if (number(map.get('UID')) !== candidate.uid) continue
           const bytes = section(map, `BODY[${part.part}]`)
-          if (bytes !== null) return cleanBody(decodeCharset(decodeTransfer(bytes, part.encoding), part.charset))
+          if (bytes !== null)
+            return cleanBody(decodeCharset(decodeTransfer(bytes, part.encoding), part.charset))
         } catch {}
       }
       return null

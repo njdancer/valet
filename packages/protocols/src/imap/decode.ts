@@ -88,10 +88,31 @@ export function decodeHeader(raw: string): string {
 
 /** No control characters or line breaks; runs of whitespace become one space. */
 export function oneLine(text: string): string {
-  return text
-    .replace(/[\u0000-\u001f\u007f\u0085\u2028\u2029]+/g, ' ')
+  return withoutControls(text, ' ')
+    .replace(/[\u0085\u2028\u2029]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+/** True for C0 controls and DEL. */
+export function isControl(code: number): boolean {
+  return code < 0x20 || code === 0x7f
+}
+
+/** True when `text` holds a C0 control or DEL. */
+export function hasControl(text: string): boolean {
+  for (let i = 0; i < text.length; i++) if (isControl(text.charCodeAt(i))) return true
+  return false
+}
+
+/** `text` with each C0 control and DEL replaced by `by`, except those in `keep`. */
+function withoutControls(text: string, by: string, keep: readonly number[] = []): string {
+  let out = ''
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i)
+    out += isControl(code) && !keep.includes(code) ? by : text[i]
+  }
+  return out
 }
 
 /**
@@ -99,9 +120,8 @@ export function oneLine(text: string): string {
  * removed (bidi overrides and zero-width characters stay out of headers; bodies keep line breaks).
  */
 export function cleanBody(text: string): string {
-  return text
-    .replace(/\r\n?/g, '\n')
-    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
+  // Tabs and line breaks stay; every other control goes.
+  return withoutControls(text.replace(/\r\n?/g, '\n'), '', [0x09, 0x0a])
 }
 
 /** Removes characters that can make a line display as something else: bidi controls and invisibles. */

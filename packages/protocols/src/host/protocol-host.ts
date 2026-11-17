@@ -10,10 +10,10 @@
 // Valet checks what comes back as untrusted; the purpose and folder rules are enforced here too.
 
 import { Socket } from 'node:net'
-import { connect as tlsConnect, type TLSSocket } from 'node:tls'
+import { type TLSSocket, connect as tlsConnect } from 'node:tls'
+import { isOperation, type ImapPurpose as Purpose } from '@valet/core/imap-policy'
 import { ImapClient, ImapError } from '../imap/client'
 import { Operations } from '../imap/operations'
-import { isOperation, type ImapPurpose as Purpose } from '@valet/core/imap-policy'
 import { findSignInMail, type SignInQuery } from '../imap/signin'
 
 const MAX_LINE = 4_100_000
@@ -42,7 +42,9 @@ let operations: Operations | null = null
 let busy = Promise.resolve()
 
 const failure = (error: unknown) =>
-  error instanceof ImapError ? { failure: error.failure, code: error.code } : { failure: 'malformed', code: null }
+  error instanceof ImapError
+    ? { failure: error.failure, code: error.code }
+    : { failure: 'malformed', code: null }
 
 function connect(b: Boot): Promise<TLSSocket> {
   const port = b.tunnels[b.endpoint]
@@ -78,7 +80,8 @@ async function handle(message: Record<string, unknown>): Promise<void> {
   try {
     switch (message['t']) {
       case 'login':
-        if (typeof message['username'] !== 'string' || typeof message['password'] !== 'string') throw new ImapError('invalid')
+        if (typeof message['username'] !== 'string' || typeof message['password'] !== 'string')
+          throw new ImapError('invalid')
         return await login(id, message['username'], message['password'])
       case 'op': {
         if (operations === null) throw new ImapError('closed')

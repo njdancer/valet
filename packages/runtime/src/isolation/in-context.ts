@@ -44,7 +44,8 @@ async function answer(ctx: ToolContext, capability: string, args: readonly unkno
       return ctx.confirm(a[0])
     case 'imap.op': {
       const [name, list] = args
-      if (ctx.imap === undefined || !isOperation(name) || !Array.isArray(list)) throw new ValetError('tool-run', 'invalid')
+      if (ctx.imap === undefined || !isOperation(name) || !Array.isArray(list))
+        throw new ValetError('tool-run', 'invalid')
       return (ctx.imap[name] as (...a: unknown[]) => Promise<unknown>).apply(ctx.imap, list)
     }
     default:

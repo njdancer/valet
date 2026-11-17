@@ -6,7 +6,12 @@
 // purpose (policy.ts). It runs on the wire, under every caller, so it holds whatever the layers
 // above it do.
 
-import { checkFetchItem, type ImapPurpose as Purpose, IMAP_PURPOSE_RANK as PURPOSE_RANK, VERB_PURPOSE } from '@valet/core/imap-policy'
+import {
+  checkFetchItem,
+  IMAP_PURPOSE_RANK as PURPOSE_RANK,
+  type ImapPurpose as Purpose,
+  VERB_PURPOSE,
+} from '@valet/core/imap-policy'
 
 export type Arg =
   | { readonly atom: string }

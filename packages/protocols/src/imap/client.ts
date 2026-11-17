@@ -3,9 +3,18 @@
 // need (operations.ts), so its whole command surface is the table in policy.ts.
 
 import type { Duplex } from 'node:stream'
-import { type Command, CommandRefused, checkCommand, encodeCommand, type SessionState } from './command'
 import type { ImapPurpose as Purpose } from '@valet/core/imap-policy'
-import { Atom, DEFAULT_WIRE_LIMITS, Framer, parseResponse, type Response, type Value, type WireLimits, WireError } from './wire'
+import { type Command, CommandRefused, checkCommand, encodeCommand, type SessionState } from './command'
+import {
+  Atom,
+  DEFAULT_WIRE_LIMITS,
+  Framer,
+  parseResponse,
+  type Response,
+  type Value,
+  WireError,
+  type WireLimits,
+} from './wire'
 
 /** Why an IMAP exchange failed, in words the host reports as error classes. */
 export type ImapFailure =
@@ -260,18 +269,27 @@ export class ImapClient {
     }
     if (response.kind === 'continue') {
       const resume = waiting.continuation
-      if (resume === null) return this.fail(new ImapError('malformed'))
+      if (resume === null) {
+        this.fail(new ImapError('malformed'))
+        return
+      }
       waiting.continuation = null
       resume()
       return
     }
     if (response.kind === 'tagged') {
-      if (response.tag !== waiting.tag) return this.fail(new ImapError('malformed'))
+      if (response.tag !== waiting.tag) {
+        this.fail(new ImapError('malformed'))
+        return
+      }
       if (response.status === 'OK') waiting.resolve({ untagged: waiting.untagged, code: response.code })
       else waiting.reject(new ImapError(response.status === 'NO' ? 'no' : 'bad', codeName(response.code)))
       return
     }
-    if (waiting.untagged.length >= 100_000) return this.fail(new ImapError('too-large'))
+    if (waiting.untagged.length >= 100_000) {
+      this.fail(new ImapError('too-large'))
+      return
+    }
     waiting.untagged.push(response)
   }
 
@@ -291,7 +309,10 @@ export class ImapClient {
 
   private setCapabilities(values: readonly Value[]): void {
     this.capabilities = new Set(
-      values.filter((v): v is Atom => v instanceof Atom).map((v) => v.value.toUpperCase()).slice(0, 200),
+      values
+        .filter((v): v is Atom => v instanceof Atom)
+        .map((v) => v.value.toUpperCase())
+        .slice(0, 200),
     )
   }
 }

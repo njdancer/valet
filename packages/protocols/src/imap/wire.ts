@@ -141,7 +141,12 @@ function literalAt(buffer: Buffer, start: number, end: number): number | null {
   let i = end - 2
   if (buffer[i] === 0x2b /* + */ || buffer[i] === 0x2d /* - */) i--
   let digits = 0
-  while (i > start && buffer[i] !== undefined && (buffer[i] as number) >= 0x30 && (buffer[i] as number) <= 0x39) {
+  while (
+    i > start &&
+    buffer[i] !== undefined &&
+    (buffer[i] as number) >= 0x30 &&
+    (buffer[i] as number) <= 0x39
+  ) {
     i--
     digits++
   }
@@ -317,7 +322,16 @@ class Parser {
     const start = this.i
     for (;;) {
       const b = this.bytes[this.i]
-      if (b === undefined || b === SP || b === 0x28 || b === 0x29 || b === 0x5d || b === 0x22 || b < 0x20 || b === 0x7f)
+      if (
+        b === undefined ||
+        b === SP ||
+        b === 0x28 ||
+        b === 0x29 ||
+        b === 0x5d ||
+        b === 0x22 ||
+        b < 0x20 ||
+        b === 0x7f
+      )
         break
       if (b === 0x7b) break
       if (b === 0x5b /* [ */) {

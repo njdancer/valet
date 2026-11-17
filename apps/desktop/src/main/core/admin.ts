@@ -138,9 +138,10 @@ export function adminReader(source: AdminSource): AdminReader {
           blockedRequests: today.blockedRequests,
         },
         remoteAccess: { enabled: remote.enabled, listening: remote.listening },
-        // A Valet-made SSH key is a credential's, never a login provider.
+        // A Valet-made SSH key is a credential's, and sign-in mail is read through a mail account
+        // Valet already holds: neither is a login provider of its own.
         loginProviders: providers
-          .flatMap((p) => (p.kind === 'valet-key' ? [] : [{ ...p, kind: p.kind }]))
+          .flatMap((p) => (p.kind === 'valet-key' || p.kind === 'mail' ? [] : [{ ...p, kind: p.kind }]))
           .map((p) => ({
             kind: p.kind,
             available: p.available,

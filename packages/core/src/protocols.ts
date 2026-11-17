@@ -11,12 +11,18 @@ export const imapFolderSchema = z
   .string()
   .min(1)
   .max(200)
-  .refine((v) => !/[\u0000-\u001f\u007f*%]/.test(v), 'a folder name has no control characters, "*" or "%"')
+  .refine(
+    (v) => ![...v].some((c) => c.charCodeAt(0) < 0x20 || c === '\u007f' || c === '*' || c === '%'),
+    'a folder name has no control characters, "*" or "%"',
+  )
 
 const endpoint = z
   .string()
   .max(106)
-  .refine((v) => isEndpoint(v) && !v.startsWith('['), 'must be host:port with a host name, e.g. imap.mail.me.com:993')
+  .refine(
+    (v) => isEndpoint(v) && !v.startsWith('['),
+    'must be host:port with a host name, e.g. imap.mail.me.com:993',
+  )
 
 export const imapProtocolSchema = z
   .object({
@@ -49,7 +55,8 @@ export function protocolIssues(manifest: {
   const issues: string[] = []
   if (manifest.navigation.length > 0) issues.push('a protocol adapter has no navigation origins')
   if (manifest.cartUrl !== undefined) issues.push('a protocol adapter has no cartUrl')
-  if (manifest.egress.length > 0) issues.push('a protocol adapter reaches only its protocols: no egress hosts')
+  if (manifest.egress.length > 0)
+    issues.push('a protocol adapter reaches only its protocols: no egress hosts')
   if (manifest.privateHosts !== undefined) issues.push('a protocol adapter has no privateHosts yet')
   if (manifest.requests.length > 0) issues.push('a protocol adapter declares no HTTP requests')
   const imap = manifest.protocols?.imap
