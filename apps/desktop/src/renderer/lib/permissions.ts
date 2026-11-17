@@ -77,6 +77,7 @@ export function addsPermissions(diff: PermissionDiff): boolean {
     diff.tools.added.length > 0 ||
     diff.secrets.added.length > 0 ||
     diff.secretFills.added.length > 0 ||
+    diff.credentials.added.length > 0 ||
     diff.authSteps.added.length > 0 ||
     removedSafeguards(diff) > 0 ||
     diff.messagesSources.added.length > 0 ||

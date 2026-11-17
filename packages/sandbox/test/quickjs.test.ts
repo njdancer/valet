@@ -210,12 +210,14 @@ describe('escape attempts from tool code in QuickJS', () => {
   })
 
   it('stops an unbounded promise chain at the slice deadline', async () => {
+    // A second, not 200 ms: on a loaded CI runner zod's first parse of the input could outlast a
+    // shorter slice, ending the run at tool-input before the chain ever started.
     const w = await inQuickJS(
       SANDBOX,
       sandboxTools,
       { sleep: systemSleep, pacingSleep: systemSleep, timeoutMs: 20_000 },
       {
-        limits: { memoryBytes: 64 * 1024 * 1024, stackBytes: 512 * 1024, sliceMs: 200 },
+        limits: { memoryBytes: 64 * 1024 * 1024, stackBytes: 512 * 1024, sliceMs: 1_000 },
       },
     )
     expect(await w.run('promise_storm')).toEqual({

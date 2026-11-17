@@ -4,12 +4,12 @@
 import {
   CredentialError,
   type CredentialProvider,
+  type ItemField,
   type ResolveFailure,
-  type SecretField,
   SecretValue,
 } from '@valet/core'
 
-export type FakeItem = Partial<Readonly<Record<SecretField, string>>>
+export type FakeItem = Partial<Readonly<Record<ItemField, string>>>
 
 export interface FakeCredentialOptions {
   readonly items?: Readonly<Record<string, FakeItem>>
@@ -20,7 +20,7 @@ export interface FakeCredentialOptions {
 export class FakeCredentialProvider implements CredentialProvider {
   readonly kind = 'fake' as const
   /** Every resolve, in order, so tests can assert what was asked for. */
-  readonly requests: { readonly itemRef: string; readonly field: SecretField }[] = []
+  readonly requests: { readonly itemRef: string; readonly field: ItemField }[] = []
   readonly #items: Map<string, FakeItem>
   readonly #failures: Map<string, ResolveFailure>
 
@@ -29,7 +29,7 @@ export class FakeCredentialProvider implements CredentialProvider {
     this.#failures = new Map(Object.entries(options.failures ?? {}))
   }
 
-  async resolve(itemRef: string, field: SecretField): Promise<SecretValue> {
+  async resolve(itemRef: string, field: ItemField): Promise<SecretValue> {
     this.requests.push({ itemRef, field })
     const failure = this.#failures.get(itemRef)
     if (failure !== undefined) throw new CredentialError(failure)

@@ -150,6 +150,10 @@ export function permissionChanges(
   )
   list('secret-origins', diff.secretFills, (f) => `${f.secret} ${f.field} into ${f.selector}`, 'high')
   list('messages-sender', diff.messagesSources, (m) => m.sender, 'high')
+  // Who holds a credential and where it may go: Valet's own sentence, never the author's words.
+  // One line per credential: the sentence, then each target unshortened (red team B1).
+  for (const c of diff.credentials.added) push('credential', 'added', c.items, 'high')
+  for (const c of diff.credentials.removed) push('credential', 'removed', [c.items[0] ?? c.name], 'low')
   list('setting', diff.settings, (s) => s.name, 'medium')
   // Login steps: an added step at medium; a removed stop step (where the login hands over to the
   // person, fails, or checks it is signed in) means it now runs further on its own, so high.

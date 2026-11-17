@@ -1,7 +1,7 @@
 // Resolves secrets with `op read` through the 1Password desktop app's CLI integration. The secret is
 // only ever read from stdout into a Buffer; it never appears in argv, a string or an error.
 
-import { CredentialError, type CredentialProvider, type SecretField, SecretValue } from '@valet/core'
+import { CredentialError, type CredentialProvider, type ItemField, SecretValue } from '@valet/core'
 import { parseItemRef, secretReference } from './item-ref'
 import { isExecutableFile, locateExecutable } from './locate'
 import { nodeSpawner, nodeTimers, runProcess, type Spawner, type Timers } from './process'
@@ -61,7 +61,7 @@ export class OnePasswordCliProvider implements CredentialProvider, VaultItemList
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
   }
 
-  async resolve(itemRef: string, field: SecretField): Promise<SecretValue> {
+  async resolve(itemRef: string, field: ItemField): Promise<SecretValue> {
     const ref = parseItemRef(itemRef)
     if (ref === null) throw new CredentialError('not-found')
     const reference = secretReference(ref, field, 'otp')

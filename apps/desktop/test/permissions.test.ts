@@ -41,6 +41,7 @@ const NOTHING_NEW: PermissionDiff = {
     ],
   },
   secrets: { added: [], removed: [], unchanged: [] },
+  credentials: { added: [], removed: [], unchanged: [] },
   secretFills: { added: [], removed: [], unchanged: [] },
   authSteps: {
     added: [],
@@ -111,6 +112,7 @@ describe('addsPermissions', () => {
         },
       },
       {
+        credentials: { added: [], removed: [], unchanged: [] },
         secretFills: {
           added: [{ selector: '#search', secret: 'login', field: 'password' }],
           removed: [],

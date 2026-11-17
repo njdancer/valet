@@ -6,7 +6,7 @@
 // KeychainCopySync is where the copy is made. It reads fields straight from the SDK into buffers
 // that go to the Keychain helper's stdin, so no SecretValue is revealed on the way.
 
-import { CredentialError, type CredentialProvider, type SecretField, SecretValue } from '@valet/core'
+import { CredentialError, type CredentialProvider, type ItemField, SecretValue } from '@valet/core'
 import { type ItemRef, parseItemRef, secretReference } from './item-ref'
 import { COPYABLE_FIELDS, type CopySource, type KeychainCopyProvider } from './keychain-copy'
 import {
@@ -103,12 +103,12 @@ export class OnePasswordDesktopProvider implements CredentialProvider, VaultItem
     return this.#session.live
   }
 
-  async resolve(itemRef: string, field: SecretField): Promise<SecretValue> {
+  async resolve(itemRef: string, field: ItemField): Promise<SecretValue> {
     return SecretValue.fromBuffer(await this.readField(itemRef, field))
   }
 
   /** A field's value as a buffer the caller owns and zeroes. For the copy. */
-  async readField(itemRef: string, field: SecretField): Promise<Buffer> {
+  async readField(itemRef: string, field: ItemField): Promise<Buffer> {
     const ref = parseItemRef(itemRef)
     if (ref === null) throw new CredentialError('not-found')
     const value = await this.#session.use(
@@ -179,7 +179,7 @@ export class KeychainCopySync {
    * Copies `fields` of the item (setup, the settings action, or after a login failed on the
    * password). Asks the person to approve if no approval is up.
    */
-  async copy(itemRef: string, fields: readonly SecretField[]): Promise<void> {
+  async copy(itemRef: string, fields: readonly ItemField[]): Promise<void> {
     const ref = refOrThrow(itemRef)
     const wanted = copyable(fields)
     // An approval that was up but has lapsed (1Password locked, or ten idle minutes) fails its next
@@ -203,7 +203,7 @@ export class KeychainCopySync {
    * When an approval is already up (so this can't prompt), refreshes the copy if the source item has
    * changed since it was made, or if a field has no copy. Never asks the person.
    */
-  async refreshIfLive(itemRef: string, fields: readonly SecretField[]): Promise<SyncOutcome> {
+  async refreshIfLive(itemRef: string, fields: readonly ItemField[]): Promise<SyncOutcome> {
     if (!this.#desktop.live) return 'not-live'
     const ref = refOrThrow(itemRef)
     const sourceUpdatedAt = await this.#desktop.updatedAt(itemRef)
@@ -220,7 +220,7 @@ export class KeychainCopySync {
     return changed ? 'copied' : 'current'
   }
 
-  #source(ref: ItemRef, field: SecretField, sourceUpdatedAt: string): CopySource {
+  #source(ref: ItemRef, field: ItemField, sourceUpdatedAt: string): CopySource {
     return {
       account: this.#desktop.account,
       vaultId: ref.vault,
@@ -238,7 +238,7 @@ function refOrThrow(itemRef: string): ItemRef {
   return ref
 }
 
-function copyable(fields: readonly SecretField[]): SecretField[] {
+function copyable(fields: readonly ItemField[]): ItemField[] {
   const wanted = COPYABLE_FIELDS.filter((field) => fields.includes(field))
   // A grant that asks for a field the copy can't hold (a TOTP secret) can't be served from a copy.
   if (wanted.length !== new Set(fields).size) throw new CredentialError('field-missing')

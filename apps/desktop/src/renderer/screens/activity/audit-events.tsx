@@ -30,6 +30,9 @@ export const EVENT_WORDS = {
   'grant-made': { label: 'Login given', tone: 'brass' },
   'grant-revoked': { label: 'Login taken back', tone: 'neutral' },
   'grant-copied': { label: 'Login copied', tone: 'brass' },
+  'credential-granted': { label: 'Credential given', tone: 'brass' },
+  'credential-revoked': { label: 'Credential taken back', tone: 'neutral' },
+  'key-generated': { label: 'SSH key made', tone: 'brass' },
   'tool-called': { label: 'Call started', tone: 'accent' },
   'tool-finished': { label: 'Call finished', tone: 'success' },
   'call-waited': { label: 'Call waited', tone: 'neutral' },
@@ -203,6 +206,27 @@ export function details(event: AuditEvent, now: number): ReactNode {
           {event.adapterId} · {event.secret} <Quiet>revoked</Quiet>
         </>
       )
+    case 'credential-granted':
+      return (
+        <>
+          {event.credential} → {providerTitle(event.provider)} ·{' '}
+          <Quiet>{event.custody === 'entrusted' ? 'given to the adapter' : 'kept by Valet'}</Quiet> for{' '}
+          <HashChip value={event.adapterHash} label="adapter hash" /> on{' '}
+          <Code>{event.targets.join(', ')}</Code>
+        </>
+      )
+    case 'credential-revoked':
+      return (
+        <>
+          {event.adapterId} · {event.credential} <Quiet>revoked</Quiet>
+        </>
+      )
+    case 'key-generated':
+      return (
+        <>
+          {event.adapterId} · {event.credential} <Code>{event.fingerprint}</Code>
+        </>
+      )
     case 'tool-called':
       return (
         <>
@@ -241,7 +265,9 @@ export function details(event: AuditEvent, now: number): ReactNode {
     case 'secret-used':
       return (
         <>
-          {event.secret}.{event.field} · <Code>{hostOf(event.origin)}</Code>
+          {event.secret}.{event.field} ·{' '}
+          <Code>{event.custody === undefined ? hostOf(event.origin) : event.origin}</Code>
+          {event.custody === 'entrusted' ? <Quiet> given to the adapter</Quiet> : null}
         </>
       )
     case 'local-access':
@@ -436,6 +462,9 @@ export const EVENT_FIELDS = {
   'grant-made': ['type', 'adapterId', 'adapterHash', 'secret', 'provider', 'origins'],
   'grant-revoked': ['type', 'adapterId', 'secret'],
   'grant-copied': ['type', 'adapterId', 'secret', 'fields'],
+  'credential-granted': ['type', 'adapterId', 'adapterHash', 'credential', 'custody', 'provider', 'targets'],
+  'credential-revoked': ['type', 'adapterId', 'credential'],
+  'key-generated': ['type', 'adapterId', 'credential', 'fingerprint'],
   'tool-called': ['type', 'adapterId', 'adapterHash', 'tool', 'client', 'clientId', 'callId'],
   'tool-finished': [
     'type',
@@ -450,7 +479,7 @@ export const EVENT_FIELDS = {
   'call-waited': ['type', 'adapterId', 'callId', 'reason', 'waitedMs', 'ahead'],
   'login-started': ['type', 'adapterId', 'callId'],
   'login-finished': ['type', 'adapterId', 'outcome', 'needsUser', 'stage', 'errorClass'],
-  'secret-used': ['type', 'adapterId', 'adapterHash', 'secret', 'field', 'origin', 'callId'],
+  'secret-used': ['type', 'adapterId', 'adapterHash', 'secret', 'field', 'origin', 'callId', 'custody'],
   'local-access': ['type', 'adapterId', 'callId', 'capability', 'errorClass'],
   'egress-connection': [
     'type',
