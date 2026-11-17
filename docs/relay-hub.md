@@ -446,6 +446,17 @@ so the account outlives any one Mac.
   on <Mac>", and the tab's badge counts them all. Activity, Sites and Agents still show the paired
   Mac; a per-Mac switcher there is left for the Devices step.
 
+**Built in 4c-4.** Settings › Devices now leads with the account:
+- the same one-line status as Needs you, with a dot, and the relay's state under it;
+- Try again (when Touch ID was cancelled) sits with Open the hub and Leave the account;
+- "Checking your Valet account…" shows until the relay reports the hub;
+- the relay says why it's down, and Pair an iPhone waits for it;
+- then the iPhones, with Pair an iPhone no longer the screen's primary button;
+- then the relay and cloud agents' domain fields under Advanced, open by itself when no relay is set.
+
+These cover UI review findings R2 (on Devices), R6, R8, R9 and R13. Still open: R11, which needs
+the hub to report each agent's last call.
+
 **What stays the same.** The hub still can't add a device: every change is signed by a device on
 the list, and every node checks the chain itself. Removing the Mac that started the list resets it
 (#125) only when no phone on the list could keep it going. A stolen phone remains out of scope
