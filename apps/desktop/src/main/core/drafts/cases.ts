@@ -1003,7 +1003,10 @@ function scriptedImap(
           problem ??= `IMAP step ${next} is ${step.op}, but the tool made ${op}.`
           throw new ValetError('egress', 'unavailable')
         }
-        if (step.args !== undefined && partialMismatch(step.args, args.slice(0, step.args.length), 'args') !== null) {
+        if (
+          step.args !== undefined &&
+          partialMismatch(step.args, args.slice(0, step.args.length), 'args') !== null
+        ) {
           problem ??= `IMAP step ${next} (${op}) was made with other arguments: ${JSON.stringify(args).slice(0, 200)}.`
           throw new ValetError('egress', 'unavailable')
         }
@@ -1018,6 +1021,8 @@ function scriptedImap(
     backend,
     problem: (finished) =>
       problem ??
-      (finished && next < steps.length ? `The tool made ${next} of the case's ${steps.length} IMAP steps.` : null),
+      (finished && next < steps.length
+        ? `The tool made ${next} of the case's ${steps.length} IMAP steps.`
+        : null),
   }
 }
