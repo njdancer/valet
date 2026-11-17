@@ -13,6 +13,7 @@
 //
 // Nothing here ever reads a secret's value except resolve, which only a CredentialGate calls.
 
+import { createHash } from 'node:crypto'
 import {
   type AdapterManifest,
   type ApprovalKind,
