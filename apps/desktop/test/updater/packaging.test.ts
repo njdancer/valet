@@ -20,6 +20,9 @@ import {
   ENTITLEMENTS_INHERIT_PATH,
   ENTITLEMENTS_PATH,
   FORBIDDEN_ENTITLEMENTS,
+  NODE_RUNTIME_BUILD,
+  NODE_RUNTIME_ENTITLEMENTS_PATH,
+  NODE_RUNTIME_SIGN_IGNORE,
   nodeDeps,
   RELEASE_APP_ID,
   RELEASE_PRODUCT_NAME,
@@ -34,6 +37,14 @@ import {
   signWithRequirement,
 } from '../../electron-builder.config'
 import { RELEASE_APP_ID as SCRIPT_RELEASE_APP_ID } from '../../scripts/make-feed.mjs'
+import {
+  archiveUrl,
+  NODE_RUNTIME_PIN,
+  readPin,
+  sha256,
+  signArguments,
+  verifiedArchive,
+} from '../../scripts/node-runtime.mjs'
 import { SHOWCASE_BUILD_MARKER } from '../../src/main/core/showcase'
 import { SMOKE_BUILD_MARKER } from '../../src/main/core/smoke'
 
@@ -64,6 +75,7 @@ const DEPS: ConfigDeps = {
   },
   readMainBundle: () => RELEASE_BUNDLE,
   bridgeBuilt: () => true,
+  nodeRuntimeBuilt: () => true,
 }
 
 // The config's nested option types are electron-builder's unions; tests read them loosely.
@@ -293,6 +305,7 @@ describe('a release build refuses to be built weaker', () => {
         from: 'build/launch-agents/me.dncr.valet.messages-helper.plist',
         to: 'Library/LaunchAgents/messages-helper.plist',
       },
+      { from: NODE_RUNTIME_BUILD, to: 'MacOS/valet-node' },
     ])
     // A development build's agent has its own label, so it never stands in for the release's.
     expect(createBuilderConfig({}, DEPS).extraFiles).toContainEqual({
@@ -694,5 +707,102 @@ describe('a showcase package (VALET_SHOWCASE=1)', () => {
   it('is refused as a release bundle', () => {
     const bundle = { ...DEPS, readMainBundle: () => `${RELEASE_BUNDLE}${SHOWCASE_BUILD_MARKER}` }
     expect(() => createBuilderConfig(RELEASE_ENV, bundle)).toThrow(/showcase build/)
+  })
+})
+
+describe('the Node runtime’s binary', () => {
+  const pinText = readFileSync(NODE_RUNTIME_PIN, 'utf8')
+  const pin = readPin(pinText)
+
+  it('is pinned to the official release for both architectures, with its own identifier', () => {
+    expect(pin.identifier).toBe('me.dncr.valet.node-runtime')
+    expect(pin.identifier).not.toBe(RELEASE_APP_ID)
+    expect(archiveUrl(pin, 'arm64')).toBe(
+      `https://nodejs.org/dist/v${pin.version}/node-v${pin.version}-darwin-arm64.tar.gz`,
+    )
+    // The same Node the repository builds and tests with (mise.toml).
+    const mise = readFileSync(resolve(APP_DIR, '../../mise.toml'), 'utf8')
+    expect(mise).toContain(`node = "${pin.version}"`)
+  })
+
+  it('refuses a pin that loosens anything', () => {
+    const base = JSON.parse(pinText)
+    const variant = (change: (p: any) => void) => {
+      const p = structuredClone(base)
+      change(p)
+      return () => readPin(JSON.stringify(p))
+    }
+    expect(variant((p) => (p.version = '24.x'))).toThrow(/exact release/)
+    expect(variant((p) => (p.identifier = 'valet node'))).toThrow(/identifier/)
+    expect(variant((p) => (p.archives.arm64.sha256 = 'abc'))).toThrow(/sha256/)
+    expect(variant((p) => (p.archives.x64.file = 'evil.tar.gz'))).toThrow(/file must be/)
+    expect(variant((p) => delete p.archives.x64)).toThrow(/arm64 and x64/)
+    expect(variant((p) => (p.url = 'https://example.com/'))).toThrow(/unexpected keys/)
+  })
+
+  it('uses an archive only when it matches the pinned SHA-256, downloaded or cached', async () => {
+    const cache = mkdtempSync(join(tmpdir(), 'node-runtime-'))
+    try {
+      const good = new TextEncoder().encode('the real archive')
+      const testPin = structuredClone(pin)
+      testPin.archives.arm64.sha256 = sha256(good)
+      const requests: string[] = []
+      const serve = (bytes: Uint8Array<ArrayBuffer>) =>
+        (async (url: string) => {
+          requests.push(url)
+          return new Response(bytes)
+        }) as unknown as typeof fetch
+      await expect(
+        verifiedArchive(testPin, 'arm64', { cache, fetch: serve(new TextEncoder().encode('tampered')) }),
+      ).rejects.toThrow(/isn't the pinned/)
+      const kept = await verifiedArchive(testPin, 'arm64', { cache, fetch: serve(good) })
+      expect(readFileSync(kept, 'utf8')).toBe('the real archive')
+      // From the cache now, with no download.
+      await verifiedArchive(testPin, 'arm64', { cache, fetch: serve(new Uint8Array()) })
+      expect(requests).toEqual([archiveUrl(pin, 'arm64'), archiveUrl(pin, 'arm64')])
+      // A cached file that changed is thrown away and downloaded again.
+      writeFileSync(kept, 'changed on disk')
+      await verifiedArchive(testPin, 'arm64', { cache, fetch: serve(good) })
+      expect(requests).toHaveLength(3)
+      expect(readFileSync(kept, 'utf8')).toBe('the real archive')
+    } finally {
+      rmSync(cache, { recursive: true, force: true })
+    }
+  })
+
+  it('is signed on its own: its identifier, the hardened runtime and the JIT entitlement only', () => {
+    expect(signArguments(pin, '-', 'x')).toEqual([
+      '--sign',
+      '-',
+      '--force',
+      '--identifier',
+      'me.dncr.valet.node-runtime',
+      '--options',
+      'runtime',
+      '--entitlements',
+      resolve(APP_DIR, NODE_RUNTIME_ENTITLEMENTS_PATH),
+      'x',
+    ])
+    expect(signArguments(pin, 'ABC', 'x')).toContain('--timestamp')
+    const plistText = readFileSync(resolve(APP_DIR, NODE_RUNTIME_ENTITLEMENTS_PATH), 'utf8')
+    const keys = [...plistText.matchAll(/<key>([^<]+)<\/key>/g)].map((m) => m[1])
+    expect(keys).toEqual([...ALLOWED_ENTITLEMENTS])
+    for (const forbidden of FORBIDDEN_ENTITLEMENTS) expect(plistText).not.toContain(forbidden)
+  })
+
+  it('ships in a release, keeps its own signature, and a release refuses to build without it', () => {
+    const c = config(RELEASE_ENV)
+    expect(c.extraFiles).toContainEqual({ from: NODE_RUNTIME_BUILD, to: 'MacOS/valet-node' })
+    expect(c.mac.signIgnore).toEqual([NODE_RUNTIME_SIGN_IGNORE])
+    expect(new RegExp(NODE_RUNTIME_SIGN_IGNORE).test('/x/Valet.app/Contents/MacOS/valet-node')).toBe(true)
+    expect(new RegExp(NODE_RUNTIME_SIGN_IGNORE).test('/x/Valet.app/Contents/MacOS/Valet')).toBe(false)
+    expect(c.mac.binaries).not.toContain('Contents/MacOS/valet-node')
+    expect(() => createBuilderConfig(RELEASE_ENV, { ...DEPS, nodeRuntimeBuilt: () => false })).toThrow(
+      /ships the Node runtime/,
+    )
+    // A development build without it packages without it.
+    expect(createBuilderConfig({}, { ...DEPS, nodeRuntimeBuilt: () => false }).extraFiles).not.toContainEqual(
+      { from: NODE_RUNTIME_BUILD, to: 'MacOS/valet-node' },
+    )
   })
 })

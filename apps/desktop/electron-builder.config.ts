@@ -102,6 +102,18 @@ export const NATIVE_EXECUTABLES = [
   'valet-approver',
 ] as const
 /**
+ * The Node runtime for `raw` adapters (docs/node-runtime.md#shipping-the-binary): the official Node
+ * release, universal, checked against the SHA-256s in build/node-runtime.json and signed on its own
+ * by scripts/node-runtime.mjs, with its own identifier and the JIT entitlement only. It ships beside
+ * the app's executable but keeps that signature: electron-builder never re-signs it (signIgnore).
+ */
+export const NODE_RUNTIME_EXECUTABLE = 'valet-node'
+export const NODE_RUNTIME_BUILD = '.node-runtime/valet-node'
+export const NODE_RUNTIME_ENTITLEMENTS_PATH = 'build/entitlements.node.plist'
+/** signIgnore's pattern for it: osx-sign tests each file's full path. */
+export const NODE_RUNTIME_SIGN_IGNORE = `/Contents/MacOS/${NODE_RUNTIME_EXECUTABLE}$`
+
+/**
  * The Messages helper's launch agent, one plist per bundle ID (build/launch-agents), installed as
  * Contents/Library/LaunchAgents/messages-helper.plist, the name SMAppService.agent(plistName:) asks for.
  */
@@ -169,6 +181,8 @@ export interface ConfigDeps {
    * a release only, to check it was built for this release.
    */
   readonly readMainBundle: () => string | null
+  /** Whether the Node runtime (NODE_RUNTIME_BUILD) has been built and signed. */
+  readonly nodeRuntimeBuilt: () => boolean
   /** Whether the native binaries (NATIVE_EXECUTABLES) have been built in SWIFT_BUILD_DIR. */
   readonly bridgeBuilt: () => boolean
 }
@@ -355,6 +369,11 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
         'a release ships the stdio bridge and the helpers: run `swift build -c release --arch arm64 --arch x86_64 --package-path swift-bridge` first',
       )
     }
+    if (!deps.nodeRuntimeBuilt()) {
+      throw new BuildConfigError(
+        'a release ships the Node runtime: run `node apps/desktop/scripts/node-runtime.mjs` first',
+      )
+    }
   } else if (release) {
     if (!set(env, 'VALET_TEAM_ID')) throw new BuildConfigError('a release build needs VALET_TEAM_ID')
     if (feedUrl === null) throw new BuildConfigError('a release build needs VALET_UPDATE_URL')
@@ -380,6 +399,11 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
     if (!deps.bridgeBuilt()) {
       throw new BuildConfigError(
         'a release ships the stdio bridge and the helpers: run `swift build -c release --arch arm64 --arch x86_64 --package-path swift-bridge` first',
+      )
+    }
+    if (!deps.nodeRuntimeBuilt()) {
+      throw new BuildConfigError(
+        'a release ships the Node runtime: run `node apps/desktop/scripts/node-runtime.mjs` first',
       )
     }
     requirement = renderRequirement(deps.readTemplate(RELEASE_REQUIREMENT_TEMPLATE), {
@@ -445,6 +469,9 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
               to: `MacOS/${name}`,
             })),
             { from: launchAgentSource(appId), to: LAUNCH_AGENT_PLIST },
+            ...(deps.nodeRuntimeBuilt()
+              ? [{ from: NODE_RUNTIME_BUILD, to: `MacOS/${NODE_RUNTIME_EXECUTABLE}` }]
+              : []),
           ],
     asar: true,
     npmRebuild: false,
@@ -471,6 +498,8 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
             ),
           }
         : {}),
+      // The Node runtime keeps its own signature, made by scripts/node-runtime.mjs.
+      signIgnore: [NODE_RUNTIME_SIGN_IGNORE],
       // A dry run signs ad hoc: electron-builder's "-" identity, which uses no key and no keychain.
       ...(dryRun ? { identity: '-' } : signs ? {} : { identity: null }),
       type: release ? 'distribution' : 'development',
@@ -510,6 +539,7 @@ export const nodeDeps: ConfigDeps = {
   loadSignAsync: () => signAsync as unknown as SignAsync,
   readMainBundle: () => readBundle(join(here, 'out', 'main')),
   bridgeBuilt: () => NATIVE_EXECUTABLES.every((name) => existsSync(join(here, SWIFT_BUILD_DIR, name))),
+  nodeRuntimeBuilt: () => existsSync(join(here, NODE_RUNTIME_BUILD)),
 }
 
 /** Every .js file under `dir`, joined, or null when `dir` has no index.js. */
