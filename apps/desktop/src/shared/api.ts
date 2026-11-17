@@ -292,6 +292,9 @@ export interface LimitsInfo {
   readonly minGapMs: number
   readonly cooldownSeconds: number
   readonly maxCooldownSeconds: number
+  /** What a read, and a write, may send in one run: the broker's budgets (docs/adapter-kinds.md). */
+  readonly uploadBytesPerRun?: number
+  readonly writeUploadBytesPerRun?: number
 }
 
 export interface PermissionDiff {
@@ -314,6 +317,10 @@ export interface PermissionDiff {
   readonly probe: { readonly before: ProbeInfo; readonly after: ProbeInfo } | null
   /** What the new version can reach on this Mac (docs/sandbox.md). */
   readonly sandbox: SandboxDiff
+  /** Hosts on the person's network, as the card says each one (docs/adapter-kinds.md). */
+  readonly privateHosts?: ListDiff<string>
+  /** The adapter's kind before (null for a first install) and after, as the card says it. */
+  readonly runtime?: { readonly before: string | null; readonly after: string }
 }
 
 export interface SandboxDiff {
@@ -835,6 +842,8 @@ export interface RemoteConsentItem {
   readonly source: string | null
   readonly requestedAt: IsoTime
   readonly expiresAt: IsoTime
+  /** 'hub': an agent signing in through the Valet account (RemoteConsentRequest.via). */
+  readonly via?: 'hub'
 }
 
 /** An approved site with a required setting not chosen yet: "Choose your Woolworths store". */
@@ -1125,6 +1134,19 @@ export interface RemoteClientItem {
   readonly askForChanges: boolean
 }
 
+/** An agent approved through the Valet account: one grant the hub holds and this Mac checked. */
+export interface HubAgentItem {
+  /** The grant's id, 64 hex characters. */
+  readonly id: string
+  readonly host: string
+  /** What it calls itself: a claim. */
+  readonly clientName: string
+  readonly approvedAt: IsoTime
+  readonly expiresAt: IsoTime
+  /** Approved on this Mac (otherwise on another device on the account). */
+  readonly approvedHere: boolean
+}
+
 /** What a cloud agent may do beyond Use tools, ticked on the consent sheet. */
 export type RemoteCapability = 'see-valet' | 'ask-for-changes'
 
@@ -1213,7 +1235,7 @@ export type PairingView =
     }
 
 export interface RosterStatus {
-  readonly state: 'off' | 'waiting' | 'on' | 'needs-you' | 'not-added' | 'refused'
+  readonly state: 'off' | 'waiting' | 'on' | 'needs-you' | 'not-added' | 'joining' | 'refused'
   readonly devices: number
 }
 
@@ -1485,6 +1507,10 @@ export interface ValetApi {
     clients(): Promise<readonly RemoteClientItem[]>
     /** Deletes one client's registration, grant and tokens, and closes its sessions. */
     revokeClient(clientId: string): Promise<void>
+    /** Agents approved through the Valet account (relay-hub.md), as this Mac checked their grants. */
+    hubAgents(): Promise<readonly HubAgentItem[]>
+    /** Removes one at the hub: its tokens stop working on every Mac at once. */
+    revokeHubAgent(grantId: string): Promise<void>
     /**
      * Lets one approved cloud agent ask for changes (with Touch ID), or stops it (at once). Its
      * open sessions close, so its next one has the authoring tools or loses them.

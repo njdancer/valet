@@ -11,11 +11,25 @@
 //
 // Electron-free; the app gives it the driver.
 
-import type { AdapterManifest, BlockedRequest, EnsureResult, SessionDriver, ToolContext } from '@valet/core'
+import {
+  type AdapterManifest,
+  type BlockedRequest,
+  type EnsureResult,
+  runtimeOf,
+  type SessionDriver,
+  type ToolContext,
+  uploadBudget,
+} from '@valet/core'
+import { RunMeter } from '@valet/egress'
 import {
   breakerRefusal,
   CallState,
+  GuardedHttp,
   GuardedToolPage,
+  type HttpEgress,
+  NO_HTTP_ACCESS,
+  NO_PAGE,
+  noBrowserDriver,
   runIsolated,
   SecretRedactionSet,
   type SiteGuards,
@@ -50,6 +64,11 @@ export interface TrialDeps {
   ) => Promise<SessionDriver>
   /** The installed adapters' guards for the host (ToolHost.siteGuards). */
   readonly guards: (host: string) => SiteGuards
+  /**
+   * The egress broker for a draft that isn't a browser adapter, built from the endpoints it is
+   * given. Without it, such a draft's ctx.http is not granted.
+   */
+  readonly egress?: (endpoints: { readonly egress: readonly string[] }) => HttpEgress
   readonly timeoutMs?: number
 }
 
@@ -128,7 +147,10 @@ export async function runTrial(
   if (spentForMs > 0) return done({ kind: 'site-resting', retryAfterMs: spentForMs })
 
   const policy = trialPolicy(manifest, signedIn)
-  const driver = await deps.driver(manifest, label, signedIn)
+  // An http draft opens no browser. Its trial reaches the draft's public hosts only: an address on
+  // the person's network waits for their approval of the adapter (docs/adapter-kinds.md).
+  const http = runtimeOf(manifest) !== 'browser'
+  const driver = http ? noBrowserDriver() : await deps.driver(manifest, label, signedIn)
   const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
@@ -158,6 +180,43 @@ export async function runTrial(
       }, timeoutMs)
     })
     const run = async (): Promise<unknown> => {
+      if (http) {
+        const publicOnly: AdapterManifest = { ...manifest, privateHosts: [] }
+        const httpCtx: ToolContext = {
+          page: NO_PAGE,
+          session: { ensure: async (): Promise<EnsureResult> => ({ status: 'ok' }) },
+          confirm: async () => false,
+          signal: controller.signal,
+          local: NO_LOCAL_ACCESS,
+          http:
+            deps.egress === undefined
+              ? NO_HTTP_ACCESS
+              : new GuardedHttp({
+                  adapterId: manifest.id,
+                  manifest: publicOnly,
+                  sideEffect: 'read',
+                  unlocks: [],
+                  site,
+                  state,
+                  audit: async (event) => {
+                    if (event.type === 'request-blocked')
+                      record({
+                        method: event.method,
+                        target: event.target,
+                        reason: event.reason,
+                        initiator: 'tool',
+                      })
+                  },
+                  broker: deps.egress({ egress: policy.egress }),
+                  run: {
+                    meter: new RunMeter(uploadBudget(manifest, 'read')),
+                    signal: controller.signal,
+                    record: () => {},
+                  },
+                }),
+        }
+        return runIsolated(deps.start, draft.script, httpCtx, tool, input)
+      }
       const inner = await driver.toolPage()
       const page = new GuardedToolPage({
         adapterId: manifest.id,

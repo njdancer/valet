@@ -27,6 +27,7 @@ import type {
   EndpointStatus,
   GrantInfo,
   GrantRequest,
+  HubAgentItem,
   LoginMissingItem,
   MissedItem,
   PairingView,
@@ -802,6 +803,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     },
   ]
   let remoteClients: RemoteClientItem[] = []
+  let hubAgents: HubAgentItem[] = []
   let remoteWrong = 0
   let remoteSetup: RemoteSetup = {
     enabled: false,
@@ -1484,6 +1486,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           source: r.source,
           requestedAt: r.requestedAt,
           expiresAt: r.expiresAt,
+          ...(r.via === undefined ? {} : { via: r.via }),
         }))
         const missing = [...adapters.values()].flatMap((a) => missingOf(detailOf(a)))
         return clone(sorted([...attention, ...consents, ...agentRequests, ...missing, ...repairs, ...missed]))
@@ -1779,6 +1782,15 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       async revokeClient(id) {
         enter('remote.revokeClient', id)
         remoteClients = remoteClients.filter((c) => c.id !== id)
+        emit({ type: 'remote-changed' })
+      },
+      async hubAgents() {
+        enter('remote.hubAgents')
+        return clone(hubAgents)
+      },
+      async revokeHubAgent(id) {
+        enter('remote.revokeHubAgent', id)
+        hubAgents = hubAgents.filter((a) => a.id !== id)
         emit({ type: 'remote-changed' })
       },
       async setAskForChanges(id, on) {

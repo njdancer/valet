@@ -17,6 +17,7 @@
 // puts nothing a client sent into HTML.
 
 import { z } from 'zod'
+import { HUB_STYLE } from './pages'
 import { linkCode, sha256Hex, token } from './secrets'
 
 export const OAUTH_TIMINGS = {
@@ -196,7 +197,7 @@ export class HubOAuth {
     if (request.method === 'GET') {
       if (path.startsWith('/.well-known/oauth-protected-resource')) return this.resourceMetadata()
       if (path === '/.well-known/oauth-authorization-server') return this.serverMetadata()
-      if (path === '/authorize') return this.authorize(url, source)
+      if (path === '/authorize') return this.authorize(request, url, source)
       if (path === '/authorize/status') return this.status(request, url)
       if (path === '/authorize/done') return this.done(request, url)
     }
@@ -337,7 +338,7 @@ export class HubOAuth {
 
   // ---------- Authorisation ----------
 
-  private async authorize(url: URL, source: string): Promise<Response> {
+  private async authorize(request: Request, url: URL, source: string): Promise<Response> {
     const q = url.searchParams
     const client = this.client(q.get('client_id'))
     const redirect = q.get('redirect_uri')
@@ -382,7 +383,10 @@ export class HubOAuth {
       return consentPage('problem', 'Too many sign-ins are waiting. Try again in a few minutes.', 429)
 
     const id = token(16)
-    const browser = token(32)
+    // One browser keeps one token across its sign-ins: a fresh one per sign-in replaced the cookie,
+    // so a sign-in started earlier in another tab of the same browser could never finish.
+    const held = cookie(request, CONSENT_COOKIE)
+    const browser = held !== null && /^[A-Za-z0-9_-]{43}$/.test(held) ? held : token(32)
     const code = linkCode()
     this.db.run(
       `INSERT INTO oauth_consents (id, client_id, redirect_uri, challenge, state, code, browser_hash, source,
@@ -647,7 +651,7 @@ function consentPage(
       ? `<h1>Valet</h1><p>${escapeText(text)}</p>`
       : `<h1>Approve this app</h1>
          <p><strong id="client"></strong> wants to use your Valet tools.</p>
-         <p>On your Mac (Valet’s window) or your iPhone, approve it and type this code:</p>
+         <p>In Valet on your Mac, type this code where it asks to approve a connection, then approve:</p>
          <p class="code" id="code"></p>
          <p class="muted" id="state">Waiting for you to approve…</p>`
   const script =
@@ -662,7 +666,10 @@ function consentPage(
     try {
       const r = await fetch('/authorize/status?id=' + encodeURIComponent(d.id), { credentials: 'same-origin' })
       const s = (await r.json()).state
-      if (s === 'approved' || s === 'declined') { location.assign('/authorize/done?id=' + encodeURIComponent(d.id)); return }
+      if (s === 'approved' || s === 'declined') {
+        state.textContent = s === 'approved' ? 'Approved. Taking you back to ' + d.client + '…' : 'Declined. Taking you back…'
+        location.assign('/authorize/done?id=' + encodeURIComponent(d.id)); return
+      }
       if (s === 'gone') { state.textContent = 'This sign-in has expired. Start again from your app.'; return }
     } catch {}
     setTimeout(poll, 2000)
@@ -671,8 +678,8 @@ function consentPage(
 </script>`
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Valet</title>
-<style>:root{color-scheme:light dark}body{font:16px/1.5 -apple-system,system-ui,sans-serif;margin:0;padding:32px 16px}
-main{max-width:32rem;margin:0 auto}.code{font:600 28px ui-monospace,Menlo,monospace;letter-spacing:.1em}.muted{opacity:.7}</style>
+<style>${HUB_STYLE}
+.code{font:600 28px ui-monospace,Menlo,monospace;letter-spacing:.1em}</style>
 </head><body data-consent="${data}"><main>${body}</main>${script}</body></html>`
   return new Response(html, {
     status,

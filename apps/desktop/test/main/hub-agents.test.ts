@@ -187,4 +187,20 @@ describe('agents signing in through the hub, on the Mac', () => {
     ])
     expect(t.agents.consents()).toEqual([])
   })
+
+  it('removes an agent it holds a grant for, telling the hub, and stops honouring it at once', async () => {
+    const t = await setup()
+    t.agents.received([consent('consent_000000001', 'ABCD-EFGH')])
+    expect(await t.agents.approve(t.agents.consents()[0] as never)).toBe(true)
+    const frame = t.sent[0]
+    if (frame?.type !== 'hub-grant') throw new Error('expected a grant')
+    t.agents.grantsReceived([frame.grant])
+    const [held] = t.agents.grants()
+    if (held === undefined) throw new Error('no grant')
+    expect(t.agents.revoke('f'.repeat(64))).toBe(false)
+    expect(t.agents.revoke(held.id)).toBe(true)
+    expect(t.sent.at(-1)).toEqual({ type: 'hub-grant-revoke', grantId: held.id })
+    expect(t.agents.grants()).toEqual([])
+    expect(t.agents.revoke(held.id)).toBe(false)
+  })
 })

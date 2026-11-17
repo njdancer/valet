@@ -9,8 +9,8 @@
 // Output redaction checks against the session values seen during the call, kept here for exactly
 // its length, and the clones of the latest login's secrets, which the adapter's session gate keeps.
 
-import { type EnsureResult, ValetError } from '@valet/core'
-import { REDACTED, type SecretRedactionSet, type Sensitive, sensitiveMatcher } from './redaction'
+import { type EnsureResult, type SecretValue, ValetError } from '@valet/core'
+import { REDACTED, SecretRedactionSet, type Sensitive, sensitiveMatcher } from './redaction'
 import type { CallLogin } from './session'
 import { breakerRefusal } from './site-protection'
 
@@ -47,8 +47,25 @@ export class CallState {
     private readonly secrets: () => SecretRedactionSet,
   ) {}
 
+  /**
+   * Secrets this call itself put on the wire (a kept credential ctx.http attached), held so the
+   * output and audit targets are redacted for them as for a login's. Disposed when the call ends.
+   */
+  private readonly sent = new SecretRedactionSet()
+
+  /** Redacts `secret` from everything this call hands back. The caller still owns `secret`. */
+  keepSent(secret: SecretValue): void {
+    this.sent.register(secret)
+  }
+
+  /** Zeroes the copies keepSent() took. */
+  disposeSent(): void {
+    this.sent.dispose()
+  }
+
   sensitive(): Sensitive {
-    return sensitiveMatcher(this.sessionValues, this.secrets())
+    const matches = sensitiveMatcher(this.sessionValues, this.secrets())
+    return (text) => matches(text) || this.sent.occursIn(text)
   }
 
   /**
@@ -58,7 +75,8 @@ export class CallState {
    */
   redactTarget(target: string, raw?: unknown): string {
     const caseless = sensitiveMatcher(this.sessionValues, this.secrets(), { ignoreCase: true })
-    const leaks = caseless(target) || (typeof raw === 'string' && this.sensitive()(raw))
+    const leaks =
+      caseless(target) || this.sent.occursIn(target) || (typeof raw === 'string' && this.sensitive()(raw))
     return leaks ? REDACTED : target
   }
 

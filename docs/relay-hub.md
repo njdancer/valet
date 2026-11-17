@@ -300,7 +300,7 @@ Built in this order: the hub's sign-in for agents and the grant format (3a), the
   that grant (what an offline node shows during its grace), both in memory only: never stored.
   A node that forgot the session (a restart) gets a new one on the next request.
 - **Not yet:** `list_changed` over an event stream, hub-level tools (which nodes are online), and a
-  page on the hub to see and revoke grants. Step 5 retires the per-Mac hosts.
+  page on the hub to see and revoke grants (the Mac's Connections can remove them, below). Step 5 retires the per-Mac hosts.
 
 ## A Mac that started the list goes
 
@@ -313,6 +313,125 @@ Removing needs a recent sign-in; it only takes access away. A Mac that missed be
 (it was offline, or it is the same Mac with new keys) still holds a pin on the old list and would
 refuse the empty one; when it is next added with a code it showed (linking, then linked), it
 forgets that pin and starts the new list.
+
+## Removing an agent
+
+Connections lists, under Cloud agents, every agent approved through the account whose grant this
+Mac checked ("Through your Valet account"), with Remove. Removing sends `hub-grant-revoke`; the hub
+deletes that grant and its tokens at once, on every Mac, and tells the other nodes. Any node on the
+account may ask, with no signature, since it only takes access away. The Mac stops honouring the
+grant before the hub answers.
+
+## Tested end to end
+
+`apps/desktop/e2e/hub.spec.ts` runs the whole journey on every pull request (macOS CI, the fast
+e2e suite): the built app, the relay and hub in a local Workers runtime
+(`apps/relay/scripts/local.mjs --hub-origin …`), Playwright's Chromium with a virtual passkey as
+the person's browser, and the MCP SDK's own OAuth client as the agent. It signs up, puts the Mac
+on the account, signs an agent in with the code its browser shows, lists and calls a tool at
+`/mcp`, approves one of several waiting sign-ins and declines the rest, removes an agent from
+Connections, restarts the relay, and re-links the Mac after it lost its keys. Then a phone
+(written in TypeScript, as the iPhone app speaks) pairs once and goes on the account's list; the
+Mac loses its keys again, the phone adds the new Mac at the hub, its approvals reach the new Mac
+without pairing, and an agent the old Mac approved still works.
+`apps/relay/test/hub-browser.test.ts` runs in the same job. **No hub or relay deploy unless both
+passed on the commit being deployed.**
+
+The first live sign-in found three bugs between the parts, each now covered there: the consent
+cookie's path, a hub sign-in the Mac's own Decline refused, and a Mac with new keys still holding
+the old list. Writing the test found two more: a second sign-in in the same browser replaced the
+first one's cookie, so the first could never finish ("Sign-in has expired"), and approving one of
+several waiting sign-ins left the sheet showing the others with no sign the approval worked.
+
+## Step 4c plan: phones on the account (decided by recommendation, needs Nick's review)
+
+Nick (2026-11-17): "I don't want to keep pairing the phone directly to the mac. The phone should
+just be logging into the relay." Today the list survives only as long as the Mac that started it:
+when that Mac lost its keys, the list, its grants and the phone's place on it all went, and the
+phone had to pair again. The fix is to make the phone a full member of the account that can sign,
+so the account outlives any one Mac.
+
+**What the person sees.**
+
+- _A new phone:_ in the iPhone app, "Sign in to your Valet account". It scans the QR code from
+  any signed-in device (Valet on a Mac: Settings › Devices › Add an iPhone), both screens show the
+  same six digits, the person picks them on the Mac, and Touch ID adds the phone to the account.
+  This is D79's "QR as a login shortcut, no separate device approval": the Touch ID that adds it is
+  the approval.
+- _A new or re-keyed Mac:_ "Connect to your Valet account" with the code typed on the hub's page,
+  as now. If the account already has a list, the phone shows "Add <Mac> to your account?", and
+  Face ID on the phone adds it. Nobody pairs again, and grants signed by devices still on the list
+  keep working.
+- _Every Mac on the account_ trusts every phone on the list for approvals, without pairing.
+
+**How it works.**
+
+1. **A Mac joins a list another device started (4c-1, Mac and hub).** When a freshly linked Mac
+   finds a non-empty list without itself, it sends `hub-roster-join` with its three public keys,
+   bound by its approval key. The hub passes it to the account's devices. Once a device on the
+   list signs the add, the Mac pins that list's first change: trust on first use, but only right
+   after the person typed this Mac's code on the hub's page while signed in. Roster changes may
+   then add a Mac when signed by a phone (the Secure Enclave helper still never adds a Mac itself).
+2. **Each Mac serves every phone on the list (4c-1).** For each phone on the verified list, the
+   Mac registers its transport key with its own relay object (`device-register`) and seals
+   approvals to its agreement key, exactly as for a phone it paired. A phone removed from the list
+   is unregistered.
+3. **The phone connects to the hub (4c-2).** The phone opens a socket to the hub with a signed
+   hello (its transport key). The hub accepts it only if the phone is on the account's list. Over
+   it, the phone gets the chain, any Mac waiting to join, and each Mac's relay address. It also
+   sends roster changes it signed with Face ID.
+4. **Signing a phone in by QR (4c-2).** Decided by recommendation, needs Nick's review: the
+   reviewed pairing protocol stays as it is, through the inviting Mac's relay object, rather than
+   being carried through the hub. It already ends with the phone on the account's list (the Mac
+   adds every phone it pairs), so a second path would only add risk. Once on the list, the phone
+   hears which account it is on in the Mac's `status` message (`account`: the hub's address and
+   the account's id), and the hub's answer names the relay every Mac dials (`relay`). A phone
+   inviting another phone can come later if it's wanted.
+5. **The iPhone app (4c-3).** Swift parts:
+   - roster verification and roster-change signing, checked against core's test vectors as the
+     other formats are;
+   - the hub socket;
+   - one channel per Mac on the list;
+   - the "Sign in to your Valet account" screen in place of "Pair with Mac".
+6. **Settings › Devices (4c-4)**, in the order Nick chose: the account's status first, then the
+   devices on the account, then the relay and domain fields under Advanced. Direct pairing leaves
+   the UI. Nick's phone signs in once more this way, and never again.
+
+**Built in 4c-1 (decided by recommendation, needs Nick's review).**
+
+- _How a Mac proves it is asking._ The join request is the Mac's own device record (devices.ts),
+  signed by its own approval key: the Secure Enclave helper already signs that, so nothing on the
+  Mac needs rebuilding. It costs one Touch ID prompt when the Mac joins, and the helper words it
+  "update this Mac's device record"; better wording needs a helper change, left for later. The
+  phone adds exactly the keys in that record, never what the hub says.
+- _How a phone reaches the hub._ Two plain HTTPS calls rather than a socket (core's
+  `hub-phone.ts`): `POST /phone/challenge`, then `POST /phone/account` with the transport key's
+  answer over the same relay-auth payload it signs for a Mac's relay object, with the hub's origin
+  in it. The hub lets in only a phone on the account's verified list. The answer has the chain, the
+  Macs waiting to join (each with its signed record) and the account's Macs; the same call can
+  append changes the phone signed. With no push, the phone asks when it opens, as it does for
+  cards. Step 4c-2 may add a socket if the app needs live updates.
+- _The Mac that started the list._ Removing it on the hub's page resets the list (#125) only when
+  no phone is on it. Otherwise the list stays, the old Mac stays on it until a phone removes it,
+  and grants it signed keep working through the new Mac, which the end-to-end test checks.
+- _Phones the Mac didn't pair._ The Mac trusts every phone on the list it verified, in memory,
+  from each verified list: one the list drops stops counting at once. It registers each with its
+  relay object, and a phone the relay knows but the Mac doesn't is let go 30 seconds after the
+  relay's `ready`, giving the hub's list time to arrive.
+- _Trust on first use._ The Mac pins a list it didn't start only while a ledger flag says the
+  person just added it with its code (`rosterJoin`, cleared once pinned or on leaving), and only
+  if the list adds it with exactly its own three keys.
+
+**What stays the same.** The hub still can't add a device: every change is signed by a device on
+the list, and every node checks the chain itself. Removing the Mac that started the list resets it
+(#125) only when no phone on the list could keep it going. A stolen phone remains out of scope
+(agent-run-security.md, "Who this guards against first").
+
+**Tests.** Each part extends `apps/desktop/e2e/hub.spec.ts`, with a phone written in TypeScript as
+`phones.spec.ts` uses, before the iPhone app is involved. The test signs a phone in by QR, approves
+an agent's request on it, loses the Mac's keys, has the phone add the new Mac, and checks that the
+phone's approvals and the agents' grants survive. The iPhone journeys then cover the same steps on
+the simulator.
 
 ## Open, for the building agent to propose (not for Nick unless it changes his goal)
 

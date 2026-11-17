@@ -91,6 +91,18 @@ export const BOOTSTRAP = `(function (send) {
       run: (args, o) => call('local.run', args, o),
       appleScript: (id, source) => call('local.appleScript', id, source),
     }),
+    // The egress broker, for an adapter whose runtime isn't browser (docs/adapter-kinds.md#ctxhttp).
+    http: Object.freeze({
+      fetch: (u, init) => call('http.fetch', u, init),
+      websocket: (u, options) => call('http.ws.open', u, options).then((opened) => {
+        const id = opened && opened.id
+        return Object.freeze({
+          send: (data, o) => call('http.ws.send', id, data, o).then(() => undefined),
+          receive: (o) => call('http.ws.receive', id, o),
+          close: () => call('http.ws.close', id).then(() => undefined),
+        })
+      }),
+    }),
   })
   return function deliver(text) {
     const m = JSON.parse(text)

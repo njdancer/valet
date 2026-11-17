@@ -2,8 +2,10 @@
 // opened by a copy of the build whose Woolworths bundle changed (harness.ts, changedAdapterBuild:
 // remove_from_cart is now irreversible, in the compiled manifest and in the source the hash covers).
 // Its hash is new, so it waits for review with a diff against what was approved, its tools are off
-// MCP, and the old grants don't carry. Approved and granted again, the now-irreversible tool asks
-// the person in the confirmation panel: a decline reaches the client as declined, an approval runs it.
+// MCP, and the old grants don't apply to it. Approving it carries over the grants it doesn't widen
+// (D47's re-bind, docs/approval-broker.md: this update changes no secret request, so both carry),
+// and the now-irreversible tool asks the person in the confirmation panel: a decline reaches the
+// client as declined, an approval runs it.
 
 import { readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
@@ -260,31 +262,23 @@ test('the review screen shows the change, and Approve waits for the acknowledgem
     .toEqual(TOOLS)
   const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
   expect(detail?.approval).toBe('approved')
-  expect(detail?.secretRequests.map((s) => s.grant)).toEqual([null])
+  // The update asks for no more secrets than the approved version, so its approval carried both
+  // grants over to the new hash: the same login item, and the same Messages sender.
+  const login = detail?.secretRequests.map((s) => s.grant) ?? []
+  expect(login).toHaveLength(1)
+  expect(login[0]).toMatchObject({
+    adapterHash: detail?.hash,
+    provider: 'keychain-copy',
+    itemTitle: COPY_ITEM_TITLE,
+  })
+  expect(detail?.messages.map((m) => m.grant?.adapterHash ?? null)).toEqual([detail?.hash])
 })
 
-test('without new grants the login can’t fill; granted again, the next call logs in and works', async () => {
+test('with the grants carried over, the next call logs in and works', async () => {
   if (launched === null) throw new Error('not launched')
-  const ungranted = await callTool(mcp(), 'woolworths_add_to_cart', { stockcode, quantity: 1 })
-  expect(ungranted.isError).toBe(true)
-  expect(ungranted.text).toMatch(/secret-fill: not-granted/)
   expect(await siteTrolley(launched)).toEqual([])
-
-  // The person grants the new hash in the sheet, as the adapter page offers.
-  await control.getByRole('link', { name: 'Woolworths' }).first().click()
-  await control.getByRole('link', { name: 'Choose login…' }).first().click()
-  const sheet = control.getByRole('dialog')
-  await sheet.getByText(COPY_ITEM_TITLE).click()
-  await sheet.getByRole('button', { name: 'Use this login' }).click()
-  await expect(sheet).toBeHidden()
-  await control.getByRole('link', { name: 'Choose…' }).first().click()
-  await expect(sheet.getByText('Let Woolworths read one-time codes from Messages')).toBeVisible()
-  await sheet.getByRole('button', { name: 'Allow these codes' }).click()
-  await expect(sheet).toBeHidden()
-
-  // The failed login's hold on automatic logins is released by the grant: the agent's retry logs in.
   const added = await callTool(mcp(), 'woolworths_add_to_cart', { stockcode, quantity: 3 })
-  expect(added.isError, added.text).toBe(false)
+  expect(added.isError, `${added.text}\n${recentAudit()}`).toBe(false)
   expect(await siteTrolley(launched)).toEqual([{ stockcode, quantity: 3 }])
 })
 

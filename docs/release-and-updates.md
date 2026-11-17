@@ -458,6 +458,14 @@ own config file.
 The `--mcp-bridge` argv shape the command-line check still accepts is unused, and goes once the
 Swift bridge has shipped in a signed build.
 
+## The Node runtime
+
+`raw` adapters run in a second Node, `Contents/MacOS/valet-node`. It is the official Node release,
+universal, and pinned by SHA-256 in `build/node-runtime.json`. It is signed on its own: its own
+identifier (`me.dncr.valet.node-runtime`), the hardened runtime, and `build/entitlements.node.plist`
+(`allow-jit` only). electron-builder never re-signs it, and the release check verifies all of this
+and runs it. [node-runtime.md](node-runtime.md#shipping-the-binary) has the details.
+
 ## Notarisation
 
 electron-builder notarises the app through `@electron/notarize` when `mac.notarize` is true and

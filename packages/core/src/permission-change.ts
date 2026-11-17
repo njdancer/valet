@@ -33,6 +33,10 @@ export const PERMISSION_AREAS = [
   'auth-steps',
   /** The session probe that decides "signed in": a `widened` line naming the old and new probe. */
   'probe',
+  /** The adapter's kind (docs/adapter-kinds.md): a line when it is not a browser, or changes. */
+  'runtime',
+  /** Hosts on the person's own network an adapter reaches, by address and port. */
+  'private-network',
 ] as const
 
 /** Login steps whose removal is at least high risk: each one stops the flow for the person. */

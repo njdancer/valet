@@ -15,6 +15,8 @@ import {
   type SessionDriver,
   sha256Hex,
 } from '@valet/core'
+import { EgressBroker } from '@valet/egress'
+import { startFakeApi } from '@valet/fake-http-api'
 import { AuthoringRefusal, type ClientIdentity } from '@valet/mcp-server'
 import type { SiteGuards } from '@valet/runtime'
 import { buildToolLibrary } from '@valet/runtime/tool-script'
@@ -189,6 +191,49 @@ describe('checks', () => {
     expect(report.findings.filter((f) => f.level === 'error')).toEqual([])
     expect(report.cases.map((c) => c.passed)).toEqual([true, true])
     expect(report.ok).toBe(true)
+  }, 60_000)
+
+  it('passes the blank http draft: no page, its cases answered through ctx.http’s own guard', async () => {
+    const { authoring } = await harness()
+    const draft = await authoring.createDraft(AGENT, {
+      adapterId: 'api',
+      from: 'blank',
+      name: 'API',
+      runtime: 'http',
+    })
+    const manifest = JSON.parse(
+      (await authoring.readFile(AGENT, false, draft.draft.draftId, 'manifest.json')).content,
+    )
+    expect(manifest.runtime).toBe('http')
+    const report = await authoring.check(AGENT, draft.draft.draftId)
+    expect(report.findings.filter((f) => f.level === 'error')).toEqual([])
+    expect(report.cases.map((c) => c.passed)).toEqual([true, true])
+    expect(report.ok).toBe(true)
+  }, 60_000)
+
+  it('fails an http draft’s case that reaches a host its manifest doesn’t name, or sends a refused header', async () => {
+    const { authoring } = await harness()
+    const { draft } = await authoring.createDraft(AGENT, {
+      adapterId: 'api',
+      from: 'blank',
+      name: 'API',
+      runtime: 'http',
+    })
+    const tools = (await authoring.readFile(AGENT, false, draft.draftId, 'src/tools.ts')).content
+    await authoring.writeFile(
+      AGENT,
+      draft.draftId,
+      'src/tools.ts',
+      tools.replace(
+        "headers: { accept: 'application/json' }",
+        "headers: { accept: 'application/json', host: 'evil.example' }",
+      ),
+    )
+    const report = await authoring.check(AGENT, draft.draftId)
+    expect(report.cases[0]).toMatchObject({
+      passed: false,
+      reason: expect.stringContaining('request-surface/undeclared-request'),
+    })
   }, 60_000)
 
   it('fails a case whose tool calls a path the manifest does not declare, even with a response listed', async () => {
@@ -811,6 +856,85 @@ describe('live trials', () => {
     await authoring.writeFile(AGENT, draftId, 'README.md', 'changed')
     await authoring.submit(AGENT, draftId, { note: null, references: [], followOns: [] })
     expect(submits[1]?.checks).toContain('Live trial: not run on this version')
+  }, 60_000)
+
+  it('runs an http draft’s read tool through the egress broker, with no browser and public hosts only', async () => {
+    const api = await startFakeApi()
+    try {
+      const { fake, driver } = trialDriver(item)
+      const g = guards()
+      const h = await harness({
+        trials: {
+          start: sandbox,
+          driver,
+          guards: () => g.site,
+          signedIn: async () => new Map(),
+          egress: (endpoints) =>
+            new EgressBroker(endpoints, {
+              lookup: (_name, cb) => cb(null, [{ address: '127.0.0.1', family: 4 }]),
+              testing: {
+                allowAddresses: ['127.0.0.1'],
+                ca: api.cert as string,
+                route: () => ({ address: '127.0.0.1', port: api.port }),
+              },
+            }),
+        },
+      })
+      const { draft } = await h.authoring.createDraft(AGENT, {
+        adapterId: 'api',
+        from: 'blank',
+        name: 'API',
+        runtime: 'http',
+      })
+      for (const path of ['manifest.json', 'src/tools.ts']) {
+        const text = (await h.authoring.readFile(AGENT, false, draft.draftId, path)).content
+        await h.authoring.writeFile(
+          AGENT,
+          draft.draftId,
+          path,
+          text.replaceAll('api.example.com', 'api.example.test'),
+        )
+      }
+      const manifest = JSON.parse(
+        (await h.authoring.readFile(AGENT, false, draft.draftId, 'manifest.json')).content,
+      )
+      manifest.privateHosts = [{ address: '192.168.1.20', port: 80, scheme: 'http' }]
+      manifest.requests.push({
+        method: 'GET',
+        host: '192.168.1.20:80',
+        path: '/v1/items/:id',
+        purpose: 'read',
+      })
+      await h.authoring.writeFile(AGENT, draft.draftId, 'manifest.json', JSON.stringify(manifest))
+      const report = await h.authoring.liveTrial(AGENT, draft.draftId, 'get_item', { id: '1' })
+      expect(report).toMatchObject({
+        ok: true,
+        output: { fromSite: { id: '1', name: 'First item', price: null } },
+      })
+      expect(api.seen.at(-1)).toMatchObject({ url: '/v1/items/1', servername: 'api.example.test' })
+      // No browser was opened for it.
+      expect(fake.labels).toEqual([])
+      // The private host waits for the person: the trial is refused it before anything is sent.
+      const tools = (await h.authoring.readFile(AGENT, false, draft.draftId, 'src/tools.ts')).content
+      await h.authoring.writeFile(
+        AGENT,
+        draft.draftId,
+        'src/tools.ts',
+        tools.replace(
+          '`/v1/items/${encodeURIComponent(input.id)}`',
+          '`http://192.168.1.20/v1/items/${encodeURIComponent(input.id)}`',
+        ),
+      )
+      const before = api.seen.length
+      const refused = await h.authoring.liveTrial(AGENT, draft.draftId, 'get_item', { id: '1' })
+      expect(refused).toMatchObject({
+        ok: false,
+        blocked: [expect.objectContaining({ reason: 'host-not-allowed' })],
+      })
+      expect(api.seen.length).toBe(before)
+    } finally {
+      await api.close()
+    }
   }, 60_000)
 
   describe('signed in (docs/authoring-tools.md#signed-in-authoring-sessions-pr-3)', () => {
@@ -1509,4 +1633,108 @@ export const tools = {
       }),
     )
   }, 90_000)
+})
+
+describe('npm dependencies (docs/node-runtime.md#dependencies)', () => {
+  const lock = {
+    lockfileVersion: 1 as const,
+    dependencies: { left: { range: '^1.0.0', resolved: 'left@1.2.0' } },
+    packages: {
+      'left@1.2.0': {
+        integrity: `sha512-${'A'.repeat(86)}==`,
+        tarball: 'https://registry.npmjs.org/left/-/left-1.2.0.tgz',
+        dependencies: {},
+      },
+    },
+  }
+  const asked: { name: string; range: string | undefined; had: number }[] = []
+  const dependencies: AuthoringDeps['dependencies'] = {
+    add: async (before, name, range) => {
+      asked.push({ name, range, had: Object.keys(before.packages).length })
+      if (name === 'evil-native') {
+        const { DependencyError } = await import('@valet/node-runtime')
+        throw new DependencyError('native-addon', 'evil-native@1.0.0 carries a native addon (x.node)')
+      }
+      return { lock, resolved: 'left@1.2.0', added: ['left@1.2.0'], removed: [], warnings: [] }
+    },
+  }
+
+  async function rawDraft(overrides: Partial<AuthoringDeps> = { dependencies }) {
+    const h = await harness(overrides)
+    const { draft } = await h.authoring.createDraft(AGENT, { adapterId: 'shop', from: 'blank' })
+    const manifest = JSON.parse((await h.store.files(draft.draftId))['manifest.json'] ?? '{}')
+    return { ...h, draftId: draft.draftId, manifest }
+  }
+
+  it('writes valet-lock.json for a raw draft, building on the lockfile it has', async () => {
+    const h = await rawDraft()
+    await h.authoring.writeFile(
+      AGENT,
+      h.draftId,
+      'manifest.json',
+      JSON.stringify({ ...h.manifest, runtime: 'raw' }),
+    )
+    asked.length = 0
+    const report = await h.authoring.addDependency(AGENT, h.draftId, { name: 'left', range: '^1.0.0' })
+    expect(report).toEqual({
+      name: 'left',
+      version: '1.2.0',
+      range: '^1.0.0',
+      packages: 1,
+      added: ['left@1.2.0'],
+      removed: [],
+      warnings: [],
+      draftStatus: 'editing',
+    })
+    const files = await h.store.files(h.draftId)
+    expect(JSON.parse(files['valet-lock.json'] ?? '{}')).toEqual(lock)
+    await h.authoring.addDependency(AGENT, h.draftId, { name: 'left' })
+    expect(asked).toEqual([
+      { name: 'left', range: '^1.0.0', had: 0 },
+      { name: 'left', range: undefined, had: 1 },
+    ])
+  })
+
+  it('refuses a draft that isn’t raw, another agent’s draft, a broken lockfile, and passes refusals on', async () => {
+    const h = await rawDraft()
+    await expect(h.authoring.addDependency(AGENT, h.draftId, { name: 'left' })).rejects.toThrow(
+      /only a raw adapter/,
+    )
+    await h.authoring.writeFile(
+      AGENT,
+      h.draftId,
+      'manifest.json',
+      JSON.stringify({ ...h.manifest, runtime: 'raw' }),
+    )
+    await expect(h.authoring.addDependency(OTHER, h.draftId, { name: 'left' })).rejects.toThrow(
+      /another agent/,
+    )
+    await expect(h.authoring.addDependency(AGENT, h.draftId, { name: 'evil-native' })).rejects.toThrow(
+      'Not added: evil-native@1.0.0 carries a native addon (x.node).',
+    )
+    await h.authoring.writeFile(AGENT, h.draftId, 'valet-lock.json', '{"lockfileVersion": 2}')
+    await expect(h.authoring.addDependency(AGENT, h.draftId, { name: 'left' })).rejects.toThrow(/isn’t valid/)
+    await h.authoring.writeFile(AGENT, h.draftId, 'valet-lock.json', '{')
+    await expect(h.authoring.addDependency(AGENT, h.draftId, { name: 'left' })).rejects.toThrow(/isn’t JSON/)
+    await h.authoring.writeFile(AGENT, h.draftId, 'manifest.json', '{')
+    await expect(h.authoring.addDependency(AGENT, h.draftId, { name: 'left' })).rejects.toThrow(
+      /manifest.json/,
+    )
+  })
+
+  it('says so in a build without dependencies, and paces each agent', async () => {
+    const without = await rawDraft({})
+    await expect(without.authoring.addDependency(AGENT, without.draftId, { name: 'left' })).rejects.toThrow(
+      /can’t add npm dependencies/,
+    )
+    const h = await rawDraft()
+    await h.authoring.writeFile(
+      AGENT,
+      h.draftId,
+      'manifest.json',
+      JSON.stringify({ ...h.manifest, runtime: 'raw' }),
+    )
+    for (let i = 0; i < 30; i++) await h.authoring.addDependency(AGENT, h.draftId, { name: 'left' })
+    await expect(h.authoring.addDependency(AGENT, h.draftId, { name: 'left' })).rejects.toThrow(/this hour/)
+  })
 })

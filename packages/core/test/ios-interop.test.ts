@@ -20,7 +20,9 @@ import {
   domainDigest,
   envelopeInfo,
   isDisplayText,
+  joinRecordDevice,
   keyId,
+  nextRosterChange,
   openSealed,
   pairingAad,
   pairingChallengePayload,
@@ -38,6 +40,7 @@ import {
   verifyDecision,
   verifyDeviceRecord,
   verifyPairingChallenge,
+  verifyRoster,
 } from '../src'
 
 const VECTORS = fileURLToPath(
@@ -245,6 +248,61 @@ const DISPLAY_CASES = [
   'שלום',
 ]
 
+/**
+ * The account's device list (roster.ts, relay-hub.md step 4c): a Mac starts it and adds a phone,
+ * and another Mac's request to join, its own record signed by its own key. The phone checks the
+ * chain and the record as core does, and signs the next change.
+ */
+function rosterVectors() {
+  const account = 'acct_0123456789abcdef'
+  const at = '2026-11-17T00:00:00.000Z'
+  const device = (role: 'mac' | 'phone', name: string) => {
+    const keys = { approval: p256(), transport: p256(), agreement: p256() }
+    return {
+      keys,
+      device: {
+        deviceId: keyId(keys.approval.spki),
+        role,
+        platform: role === 'mac' ? ('macos' as const) : ('ios' as const),
+        name,
+        approvalKey: keys.approval.spki,
+        transportKey: keys.transport.spki,
+        agreementKey: keys.agreement.spki,
+      },
+    }
+  }
+  const mac = device('mac', 'Studio')
+  const phone = device('phone', 'iPhone')
+  const joining = device('mac', 'Laptop')
+  const genesis = signText(
+    mac.keys.approval,
+    SIGNING_DOMAINS.rosterChange,
+    nextRosterChange(null, account, mac.device.deviceId, { op: 'add', device: mac.device }, at),
+  )
+  const first = verifyRoster([genesis])
+  if (!first.ok) throw new Error(first.reason)
+  const addPhone = signText(
+    mac.keys.approval,
+    SIGNING_DOMAINS.rosterChange,
+    nextRosterChange(first.roster, account, mac.device.deviceId, { op: 'add', device: phone.device }, at),
+  )
+  const checked = verifyRoster([genesis, addPhone])
+  if (!checked.ok) throw new Error(checked.reason)
+  const joinRecord = signText(
+    joining.keys.approval,
+    SIGNING_DOMAINS.deviceRecord,
+    JSON.stringify({ v: 1, ...joining.device, macId: joining.device.deviceId, pairedAt: at }),
+  )
+  return {
+    account,
+    chain: [genesis, addPhone],
+    genesis: checked.roster.genesis,
+    head: checked.roster.head,
+    devices: [mac.device.deviceId, phone.device.deviceId],
+    join: { macId: joining.device.deviceId, record: joinRecord, device: joining.device },
+  }
+}
+
 function writeVectors(path: string): void {
   const mac = { approval: p256() }
   const phone = { approval: p256(), transport: p256(), agreement: p256() }
@@ -352,6 +410,7 @@ function writeVectors(path: string): void {
     },
     envelopeInfo: { from: macId, to: phoneId, info: envelopeInfo(macId, phoneId).toString('hex') },
     displayText: DISPLAY_CASES.map((value) => ({ value, valid: isDisplayText(value) })),
+    roster: rosterVectors(),
   }
   writeFileSync(path, `${JSON.stringify(vectors, null, 2)}\n`)
 }
@@ -379,6 +438,7 @@ interface Vectors {
   }
   envelopeInfo: { from: string; to: string; info: string }
   displayText: { value: string; valid: boolean }[]
+  roster: ReturnType<typeof rosterVectors>
 }
 
 describe('iOS vectors', () => {
@@ -403,6 +463,16 @@ describe('iOS vectors', () => {
 
   it('has invalid requests that core refuses', () => {
     for (const r of vectors.invalidRequests) expect(parseRequestText(r.text), r.why).toBeNull()
+  })
+
+  it('has an account device list that checks, and a Mac’s request to join it', () => {
+    const r = vectors.roster
+    const check = verifyRoster(r.chain, { pinned: r.genesis })
+    expect(check.ok && { head: check.roster.head, devices: [...check.roster.devices.keys()] }).toEqual({
+      head: r.head,
+      devices: r.devices,
+    })
+    expect(joinRecordDevice(r.join.record, { macId: r.join.macId })).toEqual(r.join.device)
   })
 
   it('has a device record the Mac signed', () => {
@@ -506,5 +576,20 @@ describe.runIf(swiftOut !== undefined && swiftOut !== '')('decisions the Swift c
       verifyDecision(tampered, request, { macId: out.macId, devices, mode: 'live', isPending: () => true })
         .ok,
     ).toBe(false)
+  })
+})
+
+/** What the Swift code wrote beside its decision: a device list it started, adding the joining Mac. */
+const swiftRoster = swiftOut === undefined || swiftOut === '' ? null : `${swiftOut}.roster.json`
+describe.runIf(swiftRoster !== null)('a device list the Swift code signed', () => {
+  it('checks as every node checks it, and adds exactly the joining Mac’s keys', () => {
+    expect(existsSync(swiftRoster as string)).toBe(true)
+    const out = JSON.parse(readFileSync(swiftRoster as string, 'utf8')) as { chain: SignedText[] }
+    const vectors = JSON.parse(readFileSync(VECTORS, 'utf8')) as Vectors
+    const check = verifyRoster(out.chain)
+    if (!check.ok) throw new Error(`${check.reason} at ${check.at}`)
+    expect(check.roster.account).toBe(vectors.roster.account)
+    expect(check.roster.devices.get(vectors.roster.join.macId)).toEqual(vectors.roster.join.device)
+    expect(check.roster.devices.size).toBe(2)
   })
 })

@@ -3,6 +3,7 @@
 // Every way in (the built-ins, a development folder, an agent's draft) goes through checkPackage
 // before anything is hashed, compiled or stored.
 
+import { DEPENDENCY_LOCK, type DependencyLock, dependencyLockSchema } from './dependencies'
 import { bundleHash, canonicalJson } from './hash'
 import { type AdapterManifest, manifestSchema } from './manifest'
 
@@ -14,6 +15,8 @@ export const PACKAGE_MANIFEST = 'manifest.json'
 export const PACKAGE_ENTRY = 'src/tools.ts'
 /** The hash entry that carries the parsed manifest. No path can start with ':'. */
 export const MANIFEST_HASH_ENTRY = ':manifest.json'
+/** The hash entry that carries the parsed dependency lockfile, when there is one. */
+export const LOCK_HASH_ENTRY = ':valet-lock.json'
 
 export const PACKAGE_LIMITS = {
   files: 200,
@@ -34,6 +37,7 @@ export type PackageRule =
   | 'manifest-missing'
   | 'manifest-invalid'
   | 'entry-missing'
+  | 'lock-invalid'
 
 export class PackageError extends Error {
   constructor(
@@ -53,6 +57,8 @@ export interface CheckedPackage {
   readonly adapterHash: string
   /** Every file, for telling versions apart. Nothing is keyed by it. */
   readonly packageHash: string
+  /** The npm dependencies a `raw` adapter is bundled with, or null without valet-lock.json. */
+  readonly dependencies: DependencyLock | null
 }
 
 const SEGMENT = /^[a-z0-9][a-z0-9._-]*$/
@@ -63,7 +69,7 @@ const PLACEMENT: Readonly<Record<string, readonly string[]>> = {
   test: ['.ts', '.json'],
   fixtures: ['.json', '.html', '.txt'],
 }
-const TOP_LEVEL = new Set([PACKAGE_MANIFEST, 'README.md'])
+const TOP_LEVEL = new Set([PACKAGE_MANIFEST, 'README.md', DEPENDENCY_LOCK])
 
 /** Throws PackageError('path') unless `path` is a relative path the package rules allow. */
 export function checkPackagePath(path: string): void {
@@ -126,18 +132,52 @@ export function checkPackage(input: PackageFiles): CheckedPackage {
     throw new PackageError('manifest-invalid', clip(`${where}: ${issue?.message ?? 'invalid'}`))
   }
   const manifest = parsed.data
+  const dependencies = Object.hasOwn(files, DEPENDENCY_LOCK)
+    ? checkLock(files[DEPENDENCY_LOCK] as string, manifest)
+    : null
   return {
     manifest,
     files: Object.freeze(files),
     adapterHash: adapterHashOf(files, manifest),
     packageHash: bundleHash(files),
+    dependencies,
   }
+}
+
+/** The runtime kind a manifest names (`browser` when it names none). */
+function runtimeKind(manifest: AdapterManifest): string {
+  const runtime = (manifest as { readonly runtime?: unknown }).runtime
+  return typeof runtime === 'string' ? runtime : 'browser'
+}
+
+/** Parses valet-lock.json. Only a `raw` adapter runs npm code, so only one may have it. */
+export function checkLock(text: string, manifest: AdapterManifest): DependencyLock {
+  if (runtimeKind(manifest) !== 'raw')
+    throw new PackageError('lock-invalid', `only a raw adapter may have ${DEPENDENCY_LOCK}`)
+  let json: unknown
+  try {
+    json = JSON.parse(text)
+  } catch {
+    throw new PackageError('lock-invalid', 'not JSON')
+  }
+  const parsed = dependencyLockSchema.safeParse(json)
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0]
+    const where = issue === undefined ? '' : issue.path.join('.')
+    throw new PackageError(
+      'lock-invalid',
+      clip(`${where}${where === '' ? '' : ': '}${issue?.message ?? 'invalid'}`),
+    )
+  }
+  return parsed.data
 }
 
 /**
  * The hash approvals and grants are keyed by: every file under src/ plus the parsed manifest,
  * canonicalised. The same formula the built-ins were hashed with before packages, so moving them
- * onto packages keeps their hashes.
+ * onto packages keeps their hashes. A `raw` adapter's lockfile is covered too, canonicalised, and
+ * through its integrities the exact code of every dependency; a package without one hashes as it
+ * always did.
  */
 export function adapterHashOf(files: PackageFiles, manifest: AdapterManifest): string {
   const covered: Record<string, string> = {}
@@ -145,6 +185,16 @@ export function adapterHashOf(files: PackageFiles, manifest: AdapterManifest): s
     if (path.startsWith('src/')) covered[path] = files[path] as string
   }
   covered[MANIFEST_HASH_ENTRY] = canonicalJson(manifest)
+  if (Object.hasOwn(files, DEPENDENCY_LOCK)) {
+    const text = files[DEPENDENCY_LOCK] as string
+    let lock: unknown
+    try {
+      lock = JSON.parse(text)
+    } catch {
+      lock = text
+    }
+    covered[LOCK_HASH_ENTRY] = canonicalJson(lock)
+  }
   return bundleHash(covered)
 }
 

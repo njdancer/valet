@@ -2,9 +2,11 @@
 
 import { z } from 'zod'
 import type { ErrorClass, NeedsUserReason, Stage } from './errors'
+import type { HttpAccess } from './http-access'
 import type { LocalAccess } from './local-access'
 import type { AdapterManifest } from './manifest'
 import type { ToolPage } from './page'
+import { REQUEST_METHODS } from './request-surface'
 
 export type EnsureResult =
   | { readonly status: 'ok' }
@@ -30,7 +32,7 @@ export const confirmActionSchema = z
       .array(
         z
           .object({
-            method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
+            method: z.enum(REQUEST_METHODS),
             path: z.string().min(1).max(300),
           })
           .strict(),
@@ -67,6 +69,12 @@ export interface ToolContext {
    * runtime's own contexts and older tests; tool code in the tool process always has it.
    */
   readonly local?: LocalAccess
+  /**
+   * The egress broker, for an `http` adapter (docs/adapter-kinds.md#ctxhttp). Every call from a
+   * browser adapter rejects with `tool-run/not-granted`. Optional for the runtime's own contexts and
+   * older tests; tool code in the tool process always has it.
+   */
+  readonly http?: HttpAccess
 }
 
 export interface ToolImplementation<

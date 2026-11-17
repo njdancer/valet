@@ -270,7 +270,7 @@ function HubAccount({
       ) : hub.state === 'linking' ? (
         <Text tone="muted">
           On the page that opened, signed in to your account, type this code. It works until{' '}
-          {new Date(hub.expiresAt).toLocaleTimeString()}.
+          {new Date(hub.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.
         </Text>
       ) : (
         <Text tone="muted">
@@ -299,6 +299,9 @@ function HubAccount({
             <Button onClick={() => void action.run(() => api.phones.openHub())}>Open the hub</Button>
             <Button loading={action.busy} onClick={() => void action.run(() => api.phones.joinHub())}>
               New code
+            </Button>
+            <Button variant="ghost" onClick={() => void action.run(() => api.phones.leaveHub())}>
+              Cancel
             </Button>
           </>
         ) : null}
@@ -331,7 +334,9 @@ const ROSTER_LINE: Record<Exclude<RosterStatus['state'], 'off' | 'on'>, string> 
   waiting: 'Putting this Mac and its iPhones on your account’s device list…',
   'needs-you':
     'Touch ID was cancelled, so this Mac and its iPhones aren’t on your account’s device list yet.',
-  'not-added': 'Another device started your account’s device list. Add this Mac from that device.',
+  'not-added':
+    'Another device started your account’s device list, and only an iPhone on it can add this Mac. Leave the account and add this Mac again with its code, then approve it on your iPhone.',
+  joining: 'Waiting for your iPhone: open Valet on it and approve adding this Mac to your account.',
   refused: 'The device list the hub sent doesn’t check, so Valet isn’t using it.',
 }
 

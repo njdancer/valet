@@ -97,6 +97,18 @@ export const ledgerSchema = z
       })
       .strict()
       .optional(),
+    /**
+     * Set when the person just added this Mac to an account with the code it showed (step 4c):
+     * until then, and only for that account, the Mac may pin a list another device started, once
+     * a device on it adds this Mac. Cleared when it pins one or leaves.
+     */
+    rosterJoin: z
+      .object({
+        account: z.string().regex(/^[A-Za-z0-9_-]{16,64}$/),
+        at: z.iso.datetime(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
 export type LedgerData = z.infer<typeof ledgerSchema>
