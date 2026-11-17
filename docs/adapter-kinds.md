@@ -187,6 +187,33 @@ touches the server.
 - iCloud is the first real target. Its IMAP is `imap.mail.me.com:993` and its SMTP is
   `smtp.mail.me.com:587` with STARTTLS. Both need an app-specific password.
 
+### Email sign-in links and codes
+
+Some sites sign in by emailing a link or a code: claude.ai, for example. A browser adapter's
+declarative login gets these from the IMAP protocol host, the same way it gets SMS codes from the
+Messages database today (Nick, 2026-11-17). Any limit added to the mail boundary later applies to
+sign-in mail too.
+
+- **Two new login sources.** `otp` gains a `mail` source next to `messages`:
+  `{ mail: { from, subjectContains?, pattern, maxAgeSeconds } }`. There's also a new auth step,
+  `openMailLink: { from, subjectContains?, linkOrigin, maxAgeSeconds }`. It opens the link in the
+  **auth partition**, the same isolated browser that asked for the email, so a site that signs
+  you in when the link is opened in the same browser does so. The session is then handed to the
+  tool partition as usual, and it stays signed in between runs in the persistent partitions, so
+  sign-ins are rare.
+- **Valet runs the lookup, not adapter code.** A sign-in link is a login secret. If a mail
+  adapter's agent-written tool code found it, that code would see it and could swap in another
+  link. Instead, the protocol host runs one built-in, read-only operation. It opens the inbox
+  with `EXAMINE`, keeps only messages from the approved sender that arrived after the login asked
+  for the email and inside `maxAgeSeconds`, and takes the first link whose origin is
+  `linkOrigin`, which must be on a `navigation` origin. The result goes to the auth runner as a
+  secret value. It never reaches tool code, tool output or MCP, and its use is audited as
+  `secret-used`.
+- **Grant.** The person binds the browser adapter's mail source to a mail account Valet already
+  holds a kept credential for, and approves the sender. That's the same grant shape as a Messages
+  sender. Waiting polls with backoff for up to `maxAgeSeconds`, within the site's own pacing. If
+  nothing arrives, the login ends with `needsUser`.
+
 ### `raw`
 
 - `runtime: "raw"`, with `endpoints: ["host:port", …]` (exact, and each also covered by an
@@ -242,17 +269,17 @@ cards use the same wording source (`display-text`).
 Each one is a thread, a PR or more, and its own red team. There are at most four build threads at
 once, counting other work.
 
-| Wave | Workstream                                                                                                                             | Needs                         |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| 1    | **A. Broker and `http`**: F1, private hosts, the `runtime` field, `ctx.http` (WebDAV, WebSocket, feeds), authoring and guide           | —                             |
-| 1    | **B. Secrets v2**: F2, `credentials`, token and SSH-key fields, grants, redaction of encodings, card wording                           | —                             |
-| 1    | **C. Node runtime**: F3, the profile generator, the preload shim, bundling dependencies, `valet_add_dependency`                        | —                             |
-| 2    | **D. IMAP**: the protocol host, `ctx.imap`, a fake IMAP server, iCloud specifics                                                       | A, B (C's profile when ready) |
-| 2    | **E. SFTP**: `ctx.sftp`, pinned host keys, Valet-generated keys                                                                        | A, B                          |
-| 2    | **F. `raw` adapters**: `ctx.secrets`, SNI check, upload budgets in practice                                                            | A, B, C                       |
-| 3    | **G. SMTP**: `ctx.smtp`, irreversible sends, recipient allow-list                                                                      | D                             |
-| 3    | **H. Example adapters**: Hacker News and an RSS feed over `http`, CalDAV and CardDAV against fakes, a WebSocket example, a raw example | A–F                           |
-| 3    | **I. Cross-kind red team**, plus the live iCloud read trial with Nick                                                                  | everything                    |
+| Wave | Workstream                                                                                                                                        | Needs                         |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| 1    | **A. Broker and `http`**: F1, private hosts, the `runtime` field, `ctx.http` (WebDAV, WebSocket, feeds), authoring and guide                      | —                             |
+| 1    | **B. Secrets v2**: F2, `credentials`, token and SSH-key fields, grants, redaction of encodings, card wording                                      | —                             |
+| 1    | **C. Node runtime**: F3, the profile generator, the preload shim, bundling dependencies, `valet_add_dependency`                                   | —                             |
+| 2    | **D. IMAP**: the protocol host, `ctx.imap`, a fake IMAP server, iCloud specifics, [email sign-in links and codes](#email-sign-in-links-and-codes) | A, B (C's profile when ready) |
+| 2    | **E. SFTP**: `ctx.sftp`, pinned host keys, Valet-generated keys                                                                                   | A, B                          |
+| 2    | **F. `raw` adapters**: `ctx.secrets`, SNI check, upload budgets in practice                                                                       | A, B, C                       |
+| 3    | **G. SMTP**: `ctx.smtp`, irreversible sends, recipient allow-list                                                                                 | D                             |
+| 3    | **H. Example adapters**: Hacker News and an RSS feed over `http`, CalDAV and CardDAV against fakes, a WebSocket example, a raw example            | A–F                           |
+| 3    | **I. Cross-kind red team**, plus the live iCloud read trial with Nick                                                                             | everything                    |
 
 **Who owns which contract.** A owns `runtime`, `egress`/`endpoints`/`privateHosts` and the
 broker API. B owns `credentials` and the redaction contract. C owns the runtime host protocol
