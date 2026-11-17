@@ -125,6 +125,41 @@ describe('loadPackage refusals', () => {
     expect(error).toMatchObject({ stage: 'schema' })
   })
 
+  it('says a tool has no input or output schema, and how to give one', async () => {
+    const name = manifest.tools[0]?.name ?? ''
+    for (const [missing, words] of [
+      ['input', `${name} has no input schema: give tool({ input: z.object({...}) }) (z.object({}) for none)`],
+      ['output', `${name} has no output schema: give tool({ output: z.object({...}) })`],
+    ] as const) {
+      const files = packageOf(manifest, { ...sources })
+      files['src/tools.ts'] = [
+        "import { tools as real } from './tools-real'",
+        `const { ${missing}: _gone, ...rest } = real['${name}']`,
+        `export const tools = { ...real, ${name}: rest }`,
+      ].join('\n')
+      files['src/tools-real.ts'] = sources['src/tools.ts'] ?? ''
+      const error = await loadPackage(files, await runtime()).catch((e) => e)
+      expect(error).toBeInstanceOf(LoadError)
+      expect((error as LoadError).detail).toContain(words)
+      expect((error as LoadError).detail).not.toContain('not representable')
+    }
+  })
+
+  it('says which schema JSON Schema can’t express', async () => {
+    const name = manifest.tools[0]?.name ?? ''
+    const files = packageOf(manifest, { ...sources })
+    files['src/tools.ts'] = [
+      "import { z } from 'zod'",
+      "import { tools as real } from './tools-real'",
+      `export const tools = { ...real, ${name}: { ...real['${name}'], output: z.date() } }`,
+    ].join('\n')
+    files['src/tools-real.ts'] = sources['src/tools.ts'] ?? ''
+    const error = await loadPackage(files, await runtime()).catch((e) => e)
+    expect((error as LoadError).detail).toMatch(
+      new RegExp(`^${name}: its output schema can’t be written as JSON Schema`),
+    )
+  })
+
   it('compiles the same files to the same script', async () => {
     const one = await loadPackage(builtinPackage('yahoo-finance'), await runtime())
     const two = await loadPackage(builtinPackage('yahoo-finance'), await runtime())

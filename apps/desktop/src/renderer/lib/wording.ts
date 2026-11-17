@@ -154,6 +154,7 @@ export function errorWording(errorClass: ErrorClass): string {
 
 export const BLOCKED_WORDING: Readonly<Record<BlockedRequest['reason'], string>> = {
   'host-not-allowed': 'host not allowed',
+  'port-not-allowed': 'port not allowed',
   undeclared: 'undeclared request',
   'denied-path': 'denied path',
   'ambiguous-path': 'ambiguous path',
@@ -171,6 +172,8 @@ export function blockedWording(reason: BlockedRequest['reason']): string {
 export const BLOCKED_EXPLANATION: Readonly<Record<BlockedRequest['reason'], string>> = {
   'host-not-allowed':
     'The host is not in the manifest’s egress allowlist, so the request never left the page.',
+  'port-not-allowed':
+    'The host is allowed, but not on that port: Valet connects to sites on the standard https port only.',
   undeclared: 'The manifest declares no matching request, so it was cancelled before it left the page.',
   'denied-path':
     'The path touches checkout, payment or payees, and the matching declaration is not irreversible.',

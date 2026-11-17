@@ -81,6 +81,8 @@ export type SchemaProblem =
   | 'value'
   | 'shape'
   | 'convert'
+  /** The tool gives no schema at all: `detail` says which, input or output. */
+  | 'missing'
 
 export class SchemaError extends Error {
   constructor(
@@ -152,8 +154,11 @@ export interface ToolSchemas {
 export function toolSchemas(described: unknown): ToolSchemas {
   if (described === null || typeof described !== 'object') throw new SchemaError('shape', 'missing')
   const { input, output } = described as { input?: unknown; output?: unknown }
-  if (input === null || input === undefined || output === null || output === undefined)
-    throw new SchemaError('convert', 'not representable')
+  // describe says 'missing' for a tool with no schema there; undefined is the same from an older one.
+  if (input === 'missing' || input === undefined) throw new SchemaError('missing', 'input')
+  if (output === 'missing' || output === undefined) throw new SchemaError('missing', 'output')
+  if (input === null) throw new SchemaError('convert', 'input not representable')
+  if (output === null) throw new SchemaError('convert', 'output not representable')
   checkSchema(input)
   checkSchema(output)
   const inputSchema = convert(input)

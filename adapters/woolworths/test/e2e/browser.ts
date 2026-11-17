@@ -311,6 +311,7 @@ const RANK: Readonly<Record<Purpose, number>> = { read: 0, write: 1, irreversibl
 /** How a refused request leaves the capability API. */
 const REFUSALS: Readonly<Record<BlockedRequest['reason'], ValetError>> = {
   'host-not-allowed': new ValetError('egress', 'host-not-allowed'),
+  'port-not-allowed': new ValetError('egress', 'host-not-allowed'),
   undeclared: new ValetError('request-surface', 'undeclared-request'),
   'denied-path': new ValetError('request-surface', 'denied-path'),
   'ambiguous-path': new ValetError('request-surface', 'ambiguous-path'),

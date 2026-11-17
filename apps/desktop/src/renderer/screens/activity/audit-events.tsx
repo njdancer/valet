@@ -115,6 +115,7 @@ function Quiet({ children }: { readonly children: ReactNode }) {
 
 const BLOCKED_REASONS = new Set([
   'host-not-allowed',
+  'port-not-allowed',
   'undeclared',
   'denied-path',
   'ambiguous-path',

@@ -132,6 +132,40 @@ describe('checkPackage', () => {
     expect(bad.detail).toContain('id')
   })
 
+  it('says where bad JSON is, as JSON.parse does', () => {
+    const bad = refusal(valid({ 'manifest.json': '{ "id": "x", }' }))
+    expect(bad.rule).toBe('manifest-invalid')
+    expect(bad.detail).toMatch(/^not JSON: .*position \d+/)
+  })
+
+  it('lists several manifest problems, names the top level, and suggests the key it has', () => {
+    const { requests: _requests, ...rest } = JSON.parse(valid()['manifest.json'] ?? '{}')
+    const bad = refusal(
+      valid({
+        'manifest.json': JSON.stringify({
+          ...rest,
+          endpoints: [{ method: 'GET', path: '/x', purpose: 'read' }],
+          egres: ['www.example.com'],
+          name: '',
+          tools: [{ ...MANIFEST.tools[0], sideEffects: 'read' }],
+        }),
+      }),
+    )
+    expect(bad.rule).toBe('manifest-invalid')
+    expect(bad.detail).toContain('(top level): Unrecognized keys: "endpoints", "egres"')
+    expect(bad.detail).toContain('did you mean "requests" for "endpoints", "egress" for "egres"?')
+    expect(bad.detail).toContain('name: ')
+    expect(bad.detail).toContain('tools[0]: Unrecognized key: "sideEffects" (did you mean "sideEffect"')
+    expect(bad.detail).not.toMatch(/^: /)
+    expect(bad.detail.split('; ').length).toBeGreaterThan(2)
+  })
+
+  it('lists at most five manifest problems and counts the rest', () => {
+    const bad = refusal(valid({ 'manifest.json': JSON.stringify({ a: 1, b: 2, c: 3 }) }))
+    expect(bad.detail.split('; ').length).toBeLessThanOrEqual(6)
+    expect(bad.detail).toMatch(/and \d+ more$/)
+  })
+
   it('refuses content that is not text', () => {
     expect(refusal(valid({ 'src/a.ts': 'a\0b' })).rule).toBe('not-text')
     expect(refusal(valid({ 'src/a.ts': '\ud800' })).rule).toBe('not-text')
