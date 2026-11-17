@@ -55,7 +55,9 @@ describe('XK-3 a declared egress host that resolves to loopback', () => {
 
     // The driver's policy: the host is on the egress list and the port is an allowed one (443 in the
     // app; the test listens where it can).
-    const handle = await startEgressProxy({ allow: (host, p) => host === 'api.agent-owned.test' && p === port })
+    const handle = await startEgressProxy({
+      allow: (host, p) => host === 'api.agent-owned.test' && p === port,
+    })
     cleanups.push(() => handle.close())
     const answer = await new Promise<string>((resolve) => {
       const socket = connect({ host: '127.0.0.1', port: Number(new URL(handle.url).port) })
@@ -69,7 +71,9 @@ describe('XK-3 a declared egress host that resolves to loopback', () => {
       })
       socket.on('close', () => resolve(received))
       socket.on('error', () => resolve(received))
-      socket.write(`CONNECT api.agent-owned.test:${port} HTTP/1.1\r\nHost: api.agent-owned.test:${port}\r\n\r\n`)
+      socket.write(
+        `CONNECT api.agent-owned.test:${port} HTTP/1.1\r\nHost: api.agent-owned.test:${port}\r\n\r\n`,
+      )
     })
     expect(answer.startsWith('HTTP/1.1 200')).toBe(false)
     expect(reached).toBe(0)
