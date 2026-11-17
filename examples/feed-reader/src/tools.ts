@@ -33,7 +33,7 @@ async function getFeed(ctx: ToolContext, url: string): Promise<Feed> {
   const response = await ctx.http.fetch(url, {
     headers: { accept: 'application/rss+xml, application/atom+xml, application/xml;q=0.9' },
   })
-  if (response.status === 404) throw new ValetError('tool-input', 'not-found')
+  if (response.status === 404) throw new ValetError('tool-run', 'not-found')
   if (response.status === 429) throw new ValetError('tool-run', 'rate-limited')
   if (response.status !== 200) throw new ValetError('tool-run', 'unavailable')
   try {

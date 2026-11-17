@@ -63,7 +63,7 @@ export async function request(
     if (message.type !== 'result' || message.id !== id) continue
     if (message.success === true) return message.result
     const code = message.error?.code
-    if (code === 'not_found') throw new ValetError('tool-input', 'not-found')
+    if (code === 'not_found') throw new ValetError('tool-run', 'not-found')
     if (code === 'unauthorized') throw new ValetError('tool-run', 'auth-failed')
     throw new ValetError('tool-run', 'unavailable')
   }
@@ -145,7 +145,7 @@ export const tools = {
         const now = toDevices(await request(socket, 2, { type: 'get_states' })).find(
           (d) => d.id === input.light,
         )
-        if (now === undefined) throw new ValetError('tool-input', 'not-found')
+        if (now === undefined) throw new ValetError('tool-run', 'not-found')
         return { light: input.light, state: now.state }
       } finally {
         await socket.close()

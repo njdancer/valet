@@ -65,7 +65,7 @@ function check(reply: Reply | undefined): Reply {
   if (reply === undefined) throw new ValetError('tool-run', 'unexpected-shape')
   if (isError(reply)) {
     // An account without the right to a key or command: the ACL says no, which the agent can act on.
-    if (/^NOPERM\b/.test(reply.error)) throw new ValetError('tool-input', 'not-granted')
+    if (/^NOPERM\b/.test(reply.error)) throw new ValetError('tool-run', 'not-granted')
     if (/^(NOAUTH|WRONGPASS)\b/.test(reply.error)) throw new ValetError('tool-run', 'auth-failed')
     throw new ValetError('tool-run', 'unavailable')
   }

@@ -236,7 +236,7 @@ export const tools = {
       if (response.status === 201 || response.status === 204) return { uid, created: true }
       if (response.status === 412) return { uid, created: false }
       if (response.status === 401 || response.status === 403) throw new ValetError('tool-run', 'auth-failed')
-      if (response.status === 404 || response.status === 409) throw new ValetError('tool-input', 'not-found')
+      if (response.status === 404 || response.status === 409) throw new ValetError('tool-run', 'not-found')
       throw new ValetError('tool-run', 'unavailable')
     },
   }),

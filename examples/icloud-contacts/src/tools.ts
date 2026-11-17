@@ -60,7 +60,7 @@ async function addressBook(ctx: ToolContext): Promise<string> {
     if (isBook && /^\/[0-9]{1,20}\/carddavhome\/[A-Za-z0-9-]{1,64}\/$/.test(path))
       return `https://${home.host}${path}`
   }
-  throw new ValetError('tool-input', 'not-found')
+  throw new ValetError('tool-run', 'not-found')
 }
 
 export const tools = {

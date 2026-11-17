@@ -38,6 +38,8 @@ export function examplesFrom(sources: Readonly<Record<string, string>>): Readonl
   }
   const out = new Map<string, Example>()
   for (const [name, files] of [...byName].sort(([a], [b]) => a.localeCompare(b))) {
+    // Only a worked example: one with its own cases, which its check runs.
+    if (!Object.keys(files).some((path) => /^test\/[^/]+\.json$/.test(path))) continue
     let manifest: { description?: unknown; runtime?: unknown }
     try {
       manifest = JSON.parse(files['manifest.json'] ?? '')

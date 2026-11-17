@@ -122,7 +122,7 @@ export const tools = {
     async run(ctx, input) {
       const item = await getItem(ctx, input.id)
       const s = item === null ? null : toStory(item)
-      if (item === null || s === null) throw new ValetError('tool-input', 'not-found')
+      if (item === null || s === null) throw new ValetError('tool-run', 'not-found')
       const comments: { id: number; by: string | null; text: string }[] = []
       const kids = item.kids === undefined ? [] : ids(item.kids)
       for (const id of kids.slice(0, input.comments)) {

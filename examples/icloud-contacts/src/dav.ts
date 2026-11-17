@@ -32,7 +32,7 @@ export async function dav(
   })
   if (response.status === 401 || response.status === 403) throw new ValetError('tool-run', 'auth-failed')
   if (response.status === 429 || response.status === 503) throw new ValetError('tool-run', 'rate-limited')
-  if (response.status === 404) throw new ValetError('tool-input', 'not-found')
+  if (response.status === 404) throw new ValetError('tool-run', 'not-found')
   if (response.status !== 207) throw new ValetError('tool-run', 'unavailable')
   let root: XmlElement
   try {

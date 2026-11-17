@@ -45,7 +45,7 @@ import {
   MemoryMarkers,
 } from '../../../../packages/runtime/test/fakes'
 import { type AuthoringDeps, DraftAuthoring } from '../../src/main/core/drafts/authoring'
-import { EXAMPLES } from '../../src/main/core/drafts/examples'
+import { EXAMPLES, examplesFrom } from '../../src/main/core/drafts/examples'
 import { DraftStore } from '../../src/main/core/drafts/store'
 import { PackageManager } from '../../src/main/core/packages'
 
@@ -375,13 +375,35 @@ async function draftFiles(h: Awaited<ReturnType<typeof fromExample>>): Promise<P
 const used = (events: readonly AuditEvent[]) => events.filter((e) => e.type === 'secret-used')
 
 describe('the examples', () => {
-  it('are embedded, one per kind', () => {
-    expect([...EXAMPLES.keys()]).toEqual(expect.arrayContaining(['hacker-news', 'local-portfolio']))
+  it('are embedded, each with its cases', () => {
+    expect([...EXAMPLES.keys()]).toEqual([
+      'cache-reader',
+      'feed-reader',
+      'hacker-news',
+      'home-hub',
+      'icloud-calendar',
+      'icloud-contacts',
+    ])
     for (const example of EXAMPLES.values()) {
       expect(example.files['manifest.json']).toBeDefined()
       expect(example.files['src/tools.ts']).toBeDefined()
       expect(example.description.length).toBeGreaterThan(20)
+      expect(example.files['README.md']).toContain('valet_create_draft')
     }
+  })
+
+  it('leaves out a package without cases, and one whose manifest isn’t JSON', () => {
+    const found = examplesFrom({
+      '/x/examples/plain/manifest.json': '{"description":"d"}',
+      '/x/examples/plain/src/tools.ts': '',
+      '/x/examples/broken/manifest.json': '{',
+      '/x/examples/broken/test/a.json': '{}',
+      '/x/examples/good/manifest.json': '{"description":"An example","runtime":"http"}',
+      '/x/examples/good/test/a.json': '{}',
+      '/x/elsewhere/manifest.json': '{}',
+    })
+    expect([...found.keys()]).toEqual(['good'])
+    expect(found.get('good')).toMatchObject({ description: 'An example', runtime: 'http' })
   })
 
   it('refuses an example that does not exist, naming the ones that do', async () => {

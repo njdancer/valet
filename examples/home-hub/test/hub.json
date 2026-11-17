@@ -276,7 +276,7 @@
       ],
       "expect": {
         "error": {
-          "stage": "tool-input",
+          "stage": "tool-run",
           "errorClass": "not-found"
         }
       }
