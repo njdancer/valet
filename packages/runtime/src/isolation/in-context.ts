@@ -18,7 +18,10 @@ export class ToolThrew extends Error {
 }
 
 function toWire(error: unknown): WireError {
-  if (error instanceof ValetError) return { kind: 'valet', stage: error.stage, errorClass: error.errorClass }
+  if (error instanceof ValetError) {
+    const wire = { kind: 'valet', stage: error.stage, errorClass: error.errorClass } as const
+    return error.issue === undefined ? wire : { ...wire, issue: error.issue }
+  }
   if (error instanceof NeedsUserError) return { kind: 'needsUser', reason: error.reason }
   return { kind: 'other' }
 }

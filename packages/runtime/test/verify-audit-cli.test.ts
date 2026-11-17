@@ -90,6 +90,48 @@ describe('valet-verify-audit', () => {
     expect((await run(['--head', head, path])).code).toBe(0)
   })
 
+  it('passes a log that goes on from older records to the person’s controls and refused calls', async () => {
+    const { head: older } = await writeLog()
+    const log = new AuditLog(path, clock)
+    const newer: AuditEvent[] = [
+      { type: 'client-added', clientId: 'local:c_0123456789abcdef' },
+      {
+        type: 'client-access-changed',
+        clientId: 'local:c_0123456789abcdef',
+        before: ['see-valet'],
+        after: ['see-valet', 'ask-for-changes'],
+      },
+      { type: 'client-tool-on', clientId: 'local:c_0123456789abcdef', tool: 'woolworths.add_to_cart' },
+      { type: 'app-paused', paused: true },
+      { type: 'app-paused', paused: false },
+      {
+        type: 'call-refused',
+        client: 'Claude Code',
+        clientId: 'local:c_0123456789abcdef',
+        tool: 'woolworths_delete_account',
+        reason: 'unknown-tool',
+      },
+      { type: 'refusals-dropped', client: 'Claude Code', clientId: 'local:c_0123456789abcdef', count: 40 },
+      {
+        type: 'confirmation',
+        adapterId: 'woolworths',
+        tool: 'checkout',
+        client: 'Claude Code',
+        callId: 'call-2',
+        answer: 'cancelled',
+      },
+      { type: 'client-reset', clientId: 'local:c_0123456789abcdef' },
+      { type: 'client-revoked', clientId: 'local:c_0123456789abcdef' },
+    ]
+    let head = older
+    for (const event of newer) head = (await log.append(event)).hash
+    expect(await run(['--head', head, path])).toEqual({
+      code: 0,
+      stdout: `ok: ${3 + newer.length} records, head ${head}\n`,
+      stderr: '',
+    })
+  })
+
   it('passes an empty log, and says "record" for one', async () => {
     await writeFile(path, '')
     expect((await run([path])).stdout).toBe(`ok: 0 records, head ${GENESIS_HASH}\n`)

@@ -3,7 +3,7 @@
 // the typecheck until it has words: one line in EVENT_WORDS, one in EVENT_FIELDS and a case in
 // details(). Kinds this build doesn't know (a newer main process) still show, as "Other event".
 
-import type { AuditEvent, AuditRecord } from '@valet/core'
+import type { AuditEvent, AuditRecord, ClientCapability } from '@valet/core'
 import { Badge, type BadgeProps, Code, type DotTone, HashChip } from '@valet/ui'
 import type { ReactNode } from 'react'
 import { formatDuration, formatTime, hostOf } from '../../lib/format'
@@ -63,6 +63,14 @@ export const EVENT_WORDS = {
   'draft-submitted': { label: 'Draft submitted', tone: 'warning' },
   'draft-deleted': { label: 'Draft deleted', tone: 'neutral' },
   'draft-trial': { label: 'Draft tried on the site', tone: 'neutral' },
+  'client-added': { label: 'App added', tone: 'neutral' },
+  'client-revoked': { label: 'App revoked', tone: 'neutral' },
+  'client-reset': { label: 'App access reset', tone: 'neutral' },
+  'client-access-changed': { label: 'App access changed', tone: 'neutral' },
+  'client-tool-on': { label: 'Tool turned back on', tone: 'warning' },
+  'app-paused': { label: 'Valet paused', tone: 'warning' },
+  'call-refused': { label: 'Call refused', tone: 'danger' },
+  'refusals-dropped': { label: 'More calls refused', tone: 'danger' },
 } as const satisfies Readonly<Record<EventType, { readonly label: string; readonly tone: DotTone }>>
 
 const OTHER = { label: 'Other event', tone: 'neutral' } as const
@@ -81,7 +89,55 @@ export function eventWords(event: AuditEvent): { readonly label: string; readonl
   }
   // One event type records both directions.
   if (event.type === 'site-paused' && !event.paused) return { label: 'Site resumed', tone: 'success' }
+  if (event.type === 'app-paused' && !event.paused) return { label: 'Valet resumed', tone: 'success' }
+  // Giving an app more is the one to notice.
+  if (event.type === 'client-access-changed' && accessChange(event).on.length > 0)
+    return { label: 'App access widened', tone: 'warning' }
   return words
+}
+
+const CAPABILITY_WORDS: Readonly<Record<ClientCapability, string>> = {
+  'see-valet': 'See Valet',
+  'all-activity': 'All activity',
+  'ask-for-changes': 'Ask for changes',
+}
+
+function capabilityWords(capability: string): string {
+  return Object.hasOwn(CAPABILITY_WORDS, capability)
+    ? CAPABILITY_WORDS[capability as ClientCapability]
+    : capability
+}
+
+/** What an access change turned on and off, in words. */
+export function accessChange(event: Extract<AuditEvent, { type: 'client-access-changed' }>): {
+  readonly on: readonly string[]
+  readonly off: readonly string[]
+} {
+  const before = Array.isArray(event.before) ? event.before : []
+  const after = Array.isArray(event.after) ? event.after : []
+  return {
+    on: after.filter((c) => !before.includes(c)).map(capabilityWords),
+    off: before.filter((c) => !after.includes(c)).map(capabilityWords),
+  }
+}
+
+const WITHDRAW_WORDS: Readonly<Record<string, string>> = {
+  asker: 'withdrawn by the asker',
+  replaced: 'replaced by a newer request',
+  stale: 'no longer applied',
+  lockdown: 'withdrawn by lock down',
+  'client-revoked': 'withdrawn: the agent was revoked',
+  'call-cancelled': 'withdrawn: the call was cancelled',
+  'wrong-codes': 'withdrawn after wrong codes',
+  restarted: 'withdrawn when Valet restarted',
+}
+
+/** How an approval request ended, in words. */
+export function approvalAnswerWords(answer: string, reason: string | undefined): string {
+  if (answer === 'withdrawn' && reason !== undefined && Object.hasOwn(WITHDRAW_WORDS, reason))
+    return WITHDRAW_WORDS[reason] as string
+  if (answer === 'declined') return 'declined by the person'
+  return reason === undefined ? answer : `${answer} (${reason})`
 }
 
 type Tone = NonNullable<BadgeProps['tone']>
@@ -116,6 +172,7 @@ function Quiet({ children }: { readonly children: ReactNode }) {
 
 const BLOCKED_REASONS = new Set([
   'host-not-allowed',
+  'port-not-allowed',
   'undeclared',
   'denied-path',
   'ambiguous-path',
@@ -358,7 +415,7 @@ export function details(event: AuditEvent, now: number): ReactNode {
     case 'approval-requested':
       return <Code>{event.kind}</Code>
     case 'approval-answered':
-      return <Quiet>{event.answer}</Quiet>
+      return <Quiet>{approvalAnswerWords(event.answer, event.reason)}</Quiet>
     case 'agent-change':
       return (
         <>
@@ -385,6 +442,60 @@ export function details(event: AuditEvent, now: number): ReactNode {
         <>
           <Code>{event.adapterId}</Code> <Quiet>{event.draftId}</Quiet>
         </>
+      )
+    case 'client-added':
+      return (
+        <>
+          <Code>{event.clientId}</Code> <Quiet>given its own token</Quiet>
+        </>
+      )
+    case 'client-revoked':
+      return (
+        <>
+          <Code>{event.clientId}</Code> <Quiet>token withdrawn, its calls and requests ended</Quiet>
+        </>
+      )
+    case 'client-reset':
+      return (
+        <>
+          <Code>{event.clientId}</Code> <Quiet>given a new token</Quiet>
+        </>
+      )
+    case 'client-access-changed': {
+      const { on, off } = accessChange(event)
+      return (
+        <>
+          <Code>{event.clientId}</Code>{' '}
+          <Quiet>
+            {[
+              ...(on.length > 0 ? [`${on.join(', ')} turned on`] : []),
+              ...(off.length > 0 ? [`${off.join(', ')} turned off`] : []),
+            ].join(' · ')}
+          </Quiet>
+        </>
+      )
+    }
+    case 'client-tool-on':
+      return (
+        <>
+          <Code>{event.tool}</Code> <Quiet>turned back on for {event.clientId}</Quiet>
+        </>
+      )
+    case 'app-paused':
+      return <Quiet>{event.paused ? 'Every call refused until resumed' : 'Calls allowed again'}</Quiet>
+    case 'call-refused':
+      return (
+        <>
+          <Code>{event.tool}</Code> · “{clientLabel(event.client)}”{' '}
+          <Quiet>{event.reason === 'unknown-tool' ? 'no tool by that name' : 'arguments refused'}</Quiet>
+        </>
+      )
+    case 'refusals-dropped':
+      return (
+        <Quiet>
+          {event.count} more refused {event.count === 1 ? 'call' : 'calls'} from “{clientLabel(event.client)}
+          ”, not listed one by one
+        </Quiet>
       )
     case 'store-refused':
       return (
@@ -488,6 +599,14 @@ export const EVENT_FIELDS = {
   'draft-submitted': ['type', 'draftId', 'adapterId', 'clientId', 'adapterHash', 'packageHash', 'requestId'],
   'draft-deleted': ['type', 'draftId', 'adapterId', 'clientId'],
   'draft-trial': ['type', 'draftId', 'adapterId', 'clientId', 'tool', 'host', 'packageHash', 'outcome'],
+  'client-added': ['type', 'clientId'],
+  'client-revoked': ['type', 'clientId'],
+  'client-reset': ['type', 'clientId'],
+  'client-access-changed': ['type', 'clientId', 'before', 'after'],
+  'client-tool-on': ['type', 'clientId', 'tool'],
+  'app-paused': ['type', 'paused'],
+  'call-refused': ['type', 'client', 'clientId', 'tool', 'reason'],
+  'refusals-dropped': ['type', 'client', 'clientId', 'count'],
 } as const satisfies {
   readonly [K in EventType]: readonly (keyof Extract<AuditEvent, { readonly type: K }>)[]
 }

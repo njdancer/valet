@@ -284,6 +284,25 @@ describe('the remote policy over the listener', () => {
     ])
   })
 
+  it('reports a cloud agent’s call to a tool it isn’t offered, named as the agent, without the tool’s owner', async () => {
+    const { listener, tokens, caller } = await setup()
+    const client = await connect(listener.port, tokens.issue('phone', RESOURCE), 'Claude')
+    // Installed locally but not enabled remotely: to this agent there is no such tool.
+    const result = await client.callTool({ name: 'woolworths_view_cart', arguments: {} })
+
+    expect(result.isError).toBe(true)
+    expect(caller.calls).toHaveLength(0)
+    expect(caller.refusals).toEqual([
+      expect.objectContaining({
+        reason: 'unknown-tool',
+        name: 'woolworths_view_cart',
+        client: 'Claude',
+        identity: { origin: 'remote', clientId: 'phone' },
+      }),
+    ])
+    expect(caller.refusals[0]?.tool).toBeUndefined()
+  })
+
   it('caps each client’s calls per hour, apart from other clients', async () => {
     let now = 0
     const { listener, policy, tokens, caller, refusals } = await setup({ callsPerHour: 2, now: () => now })

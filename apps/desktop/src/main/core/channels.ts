@@ -33,6 +33,7 @@ export const INVOKE_METHODS = [
   'drafts.openFolder',
   'drafts.endSession',
   'approvals.pending',
+  'approvals.turnedDown',
   'approvals.approve',
   'approvals.reject',
   'grants.list',

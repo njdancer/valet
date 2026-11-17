@@ -5,6 +5,7 @@
 import type {
   AdapterManifest,
   ErrorClass,
+  InputIssue,
   NeedsUserReason,
   RequestDeclaration,
   SecretValue,
@@ -82,7 +83,11 @@ export interface AuthRunRequest {
  */
 export type AuthRunner = (request: AuthRunRequest) => Promise<AuthOutcome>
 
-export type ConfirmationAnswer = 'approved' | 'declined' | 'timed-out'
+/**
+ * How a confirmation ended. `cancelled`: nobody answered before the call itself was stopped (the
+ * agent went away or was revoked, or the app is quitting); the call doesn't go ahead.
+ */
+export type ConfirmationAnswer = 'approved' | 'declined' | 'timed-out' | 'cancelled'
 
 /**
  * How the MCP client reached the endpoint: through the stdio bridge, or plain HTTP. A label for the
@@ -138,7 +143,16 @@ export type ToolCallResult =
   | { readonly status: 'ok'; readonly output: unknown }
   /** Only the code: the app renders its own wording, and nothing adapter-authored reaches the client. */
   | { readonly status: 'needsUser'; readonly reason: NeedsUserReason }
-  | { readonly status: 'failed'; readonly stage: Stage; readonly errorClass: ErrorClass }
+  | {
+      readonly status: 'failed'
+      readonly stage: Stage
+      readonly errorClass: ErrorClass
+      /**
+       * Stage tool-input only: where the input was wrong and why, as codes (core's input-issue.ts),
+       * from the schema's own check or a ValetError the tool threw. Never a schema's message.
+       */
+      readonly issue?: InputIssue
+    }
   /**
    * Nothing may be sent to the site until `retryAfterMs` has passed. Without `cause`, the site
    * refused us and its breaker is open. With `cause: 'hourly-cap'`, the runtime has sent the site
@@ -149,9 +163,16 @@ export type ToolCallResult =
    * The call was never started, and nothing was sent: it waited its turn behind earlier calls for
    * the adapter for as long as the runtime allows, or too many were in front for it to get a turn
    * in that time. `ahead` is how many calls were in front of it when it gave up (at least 1) and
-   * `retryAfterMs` an estimate of when a new call would get its turn.
+   * `retryAfterMs` an estimate of when a new call would get its turn. `waitingFor: 'login'`: what
+   * holds the adapter is a login an earlier call started and was answered without (D50), so the
+   * call was answered at once instead of waiting out the queue.
    */
-  | { readonly status: 'busy'; readonly retryAfterMs: number; readonly ahead: number }
+  | {
+      readonly status: 'busy'
+      readonly retryAfterMs: number
+      readonly ahead: number
+      readonly waitingFor?: 'login'
+    }
   /**
    * The call found the session logged out and started a login, which is still running in the
    * background (D50). The tool did nothing else, and will do nothing more: make the call again

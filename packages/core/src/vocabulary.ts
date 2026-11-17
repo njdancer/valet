@@ -87,6 +87,8 @@ export type NeedsYouSubject =
       readonly version: string
       /** No version of the site was approved before: a first install. */
       readonly firstInstall?: boolean
+      /** Approved under this Mac's earlier approval keys, which changed: approved again. */
+      readonly approvedBefore?: boolean
     }
   | { readonly kind: 'setting-missing'; readonly adapterName: string; readonly settingTitle: string }
   | { readonly kind: 'login-missing'; readonly adapterName: string }
@@ -94,6 +96,7 @@ export type NeedsYouSubject =
   | { readonly kind: 'onepassword-locked' }
   | { readonly kind: 'setup'; readonly stepsLeft: number }
   | { readonly kind: 'audit-broken' }
+  | { readonly kind: 'keys-changed' }
 
 /** The one title for a Needs you item, wherever it is shown. */
 export function needsYouTitle(subject: NeedsYouSubject): string {
@@ -105,6 +108,7 @@ export function needsYouTitle(subject: NeedsYouSubject): string {
     case 'remote-consent':
       return 'Approve a connection'
     case 'review':
+      if (subject.approvedBefore === true) return `Approve ${plainName(subject.adapterName)} again`
       return subject.firstInstall === true
         ? `Review ${plainName(subject.adapterName)} before first use`
         : `Review the ${plainName(subject.adapterName)} update (${plainName(subject.version, 30)})`
@@ -120,6 +124,8 @@ export function needsYouTitle(subject: NeedsYouSubject): string {
       return `Finish setup (${subject.stepsLeft} ${subject.stepsLeft === 1 ? 'step' : 'steps'} left)`
     case 'audit-broken':
       return 'The audit log doesn’t check out'
+    case 'keys-changed':
+      return 'This Mac’s approval keys changed'
   }
 }
 

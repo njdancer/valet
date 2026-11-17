@@ -199,14 +199,17 @@ describe('the grant sheet', () => {
       grants: {
         ...fake.grants,
         vaultItems: async () =>
-          [
-            {
-              id: 'op-1',
-              title: 'Woolworths',
-              username: 'canary-user@example.com',
-              password: 'canary-pass-7731',
-            },
-          ] as never,
+          ({
+            status: 'ok',
+            items: [
+              {
+                id: 'op-1',
+                title: 'Woolworths',
+                username: 'canary-user@example.com',
+                password: 'canary-pass-7731',
+              },
+            ],
+          }) as never,
       },
     }
     renderAt(LOGIN, api)
@@ -257,6 +260,44 @@ describe('the grant sheet', () => {
     fake.fake.failNext('grants.vaultItems')
     renderAt(LOGIN, fake)
     expect(await screen.findByText('Couldn’t list the vault. Is 1Password set up?')).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Open Secrets' }).getAttribute('href')).toBe('#/secrets')
+  })
+
+  it('says 1Password said no, and asks again on one click, when the person declined its prompt', async () => {
+    const user = userEvent.setup()
+    const fake = createFakeApi({ now: NOW })
+    let declined = true
+    const api: FakeApi = {
+      ...fake,
+      grants: {
+        ...fake.grants,
+        vaultItems: async (provider) =>
+          declined ? { status: 'declined', account: 'tess' } : fake.grants.vaultItems(provider),
+      },
+    }
+    renderAt(LOGIN, api)
+    expect(await screen.findByText('1Password didn’t give Valet access')).toBeTruthy()
+    expect(screen.queryByText('Couldn’t list the vault. Is 1Password set up?')).toBeNull()
+    declined = false
+    await user.click(screen.getByRole('button', { name: 'Ask 1Password again' }))
+    expect((await screen.findAllByRole('radio', { name: /Woolworths/ })).length).toBeGreaterThan(0)
+    expect(screen.queryByText('1Password didn’t give Valet access')).toBeNull()
+  })
+
+  it('names the account it couldn’t open, so a mistyped account name is plain to see', async () => {
+    const fake = createFakeApi({ now: NOW })
+    const api: FakeApi = {
+      ...fake,
+      grants: {
+        ...fake.grants,
+        vaultItems: async () => ({ status: 'unavailable', account: 'my.1password.com' }),
+      },
+    }
+    renderAt(LOGIN, api)
+    expect(
+      await screen.findByText('Valet couldn’t open the 1Password account “my.1password.com”'),
+    ).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Open Secrets' }).getAttribute('href')).toBe('#/secrets')
   })
 
@@ -372,10 +413,13 @@ describe('the grant sheet', () => {
       ...fake,
       grants: {
         ...fake.grants,
-        vaultItems: async () => [
-          { id: 'op-item-dupe', title: 'Woolworths' },
-          { id: 'op-item-7c2a', title: 'Woolworths' },
-        ],
+        vaultItems: async () => ({
+          status: 'ok',
+          items: [
+            { id: 'op-item-dupe', title: 'Woolworths' },
+            { id: 'op-item-7c2a', title: 'Woolworths' },
+          ],
+        }),
       },
     }
     renderAt(LOGIN, api)

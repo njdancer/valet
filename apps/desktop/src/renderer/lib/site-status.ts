@@ -47,6 +47,12 @@ export function siteStatus(
       text: `Update ${adapter.pendingUpdate.version} waiting for review · its tools are off until you approve it`,
       fix: 'review-update',
     }
+  if (adapter.approval === 'unapproved' && adapter.approvedBefore === true)
+    return {
+      tone: 'warning',
+      text: 'Approve again · this Mac’s approval keys changed, so its tools are off until you do',
+      fix: 'review',
+    }
   if (adapter.approval === 'unapproved')
     return { tone: 'accent', text: 'Not approved yet · its tools are off until you review it', fix: 'review' }
   // Valet's own stop outranks everything below it: a green "Ready" under a "Paused" banner reads as
@@ -87,7 +93,22 @@ export function siteStatus(
     }
   const missingLogin = adapter.secrets.find((s) => !s.granted)
   if (missingLogin !== undefined)
-    return { tone: 'warning', text: `Give Valet your ${adapter.name} login`, fix: 'login' }
+    return {
+      tone: 'warning',
+      text:
+        missingLogin.lapsed === true
+          ? `Give Valet your ${adapter.name} login again · the one you gave no longer counts`
+          : `Give Valet your ${adapter.name} login`,
+      fix: 'login',
+    }
+  // Codes from Messages are optional, but a grant that was given and no longer counts would fail
+  // the next login that asks for one: never "Ready" over it.
+  if (adapter.messagesSources.some((m) => !m.granted && m.lapsed === true))
+    return {
+      tone: 'warning',
+      text: `Allow ${adapter.name} its SMS codes again · the permission you gave no longer counts`,
+      fix: 'login',
+    }
   if (adapter.pendingUpdate !== null)
     return {
       tone: 'success',

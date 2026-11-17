@@ -67,8 +67,10 @@ export function stepsDone(facts: SetupFacts): StepsDone {
   // Connected, not just added: copying a config isn't the client using it.
   const clients = facts.clients.some((c) => c.revokedAt === null && c.lastSeen !== null)
   // A provider can be ready before the person has done anything (set up outside the app, or demo
-  // mode's test provider), so it alone doesn't skip the welcome.
-  return { welcome: approve || grant || clients, onepassword, approve, grant, store, clients }
+  // mode's test provider), so it alone doesn't skip the welcome. An account name the person typed
+  // does: they were past the welcome, and setup should reopen where they were.
+  const typedAccount = facts.settings.onePasswordAccount !== null
+  return { welcome: approve || grant || clients || typedAccount, onepassword, approve, grant, store, clients }
 }
 
 /**
@@ -132,7 +134,20 @@ export function useSetupFacts(): Loaded<SetupFacts> {
  */
 export function useSetupLeft(): number | null {
   const facts = useSetupFacts()
+  const setup = useLoad((a) => a.setup.status(), [], ['settings-changed'])
+  const attention = useLoad((a) => a.attention.list(), [], ['attention-changed'])
   if (facts.status !== 'ready') return null
   const left = stepsLeft(stepsDone(facts.data))
-  return left > 0 ? left : null
+  if (left === 0) return null
+  // Setup was finished, and then this Mac's approval keys changed: the steps read as undone because
+  // the old approvals no longer count, not because setup never happened. The keys-changed item says
+  // what to do again; a "Finish setup" beside it would say the person never set Valet up.
+  if (
+    setup.status === 'ready' &&
+    setup.data.completedAt !== null &&
+    attention.status === 'ready' &&
+    attention.data.some((i) => i.kind === 'keys-changed')
+  )
+    return null
+  return left
 }

@@ -429,6 +429,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
   ]
   let offered: readonly (SettingChoiceInfo & { readonly postcode: string })[] = []
 
+  let turnedDown: PendingReview[] = []
   let reviews: PendingReview[] = [
     {
       adapterId: 'woolworths',
@@ -1173,9 +1174,14 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         enter('approvals.pending')
         return clone(reviews)
       },
+      async turnedDown() {
+        enter('approvals.turnedDown')
+        return clone(turnedDown)
+      },
       async approve(adapterId, hash) {
         enter('approvals.approve', adapterId, hash)
-        const review = reviews.find((r) => r.adapterId === adapterId)
+        const review =
+          reviews.find((r) => r.adapterId === adapterId) ?? turnedDown.find((r) => r.adapterId === adapterId)
         if (review === undefined || review.to.hash !== hash) throw new Error('stale review')
         const base = adapters.get(adapterId)
         if (base !== undefined) {
@@ -1189,16 +1195,24 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           })
         }
         reviews = reviews.filter((r) => r !== review)
+        turnedDown = turnedDown.filter((r) => r !== review)
         attention = attention.filter((a) => !(a.kind === 'review' && a.adapterId === adapterId))
         emit({ type: 'approvals-changed' })
         emit({ type: 'adapters-changed' })
         emit({ type: 'attention-changed' })
       },
-      async reject(adapterId, hash) {
-        enter('approvals.reject', adapterId, hash)
+      async reject(adapterId, hash, note) {
+        if (note === undefined) enter('approvals.reject', adapterId, hash)
+        else enter('approvals.reject', adapterId, hash, note)
         const review = reviews.find((r) => r.adapterId === adapterId)
         if (review === undefined || review.to.hash !== hash) throw new Error('stale review')
         reviews = reviews.filter((r) => r !== review)
+        // A first install turned down: the adapter reads as turned down and can be reviewed again.
+        const base = adapters.get(adapterId)
+        if (review.from === null && review.source !== 'agent' && base !== undefined) {
+          adapters.set(adapterId, { ...base, approval: 'rejected' })
+          turnedDown = [...turnedDown, review]
+        }
         attention = attention.filter((a) => !(a.kind === 'review' && a.adapterId === adapterId))
         emit({ type: 'approvals-changed' })
         emit({ type: 'adapters-changed' })
@@ -1263,7 +1277,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       },
       async vaultItems(provider) {
         enter('grants.vaultItems', provider)
-        return provider === 'messages' ? [] : clone(vault)
+        return { status: 'ok', items: provider === 'messages' ? [] : clone(vault) }
       },
       async make(request: GrantRequest) {
         enter('grants.make', request)
@@ -1428,7 +1442,10 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         const bridge = '/Applications/Valet.app/Contents/MacOS/valet-bridge'
         const config = `~/Library/Application Support/valet/client-configs/${clientId}.json`
         const list: ClientSnippet[] = [
-          { client: 'claude-code', text: `claude mcp add valet -- \\\n  ${bridge} \\\n  '${config}'` },
+          {
+            client: 'claude-code',
+            text: `claude mcp add --scope user valet -- \\\n  ${bridge} \\\n  '${config}'`,
+          },
           {
             client: 'claude-desktop',
             text: `{ "mcpServers": { "valet": { "command":\n  "${bridge}",\n  "args": ["${config}"]\n} } }`,
@@ -1977,7 +1994,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
 }
 
 const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent['type'][]>> = {
-  'tool-calls': ['tool-called', 'call-waited', 'tool-finished'],
+  'tool-calls': ['tool-called', 'call-waited', 'tool-finished', 'call-refused', 'refusals-dropped'],
   logins: ['login-started', 'login-finished'],
   'secret-use': ['secret-used'],
   blocked: ['request-blocked', 'breaker-opened', 'breaker-closed'],
@@ -2000,6 +2017,12 @@ const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent['type']
     'remote-consent',
     'remote-revoked',
     'remote-token-reuse',
+    'app-paused',
+    'client-added',
+    'client-revoked',
+    'client-reset',
+    'client-access-changed',
+    'client-tool-on',
   ],
 }
 

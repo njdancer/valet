@@ -285,7 +285,7 @@ describe('client snippets', () => {
   it('launch the bridge with the config path, quoted, and never a token', () => {
     const snippets = clientSnippets('valet', bridge)
     expect(snippetFor(snippets, 'claude-code')).toBe(
-      "claude mcp add valet -- /repo/node_modules/.bin/tsx /repo/bridge-cli.ts '/Users/n/Library/Application Support/Valet/bridge.json'",
+      "claude mcp add --scope user valet -- /repo/node_modules/.bin/tsx /repo/bridge-cli.ts '/Users/n/Library/Application Support/Valet/bridge.json'",
     )
     expect(JSON.parse(snippetFor(snippets, 'claude-desktop') ?? '')).toEqual({
       mcpServers: { valet: { command: bridge.command, args: bridge.args } },

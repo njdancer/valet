@@ -13,7 +13,18 @@ export function Stepper({
   orientation = 'vertical',
   className,
 }: {
-  steps: readonly { id: string; label: ReactNode; state: StepState; href?: string; hint?: ReactNode }[]
+  steps: readonly {
+    id: string
+    label: ReactNode
+    state: StepState
+    href?: string
+    hint?: ReactNode
+    /**
+     * Shown in place of the step's number, for a step that isn't counted (a welcome, a summary).
+     * Numbers count only the steps without one, so they match a "Step 2 of 5" elsewhere.
+     */
+    marker?: ReactNode
+  }[]
   orientation?: 'vertical' | 'horizontal'
   className?: string
 }) {
@@ -26,6 +37,7 @@ export function Stepper({
       )}
     >
       {steps.map((step, i) => {
+        const number = steps.slice(0, i + 1).filter((s) => s.marker === undefined).length
         const body = (
           <>
             <span
@@ -43,8 +55,10 @@ export function Stepper({
                 '!'
               ) : step.state === 'done' ? (
                 <Check className="size-3 animate-pop-in" strokeWidth={3} aria-hidden="true" />
+              ) : step.marker !== undefined ? (
+                step.marker
               ) : (
-                i + 1
+                number
               )}
             </span>
             <span className="flex min-w-0 flex-col">

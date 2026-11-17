@@ -36,7 +36,7 @@ const STATUS: AdminStatus = {
   updates: { state: 'up-to-date', available: null, checkedAt: '2026-11-12T01:00:00.000Z' },
   auditChain: { state: 'intact', records: 12, firstBadSeq: null, verifiedAt: '2026-11-12T01:00:00.000Z' },
   needsYou: 1,
-  sites: { installed: 2, approved: 1, paused: 0 },
+  sites: { installed: 2, approved: 1, paused: 0, toApproveAgain: 0 },
   today: { toolCalls: 3, logins: 1, loginsFailed: 0, blockedRequests: 0 },
   remoteAccess: { enabled: false, listening: false },
   loginProviders: [{ kind: 'onepassword-desktop', available: true, unavailableReason: null }],

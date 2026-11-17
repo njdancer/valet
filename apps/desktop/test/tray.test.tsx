@@ -335,4 +335,35 @@ describe('the popover’s wording', () => {
     expect(subLine(view, [item])).toBe('Login window is closed')
     act(() => undefined)
   })
+
+  it('says an agent’s staged update leaves the approved version working', () => {
+    const view = {
+      id: 'rv_w',
+      kind: 'review' as const,
+      title: 't',
+      description: 'd',
+      adapterId: 'w',
+      adapterName: 'W',
+      callId: null,
+      deadline: null,
+      at: 0,
+      actionLabel: 'Review update',
+      action: { kind: 'route' as const, to: '#/needs-you' as const },
+      tone: 'accent' as const,
+      missed: false,
+    }
+    const item: AttentionItem = {
+      kind: 'review',
+      id: 'rv_w',
+      adapterId: 'w',
+      adapterName: 'W',
+      version: '2',
+      addsPermissions: false,
+      firstInstall: false,
+    }
+    expect(subLine(view, [{ ...item, keepsServing: true }])).toBe(
+      'Asks for nothing new · the approved version keeps working until you decide',
+    )
+    expect(subLine(view, [item])).toBe('Asks for nothing new · its tools are off until you decide')
+  })
 })

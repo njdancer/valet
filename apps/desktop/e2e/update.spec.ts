@@ -244,12 +244,12 @@ test('the review screen shows the change, and Approve waits for the acknowledgem
   await control.evaluate(() => {
     window.location.hash = '#/sites/woolworths'
   })
-  await expect(control.getByText('Woolworths 0.4.0 is waiting for your review.')).toBeVisible()
+  await expect(control.getByText('Woolworths 0.5.0 is waiting for your review.')).toBeVisible()
   await control.getByRole('link', { name: 'Review Woolworths update' }).first().click()
   await expect(control.getByText('This update asks for more')).toBeVisible()
   await expect(control.getByText('remove_from_cart').first()).toBeVisible()
   await expect(control.getByText('src/manifest.ts')).toBeVisible()
-  const approve = control.getByRole('button', { name: 'Approve 0.4.0' })
+  const approve = control.getByRole('button', { name: 'Approve 0.5.0' })
   await expect(approve).toBeDisabled()
   await control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' }).check()
   await approve.click()
@@ -317,8 +317,8 @@ test('a client that cancels while the panel waits: the panel closes, and the too
   await expect(panel.getByText('Remove from cart').first()).toBeVisible()
   cancel.abort()
   expect(await call).toBe('cancelled')
-  // The cancel reaches the runtime: the panel goes, the answer is on record as declined, and the call
-  // as aborted.
+  // The cancel reaches the runtime: the panel goes, the answer is on record as cancelled (the person
+  // never declined), and the call as aborted.
   await expect.poll(() => panel.isClosed()).toBe(true)
   const finished = () =>
     readFileSync(join(userData, 'audit.jsonl'), 'utf8')
@@ -328,7 +328,7 @@ test('a client that cancels while the panel waits: the panel closes, and the too
       .filter((e) => e['type'] === 'tool-finished' || e['type'] === 'confirmation')
       .slice(-2)
   await expect.poll(finished).toEqual([
-    expect.objectContaining({ type: 'confirmation', answer: 'declined' }),
+    expect.objectContaining({ type: 'confirmation', answer: 'cancelled' }),
     expect.objectContaining({
       type: 'tool-finished',
       outcome: 'failed',

@@ -165,6 +165,22 @@ describe('searchResponse', () => {
     expect(response.SearchResultsCount).toBeGreaterThan(0)
   })
 
+  it('finds a plural as its singular', () => {
+    const codes = (term: string) => searchCatalogue({ ...milk, term }).map((p) => p.Stockcode)
+    expect(codes('breads').length).toBeGreaterThan(0)
+    expect(codes('breads')).toEqual(codes('bread'))
+    expect(codes('cheeses')).toEqual(codes('cheese'))
+    // The singular still finds the plural, as a substring.
+    expect(codes('banana')).toEqual(codes('bananas'))
+  })
+
+  it('suggests a spelling for a known misspelling, word by word', () => {
+    const response = searchResponse({ ...milk, term: 'Lady Finger Bannanas' }, new Map())
+    expect(response).toMatchObject({ SearchResultsCount: 0, SuggestedTerm: 'lady finger bananas' })
+    const corrected = searchResponse({ ...milk, term: response.SuggestedTerm as string }, new Map())
+    expect(corrected.SearchResultsCount).toBeGreaterThan(0)
+  })
+
   it('reports no corrections or suggestions', () => {
     const response = searchResponse({ ...milk, term: 'zzz' }, new Map())
     expect(response).toMatchObject({
