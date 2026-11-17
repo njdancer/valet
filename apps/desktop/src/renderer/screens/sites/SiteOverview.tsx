@@ -37,6 +37,7 @@ import {
   SESSION_WORDING,
 } from '../../lib/wording'
 import { matchesOutcome } from '../activity/calls-list'
+import { sourceWording } from './review/words'
 import type { SiteData } from './SitePage'
 import { ActionError, callers, callsToday, SiteFixButton, SiteText } from './site-ui'
 
@@ -137,12 +138,6 @@ export function updateSummary(review: PendingReview): string {
   return `It adds ${list}.`
 }
 
-const SOURCE_WORDING: Readonly<Record<PendingReview['source'], string>> = {
-  import: 'Imported from a file',
-  ide: 'Made in your IDE',
-  'authoring-agent': 'Made by the authoring agent (IDE)',
-}
-
 function UpdateBanner({
   adapter,
   review,
@@ -164,7 +159,7 @@ function UpdateBanner({
       {adapter.approval === 'approved'
         ? `Calls keep using ${adapter.version} until you approve.`
         : 'Its tools are off until you approve it.'}{' '}
-      {SOURCE_WORDING[review.source]} at {formatClock(review.submittedAt)}.
+      {sourceWording(review)} at {formatClock(review.submittedAt)}.
     </Banner>
   )
 }
@@ -486,8 +481,9 @@ function TodayCard({
     return (
       <SiteCard title="Today">
         <Text tone="subtle">
-          Agents can’t call {adapter.name} until it is approved. They are told it is waiting for review in
-          Valet.
+          {adapter.approval === 'rejected'
+            ? `You turned down ${adapter.name}, so agents can’t call it. A new version would come back here for your review.`
+            : `Agents can’t call ${adapter.name} until it is approved. They are told it is waiting for review in Valet.`}
         </Text>
       </SiteCard>
     )

@@ -356,9 +356,20 @@ export interface PendingReview {
   /** Null for a first install. */
   readonly from: { readonly version: string; readonly hash: string } | null
   readonly to: { readonly version: string; readonly hash: string }
+  /** When it was asked for: the agent's request for a draft, else when this run of Valet found it. */
   readonly submittedAt: IsoTime
-  /** Where the bundle came from. */
-  readonly source: 'import' | 'ide' | 'authoring-agent'
+  /**
+   * Where the bundle came from: `agent` an agent's draft ("Written by Claude Code"), `builtin` a
+   * bundle that comes with Valet, `import` one installed from a folder.
+   */
+  readonly source: 'import' | 'ide' | 'authoring-agent' | 'agent' | 'builtin'
+  /** For an agent's draft: the request it made, as the agent was told and the phone shows it. */
+  readonly request?: ReviewRequestInfo | null
+  /**
+   * The version under review is stored apart and the approved one keeps serving until the person
+   * decides (an agent's update to an approved site). Otherwise an update's tools are off meanwhile.
+   */
+  readonly staged?: boolean
   readonly diff: PermissionDiff
   readonly manifestDiff: readonly ManifestDiffLine[]
   readonly files: readonly FileChange[]
@@ -372,9 +383,35 @@ export interface PendingReview {
    * signed-in session for the site (B's review, point 4). The review leads with that.
    */
   readonly takesSession?: boolean
+  /**
+   * This version logs in: a session check, a secret, an SMS code or login steps. One that doesn't
+   * (a dictionary) is reviewed in terms of the pages it opens, never logins or cookies.
+   */
+  readonly logsIn?: boolean
 }
 
 export type PackageOrigin = 'builtin' | 'folder' | 'draft'
+
+/**
+ * An agent's request to install its draft, as the review shows it. Everything here but `checks` is
+ * the agent's or its client's own claim, shown as theirs.
+ */
+export interface ReviewRequestInfo {
+  /** Four characters of the request's digest: the ref the agent quotes and Touch ID names. */
+  readonly ref: string
+  /** What the asking client calls itself. */
+  readonly client: string
+  /** A cloud agent rather than an app on this Mac. */
+  readonly remote: boolean
+  /** The agent's own words, shown as its words. */
+  readonly note: string | null
+  /** Valet's own checks of the draft, one line each. */
+  readonly checks: readonly string[]
+  /** The agent's own test cases as Valet ran them, counted apart from Valet's checks. */
+  readonly agentTests: { readonly passed: number; readonly failed: number } | null
+  readonly draftId: string | null
+  readonly expiresAt: IsoTime
+}
 
 /**
  * A draft adapter an agent is writing over MCP (docs/authoring-tools.md), as Sites lists it
@@ -818,6 +855,10 @@ export interface ReviewItem {
   readonly addsPermissions: boolean
   /** No version of the site was approved before: "Review Woolworths before first use". */
   readonly firstInstall?: boolean
+  /** The approved version keeps serving until the person decides (PendingReview.staged). */
+  readonly keepsServing?: boolean
+  /** For an agent's draft: who asked, and the approval ref it was told. */
+  readonly requestedBy?: { readonly client: string; readonly ref: string } | null
 }
 
 /**
@@ -1350,7 +1391,8 @@ export interface ValetApi {
     pending(): Promise<readonly PendingReview[]>
     /** Approves exactly this hash; rejects if a different bundle is now pending. */
     approve(adapterId: string, hash: string): Promise<void>
-    reject(adapterId: string, hash: string): Promise<void>
+    /** The note, if any, goes to the agent that asked (an agent's draft only). */
+    reject(adapterId: string, hash: string, note?: string): Promise<void>
   }
   readonly grants: {
     list(): Promise<readonly GrantInfo[]>

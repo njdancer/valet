@@ -7,7 +7,7 @@
 // label, the agent's note) is quoted or kept apart, never the headline's verb.
 
 import type { SerializedRequest } from '@valet/core'
-import type { AgentRequestItem } from '../../shared/api'
+import type { AgentRequestItem, ReviewRequestInfo } from '../../shared/api'
 import { requestRef } from './approvals/prompts'
 
 type CardKind = AgentRequestItem['requestKind']
@@ -18,6 +18,26 @@ const CARD_KINDS: ReadonlySet<string> = new Set<CardKind>([
   'tool-enable',
   'secret-grant',
 ])
+
+/**
+ * An agent's request to install its draft, as the Mac's review shows it: the ref the agent was told
+ * to quote, who asked, its note, and the checks the Mac wrote on the card. Null for any other request.
+ */
+export function draftReviewRequest(serialized: SerializedRequest): ReviewRequestInfo | null {
+  const request = serialized.request
+  if (request.kind !== 'adapter-install' || request.requester.kind !== 'agent') return null
+  const display = request.display
+  return {
+    ref: requestRef(serialized),
+    client: display?.client?.label ?? request.requester.clientName,
+    remote: display?.client?.badge === 'remote',
+    note: request.agentNote,
+    checks: [...(display?.checks ?? [])],
+    agentTests: display?.agentTests === undefined ? null : { ...display.agentTests },
+    draftId: request.context?.kind === 'draft' ? request.context.draftId : null,
+    expiresAt: request.expiresAt,
+  }
+}
 
 /** The Needs you item for a waiting request, or null for one another item shows (or the person's own). */
 export function agentRequestItem(serialized: SerializedRequest): AgentRequestItem | null {

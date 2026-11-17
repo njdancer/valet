@@ -99,6 +99,77 @@ const REMOVALS_ONLY: PendingReview = {
   files: [],
 }
 
+/** An agent's no-login draft (a dictionary), as the main process hands it over. */
+const AGENT_DRAFT: PendingReview = {
+  ...REMOVALS_ONLY,
+  adapterId: 'woolworths',
+  from: null,
+  to: { version: '0.1.0', hash: 'cc'.repeat(32) },
+  submittedAt: '2026-11-07T10:30:00Z',
+  source: 'agent',
+  origin: 'draft',
+  logsIn: false,
+  request: {
+    ref: '5AB4',
+    client: 'Claude Code',
+    remote: false,
+    note: 'Looks words up; no account needed.',
+    checks: ['Names: pass', 'Live trial of define, signed out: returned output that fits its schema'],
+    agentTests: { passed: 3, failed: 0 },
+    draftId: 'dr-abcdefghij',
+    expiresAt: '2026-11-08T10:30:00Z',
+  },
+  diff: {
+    ...REMOVALS_ONLY.diff,
+    navigation: { added: ['https://en.dictionary.test'], removed: [], unchanged: [] },
+    egress: { added: ['en.dictionary.test'], removed: [], unchanged: [] },
+    cookieDomains: { added: [], removed: [], unchanged: [] },
+    tools: {
+      added: [{ name: 'define', title: 'Define', sideEffect: 'read', destructive: false, idempotent: true }],
+      removed: [],
+      unchanged: [],
+    },
+    authSteps: { added: [], removed: [], unchanged: [] },
+    limits: null,
+    probe: null,
+  },
+}
+
+describe('reviewing an agent’s draft', () => {
+  it('shows who asked, its note, the ref it was told and Valet’s checks, in no-login words', async () => {
+    const api = createFakeApi({ now: NOW, updateWaiting: true })
+    api.fake.setPendingReview(AGENT_DRAFT)
+    renderAt(REVIEW, api)
+    const card = within(await screen.findByTestId('agent-request'))
+    expect(card.getByText('Looks words up; no account needed.')).toBeTruthy()
+    expect(card.getByText(/Asked by Claude Code/)).toBeTruthy()
+    expect(card.getByText(/Live trial of define, signed out/)).toBeTruthy()
+    expect(card.getByText('Its own tests, run by Valet: 3 passed, 0 failed.')).toBeTruthy()
+    expect(screen.getAllByText('5AB4').length).toBeGreaterThan(0)
+    const text = document.body.textContent ?? ''
+    expect(text).toContain('Written by Claude Code')
+    expect(text).not.toMatch(/Imported/)
+    expect(text).not.toMatch(/login origin|choose which login|session cookies|The login may now open/)
+    expect(text).toContain('1 page origin')
+  })
+
+  it('turns it down with the person’s reason, which goes to the agent', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW, updateWaiting: true })
+    api.fake.setPendingReview(AGENT_DRAFT)
+    renderAt(REVIEW, api)
+    await user.click(await screen.findByRole('button', { name: 'Turn down…' }))
+    const dialog = within(await screen.findByRole('alertdialog'))
+    await user.type(dialog.getByRole('textbox'), 'Use the API instead.')
+    await user.click(dialog.getByRole('button', { name: 'Turn down' }))
+    await waitFor(() =>
+      expect(api.fake.calls.filter((c) => c.method === 'approvals.reject').map((c) => c.args)).toEqual([
+        ['woolworths', 'cc'.repeat(32), 'Use the API instead.'],
+      ]),
+    )
+  })
+})
+
 describe('reviewing an update', () => {
   it('is a page in the shell with a breadcrumb back to the site and its versions', async () => {
     renderAt(REVIEW, createFakeApi({ now: NOW, updateWaiting: true }))
@@ -254,14 +325,14 @@ describe('reviewing an update', () => {
     const api = createFakeApi({ now: NOW, updateWaiting: true })
     renderAt(REVIEW, api)
     api.fake.failNext('approvals.reject')
-    await user.click(await screen.findByRole('button', { name: 'Reject' }))
+    await user.click(await screen.findByRole('button', { name: 'Turn down' }))
     expect((await screen.findByRole('alert')).textContent).toBe(
       'Couldn’t save your answer; the bundle may have changed. Try again.',
     )
     expect(document.body.textContent).not.toContain('fake approvals.reject failed')
     expect(window.location.hash).toBe(REVIEW)
 
-    await user.click(screen.getByRole('button', { name: 'Reject' }))
+    await user.click(screen.getByRole('button', { name: 'Turn down' }))
     await waitFor(() => expect(window.location.hash).toBe('#/sites/woolworths'))
     expect(await api.approvals.pending()).toEqual([])
   })

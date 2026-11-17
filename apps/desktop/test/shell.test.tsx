@@ -223,6 +223,40 @@ describe('needs-you items', () => {
     expect(view.action).toEqual({ kind: 'route', to: '#/needs-you' })
   })
 
+  it('says who asked for a draft, and that an update staged beside the approved one keeps it working', () => {
+    const item = {
+      kind: 'review' as const,
+      id: 'rv_woolworths',
+      version: '0.4.0',
+      addsPermissions: true,
+      ...base,
+    }
+    const staged = needsYouView(
+      {
+        ...item,
+        firstInstall: false,
+        keepsServing: true,
+        requestedBy: { client: 'Claude Code', ref: '5AB4' },
+      },
+      () => false,
+    )
+    expect(staged.description).toBe(
+      'Asked by Claude Code · approval 5AB4. It asks for more than the version you approved. The version you approved keeps working until you decide.',
+    )
+    expect(staged.description).not.toMatch(/tools are off/)
+    const off = needsYouView({ ...item, firstInstall: false }, () => false)
+    expect(off.description).toBe(
+      'It asks for more than the version you approved. Its tools are off until you decide.',
+    )
+    const first = needsYouView(
+      { ...item, firstInstall: true, requestedBy: { client: 'Claude Code', ref: '5AB4' } },
+      () => false,
+    )
+    expect(first.description).toBe(
+      'Asked by Claude Code · approval 5AB4. Nothing from it runs until you approve it.',
+    )
+  })
+
   it('sorts by deadline, then by age, missed last', () => {
     const v = (id: string, deadline: number | null, at: number, missed = false) => ({
       ...needsYouView({ kind: 'review', id, version: '1', addsPermissions: false, ...base }, () => true),

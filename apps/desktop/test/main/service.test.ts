@@ -3803,8 +3803,17 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
       const versions = await s.api.adapters.versions('shop')
       expect(versions.versions.find((v) => v.hash === s.v2)).toMatchObject({ active: false })
       const review = (await s.api.approvals.pending()).find((r) => r.to.hash === s.v2)
-      expect(review).toMatchObject({ from: { hash: s.v1 }, to: { hash: s.v2 } })
-      expect((await s.api.attention.list()).some((i) => i.kind === 'review')).toBe(true)
+      expect(review).toMatchObject({
+        from: { hash: s.v1 },
+        to: { hash: s.v2 },
+        source: 'agent',
+        staged: true,
+        request: { ref: asked.ref, agentTests: { passed: 2, failed: 0 } },
+      })
+      // Needs you says v1 keeps working, and who asked with the ref the agent was told.
+      const item = (await s.api.attention.list()).find((i) => i.kind === 'review')
+      expect(item).toMatchObject({ keepsServing: true, requestedBy: { ref: asked.ref } })
+      expect(asked.tellThePerson).toContain(`approval ${asked.ref}`)
       expect((await s.authoring.getDraft(s.viewer, false, s.draftId)).draft.status).toBe('waiting')
       await s.api.approvals.approve('shop', s.v2)
       await vi.waitFor(async () =>
@@ -3826,11 +3835,14 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     it('a decline reaches the agent, and a version stored only for the draft goes', async () => {
       const s = await withDraft()
       await s.authoring.submit(s.viewer, s.draftId, NO_NOTE)
-      await s.api.approvals.reject('shop', s.v2)
+      await s.api.approvals.reject('shop', s.v2, 'Keep the old selector.')
       await vi.waitFor(async () =>
         expect((await s.api.adapters.versions('shop')).versions.map((v) => v.hash)).toEqual([s.v1]),
       )
-      expect((await s.authoring.getDraft(s.viewer, false, s.draftId)).draft.status).toBe('declined')
+      const declined = (await s.authoring.getDraft(s.viewer, false, s.draftId)).draft
+      expect(declined.status).toBe('declined')
+      // The person's reason reaches the agent that asked.
+      expect(declined.submission?.note).toBe('Keep the old selector.')
       expect(await s.call('echo', { text: 'hi' })).toMatchObject({ output: { text: 'v1:hi' } })
       expect((await s.api.approvals.pending()).some((r) => r.to.hash === s.v2)).toBe(false)
     })
@@ -3854,9 +3866,22 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
       }
       const authoring = s.endpoint.authoring as Authoring
       const { draft } = await authoring.createDraft(viewer, { adapterId: 'example', from: 'blank' })
-      const asked = await authoring.submit(viewer, draft.draftId, NO_NOTE)
+      const asked = await authoring.submit(viewer, draft.draftId, {
+        ...NO_NOTE,
+        note: 'Reads one page.',
+      })
       const review = (await s.api.approvals.pending()).find((r) => r.adapterId === 'example')
-      expect(review).toMatchObject({ from: null, to: { hash: asked.adapterHash }, origin: 'draft' })
+      expect(review).toMatchObject({
+        from: null,
+        to: { hash: asked.adapterHash },
+        origin: 'draft',
+        // Dated and attributed by the agent's request, not the app's launch.
+        source: 'agent',
+        staged: false,
+        request: { ref: asked.ref, client: 'Claude Code', note: 'Reads one page.', remote: false },
+      })
+      expect(review?.request?.checks.length).toBeGreaterThan(0)
+      expect(Date.parse(review?.submittedAt ?? '')).toBeGreaterThan(0)
       expect(s.endpoint.caller?.listTools().some((t) => t.adapterId === 'example')).toBe(false)
       await s.api.approvals.approve('example', asked.adapterHash)
       expect((await authoring.getDraft(viewer, false, draft.draftId)).draft.status).toBe('approved')

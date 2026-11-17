@@ -3,7 +3,14 @@
 // tick can't be skipped by a review that under-reports.
 
 import type { Purpose, RequestDeclaration } from '@valet/core'
-import type { LimitsInfo, PermissionDiff, ProbeInfo, SecretDiffEntry, ToolDiffEntry } from '../../shared/api'
+import type {
+  LimitsInfo,
+  PendingReview,
+  PermissionDiff,
+  ProbeInfo,
+  SecretDiffEntry,
+  ToolDiffEntry,
+} from '../../shared/api'
 import { plural } from './format'
 
 export type Tone = 'read' | 'write' | 'irreversible' | 'secret'
@@ -180,8 +187,32 @@ function badge(count: number, one: string, many: string, tone: Tone): AdditionBa
   return count > 0 ? [{ label: `+${count} ${count === 1 ? one : many}`, tone }] : []
 }
 
+/**
+ * Whether the version under review logs in: it asks for a secret, an SMS code, or has login steps,
+ * a session check, or session hand-over. Only then does a review speak of logins and cookies; a
+ * site with none (a dictionary) just opens pages.
+ */
+export function diffHasLogin(diff: PermissionDiff): boolean {
+  const kept = <T>(list: { readonly added: readonly T[]; readonly unchanged: readonly T[] }) =>
+    list.added.length + list.unchanged.length > 0
+  return (
+    kept(diff.secrets) ||
+    kept(diff.secretFills) ||
+    kept(diff.authSteps) ||
+    kept(diff.messagesSources) ||
+    kept(diff.cookieDomains) ||
+    kept(diff.storage) ||
+    (diff.probe !== null && diff.probe.after.kind !== 'none')
+  )
+}
+
+/** Whether a review should speak of logins: the main process says, else the diff shows it. */
+export function reviewLogsIn(review: Pick<PendingReview, 'diff' | 'logsIn'>): boolean {
+  return review.logsIn ?? diffHasLogin(review.diff)
+}
+
 /** The "This update asks for more" badges, riskiest first. */
-export function additionBadges(diff: PermissionDiff): AdditionBadge[] {
+export function additionBadges(diff: PermissionDiff, login = diffHasLogin(diff)): AdditionBadge[] {
   const tools = diff.tools.added
   const requests = diff.requests.added
   const secrets = secretChanges(diff)
@@ -196,7 +227,9 @@ export function additionBadges(diff: PermissionDiff): AdditionBadge[] {
       'write',
     ),
     ...badge(diff.egress.added.length, 'host', 'hosts', 'write'),
-    ...badge(diff.navigation.added.length, 'login origin', 'login origins', 'write'),
+    ...(login
+      ? badge(diff.navigation.added.length, 'login origin', 'login origins', 'write')
+      : badge(diff.navigation.added.length, 'page origin', 'page origins', 'write')),
     ...badge(diff.frameOrigins.added.length, 'frame origin', 'frame origins', 'write'),
     ...badge(secrets.filter((s) => s.was === null).length, 'secret', 'secrets', 'secret'),
     ...badge(

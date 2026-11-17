@@ -418,10 +418,12 @@ export function subLine(view: NeedsYouView, items: readonly AttentionItem[]): st
     case 'review':
       if (view.actionLabel === 'Review') return 'Its tools are off until you review it'
       // A changed bundle's tools are off until it is approved (the tool host lists only approved
-      // hashes), so nothing here says calls carry on.
-      return item.addsPermissions
-        ? 'Asks for more · its tools are off until you decide'
-        : 'Asks for nothing new · its tools are off until you decide'
+      // hashes), unless it is an agent's update staged beside the approved version, which keeps on.
+      return `${item.addsPermissions ? 'Asks for more' : 'Asks for nothing new'} · ${
+        item.keepsServing === true
+          ? 'the approved version keeps working until you decide'
+          : 'its tools are off until you decide'
+      }`
     default:
       return view.description
   }
