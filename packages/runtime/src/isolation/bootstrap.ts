@@ -145,6 +145,13 @@ export const BOOTSTRAP = `(function (send) {
         while (args.length > 0 && args[args.length - 1] === undefined) args.pop()
         return call('imap.op', name, args)
       }]))),
+    // The SFTP host, for a protocol adapter with SFTP (docs/sftp.md). Each operation is one call.
+    sftp: Object.freeze(Object.fromEntries(['list', 'stat', 'read', 'write', 'mkdir', 'rename', 'remove',
+      'removeDir']
+      .map((name) => [name, (...args) => {
+        while (args.length > 0 && args[args.length - 1] === undefined) args.pop()
+        return call('sftp.op', name, args)
+      }]))),
     // Sending mail, for a protocol adapter with SMTP: each send waits for the person.
     smtp: Object.freeze({ send: (message) => call('smtp.send', message) }),
   })

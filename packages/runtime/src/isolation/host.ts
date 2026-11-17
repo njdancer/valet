@@ -13,6 +13,7 @@ import {
   type HttpSocket,
   type InputIssue,
   isOperation,
+  isSftpOperation,
   issueFromZod,
   MAX_SOCKETS_PER_CALL,
   type ToolContext,
@@ -153,6 +154,7 @@ function dispatch(
   if (capability.startsWith('local.')) return dispatchLocal(ctx.local, capability, args)
   if (capability.startsWith('http.')) return dispatchHttp(ctx, capability, args, sockets)
   if (capability === 'imap.op') return dispatchImap(ctx, args)
+  if (capability === 'sftp.op') return dispatchSftp(ctx, args)
   if (capability === 'smtp.send') {
     if (ctx.smtp === undefined) return Promise.reject(new ValetError('tool-run', 'not-granted'))
     return ctx.smtp.send(args[0] as never)
@@ -246,6 +248,18 @@ function dispatchImap(ctx: ToolContext, args: readonly unknown[]): Promise<unkno
   }
   const method = imap[name] as (...a: unknown[]) => Promise<unknown>
   return method.apply(imap, list)
+}
+
+/** `sftp.op`: the operation's name and its argument list; GuardedSftp checks both. */
+function dispatchSftp(ctx: ToolContext, args: readonly unknown[]): Promise<unknown> {
+  const sftp = ctx.sftp
+  if (sftp === undefined) return Promise.reject(new ValetError('tool-run', 'not-granted'))
+  const [name, list] = args
+  if (!isSftpOperation(name) || !Array.isArray(list) || list.length > 3) {
+    return Promise.reject(new ValetError('tool-run', 'invalid'))
+  }
+  const method = sftp[name] as (...a: unknown[]) => Promise<unknown>
+  return method.apply(sftp, list)
 }
 
 async function dispatchHttp(

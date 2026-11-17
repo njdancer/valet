@@ -7,7 +7,7 @@ import { type CredentialDeclaration, credentialDeclarationSchema, credentialIssu
 import { MAIL_SECRET, MESSAGES_SECRET } from './credentials'
 import { type ERROR_CLASSES, NEEDS_USER_REASONS, type NeedsUserReason } from './errors'
 import { hostAllowed, isBareOrigin, isHostname, isHostPattern } from './origins'
-import { type Protocols, protocolIssues, protocolsSchema } from './protocols'
+import { type Protocols, protocolHost, protocolIssues, protocolsSchema } from './protocols'
 import { isScreenedPattern } from './regex-screen'
 import {
   BROWSER_METHODS,
@@ -776,6 +776,7 @@ function homeIsDerived(manifest: {
     (manifest.privateHosts ?? []).length === 0 &&
     (manifest.endpoints ?? []).length === 0 &&
     manifest.protocols?.imap === undefined &&
+    manifest.protocols?.sftp === undefined &&
     manifest.protocols?.smtp === undefined
   )
     return false
@@ -795,8 +796,8 @@ function endpointHome(manifest: {
     if (parsed !== null) return new URL(`https://${hostPort(parsed.host, parsed.port)}/`).href
   }
   // A protocol adapter's home is its server's name: only the key its pacing and breaker are kept under.
-  const server = manifest.protocols?.imap ?? manifest.protocols?.smtp
-  if (server !== undefined) return `https://${server.endpoint.slice(0, server.endpoint.lastIndexOf(':'))}/`
+  const server = manifest.protocols === undefined ? null : protocolHost(manifest.protocols)
+  if (server !== null) return `https://${server}/`
   const host = manifest.egress[0]
   if (host !== undefined) return `https://${host}/`
   const first = manifest.privateHosts?.[0]

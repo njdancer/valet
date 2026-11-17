@@ -186,6 +186,11 @@ jobs:
       - name: the Node runtime and raw adapters under Seatbelt (they run without it on Linux)
         if: matrix.part == 'fast'
         run: pnpm exec vitest run packages/node-runtime/test apps/desktop/test/main/raw-drafts.test.ts apps/desktop/test/main/examples.e2e.test.ts
+      - name: the protocol hosts under Seatbelt (they run on Linux too, unsandboxed)
+        if: matrix.part == 'fast'
+        run: |
+          pnpm exec vitest run packages/protocols/test/host.e2e.test.ts \
+            packages/protocols/test/sftp-host.e2e.test.ts packages/protocols/test/sftp-openssh.test.ts
       - name: drift smoke test, dry run against the fake (the live run skips without VALET_LIVE_SMOKE)
         if: matrix.part == 'fast'
         run: |

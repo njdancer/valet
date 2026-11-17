@@ -30,6 +30,7 @@ import {
   ValetError,
   widenedImapFolders,
   widenedRecipients,
+  widenedSftpRoots,
 } from '@valet/core'
 import type { GrantInfo, GrantRequest, VaultItem } from '../../shared/api'
 import { VAULT } from './constants'
@@ -271,6 +272,12 @@ export function credentialCarriesOver(
   if (
     after.protocols?.smtp?.credential === grant.credential &&
     wider(widenedRecipients(before.protocols, after.protocols))
+  )
+    return false
+  // Likewise an SFTP key: a new or wider root, or another server, account or host key.
+  if (
+    after.protocols?.sftp?.credential === grant.credential &&
+    wider(widenedSftpRoots(before.protocols, after.protocols))
   )
     return false
   const prev = credentialTargets(a)

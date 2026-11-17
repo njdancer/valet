@@ -8,6 +8,7 @@ import type { LocalAccess } from './local-access'
 import type { AdapterManifest } from './manifest'
 import type { ToolPage } from './page'
 import { REQUEST_METHODS } from './request-surface'
+import type { SftpAccess } from './sftp-access'
 import type { SmtpAccess } from './smtp-access'
 
 export type EnsureResult =
@@ -82,6 +83,11 @@ export interface ToolContext {
    * adapter rejects with `tool-run/not-granted`. Optional like `http`.
    */
   readonly imap?: ImapAccess
+  /**
+   * Files on an SFTP server, for a `protocol` adapter with protocols.sftp (docs/sftp.md). Every call
+   * from any other adapter rejects with `tool-run/not-granted`. Optional like `http`.
+   */
+  readonly sftp?: SftpAccess
   /**
    * Sending mail, for a `protocol` adapter with protocols.smtp. Only an irreversible tool may send,
    * and every send waits for the person. Every call from any other adapter rejects with

@@ -89,6 +89,11 @@ export const ERROR_CLASSES = [
    * manifest doesn't name, so nothing was sent (docs/imap.md).
    */
   'command-not-allowed',
+  /**
+   * An SSH server offered a host key other than the one the manifest pins, so Valet closed the
+   * connection before signing in (docs/sftp.md). The server was replaced, or someone is in between.
+   */
+  'host-key-mismatch',
   'unsupported',
   /** A signature did not verify: an update feed's envelope, or a downloaded build. */
   'signature-invalid',

@@ -86,6 +86,7 @@ import { CredentialGate, type CredentialGateOptions } from './credential-gate'
 import { GuardedHttp, type HttpCredentials, type HttpEgress, NO_HTTP_ACCESS } from './guarded-http'
 import { GuardedImap, type ImapBackend, NO_IMAP_ACCESS } from './guarded-imap'
 import { GuardedToolPage } from './guarded-page'
+import { GuardedSftp, NO_SFTP_ACCESS, type SftpBackend } from './guarded-sftp'
 import { GuardedSmtp, NO_SMTP_ACCESS, type SmtpBackend } from './guarded-smtp'
 import { checkInputIsolated, type InputCheck, runIsolated, type ToolProcessFactory } from './isolation/host'
 import type { LoginMarkerStore } from './login-marker'
@@ -202,6 +203,12 @@ export interface RegisteredAdapter {
    * `credentialGrants`. Without it, every ctx.imap call is not-granted.
    */
   readonly imap?: ImapBackend
+  /**
+   * The SFTP host behind ctx.sftp, for a `protocol` adapter with protocols.sftp (docs/sftp.md). It
+   * signs in with the manifest's kept ssh-key credential through a CredentialGate over
+   * `credentialGrants`. Without it, every ctx.sftp call is not-granted.
+   */
+  readonly sftp?: SftpBackend
   /**
    * The protocol host behind ctx.smtp, for a `protocol` adapter with protocols.smtp. Signs in like
    * `imap`. Without it, every send is not-granted.
@@ -410,6 +417,7 @@ export class ToolHost {
       ...(adapter.credentialGrants === undefined ? {} : { credentialGrants: adapter.credentialGrants }),
       ...(adapter.raw === undefined ? {} : { raw: adapter.raw }),
       ...(adapter.imap === undefined ? {} : { imap: adapter.imap }),
+      ...(adapter.sftp === undefined ? {} : { sftp: adapter.sftp }),
       ...(adapter.smtp === undefined ? {} : { smtp: adapter.smtp }),
     })
   }
@@ -1090,6 +1098,7 @@ export class ToolHost {
       signal: controller.signal,
       http: this.httpFor(entry, declaration, state),
       imap: this.imapFor(entry, declaration, state),
+      sftp: this.sftpFor(entry, declaration, state),
       smtp: this.smtpFor(entry, declaration, state, async (mail) => {
         state.assertLive()
         const answer = await state.track(
@@ -1511,6 +1520,34 @@ export class ToolHost {
       signIn: async () => {
         if (grants === undefined) throw new ValetError('credential', 'not-granted')
         return this.gateFor(entry, grants, state).signIn(imap.credential, 'imap', imap.endpoint)
+      },
+      run: this.runFor(entry, declaration, state),
+    })
+  }
+
+  /**
+   * ctx.sftp for one call: the SFTP host behind the call's checks, signed in through the call's own
+   * CredentialGate, with the run's upload budget, and its connection recorded. Not-granted for any
+   * adapter but a protocol adapter with protocols.sftp and a backend.
+   */
+  private sftpFor(entry: Entry, declaration: ToolDeclaration, state: CallState): ToolContext['sftp'] {
+    const manifest = entry.definition.manifest
+    const sftp = manifest.protocols?.sftp
+    if (entry.sftp === undefined || sftp === undefined || runtimeOf(manifest) !== 'protocol')
+      return NO_SFTP_ACCESS
+    const grants = entry.credentialGrants
+    return new GuardedSftp({
+      adapterId: manifest.id,
+      manifest,
+      sideEffect: declaration.sideEffect,
+      site: entry.site,
+      state,
+      audit: (event) => this.record(event),
+      clock: this.clock,
+      backend: entry.sftp,
+      signIn: async () => {
+        if (grants === undefined) throw new ValetError('credential', 'not-granted')
+        return this.gateFor(entry, grants, state).signIn(sftp.credential, 'sftp', sftp.endpoint)
       },
       run: this.runFor(entry, declaration, state),
     })

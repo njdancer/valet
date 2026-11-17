@@ -112,6 +112,8 @@ export async function openTunnels(
           return
         }
         live.add(client)
+        // Request and reply protocols (SSH, IMAP) send small writes one at a time.
+        client.setNoDelay(true)
         endpointOf.set(client, key)
         client.once('close', () => {
           live.delete(client)

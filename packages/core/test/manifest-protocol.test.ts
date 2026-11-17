@@ -47,10 +47,12 @@ describe('runtime: protocol', () => {
     expect(ICLOUD_IMAP_ENDPOINT).toBe('imap.mail.me.com:993')
   })
 
-  it('needs protocols.imap or protocols.smtp', () => {
+  it('needs protocols.imap, protocols.smtp or protocols.sftp', () => {
     const input = copy()
     delete input.protocols
-    expect(issues(input)).toContain('a protocol adapter needs protocols.imap or protocols.smtp')
+    expect(issues(input)).toContain(
+      'a protocol adapter needs protocols.imap, protocols.smtp or protocols.sftp',
+    )
   })
 
   describe('protocols.smtp', () => {

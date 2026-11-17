@@ -1,11 +1,14 @@
-// A `protocol` adapter's `protocols` (docs/imap.md#the-manifest): the protocol clients Valet runs
-// for it. Workstream D owns `imap`, G owns `smtp`; SFTP joins later. Each names its endpoint and the
+// A `protocol` adapter's `protocols` (docs/imap.md#the-manifest, docs/sftp.md#the-manifest): the
+// protocol clients Valet runs for it. Workstream D owns `imap`, E owns `sftp`, G owns `smtp`. An
+// adapter uses mail (imap, smtp or both) or files (sftp). Each names its endpoint and the
 // kept credential Valet signs in with, which must be declared for exactly that protocol and
 // endpoint, so a grant of it covers one server and nothing else.
 
 import { z } from 'zod'
+import { canonicalAddress, isPrivateHostAddress, parseEndpoint } from './addresses'
 import { type CredentialDeclaration, isEndpoint } from './credential'
 import { folderAllowed } from './imap-policy'
+import { isSftpPath, rootAllows, SFTP_PURPOSE_RANK } from './sftp-policy'
 import { isMailAddress, recipientAllowed } from './smtp-policy'
 
 /** A folder name as the manifest writes it: no control characters, and no LIST wildcards. */
@@ -68,8 +71,67 @@ export const smtpProtocolSchema = z
   .strict()
 export type SmtpProtocol = z.infer<typeof smtpProtocolSchema>
 
+/** An SSH host key's fingerprint as `ssh-keygen -lf` prints it: SHA256: and 43 base64 characters. */
+export function isHostKeyFingerprint(value: unknown): value is string {
+  // 32 bytes are 43 characters with two spare bits at the end, which must be zero: the last
+  // character is one of these 16, so each digest has exactly one spelling.
+  return typeof value === 'string' && /^SHA256:[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]$/.test(value)
+}
+
+const sftpEndpoint = z
+  .string()
+  .max(106)
+  .refine((v) => {
+    if (!isEndpoint(v) || v.startsWith('[')) return false
+    const host = parseEndpoint(v)?.host ?? ''
+    // A name, or an address on the person's own network (a NAS): never a public address.
+    return canonicalAddress(host) === null || isPrivateHostAddress(host)
+  }, 'must be host:port with a host name, or a private address such as 192.168.1.20:22')
+
+export const sftpRootSchema = z
+  .object({
+    /** An absolute folder on the server, exactly as the server names it: no "..", no trailing "/". */
+    path: z
+      .string()
+      .max(140)
+      .refine(isSftpPath, 'an absolute path such as /volume1/photos, with no "." or ".." parts'),
+    /** The most a tool may do under it: read, write (undoable changes) or irreversible. */
+    access: z.enum(['read', 'write', 'irreversible']),
+  })
+  .strict()
+export type SftpRootDeclaration = z.infer<typeof sftpRootSchema>
+
+export const sftpProtocolSchema = z
+  .object({
+    /** The server, `host:port`: a host name, or a private address on the person's network. */
+    endpoint: sftpEndpoint,
+    /** The name of the kept `ssh-key` credential, in `credentials`, that Valet signs in with. */
+    credential: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
+    /**
+     * The server's host key, pinned: Valet refuses any other, before signing in. As `ssh-keygen -lf`
+     * prints it. Never trusted on first use.
+     */
+    hostKeySha256: z.string().refine(isHostKeyFingerprint, 'SHA256: and the 43-character base64 digest'),
+    /**
+     * The account to sign in as, when the credential's item has no username (a key Valet made has
+     * none). The item's own username wins when it has one.
+     */
+    username: z
+      .string()
+      .regex(/^[A-Za-z0-9_][A-Za-z0-9_.@-]{0,31}$/, 'at most 32 letters, digits and . _ @ -')
+      .optional(),
+    /** The folders tools may use, each with the most a tool may do there. The deepest one decides. */
+    roots: z.array(sftpRootSchema).min(1).max(20),
+  })
+  .strict()
+export type SftpProtocol = z.infer<typeof sftpProtocolSchema>
+
 export const protocolsSchema = z
-  .object({ imap: imapProtocolSchema.optional(), smtp: smtpProtocolSchema.optional() })
+  .object({
+    imap: imapProtocolSchema.optional(),
+    smtp: smtpProtocolSchema.optional(),
+    sftp: sftpProtocolSchema.optional(),
+  })
   .strict()
 export type Protocols = z.infer<typeof protocolsSchema>
 
@@ -92,10 +154,16 @@ export function protocolIssues(manifest: {
   if (manifest.requests.length > 0) issues.push('a protocol adapter declares no HTTP requests')
   const imap = manifest.protocols?.imap
   const smtp = manifest.protocols?.smtp
-  if (imap === undefined && smtp === undefined) {
-    issues.push('a protocol adapter needs protocols.imap or protocols.smtp')
+  const sftp = manifest.protocols?.sftp
+  if (imap === undefined && smtp === undefined && sftp === undefined) {
+    issues.push('a protocol adapter needs protocols.imap, protocols.smtp or protocols.sftp')
     return issues
   }
+  if (sftp !== undefined && (imap !== undefined || smtp !== undefined)) {
+    issues.push('a protocol adapter uses mail (imap, smtp) or files (sftp), not both')
+    return issues
+  }
+  if (sftp !== undefined) issues.push(...sftpIssues(sftp, manifest.credentials))
   if (imap !== undefined) {
     issues.push(...credentialIssues(manifest.credentials, 'imap', imap.credential, imap.endpoint))
     const folders = imap.folders ?? []
@@ -111,13 +179,60 @@ export function protocolIssues(manifest: {
     if (!('protocol' in c.use)) continue
     const used =
       (c.use.protocol === 'imap' && name === imap?.credential) ||
-      (c.use.protocol === 'smtp' && name === smtp?.credential)
-    if ((c.use.protocol === 'imap' || c.use.protocol === 'smtp') && !used)
+      (c.use.protocol === 'smtp' && name === smtp?.credential) ||
+      (c.use.protocol === 'sftp' && name === sftp?.credential)
+    if ((c.use.protocol === 'imap' || c.use.protocol === 'smtp' || c.use.protocol === 'sftp') && !used)
       issues.push(
         `credential ${name}: an ${c.use.protocol} credential that protocols.${c.use.protocol} doesn't use`,
       )
   }
   return issues
+}
+
+/**
+ * Why sftp's credential isn't a kept ssh-key for exactly its endpoint, and its roots' own issues.
+ */
+function sftpIssues(
+  sftp: SftpProtocol,
+  credentials: Readonly<Record<string, CredentialDeclaration>> | undefined,
+): string[] {
+  const issues: string[] = []
+  const credential =
+    credentials !== undefined && Object.hasOwn(credentials, sftp.credential)
+      ? credentials[sftp.credential]
+      : undefined
+  if (credential === undefined) {
+    issues.push(`protocols.sftp: credential ${sftp.credential} is not declared in credentials`)
+  } else if (
+    !('protocol' in credential.use) ||
+    credential.use.protocol !== 'sftp' ||
+    credential.use.endpoint !== sftp.endpoint ||
+    credential.custody !== 'kept' ||
+    credential.kind !== 'ssh-key'
+  ) {
+    issues.push(
+      `protocols.sftp: credential ${sftp.credential} must be a kept ssh-key for sftp at ${sftp.endpoint}`,
+    )
+  }
+  if (new Set(sftp.roots.map((r) => r.path)).size !== sftp.roots.length)
+    issues.push('protocols.sftp.roots lists a path twice')
+  return issues
+}
+
+/** The most any root allows, for the card's risk. */
+export function sftpWidestAccess(sftp: SftpProtocol): 'read' | 'write' | 'irreversible' {
+  return sftp.roots.reduce<'read' | 'write' | 'irreversible'>(
+    (widest, r) => (SFTP_PURPOSE_RANK[r.access] > SFTP_PURPOSE_RANK[widest] ? r.access : widest),
+    'read',
+  )
+}
+
+/** The host a protocol adapter reaches, as its pacing key's host: an IPv6 address in brackets. */
+export function protocolHost(protocols: Protocols): string | null {
+  const endpoint = protocols.imap?.endpoint ?? protocols.smtp?.endpoint ?? protocols.sftp?.endpoint
+  const parsed = endpoint === undefined ? null : parseEndpoint(endpoint)
+  if (parsed === null) return null
+  return parsed.host.includes(':') ? `[${parsed.host}]` : parsed.host
 }
 
 /** Why a protocol's credential isn't the kept password for exactly that protocol and endpoint. */
@@ -175,6 +290,27 @@ export function widenedImapFolders(
   if (now.folders === undefined) return was !== undefined && was.folders === undefined ? [] : 'every'
   if (was === undefined) return now.folders
   return now.folders.filter((f) => !folderAllowed(f, was.folders ?? null))
+}
+
+/**
+ * The SFTP roots `after` declares that `before` didn't allow at that access: a new root, or one
+ * that may now do more. Also every root when the server, account or pinned host key changed, since
+ * the same key then signs in somewhere else.
+ */
+export function widenedSftpRoots(
+  before: Protocols | undefined,
+  after: Protocols | undefined,
+): readonly string[] {
+  const now = after?.sftp
+  if (now === undefined) return []
+  const was = before?.sftp
+  const same =
+    was !== undefined &&
+    was.endpoint === now.endpoint &&
+    was.username === now.username &&
+    was.hostKeySha256 === now.hostKeySha256
+  if (!same) return now.roots.map((r) => r.path)
+  return now.roots.filter((r) => !rootAllows(r.path, was.roots, r.access)).map((r) => r.path)
 }
 
 /** The IMAP folders `before` allowed that `after` no longer lists (a narrowing). */

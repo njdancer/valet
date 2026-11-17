@@ -4,7 +4,7 @@
 // they do over the real channel, so a test that passes here passes in the app's tool process.
 // Not used by the app.
 
-import { isOperation, NeedsUserError, type ToolContext, ValetError } from '@valet/core'
+import { isOperation, isSftpOperation, NeedsUserError, type ToolContext, ValetError } from '@valet/core'
 import type { ToolProcessFactory } from './host'
 import { dispatchLocal } from './local-dispatch'
 import type { HostMessage, ProcessMessage, WireError } from './protocol'
@@ -53,6 +53,12 @@ async function answer(ctx: ToolContext, capability: string, args: readonly unkno
       if (ctx.imap === undefined || !isOperation(name) || !Array.isArray(list))
         throw new ValetError('tool-run', 'invalid')
       return (ctx.imap[name] as (...a: unknown[]) => Promise<unknown>).apply(ctx.imap, list)
+    }
+    case 'sftp.op': {
+      const [name, list] = args
+      if (ctx.sftp === undefined || !isSftpOperation(name) || !Array.isArray(list))
+        throw new ValetError('tool-run', 'invalid')
+      return (ctx.sftp[name] as (...a: unknown[]) => Promise<unknown>).apply(ctx.sftp, list)
     }
     case 'smtp.send':
       if (ctx.smtp === undefined) throw new ValetError('tool-run', 'not-granted')

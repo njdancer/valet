@@ -2,11 +2,19 @@
 // (docs/adapter-kinds.md#approval-cards-and-the-permission-diff), in the app's words. Computed by
 // the Mac from the old and new manifests; the agent that wrote the adapter never writes these.
 
+import { canonicalAddress, parseEndpoint } from './addresses'
 import { type DependencyLock, dependencySummary } from './dependencies'
 import { type AdapterManifest, type PrivateHost, type RuntimeKind, runtimeOf } from './manifest'
 import type { PermissionChange, Risk } from './permission-change'
-import { narrowedImapFolders, type Protocols, widenedImapFolders, widenedRecipients } from './protocols'
+import {
+  narrowedImapFolders,
+  type Protocols,
+  type SftpProtocol,
+  widenedImapFolders,
+  widenedRecipients,
+} from './protocols'
 import { privateHostKey } from './request-surface'
+import { rootAllows } from './sftp-policy'
 
 /** What a kind means, as the card says it. */
 export function describeRuntime(kind: RuntimeKind): string {
@@ -59,8 +67,8 @@ export function describePrivateHost(host: PrivateHost, kind: RuntimeKind = 'http
  * covers. Each added raw endpoint is high: Valet can't see inside the adapter's connections.
  */
 export function runtimePermissionChanges(
-  before: Pick<AdapterManifest, 'runtime' | 'privateHosts' | 'endpoints'> | null,
-  after: Pick<AdapterManifest, 'runtime' | 'privateHosts' | 'endpoints'>,
+  before: Pick<AdapterManifest, 'runtime' | 'privateHosts' | 'endpoints' | 'protocols'> | null,
+  after: Pick<AdapterManifest, 'runtime' | 'privateHosts' | 'endpoints' | 'protocols'>,
 ): PermissionChange[] {
   const changes: PermissionChange[] = []
   const was = before === null ? null : runtimeOf(before)
@@ -81,6 +89,82 @@ export function runtimePermissionChanges(
   const hosts = (m: typeof after | null) =>
     new Set((m?.privateHosts ?? []).map((h) => describePrivateHost(h, runtimeOf(m ?? {}))))
   diff('private-network', hosts(before), hosts(after))
+  changes.push(...sftpPermissionChanges(before?.protocols?.sftp ?? null, after.protocols?.sftp ?? null))
+  return changes
+}
+
+/**
+ * The SFTP server as the card says it: who Valet signs in as and where, then the pinned host key,
+ * as two items so each fits a card line whole.
+ */
+export function describeSftpServer(sftp: SftpProtocol): [string, string] {
+  const as = sftp.username === undefined ? '' : ` as ${sftp.username}`
+  const host = parseEndpoint(sftp.endpoint)?.host ?? ''
+  const local = canonicalAddress(host) === null ? '' : ' on your network'
+  return [`SFTP${as} to ${sftp.endpoint}${local}`, `host key ${sftp.hostKeySha256}`]
+}
+
+const ROOT_WORDS: Readonly<Record<SftpProtocol['roots'][number]['access'], string>> = {
+  read: 'Read files in',
+  write: 'Read, add, append to and rename files in',
+  irreversible: 'Read, add, append to, rename, replace and delete files in',
+}
+
+/** One root as the card says it. */
+export function describeSftpRoot(root: SftpProtocol['roots'][number]): string {
+  return `${ROOT_WORDS[root.access]} ${root.path === '/' ? '/ (everything this account can reach)' : root.path}`
+}
+
+const ROOT_RISK: Readonly<Record<SftpProtocol['roots'][number]['access'], Risk>> = {
+  read: 'low',
+  write: 'medium',
+  irreversible: 'high',
+}
+
+/** A root that may change everything the account reaches (`/`) is high, whatever else it allows. */
+function rootRisk(root: SftpProtocol['roots'][number]): Risk {
+  return root.path === '/' && root.access !== 'read' ? 'high' : ROOT_RISK[root.access]
+}
+
+/**
+ * The SFTP lines (docs/sftp.md#the-card): the server, under `private-network` (high) when it is
+ * an address on the person's own network and `egress` (medium) otherwise; then the roots under
+ * `requests`, each added at its own risk by the most it allows. A changed account, server or host
+ * key is a new server: the new one is added and the old one removed. Removals are low.
+ */
+export function sftpPermissionChanges(
+  before: SftpProtocol | null,
+  after: SftpProtocol | null,
+): PermissionChange[] {
+  const changes: PermissionChange[] = []
+  const areaOf = (sftp: SftpProtocol) =>
+    canonicalAddress(parseEndpoint(sftp.endpoint)?.host ?? '') === null ? 'egress' : 'private-network'
+  const was = before === null ? null : describeSftpServer(before)
+  const now = after === null ? null : describeSftpServer(after)
+  const same = was !== null && now !== null && was.join('\n') === now.join('\n')
+  if (now !== null && after !== null && !same) {
+    const area = areaOf(after)
+    changes.push({ area, change: 'added', items: now, risk: area === 'egress' ? 'medium' : 'high' })
+  }
+  if (was !== null && before !== null && !same)
+    changes.push({ area: areaOf(before), change: 'removed', items: was, risk: 'low' })
+  const had = new Map((before?.roots ?? []).map((r) => [describeSftpRoot(r), r]))
+  const has = new Map((after?.roots ?? []).map((r) => [describeSftpRoot(r), r]))
+  // A root the old list already allowed at that access (on the same server) is a narrowing, not a
+  // new permission: `/inbox` read where `/inbox` was write.
+  const covered = (r: SftpProtocol['roots'][number]) =>
+    same && before !== null && rootAllows(r.path, before.roots, r.access)
+  const fresh = [...has].filter(([text]) => !had.has(text))
+  for (const level of ['high', 'medium', 'low'] as const) {
+    const added = fresh.filter(([, r]) => !covered(r) && rootRisk(r) === level)
+    if (added.length > 0)
+      changes.push({ area: 'requests', change: 'added', items: added.map(([text]) => text), risk: level })
+  }
+  const narrowed = fresh.filter(([, r]) => covered(r)).map(([text]) => text)
+  if (narrowed.length > 0)
+    changes.push({ area: 'requests', change: 'narrowed', items: narrowed, risk: 'low' })
+  const removed = [...had.keys()].filter((text) => !has.has(text))
+  if (removed.length > 0) changes.push({ area: 'requests', change: 'removed', items: removed, risk: 'low' })
   return changes
 }
 
