@@ -15,20 +15,26 @@ const profile = nodeRuntimeProfile({
   tunnelPorts: [50000],
   forbidden: await forbiddenUnderHome(realpathSync(homedir())),
 })
-writeFileSync(join(temp, 'profile.sb'), profile)
 console.log(profile)
-for (const args of [
-  ['-e', 'console.log("plain ok")'],
-  ['--permission', `--allow-fs-read=${temp}`, '-e', 'console.log("perm ok", new Date().toString())'],
-]) {
-  const r = spawnSync(
-    '/usr/bin/sandbox-exec',
-    ['-f', join(temp, 'profile.sb'), realpathSync(process.execPath), ...args],
-    {
-      encoding: 'utf8',
-      env: { HOME: temp, TMPDIR: `${temp}/` },
-      cwd: temp,
-    },
-  )
-  console.log('status', r.status, r.signal, '\nstdout', r.stdout, '\nstderr', r.stderr.slice(0, 3000))
+const extras: [string, string][] = [
+  ['base', ''],
+  ['sysctl+root', '(allow sysctl-read (sysctl-name "security.mac.lockdown_mode_state") (sysctl-name "kern.bootargs"))\n(allow file-read-data (literal "/"))'],
+  ['+map-exec', '(allow sysctl-read (sysctl-name "security.mac.lockdown_mode_state") (sysctl-name "kern.bootargs"))\n(allow file-read-data (literal "/"))\n(allow file-map-executable)'],
+  ['+mach', '(allow sysctl-read (sysctl-name "security.mac.lockdown_mode_state") (sysctl-name "kern.bootargs"))\n(allow file-read-data (literal "/"))\n(allow file-map-executable)\n(allow mach-lookup)'],
+  ['+ipc-iokit', '(allow sysctl-read (sysctl-name "security.mac.lockdown_mode_state") (sysctl-name "kern.bootargs"))\n(allow file-read-data (literal "/"))\n(allow file-map-executable)\n(allow mach-lookup)\n(allow iokit-open)\n(allow ipc-posix-shm*)\n(allow ipc-posix-sem)\n(allow system-fsctl)\n(allow user-preference-read)\n(allow sysctl-read)'],
+  ['allow-default', '(allow default)'],
+]
+for (const [label, extra] of extras) {
+  writeFileSync(join(temp, 'profile.sb'), `${profile}\n${extra}\n`)
+  for (const args of [
+    ['-e', 'console.log("plain ok")'],
+    ['--permission', `--allow-fs-read=${temp}`, '-e', 'console.log("perm ok", new Date().toString())'],
+  ]) {
+    const r = spawnSync(
+      '/usr/bin/sandbox-exec',
+      ['-f', join(temp, 'profile.sb'), realpathSync(process.execPath), ...args],
+      { encoding: 'utf8', env: { HOME: temp, TMPDIR: `${temp}/` }, cwd: temp },
+    )
+    console.log(`[${label}] status`, r.status, r.signal, 'stdout', JSON.stringify(r.stdout), 'stderr', r.stderr.slice(0, 2000))
+  }
 }

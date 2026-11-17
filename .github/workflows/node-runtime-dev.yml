@@ -19,7 +19,9 @@ jobs:
       - name: profile probe denials
         run: |
           sleep 2
-          log show --last 3m --style compact --predicate 'eventMessage CONTAINS "node(" OR eventMessage CONTAINS "sandbox-exec("' | grep -i deny | sed -E 's/^[0-9: .-]+//' | sort | uniq -c | sort -rn | head -100 || true
+          log show --last 3m --style compact --predicate 'eventMessage CONTAINS "Sandbox:"' | sed -E 's/^[0-9: .-]+//; s/\([0-9]+\)//' | sort | uniq -c | sort -rn | head -150 || true
+          log show --last 3m --style compact --predicate 'process == "node" OR process == "ReportCrash"' | grep -iE "abort|crash|assert|fatal" | head -40 || true
+          for f in ~/Library/Logs/DiagnosticReports/node*.ips; do [ -f "$f" ] && head -c 15000 "$f"; echo; break; done || true
       - name: node-runtime tests
         run: |
           pnpm exec vitest run --project node-runtime 2>&1 | tee "$RUNNER_TEMP/out.txt"; exit "${PIPESTATUS[0]}"
