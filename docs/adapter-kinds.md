@@ -563,7 +563,7 @@ Taken while Nick was away, each the recommendation. Any can be changed.
 4. **The hub's token goes on the socket's upgrade**, as a kept credential. Hubs that want it in the
    first message (Home Assistant) can't be reached with a kept credential; that needs an entrusted
    one, which only `raw` may hold, or a "credential in a message" placeholder, which isn't built.
-5. **A raw example takes an optional `reply` input for its cases.** Raw cases have no network, and
+5. **A raw example takes an optional `caseReply` input for its cases.** Raw cases have no network, and
    the check needs a passing case that checks each tool's output, so the tool decodes a given
    answer instead of asking the cache. It's a read and only decodes what it is given. Scripted
    sockets for raw cases, like the http ones, would remove it.
@@ -573,6 +573,42 @@ Taken while Nick was away, each the recommendation. Any can be changed.
    the gate hand anything else, and the fixtures don't check headers.
 8. **Examples use `tool-run/not-found`** for a missing thing, as the authoring guide says. The blank
    http template used `tool-input` and now matches.
+
+### Red team (workstream H, 2026-11-17)
+
+A fresh agent attacked the case runner's credentials and scripted sockets, the socket-table change,
+`from: "example"`, the lock in the package hash, `.xml` fixtures and the examples. PoCs stay as
+`apps/desktop/test/main/examples.redteam.test.ts` and `registry-lock.redteam.test.ts`.
+
+Fixed:
+
+- **iCalendar property injection (medium).** `add_event`'s `title` and `location` could carry a lone
+  CR or U+2028, which some parsers read as a new line, so a calling agent could add `ATTENDEE` and
+  have iCloud email an invitation from the person's account. `escapeText` now escapes backslash
+  (it didn't) and every kind of line break, and drops other control characters; the inputs refuse
+  control characters and line breaks, as does `find_contacts`' name. `fold` counts UTF-8 octets and
+  never splits a character. A case covers the lone CR.
+- **Discovery could name any host (low).** `list_calendars` reported whatever server the DAV answer
+  named, and the README tells agents to add it to the credential's hosts. Both iCloud examples now
+  refuse a host outside `pNN-caldav.icloud.com` / `pNN-contacts.icloud.com`; the guide says to check
+  discovered hosts against the provider's pattern.
+- **The raw example's test input (low).** Renamed `reply` to `caseReply` so its purpose is plain to
+  anyone copying it.
+
+Held: the lock hash matches core's `adapterHashOf` with and without a lock and any change to it
+changes the hash; `snapshotIntact` catches a tampered, added or removed lock; reserved hash entries
+are refused; case credentials follow the real gate (hosts, https only, no hand-set header); a read
+tool can't open a write socket in a case; unexpected messages and unlisted sockets fail a case; only
+issued socket ids get the no-op close.
+
+Residual risks:
+
+- An installed `cache-reader` still accepts `caseReply`, so a caller can make `get_key` return what
+  it chose. No credential or network is involved. Scripted sockets for raw cases would remove it.
+- `TLS_OPTIONS` is exported so tests can add a CA; a copied version could add
+  `rejectUnauthorized: false`, which the approval card wouldn't show.
+- A case passes even when a scripted socket's `client` steps or its `fetch` entries go unused, so a
+  passing case is weaker evidence that a write tool sends what it should.
 
 ## Approval cards and the permission diff
 

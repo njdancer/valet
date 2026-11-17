@@ -5,7 +5,7 @@
       "tool": "get_key",
       "input": {
         "key": "weather:sydney",
-        "reply": "+OK\r\n$26\r\n{\"tempC\":24,\"sky\":\"sunny\"}\r\n"
+        "caseReply": "+OK\r\n$26\r\n{\"tempC\":24,\"sky\":\"sunny\"}\r\n"
       },
       "expect": {
         "output": {
@@ -19,7 +19,7 @@
       "tool": "get_key",
       "input": {
         "key": "nope",
-        "reply": "+OK\r\n$-1\r\n"
+        "caseReply": "+OK\r\n$-1\r\n"
       },
       "expect": {
         "output": {
@@ -33,7 +33,7 @@
       "tool": "get_key",
       "input": {
         "key": "secret:admin",
-        "reply": "+OK\r\n-NOPERM User reader has no permissions to access one of the keys used as arguments\r\n"
+        "caseReply": "+OK\r\n-NOPERM User reader has no permissions to access one of the keys used as arguments\r\n"
       },
       "expect": {
         "error": {
@@ -47,7 +47,7 @@
       "tool": "get_key",
       "input": {
         "key": "weather:sydney",
-        "reply": "-WRONGPASS invalid username-password pair or user is disabled.\r\n-NOAUTH Authentication required.\r\n"
+        "caseReply": "-WRONGPASS invalid username-password pair or user is disabled.\r\n-NOAUTH Authentication required.\r\n"
       },
       "expect": {
         "error": {
@@ -61,7 +61,7 @@
       "tool": "get_key",
       "input": {
         "key": "weather:sydney",
-        "reply": "HTTP/1.1 400 Bad Request\r\n\r\n"
+        "caseReply": "HTTP/1.1 400 Bad Request\r\n\r\n"
       },
       "expect": {
         "error": {
@@ -75,7 +75,7 @@
       "tool": "scan_keys",
       "input": {
         "pattern": "weather:*",
-        "reply": "+OK\r\n*2\r\n$1\r\n0\r\n*2\r\n$14\r\nweather:sydney\r\n$14\r\nweather:hobart\r\n"
+        "caseReply": "+OK\r\n*2\r\n$1\r\n0\r\n*2\r\n$14\r\nweather:sydney\r\n$14\r\nweather:hobart\r\n"
       },
       "expect": {
         "output": {
@@ -88,7 +88,7 @@
       "name": "a scan the cache hasn't finished",
       "tool": "scan_keys",
       "input": {
-        "reply": "+OK\r\n*2\r\n$2\r\n17\r\n*1\r\n$11\r\nqueue:depth\r\n"
+        "caseReply": "+OK\r\n*2\r\n$2\r\n17\r\n*1\r\n$11\r\nqueue:depth\r\n"
       },
       "expect": {
         "output": {

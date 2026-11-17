@@ -9,6 +9,9 @@ import { DAV, dav, escapeXml, hrefIn, responses, splitHref, textIn } from './dav
 import { readCard } from './vcard'
 
 const ENTRY = 'https://contacts.icloud.com'
+/** Text with no control characters or line breaks. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point
+const PLAIN = /^[^\u0000-\u001f\u007f\u0085\u2028\u2029]*$/
 /** The servers this version's manifest declares; keep in step with its egress. */
 const SERVERS = ['p01-contacts.icloud.com']
 const CARDDAV = 'urn:ietf:params:xml:ns:carddav'
@@ -36,7 +39,11 @@ async function addressBook(ctx: ToolContext): Promise<string> {
   )
   const href = hrefIn(responses(found)[0]?.prop ?? null, 'addressbook-home-set', CARDDAV)
   const home = href === null ? null : splitHref(href, 'contacts.icloud.com')
-  if (home === null || !/^\/[0-9]{1,20}\/carddavhome\/$/.test(home.path))
+  if (
+    home === null ||
+    !/^p[0-9]{2}-contacts\.icloud\.com$/.test(home.host) ||
+    !/^\/[0-9]{1,20}\/carddavhome\/$/.test(home.path)
+  )
     throw new ValetError('tool-run', 'unexpected-shape')
   // An account on a server this version doesn't name: a new version adds it (egress, the
   // credential's hosts and the requests), as list_calendars in the calendar example says.
@@ -65,7 +72,9 @@ async function addressBook(ctx: ToolContext): Promise<string> {
 
 export const tools = {
   find_contacts: tool({
-    input: z.object({ name: z.string().trim().min(2).max(60) }),
+    input: z.object({
+      name: z.string().trim().min(2).max(60).regex(PLAIN),
+    }),
     output: z.object({
       contacts: z.array(
         z.object({

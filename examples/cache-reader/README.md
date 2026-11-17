@@ -13,7 +13,7 @@ It ships without its dependency, as a draft would start: add it first with
 `valet_add_dependency` (`name: "redis-parser"`, `range: "3.0.0"`), which fetches it and its own
 dependency (redis-errors) and writes `valet-lock.json`, whose hashes the adapter's hash covers.
 
-A raw adapter's cases have no network, so each tool takes an optional `reply`: the cache's answer,
+A raw adapter's cases have no network, so each tool takes an optional `caseReply`: the cache's answer,
 decoded as if it had come back. A real call leaves it out. Live trials get no credential, so a
 trial of this example fails as `not-granted`: it works once the person approves it and grants the
 credential, ideally for an account that can only read.

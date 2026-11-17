@@ -15,6 +15,11 @@ import { readEvents, writeEvent } from './ics'
 const ENTRY = 'https://caldav.icloud.com'
 /** The servers this version's manifest declares; keep in step with its egress. */
 const SERVERS = ['p01-caldav.icloud.com']
+/** An iCloud CalDAV partition; nothing else is reported as the account's server. */
+const PARTITION = /^p[0-9]{2}-caldav\.icloud\.com$/
+/** Text with no control characters or line breaks, so it can't start a new iCalendar property. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point
+const PLAIN = /^[^\u0000-\u001f\u007f\u0085\u2028\u2029]*$/
 const CALDAV = 'urn:ietf:params:xml:ns:caldav'
 const APPLE = 'http://apple.com/ns/ical/'
 const CREDENTIAL = 'icloud'
@@ -52,7 +57,9 @@ async function home(ctx: ToolContext): Promise<Home> {
   )
   const href = hrefIn(responses(found)[0]?.prop ?? null, 'calendar-home-set', CALDAV)
   const at = href === null ? null : splitHref(href, 'caldav.icloud.com')
-  if (at === null || !/^\/[0-9]{1,20}\/calendars\/$/.test(at.path))
+  // Only ever name an iCloud partition: a server that points elsewhere is refused, so no one is
+  // told to add (and send the credential to) a host the provider doesn't own.
+  if (at === null || !PARTITION.test(at.host) || !/^\/[0-9]{1,20}\/calendars\/$/.test(at.path))
     throw new ValetError('tool-run', 'unexpected-shape')
   return { server: at.host, url: SERVERS.includes(at.host) ? `https://${at.host}${at.path}` : null }
 }
@@ -208,10 +215,10 @@ export const tools = {
   add_event: tool({
     input: z.object({
       calendar: z.string().regex(ID),
-      title: z.string().min(1).max(200),
+      title: z.string().min(1).max(200).regex(PLAIN),
       start: z.string().regex(UTC),
       end: z.string().regex(UTC),
-      location: z.string().min(1).max(200).optional(),
+      location: z.string().min(1).max(200).regex(PLAIN).optional(),
     }),
     output: z.object({ uid: z.string(), created: z.boolean() }),
     async run(ctx, input) {

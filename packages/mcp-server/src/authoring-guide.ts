@@ -151,6 +151,12 @@ no page: tool code reaches the network only through \`ctx.http\`, and \`ctx.page
   \`ctx.http.fetch(url, { credential: 'icloud' })\`, or \`ctx.http.websocket(url, { credential: 'hub' })\`
   for the socket's upgrade. It goes only to the hosts it names, only over https. The person grants it
   once they approve the adapter; until then, and in live trials, the call fails \`tool-run/not-granted\`.
+  A credential's hosts belong to the same provider: when a server's answer names another host
+  (CalDAV discovery does), check it against that provider's pattern before reporting or using it.
+- Input text that goes into a line-based format (iCalendar, vCard, RESP, SMTP) must not be able to
+  start a new line: refuse control characters and line breaks in the schema
+  (\`.regex(/^[^\\u0000-\\u001f\\u007f\\u0085\\u2028\\u2029]*$/)\`) and escape every kind of line break
+  when writing, as \`examples/icloud-calendar/src/ics.ts\` does.
 - WebDAV methods are declared like any other: \`PROPFIND\`, \`REPORT\` (both may be reads), \`MKCOL\`,
   \`MKCALENDAR\`, \`COPY\` and \`MOVE\` (writes at least).
 - A WebSocket is a GET declaration with \`"websocket": true\`, opened with its https:// (or http://)
@@ -213,7 +219,7 @@ under src/. It has no page, no \`ctx.http\` and no \`ctx.local\`.
   it. From then on, the call may reach only that credential's endpoints: a connection to any other
   closes, and the call fails. The value and its encodings are removed from the tool's output.
 - Cases run with no network at all: give the data in the input (the cache-reader example takes an
-  optional \`reply\` for this). Live trials reach the public endpoints only, with a read's upload
+  optional \`caseReply\` for this). Live trials reach the public endpoints only, with a read's upload
   budget and no credential.
 
 ## Cases

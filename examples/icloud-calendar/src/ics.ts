@@ -24,19 +24,41 @@ export function unescapeText(value: string): string {
   return value.replace(/\\([\\;,nN])/g, (_m, c: string) => (c === 'n' || c === 'N' ? '\n' : c))
 }
 
+/**
+ * TEXT escaped for a property value. Backslash first, then `;` and `,`; every kind of line break
+ * becomes `\n` and other control characters are dropped, so no input can start a new property
+ * (a lone CR or U+2028 would let a title add an ATTENDEE, and iCloud would email an invitation).
+ */
 export function escapeText(value: string): string {
-  return value.replace(/[\;,]/g, (c) => `\\${c}`).replace(/\r?\n/g, '\\n')
+  return (
+    value
+      .replace(/[\\;,]/g, (c) => `\\${c}`)
+      .replace(/\r\n|[\r\n\u0085\u2028\u2029]/g, '\\n')
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point
+      .replace(/[\u0000-\u001f\u007f]/g, '')
+  )
 }
 
-/** Folds a content line at 73 octets, as RFC 5545 asks (75 with the CRLF and the space). */
+/**
+ * Folds a content line at 73 octets of UTF-8, as RFC 5545 asks (75 with the CRLF and the space),
+ * never inside a character.
+ */
 export function fold(line: string): string {
   const out: string[] = []
-  let rest = line
-  while (rest.length > 73) {
-    out.push(rest.slice(0, 73))
-    rest = rest.slice(73)
+  let current = ''
+  let octets = 0
+  for (const ch of line) {
+    const cp = ch.codePointAt(0) ?? 0
+    const size = cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4
+    if (octets + size > 73) {
+      out.push(current)
+      current = ''
+      octets = 0
+    }
+    current += ch
+    octets += size
   }
-  out.push(rest)
+  out.push(current)
   return out.join('\r\n ')
 }
 

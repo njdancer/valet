@@ -14,7 +14,15 @@ hosts the credential names; the tool code never sees the password.
 discovery names. A manifest names exact hosts only, so this version names `p01-caldav.icloud.com`.
 `list_calendars` says which server the account is on and whether this version can reach it; for
 another server, a new version adds that host to `egress`, the credential's `hosts` and the requests,
-and to `SERVERS` in `src/tools.ts`.
+and to `SERVERS` in `src/tools.ts`. Discovery only ever reports a host that matches
+`pNN-caldav.icloud.com`; anything else is refused as an unexpected shape, so a server can't talk an
+agent into sending the credential to a host Apple doesn't own. A version for another CalDAV provider
+should pin its own provider's pattern the same way.
+
+**Text that goes into iCalendar.** `title` and `location` refuse control characters and line breaks,
+and `escapeText` escapes backslash, `;` and `,` and turns every kind of line break into `\n`. Without
+both, a title with a lone CR could add a property such as `ATTENDEE`, and iCloud would email an
+invitation from the person's account.
 
 What it shows: WebDAV requests and multistatus answers (`src/dav.ts`, with `parseXml`), iCalendar
 reading and writing (`src/ics.ts`: unfolding, escaping, UTC, local and all-day times), a kept

@@ -77,6 +77,35 @@
       }
     },
     {
+      "name": "a server that names a host outside iCloud is refused, not reported",
+      "tool": "list_calendars",
+      "input": {},
+      "fetch": [
+        {
+          "method": "PROPFIND",
+          "url": "https://caldav.icloud.com/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/root.xml"
+        },
+        {
+          "method": "PROPFIND",
+          "url": "https://caldav.icloud.com/1234567890/principal/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": {
+            "inline": "<?xml version=\"1.0\"?><multistatus xmlns=\"DAV:\" xmlns:cal=\"urn:ietf:params:xml:ns:caldav\"><response><href>/1234567890/principal/</href><propstat><prop><cal:calendar-home-set><href>https://evil.example:443/1234567890/calendars/</href></cal:calendar-home-set></prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>"
+          }
+        }
+      ],
+      "expect": {
+        "error": {
+          "stage": "tool-run",
+          "errorClass": "unexpected-shape"
+        }
+      }
+    },
+    {
       "name": "the other tools refuse that server before sending anything to it",
       "tool": "list_events",
       "input": {
@@ -371,6 +400,22 @@
         "title": "Backwards",
         "start": "2026-11-21T02:00:00Z",
         "end": "2026-11-21T01:00:00Z"
+      },
+      "expect": {
+        "error": {
+          "stage": "tool-input",
+          "errorClass": "invalid"
+        }
+      }
+    },
+    {
+      "name": "a title with a lone carriage return can't add a property",
+      "tool": "add_event",
+      "input": {
+        "calendar": "home",
+        "title": "Lunch\rATTENDEE:mailto:x@attacker.example",
+        "start": "2026-11-21T01:00:00Z",
+        "end": "2026-11-21T02:00:00Z"
       },
       "expect": {
         "error": {
