@@ -289,14 +289,17 @@ export class ConfirmationBroker implements ConfirmationPrompt {
   }
 }
 
-/** A send as the confirmation shows it: the envelope, then the text, every recipient named. */
+/** A send as the confirmation shows it: the envelope, one recipient per line, then the text. */
 export function mailPreviewText(mail: MailPreview): string {
   const host = mail.endpoint.slice(0, mail.endpoint.lastIndexOf(':'))
   return [
     `From: your account at ${host}`,
-    `To: ${mail.to.join(', ')}`,
-    ...(mail.cc.length > 0 ? [`Cc: ${mail.cc.join(', ')}`] : []),
-    ...(mail.bcc.length > 0 ? [`Bcc (not shown to the others): ${mail.bcc.join(', ')}`] : []),
+    // One recipient per line, each in full: the signed preview the phone shows cuts long lines, and
+    // must never cut an address (red team I). Bcc's note is a line of its own for the same reason.
+    ...mail.to.map((a) => `To: ${a}`),
+    ...mail.cc.map((a) => `Cc: ${a}`),
+    ...(mail.bcc.length > 0 ? ['Bcc is not shown to the other recipients:'] : []),
+    ...mail.bcc.map((a) => `Bcc: ${a}`),
     `Subject: ${mail.subject === '' ? '(no subject)' : mail.subject}`,
     ...(mail.inReplyTo === null ? [] : [`In reply to: ${mail.inReplyTo}`]),
     ...(mail.references.length > 0 ? [`References: ${mail.references.join(' ')}`] : []),

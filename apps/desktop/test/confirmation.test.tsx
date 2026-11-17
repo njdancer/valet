@@ -294,7 +294,7 @@ describe('the confirmation window', () => {
       input: [
         {
           kind: 'text',
-          text: 'From: your account at smtp.mail.me.com\nTo: ann@example.com\nBcc (not shown to the others): bo@example.com\nSubject: Hello\n\nHi Ann',
+          text: 'From: your account at smtp.mail.me.com\nTo: ann@example.com\nBcc is not shown to the other recipients:\nBcc: bo@example.com\nSubject: Hello\n\nHi Ann',
         },
       ],
     }
@@ -303,7 +303,7 @@ describe('the confirmation window', () => {
     expect(send.className).toContain('bg-danger-solid')
     expect(screen.getByText(/It wants to send the email below/)).toBeTruthy()
     expect(screen.getByTitle('The email, exactly as Valet will send it').textContent).toContain(
-      'Bcc (not shown to the others): bo@example.com',
+      'Bcc: bo@example.com',
     )
     expect(screen.getByText(/Every recipient, Bcc included, is listed above/)).toBeTruthy()
     expect(screen.queryByText('Input from the client')).toBeNull()

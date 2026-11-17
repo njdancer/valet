@@ -40,7 +40,7 @@ describe('the generated profile', () => {
     expect(profile).not.toContain('iokit')
     // The network: the tunnels' ports on loopback, once each, and nothing else.
     expect(profile).toContain(
-      '(allow network-outbound (remote ip "localhost:50123") (remote ip "localhost:50124"))',
+      '(allow network-outbound (remote tcp4 "localhost:50123") (remote tcp4 "localhost:50124"))',
     )
     expect(profile.match(/network/g)).toHaveLength(1)
     expect(profile).not.toContain('network-bind')
@@ -185,10 +185,21 @@ describe.runIf(mac)('Seatbelt alone, on macOS', () => {
       { name: 'internet', action: 'connect', host: '1.1.1.1', port: 443 },
       { name: 'v6', action: 'connect', host: '::1', port: other.port },
       { name: 'udp', action: 'udp', host: '127.0.0.1', port: 53 },
+      // The tunnel's own number over UDP or IPv6 reaches some other socket (red team I, XK-4).
+      { name: 'udpTunnelPort', action: 'udp', host: '127.0.0.1', port: 'tunnel' },
+      { name: 'v6TunnelPort', action: 'connect', host: '::1', port: 'tunnel' },
       { name: 'mDNSResponder', action: 'unix', path: '/var/run/mDNSResponder' },
     ])
     expect(results['tunnel']).toBe('ok')
-    for (const name of ['otherLoopback', 'internet', 'v6', 'udp', 'mDNSResponder'])
+    for (const name of [
+      'otherLoopback',
+      'internet',
+      'v6',
+      'udp',
+      'udpTunnelPort',
+      'v6TunnelPort',
+      'mDNSResponder',
+    ])
       expect([name, results[name]]).toEqual([name, 'EPERM'])
     expect(other.received).toEqual([])
   })

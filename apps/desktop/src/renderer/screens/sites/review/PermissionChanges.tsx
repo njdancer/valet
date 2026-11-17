@@ -13,6 +13,7 @@ import {
   limitsLoosened,
   probeChanged,
   probeText,
+  reachLines,
   requestsByPurpose,
   reviewLogsIn,
   secretChanges,
@@ -159,6 +160,31 @@ export function PermissionChanges({ review }: { readonly review: PendingReview }
   const login = reviewLogsIn(review)
   return (
     <div className="flex flex-col">
+      {reachLines(diff).length > 0 ? (
+        <Section title="What kind of adapter it is, and what it reaches">
+          {reachLines(diff).map((line) =>
+            line.items.map((item) =>
+              line.change === 'added' || line.change === 'widened' ? (
+                <Added
+                  key={`${line.change}-${item}`}
+                  tone="write"
+                  tag={
+                    line.risk === 'low' || line.risk === 'medium'
+                      ? line.change
+                      : `${line.change}, ${line.risk}`
+                  }
+                >
+                  <span>{item}</span>
+                </Added>
+              ) : (
+                <Removed key={`${line.change}-${item}`}>
+                  <span>{item}</span>
+                </Removed>
+              ),
+            ),
+          )}
+        </Section>
+      ) : null}
       <Section title="Web addresses its tools may contact">
         {diff.egress.unchanged.length > 0 ? (
           <Unchanged>
@@ -559,6 +585,10 @@ function LimitsRow({ before, after }: { readonly before: LimitsInfo; readonly af
   if (before.cooldownSeconds !== after.cooldownSeconds) {
     parts.push(`Cool-down ${before.cooldownSeconds / 60} → ${after.cooldownSeconds / 60} min`)
   }
+  const [readWas, readNow] = [before.uploadBytesPerRun ?? 0, after.uploadBytesPerRun ?? 0]
+  if (readWas !== readNow) parts.push(`A read may send ${readWas} → ${readNow} bytes`)
+  const [writeWas, writeNow] = [before.writeUploadBytesPerRun ?? 0, after.writeUploadBytesPerRun ?? 0]
+  if (writeWas !== writeNow) parts.push(`A write may send ${writeWas} → ${writeNow} bytes`)
   if (before.maxCooldownSeconds !== after.maxCooldownSeconds) {
     parts.push(`Longest cool-down ${before.maxCooldownSeconds / 60} → ${after.maxCooldownSeconds / 60} min`)
   }

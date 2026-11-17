@@ -19,7 +19,9 @@ import {
   exceptionRisk,
   messagesSourcesIn,
   type OtpSource,
+  protocolPermissionChanges,
   runtimeOf,
+  runtimePermissionChanges,
   type SandboxDeclaration,
   type SandboxException,
   settingToolNames,
@@ -298,6 +300,7 @@ export function permissionDiff(before: AdapterManifest | null, after: AdapterMan
     limits: before === null ? null : { before: limitsInfo(before), after: limitsInfo(after) },
     probe: before === null ? null : { before: probeInfo(before), after: probeInfo(after) },
     sandbox: sandboxDiff(before, after),
+    reach: [...runtimePermissionChanges(before, after), ...protocolPermissionChanges(before, after)],
   }
 }
 
@@ -351,6 +354,7 @@ export function addsPermissions(diff: PermissionDiff): boolean {
   ]
   if (lists.some((list) => list.added.length > 0)) return true
   if (diff.sandbox.becameUnsandboxed || diff.sandbox.exceptions.some((e) => e.change === 'added')) return true
+  if (reachWidens(diff)) return true
   // A removed needsUser, fail or assertLoggedIn takes a stop out of the login.
   if (diff.authSteps.removed.some((s) => ['needsUser', 'fail', 'assertLoggedIn'].includes(s.op))) return true
   if (diff.limits !== null) {
@@ -359,11 +363,18 @@ export function addsPermissions(diff: PermissionDiff): boolean {
       after.requestsPerRun > before.requestsPerRun ||
       after.minGapMs < before.minGapMs ||
       after.cooldownSeconds < before.cooldownSeconds ||
-      after.maxCooldownSeconds < before.maxCooldownSeconds
+      after.maxCooldownSeconds < before.maxCooldownSeconds ||
+      (after.uploadBytesPerRun ?? 0) > (before.uploadBytesPerRun ?? 0) ||
+      (after.writeUploadBytesPerRun ?? 0) > (before.writeUploadBytesPerRun ?? 0)
     )
       return true
   }
   return diff.probe !== null && canonicalJson(diff.probe.before) !== canonicalJson(diff.probe.after)
+}
+
+/** Whether the kind, its endpoints, private hosts or protocol scope reach further (red team I). */
+export function reachWidens(diff: PermissionDiff): boolean {
+  return (diff.reach ?? []).some((c) => c.change === 'added' || c.change === 'widened')
 }
 
 /** The manifest as the review screen's text diff shows it: canonical keys, two-space JSON. */
