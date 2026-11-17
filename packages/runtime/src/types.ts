@@ -82,7 +82,11 @@ export interface AuthRunRequest {
  */
 export type AuthRunner = (request: AuthRunRequest) => Promise<AuthOutcome>
 
-export type ConfirmationAnswer = 'approved' | 'declined' | 'timed-out'
+/**
+ * How a confirmation ended. `cancelled`: nobody answered before the call itself was stopped (the
+ * agent went away or was revoked, or the app is quitting); the call doesn't go ahead.
+ */
+export type ConfirmationAnswer = 'approved' | 'declined' | 'timed-out' | 'cancelled'
 
 /**
  * How the MCP client reached the endpoint: through the stdio bridge, or plain HTTP. A label for the

@@ -157,6 +157,8 @@ export type WithdrawReason =
   | 'client-revoked'
   | 'wrong-codes'
   | 'restarted'
+  /** The call an app-raised request was made for ended before anyone answered it. */
+  | 'call-cancelled'
 
 export type RequestRefusal =
   | 'locked-down'
@@ -585,12 +587,19 @@ export class ApprovalBroker {
     })
   }
 
-  /** The asker takes its own request back. Nobody can withdraw another's. */
-  withdraw(requestId: string, asker: Requester): Promise<boolean> {
+  /**
+   * The asker takes its own request back. Nobody can withdraw another's. The app may say why when
+   * it wasn't its own choice: the call the request was for was cancelled, or its agent revoked.
+   */
+  withdraw(
+    requestId: string,
+    asker: Requester,
+    reason: Extract<WithdrawReason, 'asker' | 'call-cancelled' | 'client-revoked'> = 'asker',
+  ): Promise<boolean> {
     return this.exclusive(async () => {
       const request = this.pending.get(requestId)
       if (request === undefined || !sameAsker(request.request.requester, asker)) return false
-      await this.close(request, 'withdrawn', null, 'asker')
+      await this.close(request, 'withdrawn', null, reason)
       return true
     })
   }

@@ -367,8 +367,86 @@ export type AuditEvent =
       readonly tool: string
       readonly client: string
       readonly callId: string
-      readonly answer: 'approved' | 'declined' | 'timed-out'
+      /**
+       * `declined`: the person said no (or the confirmation couldn't be asked). `cancelled`: nobody
+       * answered before the call itself ended: the agent went away, the person revoked it, or the
+       * app quit. Records from before `cancelled` say `declined` for those too.
+       */
+      readonly answer: 'approved' | 'declined' | 'timed-out' | 'cancelled'
     }
+  | {
+      /**
+       * The person added an app (a local MCP client) in Valet, which issued it a token. Its name is
+       * the person's own text and isn't recorded; the id is, as tool-called records the client.
+       */
+      readonly type: 'client-added'
+      /** `local:<id>`. */
+      readonly clientId: string
+    }
+  | {
+      /** The person revoked an app: its token is gone and its sessions and waiting requests ended. */
+      readonly type: 'client-revoked'
+      readonly clientId: string
+    }
+  | {
+      /** The person reset an app's access: it was issued a new token and its sessions ended. */
+      readonly type: 'client-reset'
+      readonly clientId: string
+    }
+  | {
+      /**
+       * The person changed what an app may do besides calling site tools (See Valet, All activity,
+       * Ask for changes). The capabilities that were on before and after, by fixed name.
+       */
+      readonly type: 'client-access-changed'
+      readonly clientId: string
+      readonly before: readonly ClientCapability[]
+      readonly after: readonly ClientCapability[]
+    }
+  | {
+      /** The person turned back on a site tool the app had turned off for itself. */
+      readonly type: 'client-tool-on'
+      readonly clientId: string
+      /** `<adapterId>.<tool>`. */
+      readonly tool: string
+    }
+  | {
+      /** The person paused Valet from the menu (every call refused until resumed), or resumed it. */
+      readonly type: 'app-paused'
+      readonly paused: boolean
+    }
+  | {
+      /**
+       * The MCP endpoint refused a tools/call before any tool ran: a tool name this session doesn't
+       * offer, or arguments its input schema refuses. The argument values are never recorded. A
+       * refusal of a site tool's arguments is recorded as tool-called and tool-finished instead, as
+       * the app's other refusals are; this is for the ones no site tool can be named for.
+       */
+      readonly type: 'call-refused'
+      /** The client's self-reported name, flattened and cut as tool-called's. */
+      readonly client: string
+      /** `local:<id>` or `remote:<id>`, as tool-called records it; absent without a credential. */
+      readonly clientId?: string
+      /** The name the client asked for, if it is a well-formed tool name; else `(invalid)`. */
+      readonly tool: string
+      readonly reason: CallRefusal
+    }
+  | {
+      /**
+       * More refused calls came from one client than are recorded one by one (a client in a loop):
+       * how many in the window weren't recorded individually.
+       */
+      readonly type: 'refusals-dropped'
+      readonly client: string
+      readonly clientId?: string
+      readonly count: number
+    }
+
+/** What an app may do besides calling site tools, as the audit log names it. */
+export type ClientCapability = 'see-valet' | 'all-activity' | 'ask-for-changes'
+
+/** Why the MCP endpoint refused a call before it ran. */
+export type CallRefusal = 'unknown-tool' | 'invalid-input'
 
 export interface AuditRecord {
   readonly seq: number

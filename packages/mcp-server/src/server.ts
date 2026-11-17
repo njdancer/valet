@@ -1,6 +1,10 @@
 // One MCP server per client connection, exposing the caller's tools. The server never throws out of
 // a tool handler: the SDK would send the exception message to the client, and exception messages
 // can carry page text.
+//
+// The SDK answers some tools/call requests itself, before any handler here runs: a name the
+// session doesn't offer, or arguments its input schema refuses. Those answers are left as the SDK
+// words them, but each is reported to the caller (refusedByProtocol) so the audit log records it.
 
 import { randomUUID } from 'node:crypto'
 import { McpServer, type RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -11,7 +15,7 @@ import { type AdminReader, registerAdminTools } from './admin-tools'
 import type { ClientIdentity } from './auth'
 import { type Authoring, registerAuthoringTools } from './authoring-tools'
 import { failedResult, type ResultContext, toolResult } from './results'
-import type { CallOutcome, ClientTransport, ListedTool, ToolCaller } from './tool-caller'
+import type { CallOutcome, ClientTransport, ListedTool, ProtocolRefusal, ToolCaller } from './tool-caller'
 import { type ExposedTool, planTools, type SkippedTool, type ToolPlan } from './tool-names'
 
 export interface ServerInfo {
@@ -132,6 +136,40 @@ export interface ValetMcpServer {
   refresh(): readonly SkippedTool[]
   /** Replaces the tools with an already-made plan, so several sessions can share one listing. */
   apply(plan: ToolPlan): void
+  /**
+   * Before the session closes: every site call still running is answered at once, as aborted, and
+   * its run in the runtime is aborted too. Resolves once those answers are handed to the transport
+   * (or after END_CALLS_MS), so a client whose access is withdrawn hears an error rather than waiting
+   * on a stream that just ends. Calls made after it are answered the same way.
+   */
+  endCalls(): Promise<void>
+}
+
+/** How long endCalls waits for the answers it forced to be sent. */
+export const END_CALLS_MS = 2_000
+
+/** MCP's tool-name characters, at most MAX_TOOL_NAME_LENGTH of them. */
+const TOOL_NAME = /^[A-Za-z0-9_.-]{1,128}$/
+
+/**
+ * A tool name a client asked for, as the audit log may record it: the name itself when it is a
+ * well-formed tool name, else `(invalid)`. A client can still choose it, as it chooses its own name,
+ * but it can't carry spaces, markup or control characters.
+ */
+export function requestedToolName(name: unknown): string {
+  return typeof name === 'string' && TOOL_NAME.test(name) ? name : '(invalid)'
+}
+
+/** The SDK's request handlers, as its Protocol keeps them (a private Map, by method). */
+type RequestHandler = (request: unknown, extra: object) => Promise<unknown>
+
+function sdkHandlers(server: McpServer): Map<string, RequestHandler> | null {
+  const handlers = (server.server as unknown as { readonly _requestHandlers?: unknown })._requestHandlers
+  return handlers instanceof Map ? (handlers as Map<string, RequestHandler>) : null
+}
+
+function isErrorResult(result: unknown): boolean {
+  return typeof result === 'object' && result !== null && (result as { isError?: unknown }).isError === true
 }
 
 const MAX_CLIENT_NAME_LENGTH = 100
@@ -154,6 +192,101 @@ export function createMcpServer(
     },
   )
 
+  // Ended by endCalls(), before the session closes.
+  const ending = new AbortController()
+  /** Resolves to null once endCalls() is called, unless `work` settles first. */
+  const untilEnding = <T>(work: Promise<T>): Promise<T | null> => {
+    if (ending.signal.aborted) return Promise.resolve(null)
+    let onEnd: (() => void) | undefined
+    const ended = new Promise<null>((resolve) => {
+      onEnd = () => resolve(null)
+      ending.signal.addEventListener('abort', onEnd, { once: true })
+    })
+    return Promise.race([work, ended]).finally(() => {
+      if (onEnd !== undefined) ending.signal.removeEventListener('abort', onEnd)
+    })
+  }
+
+  // Every tool this session registers (its site tools and Valet's own), by name: a site tool with
+  // what it lists, Valet's own with null. And the requests a tool's handler ran for: a tools/call
+  // answered with an error that no handler ran for is one the SDK refused.
+  const known = new Map<string, ListedTool | null>()
+  const ran = new WeakSet<object>()
+  const registerTool = server.registerTool.bind(server) as (...args: unknown[]) => RegisteredTool
+  server.registerTool = ((name: string, config: unknown, callback: (...args: unknown[]) => unknown) => {
+    const tool = registerTool(name, config, (...args: unknown[]) => {
+      // The SDK passes the request's extra last, the very object the tools/call handler got.
+      const extra = args.at(-1)
+      if (typeof extra === 'object' && extra !== null) ran.add(extra)
+      return callback(...args)
+    })
+    known.set(name, null)
+    const remove = tool.remove.bind(tool)
+    tool.remove = () => {
+      known.delete(name)
+      remove()
+    }
+    return tool
+  }) as typeof server.registerTool
+
+  const refused = async (request: unknown): Promise<void> => {
+    const name = (request as { readonly params?: { readonly name?: unknown } } | null)?.params?.name
+    const offered = typeof name === 'string' && known.has(name)
+    const listed = offered ? (known.get(name) ?? null) : null
+    const refusal: ProtocolRefusal = {
+      reason: offered ? 'invalid-input' : 'unknown-tool',
+      name: requestedToolName(name),
+      ...(listed === null ? {} : { tool: { adapterId: listed.adapterId, tool: listed.declaration.name } }),
+      client: clientLabel(server.server.getClientVersion()?.name),
+      ...(options.identity === undefined ? {} : { identity: options.identity }),
+      ...(options.transport === undefined ? {} : { transport: options.transport }),
+      callId: newCallId(),
+    }
+    try {
+      await caller.refusedByProtocol?.(refusal)
+    } catch {
+      // A refusal that can't be recorded is still a refusal.
+    }
+  }
+
+  // The SDK's own tools/call handler, wrapped: the answer is the SDK's, unchanged, and a refusal is
+  // recorded before the client hears it. The handler is in place from construction, because the
+  // tools capability is declared up front.
+  const inFlight = new Set<Promise<unknown>>()
+  const handlers = sdkHandlers(server)
+  const sdkCall = handlers?.get('tools/call')
+  if (handlers !== null && sdkCall !== undefined) {
+    handlers.set('tools/call', (request, extra) => {
+      const answered = (async () => {
+        const result = await sdkCall(request, extra)
+        if (isErrorResult(result) && !ran.has(extra)) await refused(request)
+        return result
+      })()
+      inFlight.add(answered)
+      void answered.then(
+        () => inFlight.delete(answered),
+        () => inFlight.delete(answered),
+      )
+      return answered
+    })
+  }
+
+  const endCalls = async (): Promise<void> => {
+    ending.abort()
+    if (inFlight.size === 0) return
+    let timer: NodeJS.Timeout | undefined
+    await Promise.race([
+      Promise.allSettled([...inFlight]),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, END_CALLS_MS)
+        timer.unref()
+      }),
+    ])
+    clearTimeout(timer)
+    // The protocol sends each answer just after its handler settles.
+    await new Promise<void>((resolve) => setImmediate(resolve))
+  }
+
   const handle = async (listed: ListedTool, args: unknown, signal: AbortSignal): Promise<CallToolResult> => {
     const structured = listed.output instanceof z.ZodObject
     const callId = newCallId()
@@ -165,18 +298,21 @@ export function createMcpServer(
       ...(options.timeZone === undefined ? {} : { timeZone: options.timeZone }),
       ...(options.now === undefined ? {} : { now: options.now }),
     }
-    let outcome: CallOutcome
+    let outcome: CallOutcome | null
     try {
-      outcome = await caller.call({
-        adapterId: listed.adapterId,
-        tool: listed.declaration.name,
-        input: args,
-        client: clientLabel(server.server.getClientVersion()?.name),
-        callId,
-        signal,
-        ...(options.transport === undefined ? {} : { transport: options.transport }),
-        ...(options.identity === undefined ? {} : { identity: options.identity }),
-      })
+      outcome = await untilEnding(
+        caller.call({
+          adapterId: listed.adapterId,
+          tool: listed.declaration.name,
+          input: args,
+          client: clientLabel(server.server.getClientVersion()?.name),
+          callId,
+          // The session ending stops the run too, as the client going away would.
+          signal: AbortSignal.any([signal, ending.signal]),
+          ...(options.transport === undefined ? {} : { transport: options.transport }),
+          ...(options.identity === undefined ? {} : { identity: options.identity }),
+        }),
+      )
     } catch (error) {
       // A runtime that throws rather than returns needsUser still gets the person asked, not a failure.
       if (error instanceof NeedsUserError)
@@ -184,6 +320,8 @@ export function createMcpServer(
       const { stage, errorClass } = toReportable(error, 'tool-run')
       return failedResult(stage, errorClass, context)
     }
+    // The session is ending: answered now, as the runtime will end the run (aborted).
+    if (outcome === null) return failedResult('tool-run', 'aborted', context)
     if (outcome.status !== 'ok') return toolResult(outcome, structured, context)
     const checked = await checkedOutput(listed.output, outcome.output)
     if (!checked.valid) return failedResult('tool-output', 'invalid', context)
@@ -194,7 +332,7 @@ export function createMcpServer(
     // planTools only exposes tools whose input is an object schema.
     const input = listed.input as z.ZodObject
     const output = listed.output instanceof z.ZodObject ? listed.output : undefined
-    return server.registerTool(
+    const tool = server.registerTool(
       name,
       {
         title: listed.declaration.title,
@@ -212,6 +350,8 @@ export function createMcpServer(
         }
       },
     )
+    known.set(name, listed)
+    return tool
   }
 
   // Before any site tool, and never removed by apply(): planTools withholds every site tool whose
@@ -243,7 +383,7 @@ export function createMcpServer(
     return plan.skipped
   }
   refresh()
-  return { server, refresh, apply }
+  return { server, refresh, apply, endCalls }
 }
 
 /**

@@ -55,6 +55,7 @@ import {
   type NeedsYouHint,
   normaliseCode,
   normaliseRemoteHost,
+  type ProtocolRefusal,
   type SessionReportingEndpoint,
   type ToolCall,
   type ToolCaller,
@@ -145,9 +146,9 @@ import {
   statsToday,
 } from './audit-view'
 import { BlockedAudit, LoginSecrets } from './blocked'
-import { type AppRefusal, RuntimeToolCaller } from './caller'
+import { type AppRefusal, RefusalBudget, RuntimeToolCaller } from './caller'
 import { addToDesktopConfig } from './claude-desktop'
-import { ClientRegistry, shownTransport } from './clients'
+import { ClientRegistry, capabilityNames, shownTransport } from './clients'
 import { ConfirmationBroker, type ConfirmationSigning, type Timers } from './confirmations'
 import {
   AUTH_FLOW_TIMEOUT_MS,
@@ -484,6 +485,8 @@ export class AppService {
   private readonly memory = new RunMemory()
   private readonly sessions: SessionTracker
   private readonly broker: ConfirmationBroker
+  /** How many of each client's protocol refusals are recorded one by one. */
+  private readonly refusalBudget: RefusalBudget
   /**
    * Signed approvals (docs/approval-broker.md), from start() on. Null before, or if the Mac's keys
    * couldn't be read: then nothing that needs an approval can be approved.
@@ -643,6 +646,18 @@ export class AppService {
     this.sessions = new SessionTracker(date, () => this.emit('adapters-changed'))
     const newId = deps.newId ?? (() => randomBytes(12).toString('hex'))
     this.newId = newId
+    this.refusalBudget = new RefusalBudget(
+      deps.timers,
+      async ({ client, clientId, count }) => {
+        await this.audit.append({
+          type: 'refusals-dropped',
+          client,
+          ...(clientId === undefined ? {} : { clientId }),
+          count,
+        })
+      },
+      deps.now,
+    )
     this.broker = new ConfirmationBroker({
       adapter: (adapterId) => {
         const adapter = this.adapter(adapterId)
@@ -848,6 +863,7 @@ export class AppService {
         this.memory.finished(call.callId, result.status === 'ok' ? result.output : undefined)
       },
       refused: (call, refusal) => this.auditRefusal(call, refusal),
+      protocolRefused: (refusal) => this.auditProtocolRefusal(refusal),
     })
     await this.caller.refresh()
     await this.reapplyInstalls()
@@ -1834,10 +1850,25 @@ export class AppService {
         if (answered.ok) return 'approved'
         return answered.reason === 'cancelled' ? 'cancelled' : 'refused'
       },
-      withdraw: (requestId) => {
-        void this.approvalBroker?.withdraw(requestId, app).catch(() => false)
+      // The person's Decline on the panel is their decline of the signed request: audited as
+      // declined from this Mac, and counted against the agent the call was for.
+      decline: (requestId) => {
+        void this.approvalBroker?.decline(requestId, { via: 'mac' }).catch(() => false)
+      },
+      withdraw: (requestId, why) => {
+        void this.approvalBroker
+          ?.withdraw(requestId, app, why === 'unanswered' ? 'asker' : why)
+          .catch(() => false)
       },
     }
+  }
+
+  /**
+   * Ends, as revoked, the confirmations waiting for one agent's calls (`local:<id>` or
+   * `remote:<id>`): their requests are withdrawn as client-revoked, and each call ends at once.
+   */
+  private cancelConfirmationsOf(label: string): void {
+    this.broker.cancelWhere((item) => this.callers.get(item.callId) === label, 'client-revoked')
   }
 
   private async setSitePaused(adapterId: string, paused: boolean): Promise<void> {
@@ -3343,6 +3374,39 @@ export class AppService {
   }
 
   /**
+   * A call the MCP SDK refused before the app saw it (server.ts): a site tool's arguments that its
+   * schema refused are recorded as a refused call of that tool (so it shows among the calls), and a
+   * name the session doesn't offer as call-refused, with the name only if it is a well-formed tool
+   * name. Never the arguments. Past each client's budget, only counted (refusals-dropped).
+   */
+  private async auditProtocolRefusal(refusal: ProtocolRefusal): Promise<void> {
+    const client = printableClient(refusal.client)
+    const clientId = refusal.identity === undefined ? undefined : identityLabel(refusal.identity)
+    if (!this.refusalBudget.take(client, clientId)) return
+    if (refusal.tool !== undefined && this.adapter(refusal.tool.adapterId) !== null) {
+      await this.auditRefusal(
+        {
+          adapterId: refusal.tool.adapterId,
+          tool: refusal.tool.tool,
+          input: undefined,
+          client: refusal.client,
+          callId: refusal.callId,
+          ...(refusal.identity === undefined ? {} : { identity: refusal.identity }),
+        },
+        { status: 'failed', stage: 'tool-input', errorClass: 'invalid' },
+      )
+      return
+    }
+    await this.audit.append({
+      type: 'call-refused',
+      client,
+      ...(clientId === undefined ? {} : { clientId }),
+      tool: refusal.name,
+      reason: refusal.reason,
+    })
+  }
+
+  /**
    * A new grant is the person acting on a login that couldn't fill (not-granted) or was refused
    * (auth-failed): the runtime's hold on automatic logins exists to wait for exactly that. Without
    * this, the next call after granting was told the person had been asked to act, when nothing was
@@ -3697,6 +3761,7 @@ export class AppService {
         const clientId = viewer.clientId
         if (!this.clients.isActive(clientId)) return false
         await this.clients.revoke(clientId)
+        this.cancelConfirmationsOf(`local:${clientId}`)
         await this.approvalBroker?.withdrawClient(`local:${clientId}`).catch(() => 0)
         await rm(this.clients.configPath(clientId), { force: true }).catch(() => undefined)
         // The token is refused from the next request on; the session itself ends just after, so
@@ -4101,6 +4166,7 @@ export class AppService {
           const client = await this.clients.add(name)
           // A stopped endpoint issues the client its token when it next starts.
           await this.endpoint?.addClient({ id: client.id, configPath: this.clients.configPath(client.id) })
+          await this.audit.append({ type: 'client-added', clientId: `local:${client.id}` })
           this.emit('clients-changed')
           return (await this.clientInfos()).find((c) => c.id === client.id) as ClientInfo
         },
@@ -4114,13 +4180,22 @@ export class AppService {
             await rm(this.clients.configPath(clientId), { force: true })
           }
           await this.clients.reset(clientId)
+          await this.audit.append({ type: 'client-reset', clientId: `local:${clientId}` })
           this.emit('clients-changed')
           this.emit('endpoint-changed')
         },
         revoke: async (clientId) => {
           if (!this.clients.isActive(clientId)) throw new ValetError('config', 'not-found')
+          const label = `local:${clientId}`
           // The registry first: if the app quits part-way, the next start issues it no token.
           await this.clients.revoke(clientId)
+          await this.audit.append({ type: 'client-revoked', clientId: label })
+          // Its token is refused from here on. A call of its waiting on a confirmation ends now, as
+          // cancelled by the revoke (not as the person's decline), and its answer still reaches it
+          // before its sessions close; so do its other calls (removeClient).
+          this.endpoint?.refuseClient(clientId)
+          this.cancelConfirmationsOf(label)
+          await this.approvalBroker?.withdrawClient(label).catch(() => 0)
           await this.endpoint?.removeClient(clientId)
           await rm(this.clients.configPath(clientId), { force: true })
           this.emit('clients-changed')
@@ -4146,16 +4221,28 @@ export class AppService {
           return { ...capabilities, toolsOff: [...this.clients.toolsOff(clientId)].sort() }
         },
         setAccess: async (clientId, patch) => {
-          if (!(await this.clients.setCapabilities(clientId, patch)))
+          const before = this.clients.capabilities(clientId)
+          if (before === null || !(await this.clients.setCapabilities(clientId, patch)))
             throw new ValetError('config', 'not-found')
+          const after = this.clients.capabilities(clientId) ?? before
           this.refreshEndpoint()
           this.emit('clients-changed')
+          // Turning Ask for changes on widens what the app may do: every change is recorded.
+          if (capabilityNames(before).join() !== capabilityNames(after).join()) {
+            await this.audit.append({
+              type: 'client-access-changed',
+              clientId: `local:${clientId}`,
+              before: capabilityNames(before),
+              after: capabilityNames(after),
+            })
+          }
         },
         turnToolOn: async (clientId, qualified) => {
           if (!(await this.clients.turnOnTool(clientId, qualified)))
             throw new ValetError('config', 'not-found')
           this.refreshEndpoint()
           this.emit('clients-changed')
+          await this.audit.append({ type: 'client-tool-on', clientId: `local:${clientId}`, tool: qualified })
         },
       },
       attention: {
@@ -4384,11 +4471,15 @@ export class AppService {
             ...this.remoteCapabilities(c.id),
           })),
         revokeClient: async (id) => {
+          if (this.remote.clients.get(id) === null) throw new ValetError('config', 'not-found')
+          // As for a local app: a call waiting on a confirmation ends now, as revoked.
+          this.cancelConfirmationsOf(`remote:${id}`)
           if (!(await this.remote.revokeClient(id))) throw new ValetError('config', 'not-found')
           await this.dropRemoteCapabilities(id)
         },
         revokeAllClients: async () => {
           const ids = this.remote.remoteClients().map((c) => c.id)
+          for (const id of ids) this.cancelConfirmationsOf(`remote:${id}`)
           const count = await this.remote.revokeAllClients()
           for (const id of ids) await this.dropRemoteCapabilities(id)
           return count
@@ -4427,9 +4518,12 @@ export class AppService {
           demo: deps.demo,
         }),
         setPaused: async (paused) => {
+          const changed = this.paused !== paused
+          // In memory at once, as lock down: no call gets through while the record is written.
           this.paused = paused
           if (paused) this.authoring?.closeBrowsers()
           this.emit('app-changed')
+          if (changed) await this.audit.append({ type: 'app-paused', paused })
         },
         setLockedDown: (locked) => this.setLockedDown(locked),
         openControlPanel: async (route) => deps.ui.openControlPanel(route ?? null),

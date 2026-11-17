@@ -145,6 +145,18 @@ describe('irreversible tools', () => {
     )
   })
 
+  it('ends the call as aborted when the prompt says the call was cancelled (its agent revoked)', async () => {
+    placeOrder.mockClear()
+    const { host, prompt, audit } = fixture(irreversible)
+    prompt.answer = 'cancelled'
+
+    expect(await host.call(order)).toEqual({ status: 'failed', stage: 'tool-run', errorClass: 'aborted' })
+    expect(placeOrder).not.toHaveBeenCalled()
+    expect(audit.events).toContainEqual(
+      expect.objectContaining({ type: 'confirmation', answer: 'cancelled' }),
+    )
+  })
+
   it('treats a prompt that fails as a decline', async () => {
     placeOrder.mockClear()
     const { host, prompt, audit } = fixture(irreversible)
@@ -280,6 +292,19 @@ describe('ctx.confirm', () => {
       prompt.answer = answer
       expect(await host.call(ask({ requests: [update] }))).toEqual({ status: 'ok', output: false })
     }
+  })
+
+  it('ends the run as aborted, not as a no, when the call is cancelled while it asks', async () => {
+    const { host, prompt, audit } = fixture(asking)
+    prompt.answer = 'cancelled'
+    expect(await host.call(ask({ requests: [update] }))).toEqual({
+      status: 'failed',
+      stage: 'tool-run',
+      errorClass: 'aborted',
+    })
+    expect(audit.events).toContainEqual(
+      expect.objectContaining({ type: 'confirmation', answer: 'cancelled' }),
+    )
   })
 
   it.each([

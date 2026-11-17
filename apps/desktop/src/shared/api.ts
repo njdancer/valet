@@ -566,7 +566,7 @@ export type TraceStep = {
       readonly status: number | null
       readonly blockedReason: BlockedRequest['reason'] | null
     }
-  | { readonly type: 'confirmation'; readonly answer: 'approved' | 'declined' | 'timed-out' }
+  | { readonly type: 'confirmation'; readonly answer: 'approved' | 'declined' | 'timed-out' | 'cancelled' }
   | { readonly type: 'needs-user'; readonly reason: NeedsUserReason }
   | { readonly type: 'failed'; readonly errorClass: ErrorClass }
   | { readonly type: 'output'; readonly redactions: number; readonly bytes: number }

@@ -5,7 +5,7 @@
 
 import { randomBytes } from 'node:crypto'
 import { join } from 'node:path'
-import { ValetError } from '@valet/core'
+import { type ClientCapability, ValetError } from '@valet/core'
 import type { EndpointClient } from '@valet/mcp-server'
 import type { ClientTransport } from '@valet/runtime'
 import { z } from 'zod'
@@ -75,6 +75,15 @@ export const DEFAULT_CAPABILITIES: ClientCapabilities = {
   seeValet: true,
   allActivity: false,
   askForChanges: true,
+}
+
+/** The capabilities that are on, by the audit log's fixed names, in a fixed order. */
+export function capabilityNames(capabilities: ClientCapabilities): ClientCapability[] {
+  return [
+    ...(capabilities.seeValet ? (['see-valet'] as const) : []),
+    ...(capabilities.allActivity ? (['all-activity'] as const) : []),
+    ...(capabilities.askForChanges ? (['ask-for-changes'] as const) : []),
+  ]
 }
 
 /**
