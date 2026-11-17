@@ -340,6 +340,68 @@ the old list. Writing the test found two more: a second sign-in in the same brow
 first one's cookie, so the first could never finish ("Sign-in has expired"), and approving one of
 several waiting sign-ins left the sheet showing the others with no sign the approval worked.
 
+## Step 4c plan: phones on the account (decided by recommendation, needs Nick's review)
+
+Nick (2026-11-17): "I don't want to keep pairing the phone directly to the mac. The phone should
+just be logging into the relay." Today the list survives only as long as the Mac that started it:
+when that Mac lost its keys, the list, its grants and the phone's place on it all went, and the
+phone had to pair again. The fix is to make the phone a full member of the account that can sign,
+so the account outlives any one Mac.
+
+**What the person sees.**
+
+- _A new phone:_ in the iPhone app, "Sign in to your Valet account". It scans the QR code from
+  any signed-in device (Valet on a Mac: Settings › Devices › Add an iPhone), both screens show the
+  same six digits, the person picks them on the Mac, and Touch ID adds the phone to the account.
+  This is D79's "QR as a login shortcut, no separate device approval": the Touch ID that adds it is
+  the approval.
+- _A new or re-keyed Mac:_ "Connect to your Valet account" with the code typed on the hub's page,
+  as now. If the account already has a list, the phone shows "Add <Mac> to your account?", and
+  Face ID on the phone adds it. Nobody pairs again, and grants signed by devices still on the list
+  keep working.
+- _Every Mac on the account_ trusts every phone on the list for approvals, without pairing.
+
+**How it works.**
+
+1. **A Mac joins a list another device started (4c-1, Mac and hub).** When a freshly linked Mac
+   finds a non-empty list without itself, it sends `hub-roster-join` with its three public keys,
+   bound by its approval key. The hub passes it to the account's devices. Once a device on the
+   list signs the add, the Mac pins that list's first change: trust on first use, but only right
+   after the person typed this Mac's code on the hub's page while signed in. Roster changes may
+   then add a Mac when signed by a phone (the Secure Enclave helper still never adds a Mac itself).
+2. **Each Mac serves every phone on the list (4c-1).** For each phone on the verified list, the
+   Mac registers its transport key with its own relay object (`device-register`) and seals
+   approvals to its agreement key, exactly as for a phone it paired. A phone removed from the list
+   is unregistered.
+3. **The phone connects to the hub (4c-2).** The phone opens a socket to the hub with a signed
+   hello (its transport key). The hub accepts it only if the phone is on the account's list. Over
+   it, the phone gets the chain, any Mac waiting to join, and each Mac's relay address. It also
+   sends roster changes it signed with Face ID.
+4. **Signing a phone in by QR goes through the hub (4c-2).** This is the reviewed pairing protocol
+   (one-time secret in the QR, sealed messages, a nonce, six digits from the whole transcript),
+   carried to the inviting device through the hub instead of a Mac's relay object. The result is
+   a roster add signed by that device.
+5. **The iPhone app (4c-3).** Swift parts:
+   - roster verification and roster-change signing, checked against core's test vectors as the
+     other formats are;
+   - the hub socket;
+   - one channel per Mac on the list;
+   - the "Sign in to your Valet account" screen in place of "Pair with Mac".
+6. **Settings › Devices (4c-4)**, in the order Nick chose: the account's status first, then the
+   devices on the account, then the relay and domain fields under Advanced. Direct pairing leaves
+   the UI. Nick's phone signs in once more this way, and never again.
+
+**What stays the same.** The hub still can't add a device: every change is signed by a device on
+the list, and every node checks the chain itself. Removing the Mac that started the list resets it
+(#125) only when no phone on the list could keep it going. A stolen phone remains out of scope
+(agent-run-security.md, "Who this guards against first").
+
+**Tests.** Each part extends `apps/desktop/e2e/hub.spec.ts`, with a phone written in TypeScript as
+`phones.spec.ts` uses, before the iPhone app is involved. The test signs a phone in by QR, approves
+an agent's request on it, loses the Mac's keys, has the phone add the new Mac, and checks that the
+phone's approvals and the agents' grants survive. The iPhone journeys then cover the same steps on
+the simulator.
+
 ## Open, for the building agent to propose (not for Nick unless it changes his goal)
 
 - Storage: D1 vs a Durable Object per account.
