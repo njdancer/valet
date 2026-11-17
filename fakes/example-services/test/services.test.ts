@@ -42,18 +42,25 @@ interface Reply {
 function call(
   host: string,
   path: string,
-  options: { method?: string; headers?: Record<string, string>; body?: string; servername?: string } = {},
+  options: {
+    method?: string
+    headers?: Record<string, string>
+    body?: string
+    servername?: string
+    port?: number
+  } = {},
 ): Promise<Reply> {
   return new Promise((resolve, reject) => {
     const req = httpsRequest(
       {
         host: '127.0.0.1',
-        port: services.route(host, 443).port,
+        port: options.port ?? services.route(host, 443).port,
         path,
         method: options.method ?? 'GET',
         headers: { host, ...options.headers },
         servername: options.servername ?? host,
         ca: services.cert,
+        ...(options.port === undefined ? {} : { checkServerIdentity: () => undefined }),
       },
       (res) => {
         const chunks: Buffer[] = []
@@ -203,7 +210,7 @@ describe('CalDAV', () => {
     expect((await put('/1234567890/calendars/home/new-1.ics', ics, {})).status).toBe(428)
     const created = await put('/1234567890/calendars/home/new-1.ics', ics)
     expect(created.status).toBe(201)
-    expect(created.headers.etag).toBe('"new-1-1"')
+    expect(created.headers['etag']).toBe('"new-1-1"')
     expect(services.calendars[0]?.events.at(-1)).toEqual({
       uid: 'new-1',
       summary: 'Lunch, then a walk',
@@ -269,7 +276,12 @@ describe('the hub', () => {
   const open = (
     headers: Record<string, string> = { authorization: `Bearer ${HUB_TOKEN}` },
     path = '/api/websocket',
-  ) => new WebSocket(`ws://127.0.0.1:${services.hubPort}${path}`, { headers })
+  ) =>
+    new WebSocket(`wss://127.0.0.1:${services.hubPort}${path}`, {
+      headers,
+      // The hub's certificate is pinned, not named, so this client doesn't check its name.
+      rejectUnauthorized: false,
+    })
 
   const messages = (ws: WebSocket) => {
     const queue: unknown[] = []
@@ -297,8 +309,8 @@ describe('the hub', () => {
     expect(await refused(open(undefined, '/elsewhere'))).toBe(404)
   })
 
-  it('answers plain http with a pointer to the socket', async () => {
-    const reply = await fetch(`http://127.0.0.1:${services.hubPort}/api/states`)
+  it('answers plain requests with a pointer to the socket', async () => {
+    const reply = await call(HUB_ADDRESS, '/api/states', { port: services.hubPort })
     expect(reply.status).toBe(404)
   })
 

@@ -1,0 +1,248 @@
+{
+  "cases": [
+    {
+      "name": "the top stories, skipping a deleted one",
+      "tool": "list_stories",
+      "input": {
+        "list": "top",
+        "limit": 4
+      },
+      "fetch": [
+        {
+          "method": "GET",
+          "url": "https://hacker-news.firebaseio.com/v0/topstories.json",
+          "status": 200,
+          "contentType": "application/json",
+          "body": "fixtures/topstories.json"
+        },
+        {
+          "method": "GET",
+          "url": "https://hacker-news.firebaseio.com/v0/item/41001.json",
+          "status": 200,
+          "contentType": "application/json",
+          "body": "fixtures/item-41001.json"
+        },
+        {
+          "method": "GET",
+          "url": "https://hacker-news.firebaseio.com/v0/item/41002.json",
+          "status": 200,
+          "contentType": "application/json",
+          "body": "fixtures/item-41002.json"
+        },
+        {
+          "method": "GET",
+          "url": "https://hacker-news.firebaseio.com/v0/item/41003.json",
+          "status": 200,
+          "contentType": "application/json",
+          "body": "fixtures/item-41003.json"
+        },
+        {
+          "method": "GET",
+          "url": "https://hacker-news.firebaseio.com/v0/item/41004.json",
+          "status": 200,
+          "contentType": "application/json",
+          "body": "fixtures/item-41004.json"
+        }
+      ],
+      "expect": {
+        "output": {
+          "stories": [
+            {
+              "id": 41001,
+              "kind": "story",
+              "title": "Show HN: A calendar that reads itself",
+              "url": "https://example.org/calendar",
+              "by": "pg",
+              "points": 312,
+              "comments": 2,
+              "time": "2025-11-17T09:00:00.000Z",
+              "discussion": "https://news.ycombinator.com/item?id=41001"
+            },
+            {
+              "id": 41002,
+              "kind": "story",
+              "title": "Ask HN: What do you self-host?",
+              "url": null,
+              "by": "dang",
+              "points": 120,
+              "comments": 0,
+              "time": "2025-11-17T10:00:00.000Z",
+              "discussion": "https://news.ycombinator.com/item?id=41002"
+            },
+            {
+              "id": 41003,
+              "kind": "job",
+              "title": "Acme (YC W24) is hiring",
+              "url": "https://example.org/jobs",
+              "by": "acme",
+              "points": 1,
+              "comments": null,
+              "time": "2025-11-17T11:00:00.000Z",
+              "discussion": "https://news.ycombinator.com/item?id=41003"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a story with its live comments as plain text",
+      "tool": "get_story",
+      "input": {
+        "id": 41001,
+        "comments": 5
+      },
+      "fetch": [
+        {
+          "method": "GET",
+          "url": "https://hacker-news.firebaseio.com/v0/item/41001.json",
+          "status": 200,
+          "contentType": "application/json",
+          "body": "fixtures/item-41001.json"
+        },
+        {
+          "method": "GET",
+          "url": "https://hacker-news.firebaseio.com/v0/item/41010.json",
+          "status": 200,
+          "contentType": "application/json",
+          "body": "fixtures/item-41010.json"
+        },
+        {
+          "method": "GET",
+          "url": "https://hacker-news.firebaseio.com/v0/item/41011.json",
+          "status": 200,
+          "contentType": "application/json",
+          "body": "fixtures/item-41011.json"
+        }
+      ],
+      "expect": {
+        "output": {
+          "story": {
+            "id": 41001,
+            "kind": "story",
+            "title": "Show HN: A calendar that reads itself",
+            "url": "https://example.org/calendar",
+            "by": "pg",
+            "points": 312,
+            "comments": 2,
+            "time": "2025-11-17T09:00:00.000Z",
+            "discussion": "https://news.ycombinator.com/item?id=41001"
+          },
+          "text": null,
+          "comments": [
+            {
+              "id": 41010,
+              "by": "alice",
+              "text": "Love it. Does it sync with CalDAV (https://example.org)?"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "an Ask HN post's text",
+      "tool": "get_story",
+      "input": {
+        "id": 41002,
+        "comments": 0
+      },
+      "fetch": [
+        {
+          "method": "GET",
+          "url": "https://hacker-news.firebaseio.com/v0/item/41002.json",
+          "status": 200,
+          "contentType": "application/json",
+          "body": "fixtures/item-41002.json"
+        }
+      ],
+      "expect": {
+        "output": {
+          "story": {
+            "id": 41002,
+            "kind": "story",
+            "title": "Ask HN: What do you self-host?",
+            "url": null,
+            "by": "dang",
+            "points": 120,
+            "comments": 0,
+            "time": "2025-11-17T10:00:00.000Z",
+            "discussion": "https://news.ycombinator.com/item?id=41002"
+          },
+          "text": "I run a small server at home & want ideas.\n\nSecond paragraph.",
+          "comments": []
+        }
+      }
+    },
+    {
+      "name": "an id with nothing behind it",
+      "tool": "get_story",
+      "input": {
+        "id": 99
+      },
+      "fetch": [
+        {
+          "method": "GET",
+          "url": "https://hacker-news.firebaseio.com/v0/item/99.json",
+          "status": 200,
+          "contentType": "application/json",
+          "body": {
+            "inline": null
+          }
+        }
+      ],
+      "expect": {
+        "error": {
+          "stage": "tool-input",
+          "errorClass": "not-found"
+        }
+      }
+    },
+    {
+      "name": "a comment is not a story",
+      "tool": "get_story",
+      "input": {
+        "id": 41010
+      },
+      "fetch": [
+        {
+          "method": "GET",
+          "url": "https://hacker-news.firebaseio.com/v0/item/41010.json",
+          "status": 200,
+          "contentType": "application/json",
+          "body": "fixtures/item-41010.json"
+        }
+      ],
+      "expect": {
+        "error": {
+          "stage": "tool-input",
+          "errorClass": "not-found"
+        }
+      }
+    },
+    {
+      "name": "rate limited",
+      "tool": "list_stories",
+      "input": {
+        "list": "new"
+      },
+      "fetch": [
+        {
+          "method": "GET",
+          "url": "https://hacker-news.firebaseio.com/v0/newstories.json",
+          "status": 429,
+          "contentType": "application/json",
+          "body": {
+            "inline": {
+              "error": "slow down"
+            }
+          }
+        }
+      ],
+      "expect": {
+        "error": {
+          "stage": "tool-run",
+          "errorClass": "rate-limited"
+        }
+      }
+    }
+  ]
+}

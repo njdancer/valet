@@ -12,7 +12,10 @@
 
 import {
   type AdapterManifest,
+  CREDENTIAL_FIELDS,
   checkPackagePath,
+  credentialHeaderNames,
+  credentialTargets,
   type EnsureResult,
   type FetchInit,
   type FetchResult,
@@ -21,6 +24,7 @@ import {
   NeedsUserError,
   type PackageFiles,
   runtimeOf,
+  SecretValue,
   type ToolContext,
   type ToolPage,
   uploadBudget,
@@ -29,6 +33,7 @@ import {
 import { type ExchangeResult, RunMeter, requestSize } from '@valet/egress'
 import {
   CallState,
+  CredentialGate,
   failureDetail,
   GuardedHttp,
   GuardedToolPage,
@@ -41,6 +46,18 @@ import {
   type ToolProcessFactory,
 } from '@valet/runtime'
 import { z } from 'zod'
+
+/**
+ * What a case's kept credentials hold, by field: placeholders, so a tool that names a credential
+ * runs in a case as it would installed, through the same gate, and never with a real value. The
+ * case's fixtures don't check headers, so these only have to be there.
+ */
+export const CASE_CREDENTIAL_VALUES: Readonly<Record<string, string>> = {
+  username: 'case-username',
+  password: 'case-password',
+  token: 'case-token',
+  'ssh-key': 'case-ssh-key',
+}
 
 export const MAX_CASES = 100
 export const CASE_TIMEOUT_MS = 5_000
@@ -323,6 +340,8 @@ export async function runCase(
             state,
             audit: async () => {},
             broker: fixtureEgress(fixtures),
+            credentials: caseCredentials(draft.manifest),
+            credentialHeaders: [...credentialHeaderNames(draft.manifest)],
             run: {
               meter: new RunMeter(uploadBudget(draft.manifest, declared.sideEffect)),
               signal: controller.signal,
@@ -610,6 +629,41 @@ function withPages(fixtures: FixturePage, browser: ToolPage, c: DraftCase): Tool
 }
 
 /**
+ * A case's kept credentials: the real gate over a grant of every kept header credential the draft
+ * declares, for all its hosts, whose fields are CASE_CREDENTIAL_VALUES. Nothing is audited.
+ */
+function caseCredentials(manifest: AdapterManifest) {
+  const gate = new CredentialGate({
+    adapterId: manifest.id,
+    adapterHash: 'case',
+    credentials: manifest.credentials,
+    findGrant: async (credential) => {
+      const declaration = manifest.credentials?.[credential]
+      if (declaration === undefined || declaration.custody !== 'kept') return null
+      return {
+        adapterId: manifest.id,
+        adapterHash: 'case',
+        credential,
+        kind: declaration.kind,
+        custody: declaration.custody,
+        provider: 'keychain-copy',
+        itemRef: 'case',
+        targets: [...credentialTargets(declaration)],
+        grantedAt: new Date(0).toISOString(),
+      }
+    },
+    resolve: async (grant, field) => {
+      if (!CREDENTIAL_FIELDS[grant.kind].includes(field)) throw new ValetError('credential', 'field-missing')
+      return SecretValue.fromString(CASE_CREDENTIAL_VALUES[field] ?? '')
+    },
+    audit: { append: async () => undefined },
+    remember: () => undefined,
+    callId: null,
+  })
+  return { headerFor: (credential: string, host: string) => gate.headerFor(credential, host) }
+}
+
+/**
  * The egress broker as a case sees it: each request that passed ctx.http's guard is answered from
  * the case's `fetch` list, as the page's are. Its bytes are spent from the run's budget as the real
  * broker would spend them. Sockets aren't served yet.
@@ -620,15 +674,11 @@ function fixtureEgress(fixtures: FixturePage): HttpEgress {
       run.meter.spend(
         requestSize({ method: request.method, url, headers: request.headers, body: request.body }),
       )
-      const result = await fixtures.fetch(url.href, { method: request.method })
-      const body =
-        result.body === null
-          ? Buffer.alloc(0)
-          : Buffer.from(typeof result.body === 'string' ? result.body : JSON.stringify(result.body), 'utf8')
+      const result = fixtures.fetchText(url.href, { method: request.method })
       return {
         status: result.status,
-        headers: result.contentType === null ? {} : { 'content-type': result.contentType },
-        body,
+        headers: { 'content-type': result.contentType },
+        body: Buffer.from(result.body, 'utf8'),
       }
     },
     websocket: async () => {
@@ -670,6 +720,29 @@ class FixturePage implements ToolPage {
   }
 
   async fetch(url: string, init?: FetchInit): Promise<FetchResult> {
+    const entry = this.take(url, init)
+    return { status: entry.status, contentType: entry.contentType, body: this.body(entry) }
+  }
+
+  /**
+   * ctx.http's answer: the body as the bytes a server would send. An inline JSON value is sent as
+   * JSON, so `{"inline": null}` is the text `null`, which a page's parsed body can't tell from none.
+   */
+  fetchText(url: string, init?: FetchInit): { status: number; contentType: string; body: string } {
+    const entry = this.take(url, init)
+    const json = /json/i.test(entry.contentType)
+    const body =
+      entry.body === undefined
+        ? ''
+        : typeof entry.body === 'string'
+          ? this.read(entry.body)
+          : typeof entry.body.inline === 'string' && !json
+            ? entry.body.inline
+            : (JSON.stringify(entry.body.inline ?? null) ?? '')
+    return { status: entry.status, contentType: entry.contentType, body }
+  }
+
+  private take(url: string, init?: FetchInit): DraftCase['fetch'][number] {
     const method = (init?.method ?? 'GET').toUpperCase()
     const target = new URL(url)
     const index = this.remaining.findIndex(
@@ -679,7 +752,7 @@ class FixturePage implements ToolPage {
       throw this.miss(`No response for ${method} ${clip(target.pathname + target.search)} in the case.`)
     const [entry] = this.remaining.splice(index, 1)
     if (entry === undefined) throw this.miss('No response in the case.')
-    return { status: entry.status, contentType: entry.contentType, body: this.body(entry) }
+    return entry
   }
 
   async click(): Promise<void> {

@@ -67,6 +67,7 @@ import {
 } from './research'
 import { siteInputType, siteMethod, siteMime, siteRole, siteTag } from './site-text'
 import { DRAFT_LIMITS, DraftError, type DraftRecord, type DraftStore, type TrialSummary } from './store'
+import { draftFromExample, EXAMPLES, type Example } from './examples'
 import { blankDraft, blankHttpDraft, blankRawDraft } from './template'
 import { runTrial, type SignedInTrial, TRIAL_LIMITS, type TrialDeps, type TrialResult } from './trial'
 
@@ -147,6 +148,8 @@ export interface AuthoringDeps {
   readonly caseProcess: ToolProcessFactory
   /** A fresh Node runtime process with no network, per case of a raw draft. Without it, none run. */
   readonly rawCaseProcess?: ToolProcessFactory
+  /** The examples a draft may start from; the embedded ones when unset (tests set their own). */
+  readonly examples?: ReadonlyMap<string, Example>
   readonly installed: (adapterId: string) => Promise<InstalledVersion | null>
   /** Repair tickets (PR 3), from the audit log. Without them no draft can be a repair. */
   readonly repairs?: {
@@ -241,10 +244,12 @@ export class DraftAuthoring implements Authoring {
     viewer: ClientIdentity,
     request: {
       readonly adapterId: string
-      readonly from: 'blank' | 'installed'
+      readonly from: 'blank' | 'installed' | 'example'
       readonly name?: string
       readonly repairId?: string
       readonly runtime?: 'browser' | 'http' | 'raw'
+      /** With from "example": which one (valet_authoring_guide lists them). */
+      readonly example?: string
     },
   ): Promise<DraftDetail> {
     const client = clientKey(viewer)
@@ -280,12 +285,20 @@ export class DraftAuthoring implements Authoring {
           `${request.adapterId} is installed already. Start from "installed" to update it, or pick another id.`,
         )
       const name = request.name ?? request.adapterId
+      const examples = this.deps.examples ?? EXAMPLES
+      const example = request.example === undefined ? undefined : examples.get(request.example)
+      if (request.from === 'example' && example === undefined)
+        throw new AuthoringRefusal(
+          `No example ${JSON.stringify(clip(request.example ?? '', 40))}. The examples are: ${[...examples.keys()].join(', ')}.`,
+        )
       files =
-        request.runtime === 'http'
-          ? blankHttpDraft(request.adapterId, name)
-          : request.runtime === 'raw'
-            ? blankRawDraft(request.adapterId, name)
-            : blankDraft(request.adapterId, name)
+        example !== undefined && request.from === 'example'
+          ? draftFromExample(example, request.adapterId, request.name)
+          : request.runtime === 'http'
+            ? blankHttpDraft(request.adapterId, name)
+            : request.runtime === 'raw'
+              ? blankRawDraft(request.adapterId, name)
+              : blankDraft(request.adapterId, name)
     }
     this.notifyLimit(client)
     const record = await this.wrap(() =>

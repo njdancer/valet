@@ -1,12 +1,12 @@
 // Fake services for the example adapters (examples/, docs/adapter-kinds.md#h-example-adapters), on
 // loopback: one HTTPS server that answers as Hacker News's API, BBC News's RSS feeds, GitHub's
 // release feeds and iCloud's CalDAV and CardDAV, by the Host it was asked for; a home hub on the
-// person's network (plain http, with a WebSocket API); and a Redis-style cache over TLS. Every
+// person's network (https with a self-signed certificate, and a WebSocket API); and a Redis-style cache over TLS. Every
 // request, socket message and cache command is recorded, so a test can check what reached it.
 //
 // `route` is for the egress broker's test hooks: it sends each declared endpoint to the right one.
 
-import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
 import type { AddressInfo, Socket } from 'node:net'
 import type { Duplex } from 'node:stream'
@@ -48,7 +48,7 @@ export interface SeenRequest {
   readonly url: string
   readonly headers: Readonly<Record<string, string | string[] | undefined>>
   readonly body: string
-  /** The TLS server name asked for; null on the hub's plain http. */
+  /** The TLS server name asked for; null when none was sent (the hub, by its address). */
   readonly servername: string | null
 }
 
@@ -122,7 +122,9 @@ export async function startExampleServices(): Promise<ExampleServices> {
   )
   https.on('connection', track)
 
-  const hub = createHttpServer((req, res) =>
+  // The hub serves TLS with the same self-signed certificate: a client pins it, as one would pin a
+  // hub's own certificate on a home network.
+  const hub = createHttpsServer({ key: cert.key, cert: cert.cert }, (req, res) =>
     collect(req, (body) => {
       record(req, body)
       plain(res, 404, 'use the WebSocket API')
