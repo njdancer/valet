@@ -255,7 +255,7 @@ describe('the confirmation window', () => {
     renderAt('#/confirm/cf_a40f3c', createFakeApi({ now: NOW }))
     const listed = await screen.findByTestId('confirm-requests')
     expect(listed.textContent).toContain('POST /api/v3/ui/trolley/update')
-    expect(listed.textContent).toContain('declared in the manifest')
+    expect(listed.textContent).toContain('declared by the adapter')
     expect(screen.getByText('Approving unlocks no irreversible request')).toBeTruthy()
     expect(screen.getByTestId('adapter-note').textContent).toContain('Cavendish Bananas')
   })

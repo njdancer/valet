@@ -167,9 +167,7 @@ describe('the grant sheet', () => {
     for (const name of ['__proto__', 'constructor', 'toString', 'password']) {
       const api = createFakeApi({ now: NOW })
       renderAt(`#/sites/woolworths/login/${name}`, api)
-      expect(
-        await screen.findByText('This adapter’s manifest doesn’t ask for a secret with that name.'),
-      ).toBeTruthy()
+      expect(await screen.findByText('This adapter doesn’t ask for a secret with that name.')).toBeTruthy()
       expect(screen.queryByRole('button', { name: 'Use this login' })).toBeNull()
       cleanup()
     }
@@ -383,9 +381,7 @@ describe('the grant sheet', () => {
 
   it('has no Messages grant to make for an adapter that declares no SMS source', async () => {
     renderAt('#/sites/woolworths/login/messages', createFakeApi({ now: NOW }))
-    expect(
-      await screen.findByText('This adapter’s manifest doesn’t ask for a secret with that name.'),
-    ).toBeTruthy()
+    expect(await screen.findByText('This adapter doesn’t ask for a secret with that name.')).toBeTruthy()
   })
 
   it('shows a failed grant without its error text, and closes on Cancel or Escape', async () => {

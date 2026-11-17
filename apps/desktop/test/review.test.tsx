@@ -151,7 +151,7 @@ describe('reviewing an agent’s draft', () => {
     expect(text).toContain('Written by Claude Code')
     expect(text).not.toMatch(/Imported/)
     expect(text).not.toMatch(/login origin|choose which login|session cookies|The login may now open/)
-    expect(text).toContain('1 page origin')
+    expect(text).toContain('1 site it opens')
   })
 
   it('turns it down with the person’s reason, which goes to the agent', async () => {
@@ -200,7 +200,7 @@ describe('reviewing an update', () => {
     ])
     expect(within(added[0] as HTMLElement).getByText('new host')).toBeTruthy()
     expect(added[0]?.textContent).toContain('including your session cookies')
-    expect(screen.getByText('+1 host')).toBeTruthy()
+    expect(screen.getByText('+1 site it contacts')).toBeTruthy()
     // The manifest and its files are open on an update.
     expect(screen.getByRole('region', { name: 'Manifest changes' }).textContent).toContain(
       'api.woolworthsrewards.com.au',
@@ -317,7 +317,7 @@ describe('reviewing an update', () => {
     })
     renderAt(REVIEW, api)
     expect(await screen.findByRole('checkbox', { name: ACK })).toBeTruthy()
-    expect(screen.getByText('+1 irreversible tool')).toBeTruthy()
+    expect(screen.getByText('+1 tool that can’t be undone')).toBeTruthy()
     expect(screen.getByText('write → irreversible')).toBeTruthy()
     expect(screen.getAllByText('looser limits').length).toBeGreaterThan(0)
   })
@@ -498,7 +498,7 @@ describe('reviewing an update', () => {
     expect(screen.getAllByTestId('perm-removed')).toHaveLength(11)
     // A first install's badges say what it asks for, not what it adds (D-review).
     expect(screen.getByText('What it asks for')).toBeTruthy()
-    expect(screen.getByText('1 irreversible tool')).toBeTruthy()
+    expect(screen.getByText('1 tool that can’t be undone')).toBeTruthy()
     expect(screen.getByText('removed')).toBeTruthy()
   })
 
@@ -548,7 +548,7 @@ describe('reviewing an update', () => {
     expect(added).toHaveLength(1)
     expect(added[0]?.textContent).toContain('click button#accept-terms')
     expect(added[0]?.textContent).toContain('A click can accept terms')
-    expect(screen.getByText('+1 login step')).toBeTruthy()
+    expect(screen.getByText('login changed')).toBeTruthy()
     expect(disabled(approve)).toBe(true)
     await user.click(approve)
     expect(api.fake.calls.some((c) => c.method === 'approvals.approve')).toBe(false)

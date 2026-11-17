@@ -40,7 +40,7 @@ export function SiteTools({ data }: { readonly data: SiteData }) {
         <THead>
           <TR>
             <TH>Tool</TH>
-            <TH>What it does (from the manifest)</TH>
+            <TH>What it does (as the adapter says)</TH>
             <TH>Effect</TH>
             <TH align="right">Calls · 7 days</TH>
           </TR>

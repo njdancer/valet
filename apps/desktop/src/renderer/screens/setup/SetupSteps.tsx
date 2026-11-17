@@ -353,9 +353,18 @@ function AdapterFacts({
               term: 'Tools',
               value: (
                 <span className="inline-flex flex-wrap gap-1.5">
-                  <RiskBadge purpose="read">{adapter.toolCounts.read} read</RiskBadge>
-                  <RiskBadge purpose="write">{adapter.toolCounts.write} write</RiskBadge>
-                  <RiskBadge purpose="irreversible">{adapter.toolCounts.irreversible} irreversible</RiskBadge>
+                  {/* Only the kinds it has: "0 irreversible" in red read as a warning. */}
+                  {adapter.toolCounts.read > 0 ? (
+                    <RiskBadge purpose="read">{adapter.toolCounts.read} read only</RiskBadge>
+                  ) : null}
+                  {adapter.toolCounts.write > 0 ? (
+                    <RiskBadge purpose="write">{adapter.toolCounts.write} change things</RiskBadge>
+                  ) : null}
+                  {adapter.toolCounts.irreversible > 0 ? (
+                    <RiskBadge purpose="irreversible">
+                      {adapter.toolCounts.irreversible} can’t be undone
+                    </RiskBadge>
+                  ) : null}
                 </span>
               ),
             },
