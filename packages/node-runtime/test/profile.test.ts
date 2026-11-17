@@ -49,7 +49,7 @@ describe('the generated profile', () => {
     const writes = lines.filter((l) => l.includes('file-write'))
     expect(writes).toEqual([
       `(allow file-read* file-write* (subpath ${sbplString(input.tempDir)}))`,
-      '(allow file-write-data (literal "/dev/null") (literal "/dev/zero"))',
+      '(allow file-write-data (literal "/dev/null") (literal "/dev/zero") (literal "/dev/dtracehelper"))',
       '(allow file-read* file-write* (subpath "/Users/tess/Downloads/Valet"))',
       '(deny file-read* file-write* (subpath "/Users/tess/.ssh") (subpath "/Users/tess/Library/Keychains"))',
     ])
