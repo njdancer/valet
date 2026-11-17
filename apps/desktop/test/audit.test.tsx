@@ -659,7 +659,9 @@ describe('the audit log', () => {
     const copies = fake.fake.calls.filter((c) => c.method === 'app.copyText').map((c) => c.args[0])
     expect(copies).toHaveLength(leaky.length)
     for (const copy of copies) expect(copy).not.toContain(CANARY)
-  })
+    // It opens and copies every sample record, one per event type, so it grows with them: about
+    // 3.5 seconds alone, past the default 5 under a full parallel run.
+  }, 20_000)
 
   it('shows a defined audit field only if it holds the kind of value core writes there', async () => {
     const user = userEvent.setup()
