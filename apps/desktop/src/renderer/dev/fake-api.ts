@@ -23,6 +23,7 @@ import type {
   ClientInfo,
   ClientSnippet,
   ConfirmationItem,
+  CredentialGrantInfo,
   DraftPage,
   EndpointStatus,
   GrantInfo,
@@ -174,6 +175,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
 
   // ---------- State ----------
 
+  let credentialGrants: CredentialGrantInfo[] = []
   let grants: GrantInfo[] = [
     {
       adapterId: 'woolworths',
@@ -1332,6 +1334,53 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         grants = grants.filter((g) => !(g.adapterId === adapterId && g.secret === secret))
         emit({ type: 'grants-changed' })
         emit({ type: 'adapters-changed' })
+      },
+    },
+    credentials: {
+      async list() {
+        enter('credentials.list')
+        return clone(credentialGrants)
+      },
+      async make(request) {
+        enter('credentials.make', request)
+        const info: CredentialGrantInfo = {
+          adapterId: request.adapterId,
+          adapterHash: request.adapterHash,
+          credential: request.credential,
+          kind: request.provider === 'valet-key' ? 'ssh-key' : 'token',
+          custody: 'kept',
+          provider: request.provider,
+          itemTitle: request.provider === 'valet-key' ? 'Valet-made key' : 'Item',
+          targets: [...(request.targets ?? [])],
+          grantedAt: new Date(now).toISOString(),
+          publicKey: null,
+          fingerprint: null,
+          signed: true,
+        }
+        credentialGrants = [
+          ...credentialGrants.filter(
+            (g) => !(g.adapterId === request.adapterId && g.credential === request.credential),
+          ),
+          info,
+        ]
+        emit({ type: 'grants-changed' })
+        return clone(info)
+      },
+      async revoke(adapterId, credential) {
+        enter('credentials.revoke', adapterId, credential)
+        credentialGrants = credentialGrants.filter(
+          (g) => !(g.adapterId === adapterId && g.credential === credential),
+        )
+        emit({ type: 'grants-changed' })
+      },
+      async generateKey(adapterId, credential) {
+        enter('credentials.generateKey', adapterId, credential)
+        return {
+          itemRef: 'valet-key:0b5e2f1c-3d4a-4b6c-8d7e-9f0a1b2c3d4e',
+          publicKey: `ssh-ed25519 ${'A'.repeat(68)} valet-${adapterId}-${credential}`.replaceAll('_', '-'),
+          fingerprint: `SHA256:${'B'.repeat(43)}`,
+          createdAt: new Date(now).toISOString(),
+        }
       },
     },
     runs: {

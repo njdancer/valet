@@ -339,6 +339,7 @@ async function main(): Promise<void> {
     ...opDeps,
     keychainHelper: nativeHelper('valet-keychain'),
     copyService: names.copyService,
+    keyService: names.keyService,
     // The token's Keychain item is shared by every build, so only the release app's erase removes it.
     ownsToken: release,
     // Only a packaged app has the launch agent's plist for SMAppService; a dev build reads Messages

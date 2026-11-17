@@ -22,6 +22,7 @@ import { dirname, isAbsolute } from 'node:path'
 import {
   CredentialError,
   type CredentialProvider,
+  type ItemField,
   type OtpReader,
   type ProviderKind,
   type SecretField,
@@ -32,6 +33,7 @@ import {
   DEFAULT_OP_PATHS,
   type DesktopClientFactory,
   HelperKeychainTokenSource,
+  KEY_SERVICE,
   KeychainCopyProvider,
   KeychainCopySync,
   KeychainHelper,
@@ -48,6 +50,7 @@ import {
   type SecretsClientFactory,
   type Spawner,
   type Timers,
+  ValetKeys,
 } from '@valet/credentials'
 import type { ProviderStatus, Settings, VaultItem } from '../../shared/api'
 import { KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE, ONEPASSWORD_TEAM_ID, VAULT } from './constants'
@@ -66,9 +69,11 @@ export interface Credentials {
    * Copies `fields` of a keychain-copy grant's item from 1Password into the Keychain, with the
    * person approving in 1Password. Throws CredentialError.
    */
-  copyItem(itemRef: string, fields: readonly SecretField[]): Promise<void>
+  copyItem(itemRef: string, fields: readonly ItemField[]): Promise<void>
   /** Refreshes copies whose source changed, only while an approval is already up. Never prompts. */
   refreshCopies(items: readonly { itemRef: string; fields: readonly SecretField[] }[]): Promise<void>
+  /** Valet-made SSH keys (secrets v2), kept in the Keychain; null in a build without one. */
+  valetKeys?(): ValetKeys | null
   /** Removes an item's copy, once no grant uses it. */
   forgetCopy(itemRef: string): Promise<void>
   /**
@@ -201,6 +206,8 @@ export interface RealCredentialsDeps extends OpCheckDeps {
   readonly keychain?: KeychainStore
   /** The Keychain service copies live under; the dev build keeps its own. */
   readonly copyService?: string
+  /** The Keychain service Valet-made SSH keys live under; the dev build keeps its own. */
+  readonly keyService?: string
   /**
    * The Messages helper (D8) when this build ships it: its binary, which registers the launch agent
    * with SMAppService, and the socket the agent listens on. Null in development builds.
@@ -249,6 +256,7 @@ export function realCredentials(deps: RealCredentialsDeps): Credentials {
     keychain === null
       ? null
       : new KeychainCopyProvider({ keychain, service: deps.copyService ?? COPY_SERVICE })
+  const keys = keychain === null ? null : new ValetKeys({ keychain, service: deps.keyService ?? KEY_SERVICE })
   const serviceAccount = new OnePasswordServiceAccountProvider({
     tokenSource:
       keychain === null
@@ -381,6 +389,7 @@ export function realCredentials(deps: RealCredentialsDeps): Credentials {
       sync = desktop === null || copies === null ? null : new KeychainCopySync({ desktop, copies })
     },
     copyItem: async (itemRef, fields) => requireSync().copy(itemRef, fields),
+    valetKeys: () => keys,
     async refreshCopies(items) {
       if (sync === null) return
       for (const item of items) {
@@ -395,6 +404,11 @@ export function realCredentials(deps: RealCredentialsDeps): Credentials {
       const failed: CredentialEraseStep[] = []
       // Every item under this build's copy service, not only the ones grants.json still names.
       if (copies !== null) await copies.forgetAll().catch(() => failed.push('keychain-copies'))
+      // Valet-made SSH keys are Keychain items Valet keeps too; a reset takes them with the copies.
+      if (keys !== null)
+        await keys.forgetAll().catch(() => {
+          if (!failed.includes('keychain-copies')) failed.push('keychain-copies')
+        })
       if (deps.ownsToken === true) {
         if (keychain !== null) {
           await keychain.delete(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT).catch(() => failed.push('keychain-token'))

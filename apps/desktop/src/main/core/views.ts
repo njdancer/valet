@@ -5,6 +5,7 @@
 import {
   type AdapterManifest,
   type AuditRecord,
+  credentialsOf,
   type Grant,
   hasLogin,
   MESSAGES_SECRET,
@@ -272,7 +273,9 @@ export function pendingReview(
     manifestDiff: lineDiff(before === null ? [] : manifestText(before.manifest), manifestText(manifest)),
     files: fileChanges(before?.files ?? null, state.adapter.files),
     origin,
-    takesSession: origin !== 'builtin' && hasLogin(manifest),
+    // Its login, or the credential grants (secrets v2) it would keep.
+    takesSession:
+      origin !== 'builtin' && (hasLogin(manifest) || Object.keys(credentialsOf(manifest)).length > 0),
     // A manifest's login is all or nothing (parseManifest): no probe, no steps, secrets or cookies.
     logsIn: hasLogin(manifest),
     ...(state.approvedBefore === true ? { approvedBefore: true } : {}),

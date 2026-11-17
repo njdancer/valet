@@ -367,6 +367,18 @@ describe('every channel', () => {
     ],
     'grants.revoke': ['woolworths', 'login'],
     'grants.resync': ['woolworths', 'login'],
+    'credentials.list': [],
+    'credentials.make': [
+      {
+        adapterId: 'notes-api',
+        adapterHash: 'a'.repeat(64),
+        credential: 'api',
+        provider: 'onepassword-service-account',
+        itemId: 'abc123',
+      },
+    ],
+    'credentials.revoke': ['notes-api', 'api'],
+    'credentials.generateKey': ['nas-sftp', 'key'],
     'runs.list': [{ adapterId: 'woolworths', limit: 5 }],
     'runs.trace': ['call_1'],
     'runs.statsToday': [],
