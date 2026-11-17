@@ -257,27 +257,5 @@
         "agreementKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAExrr1GXcjkn62AmmKP08I_Wv11rU7wTD-lWx-2ggfi_TOGU-GZlnZTmrh-yjRc_VTxzw47pivsEC8oJT4DmwUpg"
       }
     }
-  },
-  "permissionAreas": [
-    "navigation",
-    "egress",
-    "auth-frames",
-    "secret",
-    "secret-origins",
-    "messages-sender",
-    "requests",
-    "tool",
-    "side-effect",
-    "session-cookies",
-    "session-storage",
-    "setting",
-    "limits",
-    "sandbox-mode",
-    "sandbox-exception",
-    "auth-steps",
-    "probe",
-    "runtime",
-    "private-network",
-    "credential"
-  ]
+  }
 }
