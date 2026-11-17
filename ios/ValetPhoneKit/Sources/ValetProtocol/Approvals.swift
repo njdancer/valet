@@ -7,6 +7,7 @@ import Foundation
 public enum ApprovalKind: String, CaseIterable, Sendable {
   case adapterInstall = "adapter-install"
   case secretGrant = "secret-grant"
+  case credentialGrant = "credential-grant"
   case toolEnable = "tool-enable"
   case remoteClient = "remote-client"
   case setting
@@ -22,7 +23,7 @@ public enum ApprovalKind: String, CaseIterable, Sendable {
   /// APPROVAL_TTL_MS in core, in seconds.
   public var ttl: TimeInterval {
     switch self {
-    case .adapterInstall, .secretGrant, .toolEnable, .setting: return 24 * 3600
+    case .adapterInstall, .secretGrant, .credentialGrant, .toolEnable, .setting: return 24 * 3600
     case .remoteClient, .resume: return 10 * 60
     case .authoringSession, .privateNetwork: return 30 * 60
     case .irreversibleCall: return 2 * 60
@@ -75,6 +76,13 @@ public enum ApprovalSubject: Equatable, Sendable {
     public let provider, itemTitle, itemFingerprint: String
     public let origins: [String]
   }
+  /// Secrets v2: a credential an adapter's code uses outside a browser login.
+  public struct CredentialGrant: Equatable, Sendable {
+    public let adapterId, adapterHash, credential, kind, custody, provider, itemTitle, itemFingerprint: String
+    public let targets: [String]
+    /// The Mac's sentence for the card (core's describeCredentialUse).
+    public let description: String
+  }
   public struct ToolEnable: Equatable, Sendable {
     public let adapterId, adapterHash, tool, scope: String
     public let clientId: String?
@@ -119,6 +127,7 @@ public enum ApprovalSubject: Equatable, Sendable {
 
   case adapterInstall(AdapterInstall)
   case secretGrant(SecretGrant)
+  case credentialGrant(CredentialGrant)
   case toolEnable(ToolEnable)
   case remoteClient(RemoteClient)
   case setting(Setting)
@@ -180,6 +189,31 @@ public enum ApprovalSubject: Equatable, Sendable {
         itemFingerprint: try f.string("itemFingerprint", pattern: "[0-9a-f]{16}"),
         origins: try f.strings("origins", min: 1, max: 10, pattern: Patterns.origin)
       ))
+    case .credentialGrant:
+      let f = try Fields(value, path: path, required: [
+        "adapterId", "adapterHash", "credential", "kind", "custody", "provider", "itemTitle", "itemFingerprint",
+        "targets", "description",
+      ])
+      let targets = try f.strings("targets", min: 1, max: 20, pattern: "[a-z0-9.:-]{1,106}")
+      guard Set(targets).count == targets.count else { throw SchemaError("\(path).targets", "targets repeat") }
+      let subject = CredentialGrant(
+        adapterId: try f.string("adapterId", pattern: Patterns.adapterId),
+        adapterHash: try f.string("adapterHash", pattern: Patterns.hash),
+        credential: try f.string("credential", pattern: "[a-z][a-z0-9_]{0,39}"),
+        kind: try f.oneOf("kind", ["password", "token", "ssh-key"]),
+        custody: try f.oneOf("custody", ["kept", "entrusted"]),
+        provider: try f.oneOf("provider", [
+          "keychain-copy", "onepassword-service-account", "onepassword-desktop", "valet-key",
+        ]),
+        itemTitle: try f.display("itemTitle", max: 120),
+        itemFingerprint: try f.string("itemFingerprint", pattern: "[0-9a-f]{16}"),
+        targets: targets,
+        description: try f.display("description", max: 200)
+      )
+      if subject.provider == "valet-key", subject.kind != "ssh-key" {
+        throw SchemaError(path, "a Valet-made key is an SSH key")
+      }
+      return .credentialGrant(subject)
     case .toolEnable:
       let f = try Fields(value, path: path, required: [
         "adapterId", "adapterHash", "tool", "scope", "clientId", "sideEffect",

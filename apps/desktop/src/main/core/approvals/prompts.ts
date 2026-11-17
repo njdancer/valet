@@ -14,6 +14,7 @@ import type { ApprovalKind, SerializedRequest } from '@valet/core'
 const ACTIONS: Readonly<Record<ApprovalKind, string>> = {
   'adapter-install': 'approve an adapter',
   'secret-grant': 'let an adapter use your login',
+  'credential-grant': 'let an adapter use a credential',
   'tool-enable': 'turn on a tool',
   'remote-client': 'let a remote agent connect',
   setting: 'change a setting',
@@ -65,6 +66,12 @@ function detail(serialized: SerializedRequest): string {
         .map(hostOf)
         .filter((h) => h !== null)
         .join(', ')}`
+    case 'credential-grant': {
+      // The targets are Mac-checked hosts and endpoints; the custody is the fact that matters most.
+      const { custody, targets } = request.subject
+      const where = targets.length <= 2 ? targets.join(', ') : `${targets.length} hosts`
+      return custody === 'entrusted' ? `, handing it to the adapter's code, for ${where}` : ` with ${where}`
+    }
     default:
       return ''
   }

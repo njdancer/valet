@@ -167,6 +167,27 @@ final class PhoneModelTests: XCTestCase {
     XCTAssertTrue(keys.reasons.isEmpty)
   }
 
+  func testCredentialCardsSayWhoHoldsTheValueAndCanBeApprovedHere() async throws {
+    setUp(.quiet)
+    world.mac.ask(.credential(id: "3C7Exxxxxxxxxxxxxxxxxx"))
+    world.mac.ask(.credential(id: "3C7Fxxxxxxxxxxxxxxxxxx", entrusted: true))
+    world.relay.drain()
+    time.advance(2)
+    let kept = try XCTUnwrap(card("3C7E"))
+    XCTAssertEqual(kept.card.kindWord, "Credential")
+    XCTAssertEqual(kept.card.tone, .strong)
+    XCTAssertTrue(kept.card.riskLine.contains("never sees it"), kept.card.riskLine)
+    XCTAssertNil(kept.card.macOnlyReason, "a credential is approvable on the phone, raw adapters included")
+    let entrusted = try XCTUnwrap(card("3C7F"))
+    XCTAssertTrue(entrusted.card.riskLine.contains("own code gets the value"), entrusted.card.riskLine)
+    XCTAssertNil(entrusted.card.macOnlyReason)
+    XCTAssertTrue(entrusted.card.rows.contains { $0.marker == "Handed over for" && $0.text == "imap.mail.me.com:993" })
+    XCTAssertEqual(model.approveBlocker(entrusted.id, readTicked: false, typedCode: nil), .needsReadTick)
+    try await model.approve(entrusted.id, readTicked: true)
+    world.relay.drain()
+    XCTAssertEqual(card("3C7F")?.state, .approvedHere)
+  }
+
   func testStrongCardsNeedTheReadTick() async throws {
     setUp(.cards)
     let confirm = try XCTUnwrap(card("8F20"))

@@ -99,6 +99,34 @@ const subjects = {
     })
     .strict(),
   /**
+   * Let an adapter's code use a credential outside a browser login (secrets v2,
+   * docs/adapter-kinds.md#f2-secrets-version-2): a header to these hosts, a sign-in to these
+   * endpoints, or (entrusted, `raw` only) the value itself for these endpoints. `targets` is the
+   * grant's, always within what the manifest of `adapterHash` declares; `description` is the
+   * card's sentence, built by the Mac from that declaration (describeCredentialUse).
+   */
+  'credential-grant': z
+    .object({
+      adapterId,
+      adapterHash: hash,
+      credential: name.max(40),
+      kind: z.enum(['password', 'token', 'ssh-key']),
+      custody: z.enum(['kept', 'entrusted']),
+      provider: z.enum(['keychain-copy', 'onepassword-service-account', 'onepassword-desktop', 'valet-key']),
+      /** The item's title as the provider shows it, or a Valet-made key's label. */
+      itemTitle: displayText(120),
+      /** First 16 hex of SHA-256 of the item reference: tells two items with one title apart. */
+      itemFingerprint: z.string().regex(/^[0-9a-f]{16}$/),
+      targets: z
+        .array(z.string().regex(/^[a-z0-9.:-]{1,106}$/))
+        .min(1)
+        .max(20),
+      description: displayText(200),
+    })
+    .strict()
+    .refine((s) => new Set(s.targets).size === s.targets.length, 'targets repeat')
+    .refine((s) => s.provider !== 'valet-key' || s.kind === 'ssh-key', 'a Valet-made key is an SSH key'),
+  /**
    * Turn a tool on: locally (after someone turned it off), or for remote clients, all of them or
    * one (`clientId`).
    */
@@ -235,6 +263,7 @@ export const NEVER_STORED: readonly ApprovalKind[] = ['irreversible-call', 'devi
 export const KIND_TIER: Readonly<Record<ApprovalKind, 'approve' | 'approve-each-use'>> = {
   'adapter-install': 'approve',
   'secret-grant': 'approve',
+  'credential-grant': 'approve',
   'tool-enable': 'approve',
   'remote-client': 'approve',
   setting: 'approve',
@@ -249,6 +278,7 @@ export const KIND_TIER: Readonly<Record<ApprovalKind, 'approve' | 'approve-each-
 export const APPROVAL_TTL_MS: Readonly<Record<ApprovalKind, number>> = {
   'adapter-install': 24 * 3600_000,
   'secret-grant': 24 * 3600_000,
+  'credential-grant': 24 * 3600_000,
   'tool-enable': 24 * 3600_000,
   'remote-client': 10 * 60_000,
   setting: 24 * 3600_000,
@@ -361,6 +391,7 @@ export const approvalRequestSchema = z
   .discriminatedUnion('kind', [
     requestOf('adapter-install'),
     requestOf('secret-grant'),
+    requestOf('credential-grant'),
     requestOf('tool-enable'),
     requestOf('remote-client'),
     requestOf('setting'),
