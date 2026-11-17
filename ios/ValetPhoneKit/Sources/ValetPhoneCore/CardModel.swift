@@ -200,7 +200,7 @@ public enum CardModel {
       row("Uses", "\(providerName(s.provider)) item \u{201C}\(isolate(s.itemTitle))\u{201D}", .strong, claim: true)
       row(s.custody == "entrusted" ? "Handed over for" : "Sent only to", targets, .strong)
       row("Kind", s.kind == "ssh-key" ? "SSH key" : s.kind, .neutral)
-      details.append(CardDetail(label: "What the adapter declares", value: s.description, isClaim: false))
+      details.append(CardDetail(label: "What Valet does with it", value: s.description, isClaim: false))
       details.append(CardDetail(label: "Item fingerprint", value: s.itemFingerprint, isClaim: false))
     case let .toolEnable(s):
       let tool = "\(s.adapterId).\(s.tool)"

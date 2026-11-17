@@ -667,6 +667,17 @@ export class AppService {
           ].slice(-500)
         })
       },
+      dropCarried: async (matches) => {
+        const ledger = this.ledger
+        if (ledger === null) return
+        await ledger.commit(
+          (draft) => {
+            if (draft.carriedCredentials !== undefined)
+              draft.carriedCredentials = draft.carriedCredentials.filter((c) => !matches(c))
+          },
+          { tightening: true },
+        )
+      },
       providers: () => deps.credentials.providers(),
       keys: deps.credentials.valetKeys?.() ?? null,
       available: () => this.available(),
@@ -4340,7 +4351,7 @@ export class AppService {
           return info
         },
         revoke: async (adapterId, credential) => {
-          await this.credentialKeeper.revoke(adapterId, credential)
+          await this.oneAtATime(adapterId, () => this.credentialKeeper.revoke(adapterId, credential))
           this.emit('grants-changed')
         },
         generateKey: async (adapterId, credential) => {

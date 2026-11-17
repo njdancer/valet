@@ -106,6 +106,8 @@ export interface CredentialKeeperDeps {
   readonly carried: () => readonly CarriedCredential[] | null
   /** Records one adapter's carries, replacing older ones for that adapter. */
   readonly recordCarried: (adapterId: string, records: readonly CarriedCredential[]) => Promise<void>
+  /** Takes carries away (a revoke, an uninstall). Only tightens. */
+  readonly dropCarried: (matches: (record: CarriedCredential) => boolean) => Promise<void>
   /** The providers this launch has (Credentials.providers()). */
   readonly providers: () => Partial<Record<ProviderKind, CredentialProvider>>
   /** Valet-made SSH keys, or null in a build without a Keychain. */
@@ -171,7 +173,8 @@ export class CredentialKeeper {
         kind: grant.kind,
         custody: grant.custody,
         provider: grant.provider as CredentialProviderKind,
-        itemTitle: key !== null ? 'Valet-made key' : (this.#titles.get(grant.itemRef) ?? 'Item'),
+        itemTitle:
+          key !== null ? `Valet-made key ${key.fingerprint}` : (this.#titles.get(grant.itemRef) ?? 'Item'),
         targets: [...grant.targets],
         grantedAt: grant.grantedAt,
         publicKey: key?.publicKey ?? null,
@@ -197,7 +200,13 @@ export class CredentialKeeper {
       throw new ValetError('grant', 'invalid')
     // A Valet-made key is an SSH key, and only Valet makes one: never for a password or token.
     if (request.provider === 'valet-key') {
-      if (!isValetKeyRef(request.itemId) || declaration.kind !== 'ssh-key')
+      // A Valet-made key stays with Valet: never entrusted to adapter code, and only for the
+      // adapter and credential it was made for (its label says which).
+      if (!isValetKeyRef(request.itemId) || declaration.kind !== 'ssh-key' || declaration.custody !== 'kept')
+        throw new ValetError('grant', 'invalid')
+      const key = await this.#keyInfo(request.itemId)
+      if (key === null) throw new ValetError('grant', 'not-found')
+      if (!key.publicKey.endsWith(` ${keyLabel(request.adapterId, request.credential)}`))
         throw new ValetError('grant', 'invalid')
     } else {
       if (!VAULT_ITEM_ID.test(request.itemId)) throw new ValetError('grant', 'invalid')
@@ -243,8 +252,11 @@ export class CredentialKeeper {
       provider: grant.provider,
       targets: [...grant.targets],
     })
+    const before = await this.#deps.store.list()
     await this.#deps.store.put(grant)
     this.#titles.set(grant.itemRef, title)
+    // A Valet-made key this grant replaced is no longer named: its private half goes.
+    await this.#forgetUnusedKeys(before)
     const info = (await this.list()).find(
       (g) =>
         g.adapterId === grant.adapterId &&
@@ -259,6 +271,8 @@ export class CredentialKeeper {
   async revoke(adapterId: string, credential: string): Promise<void> {
     const before = await this.#deps.store.list()
     await this.#deps.revokeEvidence((s) => s.adapterId === adapterId && s.credential === credential)
+    // A carry record would otherwise make an old copy count again under a later install.
+    await this.#deps.dropCarried((c) => c.adapterId === adapterId && c.credential === credential)
     await this.#deps.store.revoke(adapterId, credential)
     await this.#deps.audit.append({ type: 'credential-revoked', adapterId, credential })
     await this.#forgetUnusedKeys(before)
@@ -284,7 +298,7 @@ export class CredentialKeeper {
     const credentials = credentialsOf(adapter.manifest)
     if (!Object.hasOwn(credentials, credential) || credentials[credential]?.kind !== 'ssh-key')
       throw new ValetError('grant', 'invalid')
-    const info = await keys.generate(`valet-${adapterId}-${credential}`.slice(0, 100).replaceAll('_', '-'))
+    const info = await keys.generate(keyLabel(adapterId, credential))
     try {
       await this.#deps.audit.append({
         type: 'key-generated',
@@ -348,6 +362,9 @@ export class CredentialKeeper {
       })),
     )
     for (const g of kept) {
+      // A revoke while this ran takes the old grant and its evidence: it is not carried then.
+      if ((await this.#deps.store.find(adapterId, previous.hash, g.credential)) === null || !this.#signed(g))
+        continue
       try {
         await this.#deps.audit.append({
           type: 'credential-granted',
@@ -403,7 +420,9 @@ export class CredentialKeeper {
             s.adapterId === c.adapterId &&
             s.adapterHash === c.toHash &&
             s.previousHash === c.fromHash &&
-            s.inheritsSession,
+            s.inheritsSession &&
+            // A rollback never carries (carry refuses it), so its evidence never makes a carry count.
+            s.source !== 'rollback',
         ) !== null,
     )
   }
@@ -417,8 +436,10 @@ export class CredentialKeeper {
 
   async #itemTitle(provider: CredentialProviderKind, itemId: string): Promise<string> {
     if (provider === 'valet-key') {
-      if ((await this.#keyInfo(itemId)) === null) throw new ValetError('grant', 'not-found')
-      return 'Valet-made key'
+      const key = await this.#keyInfo(itemId)
+      if (key === null) throw new ValetError('grant', 'not-found')
+      // The SSH fingerprint, as the server's authorized_keys shows it: tells keys apart on the card.
+      return `Valet-made key ${key.fingerprint}`
     }
     const item = (await this.#deps.vaultItems(provider)).find((i) => i.id === itemId)
     if (item === undefined) throw new ValetError('grant', 'not-found')
@@ -439,6 +460,18 @@ export class CredentialKeeper {
       if (grant.provider === 'valet-key' && !after.some((g) => g.itemRef === grant.itemRef))
         await keys.forget(grant.itemRef).catch(() => undefined)
   }
+}
+
+/**
+ * The label a Valet-made key carries in its public half: which adapter and credential it was made
+ * for. Adapter ids have no dot and credential names no hyphen, so the label is never ambiguous; one
+ * too long for the key's 100 characters is a hash of the two.
+ */
+export function keyLabel(adapterId: string, credential: string): string {
+  const label = `valet.${adapterId}.${credential.replaceAll('_', '-')}`
+  return label.length <= 100
+    ? label
+    : `valet.${createHash('sha256').update(`${adapterId}/${credential}`).digest('hex').slice(0, 40)}`
 }
 
 /** The card for `grant`: the Mac's own sentence for the declaration, narrowed to the grant's targets. */

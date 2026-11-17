@@ -213,6 +213,9 @@ public enum ApprovalSubject: Equatable, Sendable {
       if subject.provider == "valet-key", subject.kind != "ssh-key" {
         throw SchemaError(path, "a Valet-made key is an SSH key")
       }
+      if subject.provider == "valet-key", subject.custody != "kept" {
+        throw SchemaError(path, "a Valet-made key is never handed to adapter code")
+      }
       return .credentialGrant(subject)
     case .toolEnable:
       let f = try Fields(value, path: path, required: [

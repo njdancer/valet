@@ -1379,7 +1379,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         enter('credentials.generateKey', adapterId, credential)
         return {
           itemRef: 'valet-key:0b5e2f1c-3d4a-4b6c-8d7e-9f0a1b2c3d4e',
-          publicKey: `ssh-ed25519 ${'A'.repeat(68)} valet-${adapterId}-${credential}`.replaceAll('_', '-'),
+          publicKey: `ssh-ed25519 ${'A'.repeat(68)} valet.${adapterId}.${credential.replaceAll('_', '-')}`,
           fingerprint: `SHA256:${'B'.repeat(43)}`,
           createdAt: new Date(now).toISOString(),
         }

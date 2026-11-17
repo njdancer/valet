@@ -125,7 +125,11 @@ const subjects = {
     })
     .strict()
     .refine((s) => new Set(s.targets).size === s.targets.length, 'targets repeat')
-    .refine((s) => s.provider !== 'valet-key' || s.kind === 'ssh-key', 'a Valet-made key is an SSH key'),
+    .refine((s) => s.provider !== 'valet-key' || s.kind === 'ssh-key', 'a Valet-made key is an SSH key')
+    .refine(
+      (s) => s.provider !== 'valet-key' || s.custody === 'kept',
+      'a Valet-made key is never handed to adapter code',
+    ),
   /**
    * Turn a tool on: locally (after someone turned it off), or for remote clients, all of them or
    * one (`clientId`).

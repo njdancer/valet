@@ -482,3 +482,12 @@ note it here. Each one can be reversed.
 - **B: usernames aren't redacted** from tool output. Only the secret is, so a mail adapter's
   `from` and `to` fields survive. A username is not a secret, and redacting it made mail and
   SFTP adapters unusable.
+- **B: a key Valet makes is never handed to adapter code.** Valet-made SSH keys are offered only
+  for `kept` credentials. If an adapter wants the raw key, the person brings their own key from
+  1Password.
+- **B: a Valet-made key is tied to one adapter and one credential.** Its public line ends
+  `valet.<adapter>.<credential>`, and a grant refuses a key made for anything else. So the
+  server's authorized_keys line names what it lets in, and revoking deletes the key.
+- **B: a grant carries over an update only when the update keeps the session.** That needs the
+  person's signed approval of the update. A rollback never carries a grant, and revoking a carried
+  grant also drops its carry record.

@@ -69,7 +69,10 @@ function detail(serialized: SerializedRequest): string {
     case 'credential-grant': {
       // The targets are Mac-checked hosts and endpoints; the custody is the fact that matters most.
       const { custody, targets } = request.subject
-      const where = targets.length <= 2 ? targets.join(', ') : `${targets.length} hosts`
+      const where =
+        targets.length <= 2
+          ? targets.join(', ')
+          : `${targets.length} ${targets.some((t) => t.includes(':')) ? 'endpoints' : 'hosts'}`
       return custody === 'entrusted' ? `, handing it to the adapter's code, for ${where}` : ` with ${where}`
     }
     default:

@@ -39,6 +39,18 @@ const token: CredentialDeclaration = {
   },
 }
 
+const entrustedKey: CredentialDeclaration = { ...sshKey, custody: 'entrusted' }
+const HASH2 = 'd'.repeat(64)
+
+/** An adapter-install approval as the broker honours it, enough for a carry to read. */
+interface Install {
+  readonly adapterId: string
+  readonly adapterHash: string
+  readonly previousHash: string
+  readonly inheritsSession: boolean
+  readonly source: 'install' | 'update' | 'rollback'
+}
+
 function setup(options: { approve?: boolean; keys?: boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'valet-keeper-'))
   dirs.push(dir)
@@ -49,12 +61,14 @@ function setup(options: { approve?: boolean; keys?: boolean } = {}) {
   const copied: string[] = []
   const manifest = {
     id: 'nas',
-    credentials: { key: sshKey, api: token },
+    credentials: { key: sshKey, backup: sshKey, ent: entrustedKey, api: token },
   } as unknown as AdapterManifest
+  const installs: Install[] = []
+  const installed = { hash: HASH }
   const carried: CarriedCredential[] = []
   const keeper = new CredentialKeeper({
     store: new FileCredentialGrantStore({ path: join(dir, 'credential-grants.json') }),
-    adapter: (id) => (id === 'nas' ? { hash: HASH, manifest } : null),
+    adapter: (id) => (id === 'nas' ? { hash: installed.hash, manifest } : null),
     approve: async (subject) => {
       if (options.approve === false) return false
       signed.push(subject)
@@ -63,13 +77,19 @@ function setup(options: { approve?: boolean; keys?: boolean } = {}) {
     honoured: (kind, matches) =>
       kind === 'credential-grant'
         ? (signed.find((s) => (matches as (s: ApprovalSubject<'credential-grant'>) => boolean)(s)) ?? null)
-        : null,
+        : kind === 'adapter-install'
+          ? ((installs.find((s) => (matches as (s: Install) => boolean)(s)) ?? null) as never)
+          : null,
     revokeEvidence: async (matches) => {
       for (let i = signed.length - 1; i >= 0; i--) if (matches(signed[i] as never)) signed.splice(i, 1)
     },
     carried: () => carried,
     recordCarried: async (_id, records) => {
       carried.push(...records)
+    },
+    dropCarried: async (matches) => {
+      for (let i = carried.length - 1; i >= 0; i--)
+        if (matches(carried[i] as CarriedCredential)) carried.splice(i, 1)
     },
     providers: () => ({
       'onepassword-service-account': {
@@ -96,14 +116,14 @@ function setup(options: { approve?: boolean; keys?: boolean } = {}) {
     },
     now: () => Date.parse('2026-11-17T12:00:00.000Z'),
   })
-  return { keeper, signed, audit, keychain, keys, copied }
+  return { keeper, signed, audit, keychain, keys, copied, installs, installed, carried, manifest }
 }
 
 describe('CredentialKeeper', () => {
   it('makes a Valet SSH key, grants it with a signature, and forgets it when the grant goes', async () => {
     const { keeper, signed, audit, keys } = setup()
     const key = await keeper.generateKey('nas', 'key')
-    expect(key.publicKey).toMatch(/^ssh-ed25519 [A-Za-z0-9+/]{68} valet-nas-key$/)
+    expect(key.publicKey).toMatch(/^ssh-ed25519 [A-Za-z0-9+/]{68} valet\.nas\.key$/)
     expect(audit).toContainEqual({
       type: 'key-generated',
       adapterId: 'nas',
@@ -123,7 +143,7 @@ describe('CredentialKeeper', () => {
         provider: 'valet-key',
         kind: 'ssh-key',
         targets: ['nas.example.com:22'],
-        itemTitle: 'Valet-made key',
+        itemTitle: `Valet-made key ${key.fingerprint}`,
       }),
     ])
     // The gate finds it, and the key resolves as an OpenSSH private key.
@@ -237,6 +257,73 @@ describe('CredentialKeeper', () => {
     expect(await keeper.list()).toEqual([expect.objectContaining({ signed: false })])
     // Another version's source never finds this one's grant.
     expect(await keeper.sourceFor('nas', 'c'.repeat(64)).findGrant('api')).toBeNull()
+  })
+
+  it('never hands a Valet key to adapter code, and keeps a key to the credential it was made for', async () => {
+    const { keeper, signed } = setup()
+    const base = { adapterId: 'nas', adapterHash: HASH, provider: 'valet-key' } as const
+    const forEnt = await keeper.generateKey('nas', 'ent').catch(() => null)
+    const key = await keeper.generateKey('nas', 'key')
+    await expect(
+      keeper.make({ ...base, credential: 'ent', itemId: forEnt?.itemRef ?? key.itemRef }),
+    ).rejects.toMatchObject({
+      errorClass: 'invalid',
+    })
+    // A key made for `key` isn't granted as `backup`: the server trusts it by its label.
+    await expect(keeper.make({ ...base, credential: 'backup', itemId: key.itemRef })).rejects.toMatchObject({
+      errorClass: 'invalid',
+    })
+    expect(signed).toEqual([])
+  })
+
+  it('carries a grant over an update the person approved, never over a rollback, and revoke ends a carry', async () => {
+    const request = {
+      adapterId: 'nas',
+      adapterHash: HASH,
+      credential: 'api',
+      provider: 'onepassword-service-account',
+      itemId: 'api-token',
+    } as const
+    // A rollback's approval never carries a grant.
+    const back = setup()
+    await back.keeper.make(request)
+    back.installed.hash = HASH2
+    back.installs.push({
+      adapterId: 'nas',
+      adapterHash: HASH2,
+      previousHash: HASH,
+      inheritsSession: true,
+      source: 'rollback',
+    })
+    await back.keeper.carry('nas', HASH2, { hash: HASH, manifest: back.manifest })
+    expect(back.carried).toEqual([])
+    expect(await back.keeper.sourceFor('nas', HASH2).findGrant('api')).toBeNull()
+    // Even with a real carry record in the ledger, rollback evidence doesn't make it count.
+    const rollback = back.installs[0] as Install
+    back.installs[0] = { ...rollback, source: 'update' }
+    await back.keeper.carry('nas', HASH2, { hash: HASH, manifest: back.manifest })
+    expect(back.carried).toHaveLength(1)
+    expect(await back.keeper.sourceFor('nas', HASH2).findGrant('api')).not.toBeNull()
+    back.installs[0] = rollback
+    expect(await back.keeper.sourceFor('nas', HASH2).findGrant('api')).toBeNull()
+
+    // An update carries, and revoking the carried grant drops its record.
+    const up = setup()
+    await up.keeper.make(request)
+    up.installed.hash = HASH2
+    up.installs.push({
+      adapterId: 'nas',
+      adapterHash: HASH2,
+      previousHash: HASH,
+      inheritsSession: true,
+      source: 'update',
+    })
+    await up.keeper.carry('nas', HASH2, { hash: HASH, manifest: up.manifest })
+    expect(up.carried).toHaveLength(1)
+    expect(await up.keeper.sourceFor('nas', HASH2).findGrant('api')).not.toBeNull()
+    await up.keeper.revoke('nas', 'api')
+    expect(up.carried).toEqual([])
+    expect(await up.keeper.sourceFor('nas', HASH2).findGrant('api')).toBeNull()
   })
 
   it('refuses to make keys in a build without a Keychain', async () => {

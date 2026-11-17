@@ -91,7 +91,7 @@ func detail(kind: String, subject: [String: Any]) -> String {
     return " on \(hosts.joined(separator: ", "))"
   case "credential-grant":
     let targets = subject["targets"] as? [String] ?? []
-    let where_ = targets.count <= 2 ? targets.joined(separator: ", ") : "\(targets.count) hosts"
+    let where_ = targets.count <= 2 ? targets.joined(separator: ", ") : "\(targets.count) \(targets.contains { $0.contains(":") } ? "endpoints" : "hosts")"
     return subject["custody"] as? String == "entrusted"
       ? ", handing it to the adapter's code, for \(where_)"
       : " with \(where_)"

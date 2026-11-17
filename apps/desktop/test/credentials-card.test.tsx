@@ -71,7 +71,7 @@ describe('the Credentials card', () => {
     const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: 'Grant…' }))
     await user.click(await screen.findByRole('button', { name: 'Make a key' }))
-    expect(await screen.findByText(/^ssh-ed25519 A{68} valet-woolworths-nas-key$/)).toBeTruthy()
+    expect(await screen.findByText(/^ssh-ed25519 A{68} valet\.woolworths\.nas-key$/)).toBeTruthy()
     expect(screen.getByText(/authorized_keys/)).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Grant with Touch ID' }))
     await waitFor(() => expect(called(api, 'credentials.make')).toHaveLength(1))
