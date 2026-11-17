@@ -152,3 +152,21 @@ file after a crash. Each is fixed in the same PR:
 - an `interrupted` anchor state fails closed;
 - the Mac can't be revoked, enforced in the schemas;
 - more invisible characters are refused.
+
+### 2026-11-17: hostile agent and the open hub
+
+Scope: the relay hub's OAuth server and `/mcp` (`apps/relay/src/hub`), how the Mac serves hub
+agents (`hub-agents.ts`, `remote.ts`, `phones.ts`), the admin writer, the scratch browser's rules
+and agent feedback. Full write-up: [findings/2026-11-17-red-team-hub-and-agents.md](findings/2026-11-17-red-team-hub-and-agents.md).
+
+- **Found and fixed (medium):** anyone could fill the hub's 100 client registrations for good, or
+  hold all 20 waiting sign-ins from one address. Unused registrations now go after an hour, and
+  one address or client has its own small caps. Tests in `apps/relay/test/hub-oauth.test.ts`.
+- **Found and fixed (low):** an agent's feedback report could @mention anyone or link any issue,
+  filed as the token's owner. Mentions and references now go in code spans. Tests in
+  `apps/desktop/test/main/feedback.test.ts`.
+- **Needs a decision (high, design):** agent feedback is read by Claude threads whose PRs merge
+  without review, so a prompt-injected agent's report is a path to a code change.
+- **Tried, held:** grant and tool isolation at the hub's `/mcp`, the code-picks-the-sign-in flow,
+  redirect and client-name checks, token reuse, the admin writer's tiers, the scratch browser's
+  address rules.

@@ -2,7 +2,11 @@ import XCTest
 
 /// The journeys (docs/ux/agent-run/journeys.md) on the simulator, against the fake Mac and relay in
 /// the ValetPhoneDev build. Face ID is the fake's: it succeeds unless `-valet-faceid-fails`.
-final class JourneyTests: XCTestCase {
+///
+/// The tests are split into a class per journey, so a run can pick or skip whole classes (CI skips
+/// ScreensForReviewTests outside the nightly run). This base class holds the helpers and no tests,
+/// since a subclass would run any test it inherited.
+class JourneyTestCase: XCTestCase {
   var app: XCUIApplication!
 
   override func setUp() {
@@ -23,6 +27,19 @@ final class JourneyTests: XCTestCase {
     return e
   }
 
+  /// Taps `id` and waits for `shown`. A tap that lands while the screen is still settling (after a
+  /// scroll or a launch) can be dropped on a busy CI simulator, which failed runs with "never
+  /// appeared", so it taps again, up to three times, before failing.
+  @discardableResult
+  func tap(_ id: String, until shown: String) -> XCUIElement {
+    let target = element(shown)
+    for _ in 0..<3 {
+      waitFor(id).tap()
+      if target.waitForExistence(timeout: 10) { break }
+    }
+    return waitFor(shown)
+  }
+
   func openCard(_ ref: String) {
     // Cards further down the list may not exist until scrolled to.
     // The list keeps its scroll position between cards, so look further down first, then back up.
@@ -32,18 +49,19 @@ final class JourneyTests: XCTestCase {
       if tries < 4 { app.swipeUp() } else { app.swipeDown() }
       tries += 1
     }
-    waitFor("card.\(ref)").tap()
-    _ = waitFor("card.title")
+    tap("card.\(ref)", until: "card.title")
     // Valet won't take an approval in the first second after a card changes (the settle time).
     Thread.sleep(forTimeInterval: 1.2)
   }
 
+}
+
+final class PairingJourneyTests: JourneyTestCase {
   // MARK: J1
 
   func testJ1PairsWhenTheCodesMatch() {
     launch("pair")
-    waitFor("pair.fake").tap()
-    let code = waitFor("pair.code")
+    let code = tap("pair.fake", until: "pair.code")
     XCTAssertEqual(code.label.replacingOccurrences(of: " ", with: "").count, 6)
     waitFor("fake.mac.confirm").tap()
     XCTAssertTrue(app.tabBars.buttons["Needs you"].waitForExistence(timeout: 10))
@@ -52,12 +70,14 @@ final class JourneyTests: XCTestCase {
 
   func testJ1NothingPairsWhenTheMacSaysNoneMatch() {
     launch("pair")
-    waitFor("pair.fake").tap()
-    _ = waitFor("pair.code")
+    tap("pair.fake", until: "pair.code")
     waitFor("fake.mac.reject").tap()
     XCTAssertTrue(waitFor("pair.failed").label.contains("Nothing was paired"))
   }
 
+}
+
+final class InstallJourneyTests: JourneyTestCase {
   // MARK: J4
 
   func testJ4ApprovesAnInstall() {
@@ -90,6 +110,9 @@ final class JourneyTests: XCTestCase {
     XCTAssertTrue(waitFor("card.state").label.contains("Declined"))
   }
 
+}
+
+final class ConnectJourneyTests: JourneyTestCase {
   func testJ4ConnectNeedsTheCodeTheAgentShows() {
     launch("cards")
     openCard("4C55")
@@ -111,6 +134,9 @@ final class JourneyTests: XCTestCase {
     XCTAssertFalse(element("card.approve").exists)
   }
 
+}
+
+final class SafetyJourneyTests: JourneyTestCase {
   // MARK: J7
 
   func testJ7SeesTheAgentsWordsAsAClaimAndDeclines() {
@@ -145,6 +171,9 @@ final class JourneyTests: XCTestCase {
     XCTAssertTrue(waitFor("card.state").label.contains("Approved"))
   }
 
+}
+
+final class AccessibilityTests: JourneyTestCase {
   // MARK: Every screen, for accessibility
 
   func testAccessibilityAuditOnEveryTab() throws {
@@ -211,6 +240,11 @@ final class JourneyTests: XCTestCase {
     add(shot)
   }
 
+}
+
+/// Screenshots only, no assertions beyond the journeys'. CI takes them in the nightly full run and on
+/// a pull request labelled ios-screens (.github/workflows/ios-screens.yml), not on every push.
+final class ScreensForReviewTests: JourneyTestCase {
   // MARK: Screens for review (persona QA reads these from the CI artifact)
 
   func shot(_ name: String) {
@@ -223,8 +257,7 @@ final class JourneyTests: XCTestCase {
   func testScreensForReview() {
     launch("pair")
     shot("01 pair start")
-    waitFor("pair.fake").tap()
-    _ = waitFor("pair.code")
+    tap("pair.fake", until: "pair.code")
     shot("02 pair code")
     launch("cards")
     _ = waitFor("card.1D99")

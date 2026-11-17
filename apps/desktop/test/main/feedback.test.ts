@@ -10,6 +10,7 @@ import {
   type FeedbackDeskDeps,
   FeedbackDeskImpl,
   ghCliToken,
+  quietMentions,
   scrubFeedback,
 } from '../../src/main/core/feedback'
 
@@ -138,6 +139,30 @@ describe('scrubFeedback', () => {
     expect(scrubbed.text).toContain('Cookie: [redacted]')
     expect(scrubbed.text).toContain('b032ba7f07c6c34482dfced46abaddc83a3b29b9a1c690eafe7524da9a7317ba stays')
     expect(scrubbed.count).toBe(5)
+  })
+})
+
+// Red team, 2026-11-17: a report is filed as the token's owner, so an agent's @mention or
+// cross-reference would notify or link in the person's name.
+describe('quietMentions', () => {
+  it('puts mentions and references to other repositories’ issues in code spans', () => {
+    expect(quietMentions('cc @octocat and @some-org/team, see other/repo#12')).toBe(
+      'cc `@octocat` and `@some-org/team`, see `other/repo#12`',
+    )
+    expect(quietMentions('@ghost at the start')).toBe('`@ghost` at the start')
+    expect(quietMentions('see https://github.com/other/repo/issues/3 now')).toBe(
+      'see `https://github.com/other/repo/issues/3` now',
+    )
+    // Already quiet, or not a mention.
+    expect(quietMentions('`@octocat` a@b #12 x/y.z')).toBe('`@octocat` a@b #12 x/y.z')
+  })
+
+  it('reaches the issue GitHub is sent', async () => {
+    const t = setup()
+    await t.desk.send(ME, { ...REPORT, body: 'Ping @octocat about other/repo#1' })
+    const filed = t.github.seen.find((s) => s.method === 'POST')?.body as { body: string }
+    expect(filed.body).toContain('Ping `@octocat` about `other/repo#1`')
+    expect(filed.body).not.toMatch(/(^|[^`])@octocat/)
   })
 })
 

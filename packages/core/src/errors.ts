@@ -77,6 +77,13 @@ export const ERROR_CLASSES = [
   /** A local file has loose permissions or an unexpected owner. */
   'insecure-file',
   'login-in-progress',
+  /**
+   * A tunnelled TLS connection named another server than the endpoint it was allowed to reach
+   * (its ClientHello's SNI), so the broker closed it (docs/adapter-kinds.md#f1-the-egress-broker).
+   */
+  'sni-mismatch',
+  /** The run sent more than its upload budget allows, so the broker closed the connection. */
+  'upload-budget',
   'unsupported',
   /** A signature did not verify: an update feed's envelope, or a downloaded build. */
   'signature-invalid',

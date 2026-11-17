@@ -7,7 +7,7 @@
 // reorders it fails `verifyRoster` on every node that saw the real one.
 
 import { z } from 'zod'
-import { DEVICE_ROLES, keyIdSchema } from './devices'
+import { DEVICE_ROLES, deviceRecordSchema, keyIdSchema } from './devices'
 import { displayText } from './display-text'
 import { sha256Hex } from './hash'
 import {
@@ -203,4 +203,54 @@ export function nextRosterChange(
     change,
   }
   return JSON.stringify(next)
+}
+
+/**
+ * A Mac asking to join a list another device started (relay-hub.md, step 4c): its own device
+ * record (devices.ts), signed by its own approval key. That proves the Mac holds the approval key
+ * and binds its transport and agreement keys to it, so a phone that adds it adds exactly this
+ * Mac's keys, whatever the hub says.
+ */
+export const signedJoinRecordSchema = z
+  .object({ payload: z.string().min(2).max(4096), signature: p256SignatureSchema })
+  .strict()
+
+/**
+ * The device a join record asks to add, or null if it isn't a Mac's own record signed by its own
+ * key. `macId`, when given, is the Mac the hub says asked. `verify` as for verifyRoster, over the
+ * device-record domain.
+ */
+export function joinRecordDevice(
+  signed: SignedText,
+  options: {
+    readonly macId?: string
+    readonly verify?: (approvalKey: string, payload: string, signature: string) => boolean
+  } = {},
+): RosterDevice | null {
+  if (!signedJoinRecordSchema.safeParse(signed).success) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(signed.payload)
+  } catch {
+    return null
+  }
+  const result = deviceRecordSchema.safeParse(parsed)
+  if (!result.success) return null
+  const record = result.data
+  if (record.role !== 'mac' || record.platform !== 'macos' || record.macId !== record.deviceId) return null
+  if (options.macId !== undefined && record.deviceId !== options.macId) return null
+  const verify =
+    options.verify ??
+    ((key: string, payload: string, signature: string) =>
+      verifyP256(key, SIGNING_DOMAINS.deviceRecord, payload, signature))
+  if (!verify(record.approvalKey, signed.payload, signed.signature)) return null
+  return {
+    deviceId: record.deviceId,
+    role: 'mac',
+    platform: 'macos',
+    name: record.name,
+    approvalKey: record.approvalKey,
+    transportKey: record.transportKey,
+    agreementKey: record.agreementKey,
+  }
 }

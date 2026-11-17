@@ -86,6 +86,8 @@ export const INVOKE_METHODS = [
   'remote.declineAllConsents',
   'remote.clients',
   'remote.revokeClient',
+  'remote.hubAgents',
+  'remote.revokeHubAgent',
   'remote.revokeAllClients',
   'remote.setAskForChanges',
   'remote.setup',

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { EMPTY_LOCK } from '../src/dependencies'
 import { bundleHash, canonicalJson } from '../src/hash'
 import { parseManifest } from '../src/manifest'
 import {
@@ -144,7 +145,7 @@ describe('checkPackage', () => {
       valid({
         'manifest.json': JSON.stringify({
           ...rest,
-          endpoints: [{ method: 'GET', path: '/x', purpose: 'read' }],
+          request: [{ method: 'GET', path: '/x', purpose: 'read' }],
           egres: ['www.example.com'],
           name: '',
           tools: [{ ...MANIFEST.tools[0], sideEffects: 'read' }],
@@ -152,8 +153,8 @@ describe('checkPackage', () => {
       }),
     )
     expect(bad.rule).toBe('manifest-invalid')
-    expect(bad.detail).toContain('(top level): Unrecognized keys: "endpoints", "egres"')
-    expect(bad.detail).toContain('did you mean "requests" for "endpoints", "egress" for "egres"?')
+    expect(bad.detail).toContain('(top level): Unrecognized keys: "request", "egres"')
+    expect(bad.detail).toContain('did you mean "requests" for "request", "egress" for "egres"?')
     expect(bad.detail).toContain('name: ')
     expect(bad.detail).toContain('tools[0]: Unrecognized key: "sideEffects" (did you mean "sideEffect"')
     expect(bad.detail).not.toMatch(/^: /)
@@ -183,5 +184,41 @@ describe('checkPackage', () => {
     const large: Record<string, string> = valid()
     for (let i = 0; i < 9; i++) large[`src/f${i}.ts`] = 'x'.repeat(PACKAGE_LIMITS.fileBytes)
     expect(refusal(large).rule).toBe('too-large')
+  })
+})
+
+describe('a dependency lockfile (docs/node-runtime.md#dependencies)', () => {
+  const lock = {
+    lockfileVersion: 1,
+    dependencies: { a: { range: '^1.0.0', resolved: 'a@1.0.0' } },
+    packages: {
+      'a@1.0.0': {
+        integrity: `sha512-${'A'.repeat(86)}==`,
+        tarball: 'https://registry.npmjs.org/a/-/a-1.0.0.tgz',
+        dependencies: {},
+      },
+    },
+  }
+
+  it('may sit at the top of a package, but only a raw adapter may carry one', () => {
+    expect(() => checkPackagePath('valet-lock.json')).not.toThrow()
+    expect(checkPackage(valid()).dependencies).toBeNull()
+    expect(refusal(valid({ 'valet-lock.json': JSON.stringify(EMPTY_LOCK) })).rule).toBe('lock-invalid')
+  })
+
+  it('is covered by the adapter hash, whitespace aside; without one the hash is unchanged', () => {
+    const files = valid()
+    const plain = adapterHashOf(files, MANIFEST)
+    const covered: Record<string, string> = { ...SOURCES, ':manifest.json': canonicalJson(MANIFEST) }
+    expect(plain).toBe(bundleHash(covered))
+    const withLock = adapterHashOf({ ...files, 'valet-lock.json': JSON.stringify(lock) }, MANIFEST)
+    expect(withLock).not.toBe(plain)
+    expect(adapterHashOf({ ...files, 'valet-lock.json': JSON.stringify(lock, null, 2) }, MANIFEST)).toBe(
+      withLock,
+    )
+    const other = { ...lock, dependencies: { a: { range: '1.0.0', resolved: 'a@1.0.0' } } }
+    expect(adapterHashOf({ ...files, 'valet-lock.json': JSON.stringify(other) }, MANIFEST)).not.toBe(withLock)
+    // Text that isn't JSON still hashes (checkPackage refuses it before it matters).
+    expect(adapterHashOf({ ...files, 'valet-lock.json': '{' }, MANIFEST)).not.toBe(plain)
   })
 })

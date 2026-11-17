@@ -131,7 +131,29 @@ export function scrubFeedback(text: string): Scrubbed {
       count += 1
       return '[redacted]'
     })
-  return { text: out, count }
+  return { text: quietMentions(out), count }
+}
+
+/**
+ * Puts @mentions and references to other issues in code spans, where GitHub neither notifies nor
+ * links. The issue is filed as whoever owns the token (with the gh fallback, the person), so
+ * without this an agent's report could ping any GitHub user or team, or leave a "mentioned this"
+ * line on any public issue, in the person's name.
+ */
+export function quietMentions(text: string): string {
+  return text
+    .replace(
+      /\bhttps?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9._-]+\/(?:issues|pull|discussions)\/\d+[^\s`)]*/g,
+      (url) => `\`${url}\``,
+    )
+    .replace(
+      /(^|[^\w`/.-])([A-Za-z0-9-]+\/[A-Za-z0-9._-]+#\d+)/g,
+      (_m, before: string, ref: string) => `${before}\`${ref}\``,
+    )
+    .replace(
+      /(^|[^\w`])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\/[A-Za-z0-9._-]+)?)/g,
+      (_m, before: string, handle: string) => `${before}\`@${handle}\``,
+    )
 }
 
 /** A reply as the agent reads it: bounded, without control characters. */

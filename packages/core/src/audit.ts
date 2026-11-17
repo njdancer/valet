@@ -147,6 +147,25 @@ export type AuditEvent =
       readonly errorClass: ErrorClass | null
     }
   | {
+      /**
+       * One connection the egress broker made for an adapter that isn't a browser
+       * (docs/adapter-kinds.md#f1-the-egress-broker): where to, how, and how many bytes went each
+       * way. Never a path, a header or a body.
+       */
+      readonly type: 'egress-connection'
+      readonly adapterId: string
+      readonly callId: string
+      /** `host:port`, with a private host's address as declared. */
+      readonly endpoint: string
+      readonly kind: 'https' | 'http' | 'websocket' | 'tunnel'
+      readonly bytesUp: number
+      readonly bytesDown: number
+      /** Null when it ended normally; else what it was refused or failed with. */
+      readonly errorClass: ErrorClass | null
+      /** Made in a draft's live trial (callId is then the trial's), not an installed call. */
+      readonly draftId?: string
+    }
+  | {
       readonly type: 'breaker-opened'
       /** The site host whose breaker opened; every adapter on that host waits. */
       readonly host: string

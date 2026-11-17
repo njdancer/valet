@@ -331,7 +331,7 @@ export class DraftStore {
 
 /** Where a package's files may go (core's package rules), for a refused path. */
 const PLACES =
-  'Only manifest.json and README.md sit at the top; src/ holds .ts (the entry is src/tools.ts), test/ .ts and .json, and fixtures/ .json, .html and .txt.'
+  'Only manifest.json and README.md (and, for a raw adapter, valet-lock.json) sit at the top; src/ holds .ts (the entry is src/tools.ts), test/ .ts and .json, and fixtures/ .json, .html and .txt.'
 
 function checkPath(path: string): void {
   try {

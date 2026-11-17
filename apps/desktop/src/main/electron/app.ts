@@ -19,6 +19,7 @@ import {
 } from '@valet/browser-electron'
 import { DEFAULT_SANDBOX } from '@valet/core'
 import { KeychainHelper, KeychainTokenSource, messagesHelperSocketPath } from '@valet/credentials'
+import { EgressBroker } from '@valet/egress'
 import { startEndpoint } from '@valet/mcp-server'
 import { createLocalAccess } from '@valet/sandbox'
 import { app, clipboard, dialog, protocol, session, shell } from 'electron'
@@ -434,6 +435,10 @@ async function main(): Promise<void> {
       local: (manifest) =>
         createLocalAccess(manifest.sandbox ?? DEFAULT_SANDBOX, 'declared', { home, refusedPorts: ownPorts }),
     },
+    // The broker an http adapter reaches the network through: its manifest's exact endpoints, the
+    // broker's own DNS, and never this Mac's own addresses (docs/adapter-kinds.md#f1-the-egress-broker).
+    egress: (endpoints) =>
+      new EgressBroker({ egress: endpoints.egress, privateHosts: endpoints.privateHosts ?? [] }),
     // Demo mode keeps only the shop on this machine: the other built-ins (no login, public data)
     // reach their real sites.
     createDriver: (manifest, reporters) =>

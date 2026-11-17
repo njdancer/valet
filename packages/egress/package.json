@@ -1,0 +1,19 @@
+{
+  "name": "@valet/egress",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@valet/core": "workspace:*",
+    "ws": "8.21.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1",
+    "@valet/fake-woolworths-site": "workspace:*",
+    "@valet/fake-http-api": "workspace:*"
+  }
+}

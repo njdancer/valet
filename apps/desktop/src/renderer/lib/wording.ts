@@ -137,6 +137,8 @@ export const ERROR_WORDING: Readonly<Record<ErrorClass, string>> = {
   'input-unreachable': 'Field unreachable',
   'insecure-file': 'Insecure file permissions',
   'login-in-progress': 'Login already running',
+  'sni-mismatch': 'Connection named another server',
+  'upload-budget': 'Sent more than its upload budget',
   unsupported: 'Unsupported',
   'signature-invalid': 'Signature didn’t verify',
   expired: 'Expired',

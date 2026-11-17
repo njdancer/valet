@@ -20,14 +20,21 @@ import {
   type LocalAccess,
   NeedsUserError,
   type PackageFiles,
+  runtimeOf,
   type ToolContext,
   type ToolPage,
+  uploadBudget,
   ValetError,
 } from '@valet/core'
+import { type ExchangeResult, RunMeter, requestSize } from '@valet/egress'
 import {
   CallState,
   failureDetail,
+  GuardedHttp,
   GuardedToolPage,
+  type HttpEgress,
+  NO_HTTP_ACCESS,
+  NO_PAGE,
   runIsolated,
   SecretRedactionSet,
   type SiteGuards,
@@ -283,8 +290,28 @@ export async function runCase(
     audit: async () => {},
   })
   const domUse = { name: null as string | null }
+  // An http adapter has no page: its requests go through the runtime's own ctx.http guard, to the
+  // case's responses in place of the egress broker, with the run's real upload budget.
+  const http = runtimeOf(draft.manifest) !== 'browser'
   const ctx: ToolContext = {
-    page: browser === null ? watchDom(guarded, domUse) : guarded,
+    page: http ? NO_PAGE : browser === null ? watchDom(guarded, domUse) : guarded,
+    http: http
+      ? new GuardedHttp({
+          adapterId: draft.manifest.id,
+          manifest: draft.manifest,
+          sideEffect: declared.sideEffect,
+          unlocks: [],
+          site: OPEN_SITE,
+          state,
+          audit: async () => {},
+          broker: fixtureEgress(fixtures),
+          run: {
+            meter: new RunMeter(uploadBudget(draft.manifest, declared.sideEffect)),
+            signal: controller.signal,
+            record: () => {},
+          },
+        })
+      : NO_HTTP_ACCESS,
     session: { ensure: async (): Promise<EnsureResult> => sessionResult(c.session) },
     confirm: async () => false,
     signal: controller.signal,
@@ -558,6 +585,34 @@ function withPages(fixtures: FixturePage, browser: ToolPage, c: DraftCase): Tool
 }
 
 /**
+ * The egress broker as a case sees it: each request that passed ctx.http's guard is answered from
+ * the case's `fetch` list, as the page's are. Its bytes are spent from the run's budget as the real
+ * broker would spend them. Sockets aren't served yet.
+ */
+function fixtureEgress(fixtures: FixturePage): HttpEgress {
+  return {
+    fetch: async (url, request, run): Promise<ExchangeResult> => {
+      run.meter.spend(
+        requestSize({ method: request.method, url, headers: request.headers, body: request.body }),
+      )
+      const result = await fixtures.fetch(url.href, { method: request.method })
+      const body =
+        result.body === null
+          ? Buffer.alloc(0)
+          : Buffer.from(typeof result.body === 'string' ? result.body : JSON.stringify(result.body), 'utf8')
+      return {
+        status: result.status,
+        headers: result.contentType === null ? {} : { 'content-type': result.contentType },
+        body,
+      }
+    },
+    websocket: async () => {
+      throw fixtures.unsupported('A case can’t open a WebSocket yet: check the socket in a live trial.')
+    },
+  }
+}
+
+/**
  * The inner page: what the guarded page asks once a request has passed every guard. It answers
  * only from the case. Its own checks are about the case, not the site: a request the case didn't
  * list fails the case with a reason the agent can act on.
@@ -654,6 +709,11 @@ class FixturePage implements ToolPage {
       throw this.miss(`No fixture ${clip(path)} in the draft.`)
     this.used.add(path)
     return this.files[path] ?? ''
+  }
+
+  /** Something the case harness can't serve: the case fails, saying so. */
+  unsupported(reason: string): Error {
+    return this.miss(reason)
   }
 
   /** Records why the case can't go on and returns an error that ends the run. */

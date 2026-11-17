@@ -20,6 +20,7 @@ import {
   DeadlineChip,
   DescriptionList,
   Dialog,
+  Disclosure,
   Field,
   Input,
   Label,
@@ -182,31 +183,21 @@ function Consent({
       }
     >
       <Stack gap={5}>
-        <div role="note">
-          <Banner
-            tone="warning"
-            title="A request you didn’t just start was started by someone else. Decline it."
-          >
-            Anyone can ask from your public address, and their request can look exactly like yours.
+        {answer === 'approved' ? (
+          // Approving one of several leaves the rest here: say the approval worked, and what is left.
+          <Banner live tone="success" title="Approved. Your browser carries on to the connector by itself.">
+            {state.requests.length === 1
+              ? 'Another request is still waiting. If you didn’t start it, decline it.'
+              : `${state.requests.length} other requests are still waiting. If you didn’t start them, decline them.`}
           </Banner>
-        </div>
-
-        <Stack gap={3}>
-          {state.requests.map((request) => (
-            <RequestFacts
-              key={request.id}
-              request={request}
-              now={now}
-              onDecline={
-                many ? () => void action.run(() => api.remote.declineConsent(request.id)) : undefined
-              }
-            />
-          ))}
-        </Stack>
-
+        ) : null}
         <Field
           label="Code from your browser"
-          description="Type the code your browser shows. It picks the request it belongs to."
+          description={
+            many
+              ? 'Type the code your browser shows. It picks your request from the ones below.'
+              : 'Type the code your browser shows.'
+          }
         >
           <Input
             value={code}
@@ -227,6 +218,33 @@ function Consent({
             }}
           />
         </Field>
+
+        {many ? (
+          <div role="note">
+            <Banner
+              tone="warning"
+              title="A request you didn’t just start was started by someone else. Decline it."
+            >
+              Anyone can ask from your public address, and their request can look exactly like yours.
+            </Banner>
+          </div>
+        ) : null}
+
+        <Stack gap={2}>
+          {many ? <Text weight="semibold">Waiting ({state.requests.length})</Text> : null}
+          {state.requests.map((request) =>
+            many ? (
+              <RequestRow
+                key={request.id}
+                request={request}
+                now={now}
+                onDecline={() => void action.run(() => api.remote.declineConsent(request.id))}
+              />
+            ) : (
+              <RequestFacts key={request.id} request={request} now={now} />
+            ),
+          )}
+        </Stack>
 
         {answer !== null && answer !== 'approved' ? (
           <Text role="alert" tone="danger" size="sm" weight="medium">
@@ -314,18 +332,22 @@ function Consent({
   )
 }
 
+/** Everything Valet knows about one request. Standalone (the only request) it is the request's box. */
 function RequestFacts({
   request,
   now,
-  onDecline,
+  bare = false,
 }: {
   readonly request: RemoteConsentRequest
   readonly now: number
-  readonly onDecline: (() => void) | undefined
+  readonly bare?: boolean
 }) {
   const api = useApi()
   return (
-    <div data-testid="consent-request" className="flex flex-col gap-3 rounded-md bg-inset p-3">
+    <div
+      data-testid={bare ? undefined : 'consent-request'}
+      className={bare ? undefined : 'flex flex-col gap-3 rounded-md bg-inset p-3'}
+    >
       <DescriptionList
         items={[
           { term: 'Asks as', value: <Value mono>{request.clientHost}</Value> },
@@ -373,13 +395,48 @@ function RequestFacts({
             : []),
         ]}
       />
-      {onDecline !== undefined ? (
-        <div>
-          <Button size="sm" onClick={onDecline}>
-            Decline {request.clientHost}
-          </Button>
-        </div>
-      ) : null}
+    </div>
+  )
+}
+
+/**
+ * One of several waiting requests, as one short line: who it claims to be, when it asked, and its
+ * own Decline. The rest of what Valet knows about it (address, name it gives) is one click away.
+ */
+function RequestRow({
+  request,
+  now,
+  onDecline,
+}: {
+  readonly request: RemoteConsentRequest
+  readonly now: number
+  readonly onDecline: () => void
+}) {
+  return (
+    <div data-testid="consent-request" className="flex flex-col gap-1.5 rounded-md bg-inset px-3 py-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <Stack gap={0.5} className="min-w-0 flex-1">
+          <span className="inline-flex flex-wrap items-center gap-2">
+            <Value mono>{request.clientHost}</Value>
+            {request.clientName !== null ? (
+              <Text size="sm" tone="muted">
+                “{clientLabel(request.clientName)}”
+              </Text>
+            ) : null}
+          </span>
+          <Text size="sm" tone="muted">
+            {request.via === 'hub' ? 'Through your Valet account · ' : ''}asked{' '}
+            {formatAgo(request.requestedAt, now)}
+          </Text>
+        </Stack>
+        <DeadlineChip until={Date.parse(request.expiresAt)} now={now} subject="Approve a connection" />
+        <Button size="sm" onClick={onDecline}>
+          Decline {request.clientHost}
+        </Button>
+      </div>
+      <Disclosure summary="Details">
+        <RequestFacts request={request} now={now} bare />
+      </Disclosure>
     </div>
   )
 }

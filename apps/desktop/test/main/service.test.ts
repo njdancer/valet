@@ -32,6 +32,8 @@ import {
   type SessionDriver,
   ValetError,
 } from '@valet/core'
+import { EgressBroker } from '@valet/egress'
+import { startFakeApi } from '@valet/fake-http-api'
 import {
   ADMIN_LOCKED_DOWN_RESULT,
   ADMIN_OTHER_AGENT_RESULT,
@@ -139,6 +141,7 @@ async function setup(
     trialDriver?: ServiceDeps['trialDriver']
     /** Collects the diagnostics log's lines (their types). */
     diagnostics?: string[]
+    egress?: ServiceDeps['egress']
   } = {},
 ) {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'sa-service-'))
@@ -219,6 +222,7 @@ async function setup(
     ...(options.diagnostics === undefined
       ? {}
       : { diagnostics: (d: { readonly type: string }) => options.diagnostics?.push(d.type) }),
+    ...(options.egress === undefined ? {} : { egress: options.egress }),
     createDriver: async (_manifest, reporters) => {
       driver.reporters = reporters
       return driver
@@ -670,7 +674,7 @@ describe('an update', () => {
       {
         ...SHOP,
         version: '1.1.0',
-        navigation: [...SHOP.navigation, 'https://sso.shop.test'],
+        navigation: [...(SHOP.navigation ?? []), 'https://sso.shop.test'],
         secrets: {
           login: { ...SHOP_LOGIN, origins: ['https://login.shop.test', 'https://sso.shop.test'] },
         } as typeof SHOP.secrets,
@@ -3726,6 +3730,7 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     describe: 'answers' | 'hangs' = 'answers',
     sandbox?: ServiceDeps['sandbox'],
     trialDriver?: ServiceDeps['trialDriver'],
+    egress?: ServiceDeps['egress'],
   ) {
     const start = inMemoryToolProcess()
     const prelude = await buildToolLibrary()
@@ -3744,6 +3749,7 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
       toolProcess: start,
       ...(sandbox === undefined ? {} : { sandbox }),
       ...(trialDriver === undefined ? {} : { trialDriver }),
+      ...(egress === undefined ? {} : { egress }),
     })
     const hashOf = (files: PackageFiles) => checkPackage(files).adapterHash
     return { ...s, picked, hashOf }
@@ -3811,6 +3817,82 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     await s.api.approvals.approve('shop', review?.to.hash ?? '')
     expect(await s.call('echo', { text: 'hi' })).toMatchObject({ status: 'ok', output: { text: 'v2:hi' } })
     expect(sandboxed.length).toBe(before)
+  })
+
+  it('installs and runs an http adapter through the egress broker, which only its review can widen', async () => {
+    const api = await startFakeApi()
+    try {
+      const egress: ServiceDeps['egress'] = (manifest) =>
+        new EgressBroker(
+          { egress: manifest.egress, privateHosts: manifest.privateHosts ?? [] },
+          {
+            lookup: (_name, cb) => cb(null, [{ address: '127.0.0.1', family: 4 }]),
+            testing: {
+              allowAddresses: ['127.0.0.1'],
+              ca: api.cert as string,
+              route: () => ({ address: '127.0.0.1', port: api.port }),
+            },
+          },
+        )
+      const httpManifest: ManifestInput = {
+        schemaVersion: 1,
+        id: 'items',
+        name: 'Items',
+        version: '1.0.0',
+        description: 'Reads items from an API.',
+        runtime: 'http',
+        egress: ['api.example.test'],
+        privateHosts: [{ address: '192.168.1.20', port: 8123, scheme: 'http' }],
+        requests: [{ method: 'GET', host: 'api.example.test', path: '/v1/items', purpose: 'read' }],
+        tools: [{ name: 'count', title: 'Count', description: 'Counts items.', sideEffect: 'read' }],
+      }
+      const tools = [
+        "import { z } from 'zod'",
+        'export const tools = {',
+        '  count: { input: z.object({ url: z.string() }), output: z.object({ count: z.number() }), run: async (ctx, a) => {',
+        '    const r = await ctx.http.fetch(a.url)',
+        '    return { count: JSON.parse(r.body).items.length }',
+        '  } },',
+        '}',
+      ].join('\n')
+      const files = packageOf(parseManifest(httpManifest), { 'src/tools.ts': tools })
+      const s = await withPackages(files, undefined, 'answers', undefined, undefined, egress)
+      let n = 0
+      const count = (url: string) =>
+        (s.endpoint.caller as ToolCaller).call({
+          adapterId: 'items',
+          tool: 'count',
+          input: { url },
+          client: 'Claude Code',
+          callId: `call_count_${++n}`,
+          transport: 'http',
+        })
+      expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true, adapterId: 'items' })
+      const review = (await s.api.approvals.pending()).find((r) => r.adapterId === 'items')
+      // The review says what kind of adapter it is and that it reaches the person's network.
+      expect(JSON.stringify(review)).toContain('192.168.1.20:8123')
+      await s.api.approvals.approve('items', review?.to.hash ?? '')
+      expect(await count('https://api.example.test/v1/items')).toMatchObject({
+        status: 'ok',
+        output: { count: 2 },
+      })
+      expect(api.seen.at(-1)).toMatchObject({ url: '/v1/items', servername: 'api.example.test' })
+      expect(readAudit(s.paths.audit)).toContainEqual(
+        expect.objectContaining({
+          type: 'egress-connection',
+          adapterId: 'items',
+          endpoint: 'api.example.test:443',
+        }),
+      )
+      // Anywhere else is refused before anything is sent.
+      const before = api.seen.length
+      expect(await count('https://evil.example.test/v1/items')).toMatchObject({
+        status: 'failed',
+      })
+      expect(api.seen.length).toBe(before)
+    } finally {
+      await api.close()
+    }
   })
 
   it('installs from a folder: the new version waits for approval, says it takes the session, and can be rolled back', async () => {

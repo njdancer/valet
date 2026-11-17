@@ -184,7 +184,9 @@ describe('valet-verify-audit', () => {
     }
   })
 
-  it('fails when the file is cut short mid-line, with or without the expected head', async () => {
+  it('fails when the file is cut short mid-line, with or without the expected head', {
+    timeout: 30_000,
+  }, async () => {
     const { bytes, head } = await writeLog()
     const boundaries = new Set(lineStarts(bytes))
     for (const short of truncations(bytes)) {

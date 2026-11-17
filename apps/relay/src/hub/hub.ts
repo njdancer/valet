@@ -15,20 +15,33 @@ import {
 } from '@simplewebauthn/server'
 import { KEY_ID } from '@valet/core/devices'
 import { hubConsentIdSchema, signedHubGrantSchema, verifyHubGrant } from '@valet/core/hub-grant'
+import { HUB_PHONE_CHALLENGE_MS, type HubPhoneAccount, hubPhoneRequestSchema } from '@valet/core/hub-phone'
 import {
   HUB_MAX_GRANTS,
   HUB_MAX_OPEN_CONSENTS,
   type HubStatus,
   hubNodeNameSchema,
   hubNodeSlugSchema,
+  relayAuthPayload,
 } from '@valet/core/relay-protocol'
-import { type Roster, signedRosterChangeSchema, verifyRoster } from '@valet/core/roster'
+import {
+  joinRecordDevice,
+  type Roster,
+  signedJoinRecordSchema,
+  signedRosterChangeSchema,
+  verifyRoster,
+} from '@valet/core/roster'
 import { z } from 'zod'
 import type { HubAnswer } from '../core'
 import { fromBase64url, toBase64url } from '../encoding'
 import type { Env } from '../env'
 import { logFailure } from '../log'
-import { verifyHubGrantSignature, verifyRosterSignature } from '../verify'
+import {
+  verifyDeviceRecordSignature,
+  verifyHubGrantSignature,
+  verifyRelayAuth,
+  verifyRosterSignature,
+} from '../verify'
 import { WindowCounter } from '../window'
 import { macStub } from './link'
 import { HubMcp, type HubNode } from './mcp'
@@ -66,6 +79,9 @@ export const HUB_CAPS = {
   /** Passkeys and nodes per account. */
   passkeys: 20,
   nodes: 20,
+  /** Phones' challenges open at once, and wrong answers to them per 10 minutes. */
+  phoneChallenges: 64,
+  phoneWrong: 20,
 } as const
 
 export const SESSION_COOKIE = '__Host-valet-hub'
@@ -102,7 +118,7 @@ interface NodeRow {
 
 interface ChallengeRow {
   readonly id: string
-  readonly kind: 'sign-up' | 'sign-in' | 'passkey' | 'app'
+  readonly kind: 'sign-up' | 'sign-in' | 'passkey' | 'app' | 'phone'
   readonly challenge: string
   readonly account_id: string | null
   readonly data: string
@@ -155,12 +171,17 @@ const BODIES = {
     .strict(),
   internalGrant: z.object({ macId: z.string().regex(KEY_ID), grant: signedHubGrantSchema }).strict(),
   internalDecline: z.object({ macId: z.string().regex(KEY_ID), consentId: hubConsentIdSchema }).strict(),
+  internalRevoke: z
+    .object({ macId: z.string().regex(KEY_ID), grantId: z.string().regex(/^[0-9a-f]{64}$/) })
+    .strict(),
+  internalJoin: z.object({ macId: z.string().regex(KEY_ID), record: signedJoinRecordSchema }).strict(),
 } as const
 
 export class Hub extends DurableObject<Env> {
   private readonly sql: SqlStorage
   private readonly wrongCodes = new WindowCounter(HUB_CAPS.wrongCodes, 10 * 60_000, Date.now, 64)
   private readonly appSignIns = new WindowCounter(HUB_CAPS.appSignIns, 10 * 60_000, Date.now, 256)
+  private readonly phoneWrong = new WindowCounter(HUB_CAPS.phoneWrong, 10 * 60_000, Date.now, 256)
   private readonly oauth: HubOAuth
   private readonly mcp: HubMcp
 
@@ -231,6 +252,10 @@ export class Hub extends DurableObject<Env> {
         account_id TEXT NOT NULL, seq INTEGER NOT NULL, payload TEXT NOT NULL, signature TEXT NOT NULL,
         PRIMARY KEY (account_id, seq)
       );
+      CREATE TABLE IF NOT EXISTS roster_joins (
+        mac_id TEXT PRIMARY KEY, account_id TEXT NOT NULL, payload TEXT NOT NULL, signature TEXT NOT NULL,
+        at INTEGER NOT NULL
+      );
     `)
   }
 
@@ -276,6 +301,7 @@ export class Hub extends DurableObject<Env> {
       if (url.origin === 'https://hub.internal')
         return Response.json(await this.internal(url.pathname, request))
       if (url.pathname === '/mcp') return await this.agentMcp(request)
+      if (url.pathname.startsWith('/phone/')) return await this.phone(request, url.pathname)
       if (this.oauth.handles(url.pathname)) return await this.agentSignIn(request, url)
       return await this.public(request, url)
     } catch (error) {
@@ -329,6 +355,7 @@ export class Hub extends DurableObject<Env> {
         const { macId } = BODIES.internalMac.parse(body)
         this.run('DELETE FROM nodes WHERE mac_id = ?', macId)
         this.run('DELETE FROM link_requests WHERE mac_id = ?', macId)
+        this.run('DELETE FROM roster_joins WHERE mac_id = ?', macId)
         return this.answer(macId, false)
       }
       case '/node/roster-append': {
@@ -339,7 +366,15 @@ export class Hub extends DurableObject<Env> {
         const refused = await this.appendRoster(node.account_id, changes)
         if (refused !== null)
           return { ...this.answer(macId, true), roster: { changes: this.chain(node.account_id), refused } }
+        await this.rosterChanged(node.account_id)
         await this.tellNodes(node.account_id, macId)
+        return this.answer(macId, true)
+      }
+      case '/node/roster-join': {
+        const { macId, record } = BODIES.internalJoin.parse(body)
+        const node = this.node(macId)
+        if (node === null) return this.answer(macId, false)
+        await this.keepJoin(node.account_id, macId, record, now)
         return this.answer(macId, true)
       }
       case '/node/grant': {
@@ -355,6 +390,22 @@ export class Hub extends DurableObject<Env> {
         if (node === null) return this.answer(macId, false)
         this.oauth.decline(consentId)
         await this.tellNodes(node.account_id, macId)
+        return this.answer(macId, true)
+      }
+      case '/node/grant-revoke': {
+        const { macId, grantId } = BODIES.internalRevoke.parse(body)
+        const node = this.node(macId)
+        if (node === null) return this.answer(macId, false)
+        const held = this.one<{ id: string }>(
+          'SELECT id FROM grants WHERE id = ? AND account_id = ?',
+          grantId,
+          node.account_id,
+        )
+        if (held !== null) {
+          this.oauth.revokeGrant(grantId)
+          this.run('DELETE FROM grants WHERE id = ?', grantId)
+          await this.tellNodes(node.account_id, macId)
+        }
         return this.answer(macId, true)
       }
       default:
@@ -1047,12 +1098,14 @@ export class Hub extends DurableObject<Env> {
     if (node === null || node.account_id !== session.account.id)
       throw new Refusal(404, 'not_found', 'No such node.')
     this.run('DELETE FROM nodes WHERE mac_id = ?', macId)
+    this.run('DELETE FROM roster_joins WHERE mac_id = ?', macId)
     await this.tell(macId)
-    // The Mac that started the account's device list is its root: every node trusts only a list it
-    // started itself, or (from 4c) one its own list leads to. With that Mac gone (a Mac that lost
-    // its keys comes back as a new one), the list and the grants signed under it go too, and the
-    // next Mac starts a new list. Taking things away needs no signature; adding still does.
-    if (this.startedBy(node.account_id) === macId) {
+    // The Mac that started the account's device list is its root. With that Mac gone (a Mac that
+    // lost its keys comes back as a new one) and no phone on the list to carry it on, nobody left
+    // could sign a change: the list and the grants signed under it go, and the next Mac starts a
+    // new list. With a phone on it, the list stays, and the phone adds the next Mac (step 4c).
+    // Taking things away needs no signature; adding still does.
+    if (this.startedBy(node.account_id) === macId && !(await this.hasPhone(node.account_id))) {
       for (const grant of this.all<{ id: string }>(
         'SELECT id FROM grants WHERE account_id = ?',
         node.account_id,
@@ -1060,6 +1113,7 @@ export class Hub extends DurableObject<Env> {
         this.oauth.revokeGrant(grant.id)
       this.run('DELETE FROM grants WHERE account_id = ?', node.account_id)
       this.run('DELETE FROM roster WHERE account_id = ?', node.account_id)
+      this.run('DELETE FROM roster_joins WHERE account_id = ?', node.account_id)
       await this.tellNodes(node.account_id, macId)
     }
     return Response.json({ ok: true })
@@ -1143,6 +1197,153 @@ export class Hub extends DurableObject<Env> {
   private async tellNodes(accountId: string, except: string): Promise<void> {
     const nodes = this.all<{ mac_id: string }>('SELECT mac_id FROM nodes WHERE account_id = ?', accountId)
     await Promise.all(nodes.filter((n) => n.mac_id !== except).map((n) => this.tell(n.mac_id)))
+  }
+
+  /** True if the account's verified list has a phone on it, which can keep it going. */
+  private async hasPhone(accountId: string): Promise<boolean> {
+    const roster = await this.verifiedRoster(accountId)
+    return roster !== null && [...roster.devices.values()].some((d) => d.role === 'phone')
+  }
+
+  /**
+   * Keeps a Mac's request to join the account's list, for its phones to read: only the Mac's own
+   * record, signed by its own key, from a Mac on the account that isn't on the list yet.
+   */
+  private async keepJoin(
+    accountId: string,
+    macId: string,
+    record: { payload: string; signature: string },
+    now: number,
+  ): Promise<boolean> {
+    const roster = await this.verifiedRoster(accountId)
+    if (roster === null || roster.devices.has(macId)) return false
+    let signed: { key: string; payload: string; signature: string } | null = null
+    const device = joinRecordDevice(record, {
+      macId,
+      verify: (key, payload, signature) => {
+        signed = { key, payload, signature }
+        return true
+      },
+    })
+    const check = signed as { key: string; payload: string; signature: string } | null
+    if (device === null || check === null) return false
+    if (!(await verifyDeviceRecordSignature(check.key, check.payload, check.signature))) return false
+    this.run(
+      'INSERT OR REPLACE INTO roster_joins (mac_id, account_id, payload, signature, at) VALUES (?, ?, ?, ?, ?)',
+      macId,
+      accountId,
+      record.payload,
+      record.signature,
+      now,
+    )
+    return true
+  }
+
+  /** Requests to join that are still open: from Macs still on the account and not yet on the list. */
+  private joins(accountId: string, roster: Roster | null): HubPhoneAccount['joining'] {
+    const rows = this.all<{ mac_id: string; payload: string; signature: string; at: number }>(
+      `SELECT j.mac_id, j.payload, j.signature, j.at FROM roster_joins j
+         JOIN nodes n ON n.mac_id = j.mac_id AND n.account_id = j.account_id
+         WHERE j.account_id = ? ORDER BY j.at LIMIT 16`,
+      accountId,
+    )
+    return rows
+      .filter((r) => roster === null || !roster.devices.has(r.mac_id))
+      .map((r) => ({
+        macId: r.mac_id,
+        record: { payload: r.payload, signature: r.signature },
+        at: iso(r.at),
+      }))
+  }
+
+  // ---------- Phones on the account (hub-phone.ts) ----------
+
+  private async phone(request: Request, path: string): Promise<Response> {
+    if (request.method !== 'POST') throw new Refusal(405, 'method_not_allowed', 'Not allowed.')
+    if (!request.headers.get('content-type')?.startsWith('application/json'))
+      throw new Refusal(415, 'unsupported', 'Send JSON.')
+    const now = Date.now()
+    this.sweep(now)
+    const body = await readJson(request)
+    const headers = { 'cache-control': 'no-store' }
+    if (path === '/phone/challenge') {
+      const open =
+        this.one<{ n: number }>("SELECT COUNT(*) AS n FROM challenges WHERE kind = 'phone'")?.n ?? 0
+      if (open >= HUB_CAPS.phoneChallenges)
+        throw new Refusal(429, 'too_many', 'Too many requests. Wait a minute.')
+      const nonce = token()
+      this.run(
+        "INSERT INTO challenges (id, kind, challenge, account_id, data, expires_at) VALUES (?, 'phone', ?, NULL, '', ?)",
+        nonce,
+        nonce,
+        now + HUB_PHONE_CHALLENGE_MS,
+      )
+      return Response.json({ nonce, expiresAt: iso(now + HUB_PHONE_CHALLENGE_MS) }, { headers })
+    }
+    if (path !== '/phone/account') throw new Refusal(404, 'not_found', 'Nothing here.')
+    const ask = hubPhoneRequestSchema.parse(body)
+    // Counted until one checks: a device id that keeps failing is held off for a while.
+    if (!this.phoneWrong.take(ask.deviceId))
+      throw new Refusal(429, 'too_many', 'Too many requests. Wait a minute.')
+    // Each nonce works once, whatever the answer.
+    const challenge = this.one<{ id: string }>(
+      "SELECT id FROM challenges WHERE id = ? AND kind = 'phone' AND expires_at > ?",
+      ask.nonce,
+      now,
+    )
+    this.run("DELETE FROM challenges WHERE id = ? AND kind = 'phone'", ask.nonce)
+    const found = challenge === null ? null : await this.phoneOnList(ask.deviceId)
+    const payload = relayAuthPayload({
+      nonce: ask.nonce,
+      relay: this.origin,
+      role: 'phone',
+      id: ask.deviceId,
+    })
+    if (found === null || !(await verifyRelayAuth(found.transportKey, payload, ask.signature)))
+      throw new Refusal(401, 'not_on_account', 'This device isn’t on a Valet account here.')
+    this.phoneWrong.forget(ask.deviceId)
+    const accountId = found.accountId
+    let refused: 'conflict' | 'invalid' | undefined
+    if (ask.append !== undefined) {
+      const result = await this.appendRoster(accountId, ask.append)
+      if (result === null) {
+        await this.rosterChanged(accountId)
+        await this.tellNodes(accountId, '')
+      } else refused = result
+    }
+    const roster = await this.verifiedRoster(accountId)
+    const answer: HubPhoneAccount = {
+      account: accountId,
+      relay: `https://${this.env.RELAY_HOST}`,
+      changes: this.chain(accountId),
+      ...(refused === undefined ? {} : { refused }),
+      joining: this.joins(accountId, roster),
+      nodes: this.all<NodeRow>('SELECT * FROM nodes WHERE account_id = ? ORDER BY linked_at', accountId).map(
+        (n) => ({ macId: n.mac_id, slug: n.slug, name: n.name, online: n.online === 1 }),
+      ),
+    }
+    return Response.json(answer, { headers })
+  }
+
+  /** The account whose verified list has this phone, and the transport key it lists for it. */
+  private async phoneOnList(deviceId: string): Promise<{ accountId: string; transportKey: string } | null> {
+    for (const { account_id } of this.all<{ account_id: string }>('SELECT DISTINCT account_id FROM roster')) {
+      const device = (await this.verifiedRoster(account_id))?.devices.get(deviceId)
+      if (device !== undefined && device.role === 'phone')
+        return { accountId: account_id, transportKey: device.transportKey }
+    }
+    return null
+  }
+
+  /** After a change to the list: requests to join from Macs now on it are done. */
+  private async rosterChanged(accountId: string): Promise<void> {
+    const roster = await this.verifiedRoster(accountId)
+    for (const { mac_id } of this.all<{ mac_id: string }>(
+      'SELECT mac_id FROM roster_joins WHERE account_id = ?',
+      accountId,
+    ))
+      if (roster === null || roster.devices.has(mac_id))
+        this.run('DELETE FROM roster_joins WHERE mac_id = ?', mac_id)
   }
 
   private freeSlug(accountId: string, base: string): string {

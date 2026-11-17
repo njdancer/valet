@@ -2,9 +2,10 @@
 // opened by a copy of the build whose Woolworths bundle changed (harness.ts, changedAdapterBuild:
 // remove_from_cart is now irreversible, in the compiled manifest and in the source the hash covers).
 // Its hash is new, so it waits for review with a diff against what was approved, its tools are off
-// MCP, and the old grants don't reach it while it waits. The update widens no grant, so approving it
-// carries the login and the codes over (D47). Then the now-irreversible tool asks the person in the
-// confirmation panel: a decline reaches the client as declined, an approval runs it.
+// MCP, and the old grants don't apply to it. Approving it carries over the grants it doesn't widen
+// (D47's re-bind, docs/approval-broker.md: this update changes no secret request, so both carry),
+// and the now-irreversible tool asks the person in the confirmation panel: a decline reaches the
+// client as declined, an approval runs it.
 
 import { readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
@@ -261,16 +262,23 @@ test('the review screen shows the change, and Approve waits for the acknowledgem
     .toEqual(TOOLS)
   const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
   expect(detail?.approval).toBe('approved')
-  // It widens no grant, so the login and the codes carry over to the approved hash (D47).
-  expect(detail?.secretRequests.map((s) => s.grant?.itemTitle)).toEqual([COPY_ITEM_TITLE])
-  expect(detail?.messages.map((m) => m.grant !== null)).toEqual([true])
+  // The update asks for no more secrets than the approved version, so its approval carried both
+  // grants over to the new hash: the same login item, and the same Messages sender.
+  const login = detail?.secretRequests.map((s) => s.grant) ?? []
+  expect(login).toHaveLength(1)
+  expect(login[0]).toMatchObject({
+    adapterHash: detail?.hash,
+    provider: 'keychain-copy',
+    itemTitle: COPY_ITEM_TITLE,
+  })
+  expect(detail?.messages.map((m) => m.grant?.adapterHash ?? null)).toEqual([detail?.hash])
 })
 
 test('with the grants carried over, the next call logs in and works', async () => {
   if (launched === null) throw new Error('not launched')
   expect(await siteTrolley(launched)).toEqual([])
   const added = await callTool(mcp(), 'woolworths_add_to_cart', { stockcode, quantity: 3 })
-  expect(added.isError, added.text).toBe(false)
+  expect(added.isError, `${added.text}\n${recentAudit()}`).toBe(false)
   expect(await siteTrolley(launched)).toEqual([{ stockcode, quantity: 3 }])
 })
 

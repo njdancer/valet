@@ -2,11 +2,16 @@
 // (docs/phone-channel.md#running-it-locally). Not a deploy: nothing leaves this machine.
 //
 //   node apps/relay/scripts/local.mjs [--port 8787] [--origin https://relay.valet.test]
+//     [--hub-origin http://localhost:8787 --hub-setup <secret>] [--persist <dir>]
 //
 // Devices dial http://127.0.0.1:<port>; the relay names `origin` in its challenges, as the
 // deployed one names its own host, so the Mac and the phone are configured with that origin and
 // told to dial the local port instead (VALET_RELAY_CONNECT on the Mac, -valet-relay-connect on
 // the iPhone dev build). Prints one line, `relay listening <url>`, once it is ready.
+//
+// With --hub-origin, the hub (docs/relay-hub.md) answers there too: its pages and its one MCP address
+// at that origin's host, its account set up with --hub-setup. --persist keeps the Durable Objects'
+// storage in that folder, so a restart picks up where the last run stopped.
 
 import { mkdirSync, mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
@@ -19,10 +24,14 @@ const { values } = parseArgs({
   options: {
     port: { type: 'string', default: '8787' },
     origin: { type: 'string', default: 'https://relay.valet.test' },
+    'hub-origin': { type: 'string' },
+    'hub-setup': { type: 'string', default: 'local-setup-secret' },
+    persist: { type: 'string' },
   },
 })
 const origin = new URL(values.origin)
 if (origin.protocol !== 'https:') throw new Error('the origin is https://<host>')
+const hub = values['hub-origin'] === undefined ? null : new URL(values['hub-origin'])
 
 // Under the package: workerd won't load a module from outside its starting directory.
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -37,9 +46,20 @@ const mf = new Miniflare({
   scriptPath,
   compatibilityDate: '2026-08-01',
   compatibilityFlags: ['nodejs_compat', 'enable_request_signal'],
-  durableObjects: { MAC_RELAY: 'MacRelay', PUSH: 'PushRelay' },
-  durableObjectsPersist: mkdtempSync(join(scratch, 'local-do-')),
-  bindings: { RELAY_HOST: origin.host, RELAY_ORIGIN: origin.origin, WAIT_SECRET: 'local-wait-secret' },
+  durableObjects: {
+    MAC_RELAY: 'MacRelay',
+    PUSH: 'PushRelay',
+    ...(hub === null ? {} : { HUB: { className: 'Hub', useSQLite: true } }),
+  },
+  durableObjectsPersist: values.persist ?? mkdtempSync(join(scratch, 'local-do-')),
+  bindings: {
+    RELAY_HOST: origin.host,
+    RELAY_ORIGIN: origin.origin,
+    WAIT_SECRET: 'local-wait-secret',
+    ...(hub === null
+      ? {}
+      : { HUB_HOST: hub.hostname, HUB_ORIGIN: hub.origin, HUB_SETUP_SECRET: values['hub-setup'] }),
+  },
   ratelimits: {
     CONNECT_LIMIT: limit('1'),
     FORWARD_LIMIT: limit('2'),

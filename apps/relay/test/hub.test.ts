@@ -26,8 +26,10 @@ import {
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { base32, checkTotp, fromBase32, normaliseLinkCode, slugFromName, totpAt } from '../src/hub/secrets'
+import { HubPhone } from './hub-phone'
 import { testKey } from './keys'
 import { type TestPasskey, testPasskey } from './passkey'
+import { p256 } from './phone'
 import { HUB_HOST, HUB_ORIGIN, HUB_SETUP_SECRET, RELAY_ORIGIN, type Runtime, startRelay } from './runtime'
 
 const cleanup: Array<() => Promise<void> | void> = []
@@ -112,6 +114,8 @@ interface Mac {
   readonly device: RosterDevice
   signRoster(payload: string): { payload: string; signature: string }
   signGrant(payload: string): { payload: string; signature: string }
+  /** This Mac's own device record, signed by its approval key: what it sends to join a list. */
+  joinRecord(): { payload: string; signature: string }
   online(): Promise<void>
   next(state: HubStatus['state']): Promise<HubStatus>
 }
@@ -126,6 +130,7 @@ interface MacOptions {
 function startMac(runtime: Runtime, options: MacOptions = {}): Mac {
   const transport = testKey()
   const approval = testKey()
+  const agreementKey = testKey().publicKey
   const hub: HubStatus[] = []
   const rosters: Extract<RelayEvent, { type: 'hub-roster' }>[] = []
   const consents: Extract<RelayEvent, { type: 'hub-consents' }>[] = []
@@ -180,7 +185,7 @@ function startMac(runtime: Runtime, options: MacOptions = {}): Mac {
       name: 'Mac',
       approvalKey: approval.publicKey,
       transportKey: transport.publicKey,
-      agreementKey: testKey().publicKey,
+      agreementKey,
     },
     signRoster: (payload) => ({
       payload,
@@ -190,6 +195,21 @@ function startMac(runtime: Runtime, options: MacOptions = {}): Mac {
       payload,
       signature: approval.signDomain(SIGNING_DOMAINS.hubGrant, payload),
     }),
+    joinRecord: () => {
+      const payload = JSON.stringify({
+        v: 1,
+        deviceId: approval.id,
+        macId: approval.id,
+        role: 'mac',
+        platform: 'macos',
+        name: 'Mac',
+        approvalKey: approval.publicKey,
+        transportKey: transport.publicKey,
+        agreementKey,
+        pairedAt: new Date().toISOString(),
+      })
+      return { payload, signature: approval.signDomain(SIGNING_DOMAINS.deviceRecord, payload) }
+    },
     online: () => until(() => client.status.state === 'online'),
     // Statuses in order: each call takes the first one of that state after the last one taken.
     next: async (state) => {
@@ -575,6 +595,120 @@ describe('nodes', () => {
     stranger.client.send({ type: 'hub-roster-append', changes: [genesis] })
     await until(() => stranger.rosters.some((r) => r.refused === 'not-linked'))
   })
+
+  it('lets a phone on the list carry it on: a new Mac asks to join, and the phone adds it', async () => {
+    const runtime = await relay()
+    const browser = new Browser(runtime)
+    await signUp(browser, testPasskey(HUB_HOST))
+    const join = async (name: string, slug: string): Promise<Mac & { accountId: string }> => {
+      const mac = startMac(runtime)
+      await mac.online()
+      mac.client.send({ type: 'hub-link-start', name })
+      const linking = await mac.next('linking')
+      if (linking.state !== 'linking') throw new Error('expected linking')
+      await browser.json('/api/nodes/link', { code: linking.code, slug })
+      const linked = await mac.next('linked')
+      if (linked.state !== 'linked') throw new Error('expected linked')
+      return Object.assign(mac, { accountId: linked.accountId })
+    }
+    const until = async (check: () => boolean) => {
+      const deadline = Date.now() + 10_000
+      while (!check()) {
+        if (Date.now() > deadline) throw new Error('timed out')
+        await delay(50)
+      }
+    }
+    const post = (path: string, body: unknown) =>
+      runtime.fetch(`${HUB_ORIGIN}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    const phone = new HubPhone({ approval: p256(), transport: p256(), agreement: p256() }, HUB_ORIGIN, post)
+
+    const a = await join('Studio', 'studio')
+    await until(() => a.rosters.length > 0)
+    // Not on any list yet: the hub lets it in nowhere.
+    await expect(phone.account()).rejects.toThrow(/401/)
+
+    // A starts the list with the phone it paired.
+    const at = new Date().toISOString()
+    const genesis = a.signRoster(
+      nextRosterChange(null, a.accountId, a.id, { op: 'add', device: a.device }, at),
+    )
+    const first = verifyRoster([genesis])
+    if (!first.ok) throw new Error(first.reason)
+    const addPhone = a.signRoster(
+      nextRosterChange(first.roster, a.accountId, a.id, { op: 'add', device: phone.device() }, at),
+    )
+    a.client.send({ type: 'hub-roster-append', changes: [genesis, addPhone] })
+    await until(() => a.rosters.some((r) => r.changes.length === 2))
+    const seen = await phone.account()
+    expect(seen).toMatchObject({
+      account: a.accountId,
+      joining: [],
+      nodes: [{ macId: a.id, slug: 'studio' }],
+    })
+    expect(seen.changes).toHaveLength(2)
+
+    // A wrong answer, or a nonce used twice, gets nothing.
+    const challenge = (await (await post('/phone/challenge', {})).json()) as { nonce: string }
+    const wrong = await post('/phone/account', {
+      deviceId: phone.deviceId,
+      nonce: challenge.nonce,
+      signature: a.signRoster('x').signature,
+    })
+    expect(wrong.status).toBe(401)
+    const other = new HubPhone(
+      { approval: phone.keys.approval, transport: p256(), agreement: phone.keys.agreement },
+      HUB_ORIGIN,
+      post,
+    )
+    await expect(other.account()).rejects.toThrow(/401/)
+
+    // B links and asks to join. Another Mac's record, or a record B didn't sign, isn't kept.
+    const b = await join('Laptop', 'laptop')
+    b.client.send({ type: 'hub-roster-join', record: a.joinRecord() })
+    const own = b.joinRecord()
+    b.client.send({
+      type: 'hub-roster-join',
+      record: { ...own, signature: a.signRoster(own.payload).signature },
+    })
+    await delay(300)
+    expect((await phone.account()).joining).toEqual([])
+    b.client.send({ type: 'hub-roster-join', record: own })
+    await until(() => b.rosters.length > 1)
+    const waiting = await phone.account()
+    expect(waiting.joining).toEqual([{ macId: b.id, record: own, at: expect.any(String) }])
+
+    // The phone adds B: every node hears it, and the request is done.
+    const before = b.rosters.length
+    const added = await phone.addWaitingMacs()
+    expect(added.refused).toBeUndefined()
+    expect(added.joining).toEqual([])
+    expect(added.changes).toHaveLength(3)
+    await until(() => b.rosters.length > before && b.rosters.at(-1)?.changes.length === 3)
+    const third = verifyRoster(b.rosters.at(-1)?.changes ?? [], { pinned: first.roster.genesis })
+    expect(third.ok && [...third.roster.devices.keys()]).toEqual([a.id, phone.deviceId, b.id])
+    // The same change again is a conflict, and changes nothing.
+    expect((await phone.account(added.changes.slice(2))).refused).toBe('conflict')
+
+    // Removing A on the hub's page, the Mac that started the list, no longer resets it: the phone
+    // carries it on.
+    await browser.json('/api/nodes/remove', { macId: a.id })
+    await delay(300)
+    expect((await phone.account()).changes).toHaveLength(3)
+    expect(b.rosters.at(-1)?.changes).toHaveLength(3)
+
+    // A Mac that leaves the account drops its request to join.
+    const c = await join('Spare', 'spare')
+    c.client.send({ type: 'hub-roster-join', record: c.joinRecord() })
+    await delay(300)
+    expect((await phone.account()).joining.map((j) => j.macId)).toEqual([c.id])
+    c.client.send({ type: 'hub-unlink' })
+    await c.next('unlinked')
+    expect((await phone.account()).joining).toEqual([])
+  })
 })
 
 describe('agents signing in at the hub', () => {
@@ -929,6 +1063,16 @@ describe('agents signing in at the hub', () => {
     await mac.online()
     await until(() => mac.grants.length > 1)
     expect(((await result('tools/list')) as { tools: unknown[] }).tools).toHaveLength(1)
+
+    // The person removes the agent on the Mac: its token stops working at once, and every node
+    // hears the grants without it. A grant id the account doesn't hold changes nothing.
+    const heard = mac.grants.length
+    mac.client.send({ type: 'hub-grant-revoke', grantId: 'f'.repeat(64) })
+    await delay(200)
+    expect((await mcp('tools/list')).status).toBe(200)
+    mac.client.send({ type: 'hub-grant-revoke', grantId: hubGrantId(signed) })
+    await until(() => mac.grants.slice(heard).some((g) => g.grants.length === 0))
+    expect((await mcp('tools/list')).status).toBe(401)
   }, 30_000)
 
   it('starts the device list again when the Mac that started it is removed, taking its grants', async () => {

@@ -37,6 +37,7 @@ export const EVENT_WORDS = {
   'login-finished': { label: 'Login finished', tone: 'success' },
   'secret-used': { label: 'Login typed', tone: 'brass' },
   'local-access': { label: 'Local data used', tone: 'brass' },
+  'egress-connection': { label: 'Connection made', tone: 'neutral' },
   'request-blocked': { label: 'Request blocked', tone: 'danger' },
   'breaker-opened': { label: 'Site paused calls', tone: 'warning' },
   'breaker-closed': { label: 'Site allows calls again', tone: 'success' },
@@ -307,6 +308,16 @@ export function details(event: AuditEvent, now: number): ReactNode {
           <Quiet>{event.errorClass === null ? 'allowed' : event.errorClass}</Quiet>
         </>
       )
+    case 'egress-connection':
+      return (
+        <>
+          <Code>{event.endpoint}</Code> {event.kind}{' '}
+          <Quiet>
+            {event.bytesUp} B up · {event.bytesDown} B down
+            {event.errorClass === null ? '' : ` · ${event.errorClass}`}
+          </Quiet>
+        </>
+      )
     case 'request-blocked':
       return (
         <>
@@ -552,6 +563,17 @@ export const EVENT_FIELDS = {
   'login-finished': ['type', 'adapterId', 'outcome', 'needsUser', 'stage', 'errorClass'],
   'secret-used': ['type', 'adapterId', 'adapterHash', 'secret', 'field', 'origin', 'callId'],
   'local-access': ['type', 'adapterId', 'callId', 'capability', 'errorClass'],
+  'egress-connection': [
+    'type',
+    'adapterId',
+    'callId',
+    'endpoint',
+    'kind',
+    'bytesUp',
+    'bytesDown',
+    'errorClass',
+    'draftId',
+  ],
   'request-blocked': ['type', 'adapterId', 'method', 'target', 'reason', 'initiator', 'partition', 'callId'],
   'breaker-opened': ['type', 'host', 'cause', 'retryAt', 'callId'],
   'breaker-closed': ['type', 'host'],

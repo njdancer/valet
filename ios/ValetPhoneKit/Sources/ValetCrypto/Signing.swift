@@ -11,6 +11,7 @@ public enum SigningDomain: String, Sendable {
   case approvalDecision = "valet/approval-decision/v1"
   case deviceRecord = "valet/device-record/v1"
   case relayAuth = "valet/relay-auth/v1"
+  case rosterChange = "valet/roster-change/v1"
   case pairing = "valet/pairing/v1"
   case pairingChallenge = "valet/pairing/v1 challenge"
 }

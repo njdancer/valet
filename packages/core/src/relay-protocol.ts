@@ -265,6 +265,21 @@ export const macToPhoneMessageSchema = z.discriminatedUnion('type', [
             .strict(),
         )
         .max(50),
+      /**
+       * The Valet account this Mac and the phone are on (relay-hub.md, step 4c), once the phone is
+       * on the account's device list: where the phone reads the list, the Macs waiting to join and
+       * every Mac on the account. Absent while the Mac is on no account.
+       */
+      account: z
+        .object({
+          hub: z
+            .string()
+            .max(200)
+            .regex(/^https?:\/\/[a-z0-9.-]+(?::[0-9]{1,5})?$/),
+          accountId: z.string().regex(/^[A-Za-z0-9_-]{16,64}$/),
+        })
+        .strict()
+        .optional(),
     })
     .strict(),
   /**
@@ -537,6 +552,19 @@ export const macToRelaySchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('hub-grant'), grant: signedHubGrantSchema }).strict(),
   /** The person declined an agent's sign-in at the hub. */
   z.object({ type: z.literal('hub-consent-decline'), consentId: hubConsentIdSchema }).strict(),
+  /**
+   * The person removed an agent that signed in at the hub: the hub deletes its grant and the agent's
+   * tokens at once, and every node hears the account's grants without it. Any node on the account
+   * may ask; taking access away needs no signature.
+   */
+  z.object({ type: z.literal('hub-grant-revoke'), grantId: z.string().regex(/^[0-9a-f]{64}$/) }).strict(),
+  /**
+   * Ask to join the account's device list when another device started it (relay-hub.md, step 4c):
+   * this Mac's own device record, signed by its approval key, so a phone on the list can check the
+   * three keys it would add are this Mac's. The hub keeps it for the account's phones to read; a
+   * phone signs the add.
+   */
+  z.object({ type: z.literal('hub-roster-join'), record: signedTextSchema }).strict(),
 ])
 export type MacToRelay = z.infer<typeof macToRelaySchema>
 

@@ -24,7 +24,8 @@ enforces it, not that a shipped app does.
 Adapter code is untrusted where secrets are concerned. Whether a person, an AI agent or a
 marketplace author wrote it, the runtime must guarantee two things:
 
-1. Adapter code never obtains a secret's value (password, one-time code).
+1. Adapter code never obtains a secret's value (password, one-time code). ([adapter-kinds.md](adapter-kinds.md#f2-secrets-version-2) plans one exception:
+   a revocable credential entrusted to a `raw` adapter, under extra limits. **Designed.**)
 2. Adapter code can't cause a secret, or a session that a secret produced, to reach anything
    outside the hosts its manifest declares.
 

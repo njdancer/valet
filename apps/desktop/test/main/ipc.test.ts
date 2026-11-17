@@ -120,6 +120,8 @@ describe('arguments', () => {
     ['a confirmation id with a slash', 'openConfirmation', ['cf_1/../x']],
     ['an unknown client kind', 'clients.copyConfig', ['c_0123456789abcdef', 'cursor']],
     ['an undefined optional argument', 'runs.list', [undefined]],
+    ['a hub sign-in id with a slash', 'remote.declineConsent', ['hub:abcdefghij/x']],
+    ['a short hub agent id', 'remote.revokeHubAgent', ['abc']],
   ]
   for (const [name, method, args] of refusedArgs) {
     it(`refuses ${name}`, async () => {
@@ -204,6 +206,12 @@ describe('arguments', () => {
     await d.dispatch(invokeChannel('audit.page'), [{ limit: 5, search: undefined }], control)
     expect(calls[0]?.args[0]).toEqual({ limit: 5 })
     expect(Object.keys(calls[0]?.args[0] as object)).toEqual(['limit'])
+  })
+
+  it('declines a sign-in waiting at the hub by its hub: id', async () => {
+    const { d, calls } = dispatcher()
+    await d.dispatch(invokeChannel('remote.declineConsent'), ['hub:Abc_defghij-12'], control)
+    expect(calls).toEqual([{ method: 'remote.declineConsent', args: ['hub:Abc_defghij-12'] }])
   })
 
   it('accepts optional arguments left out, and a checked route', async () => {
@@ -397,6 +405,8 @@ describe('every channel', () => {
     'remote.declineAllConsents': [],
     'remote.clients': [],
     'remote.revokeClient': ['rcabcdefghijklmnopqrst'],
+    'remote.hubAgents': [],
+    'remote.revokeHubAgent': [HASH64],
     'remote.revokeAllClients': [],
     'remote.setAskForChanges': ['rcabcdefghijklmnopqrst', true],
     'remote.setup': [],

@@ -63,7 +63,7 @@ describe('decideRequest', () => {
 
   it('allows a declared request and returns its declaration', () => {
     const decision = decideRequest('get', 'https://www.example.com/apis/ui/Trolley', hosts, declarations)
-    expect(decision).toEqual({ allowed: true, declaration: declarations[0] })
+    expect(decision).toEqual({ allowed: true, declaration: declarations[0], host: 'www.example.com' })
   })
 
   it('matches methods exactly, not just paths', () => {
@@ -120,6 +120,7 @@ describe('declarations tied to a host', () => {
     expect(decideRequest('GET', 'https://api.example.net/v0/item/101.json', hosts, declarations)).toEqual({
       allowed: true,
       declaration: declarations[0],
+      host: 'api.example.net',
     })
     expect(decideRequest('GET', 'https://API.example.net/v0/item/101', hosts, declarations).allowed).toBe(
       true,
@@ -188,5 +189,91 @@ describe('encoded and ambiguous paths', () => {
     expect(
       decideRequest('GET', 'https://www.example.com/api/product/a%20b', hosts, declarations).allowed,
     ).toBe(true)
+  })
+})
+
+describe('endpoints for http adapters', () => {
+  const hosts = ['api.example.com']
+  const privateHosts = [
+    { address: '192.168.1.20', port: 8123, scheme: 'http' as const },
+    { address: 'fd00::5', port: 443 },
+  ]
+  const declarations: RequestDeclaration[] = [
+    { method: 'GET', host: 'api.example.com', path: '/v1/items', purpose: 'read' },
+    { method: 'GET', host: 'api.example.com', path: '/v1/live', purpose: 'read', websocket: true },
+    { method: 'GET', host: '192.168.1.20:8123', path: '/api/states', purpose: 'read' },
+    { method: 'PROPFIND', host: '[fd00::5]:443', path: '/dav/', purpose: 'read' },
+  ]
+  const decide = (method: string, url: string, extra: { websocket?: boolean } = {}) =>
+    decideRequest(method, url, hosts, declarations, { privateHosts, exactPort: true, ...extra })
+
+  it('allows a private host on its own scheme and port, keyed as declared', () => {
+    expect(decide('GET', 'http://192.168.1.20:8123/api/states')).toMatchObject({
+      allowed: true,
+      host: '192.168.1.20:8123',
+      privateHost: privateHosts[0],
+    })
+    expect(decide('PROPFIND', 'https://[fd00::5]/dav/')).toMatchObject({
+      allowed: true,
+      host: '[fd00::5]:443',
+    })
+    expect(decide('PROPFIND', 'https://[fd00::5]:443/dav/')).toMatchObject({ allowed: true })
+  })
+
+  it.each([
+    'https://192.168.1.20:8123/api/states',
+    'http://192.168.1.20:8124/api/states',
+    'http://192.168.1.20/api/states',
+    'http://192.168.1.21:8123/api/states',
+    'http://[::ffff:192.168.1.20]:8123/api/states',
+    'http://user:pw@192.168.1.20:8123/api/states',
+    'http://[fd00::5]:443/dav/',
+    'https://[fd00::6]/dav/',
+    // Octal: the URL parser reads 020 as 16.
+    'http://192.168.1.020:8123/api/states',
+  ])('refuses %s', (url) => {
+    const method = url.includes('dav') ? 'PROPFIND' : 'GET'
+    expect(decide(method, url)).toEqual({ allowed: false, reason: 'host-not-allowed' })
+  })
+
+  // The URL parser writes each of these as the declared address, so they are that address.
+  it.each([
+    'http://3232235796:8123/api/states',
+    'http://0xc0a80114:8123/api/states',
+    'https://[fd00:0:0::5]/dav/',
+    'https://[FD00::5]/dav/',
+  ])('takes %s as the declared address', (url) => {
+    const method = url.includes('dav') ? 'PROPFIND' : 'GET'
+    expect(decide(method, url).allowed).toBe(true)
+  })
+
+  it('holds a public host to port 443 when asked', () => {
+    expect(decide('GET', 'https://api.example.com:8443/v1/items')).toEqual({
+      allowed: false,
+      reason: 'host-not-allowed',
+    })
+    expect(decide('GET', 'https://api.example.com:443/v1/items').allowed).toBe(true)
+    expect(decide('GET', 'http://api.example.com/v1/items').allowed).toBe(false)
+    expect(decide('GET', 'https://user@api.example.com/v1/items').allowed).toBe(false)
+  })
+
+  it('refuses an IP literal of a public host', () => {
+    expect(decide('GET', 'https://93.184.216.34/v1/items')).toEqual({
+      allowed: false,
+      reason: 'host-not-allowed',
+    })
+  })
+
+  it('matches websocket declarations only for sockets, and the rest never for sockets', () => {
+    expect(decide('GET', 'https://api.example.com/v1/live').allowed).toBe(false)
+    expect(decide('GET', 'https://api.example.com/v1/live', { websocket: true }).allowed).toBe(true)
+    expect(decide('GET', 'https://api.example.com/v1/items', { websocket: true }).allowed).toBe(false)
+  })
+
+  it('never matches a private declaration on a public host or the reverse', () => {
+    expect(
+      decideRequest('GET', 'https://api.example.com/api/states', hosts, declarations, { privateHosts })
+        .allowed,
+    ).toBe(false)
   })
 })
