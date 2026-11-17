@@ -182,7 +182,9 @@ export function decodeError(wire: unknown, withDetail = false): Error {
   let error: Error = new Error('tool code failed')
   let detail: unknown
   if (wire !== null && typeof wire === 'object') {
-    const w = wire as Partial<Record<'kind' | 'stage' | 'errorClass' | 'reason' | 'detail' | 'issue', unknown>>
+    const w = wire as Partial<
+      Record<'kind' | 'stage' | 'errorClass' | 'reason' | 'detail' | 'issue', unknown>
+    >
     if (w.kind === 'valet' && isStage(w.stage) && isErrorClass(w.errorClass)) {
       // ValetError keeps an issue for tool-input only, and only the parts the vocabulary allows.
       error = new ValetError(w.stage, w.errorClass, inputIssue(w.issue))

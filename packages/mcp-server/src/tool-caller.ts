@@ -2,7 +2,14 @@
 // imports the runtime, so the endpoint can be tested against a fake and the runtime can change
 // behind this seam.
 
-import type { CallRefusal, ErrorClass, InputIssue, NeedsUserReason, Stage, ToolDeclaration } from '@valet/core'
+import type {
+  CallRefusal,
+  ErrorClass,
+  InputIssue,
+  NeedsUserReason,
+  Stage,
+  ToolDeclaration,
+} from '@valet/core'
 import type { z } from 'zod'
 import type { ClientIdentity } from './auth'
 
