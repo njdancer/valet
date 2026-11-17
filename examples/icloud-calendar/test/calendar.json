@@ -1,0 +1,383 @@
+{
+  "cases": [
+    {
+      "name": "the calendars that hold events, not the inbox or reminders",
+      "tool": "list_calendars",
+      "input": {},
+      "fetch": [
+        {
+          "method": "PROPFIND",
+          "url": "https://caldav.icloud.com/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/root.xml"
+        },
+        {
+          "method": "PROPFIND",
+          "url": "https://caldav.icloud.com/1234567890/principal/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/principal.xml"
+        },
+        {
+          "method": "PROPFIND",
+          "url": "https://p01-caldav.icloud.com/1234567890/calendars/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/home.xml"
+        }
+      ],
+      "expect": {
+        "output": {
+          "server": "p01-caldav.icloud.com",
+          "reachable": true,
+          "calendars": [
+            {
+              "id": "home",
+              "name": "Home",
+              "color": "#34AADC"
+            },
+            {
+              "id": "work",
+              "name": "Work",
+              "color": "#FF2968"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "an account on a server this version doesn't name",
+      "tool": "list_calendars",
+      "input": {},
+      "fetch": [
+        {
+          "method": "PROPFIND",
+          "url": "https://caldav.icloud.com/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/root.xml"
+        },
+        {
+          "method": "PROPFIND",
+          "url": "https://caldav.icloud.com/1234567890/principal/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": {
+            "inline": "<?xml version=\"1.0\"?><multistatus xmlns=\"DAV:\" xmlns:cal=\"urn:ietf:params:xml:ns:caldav\"><response><href>/1234567890/principal/</href><propstat><prop><cal:calendar-home-set><href>https://p07-caldav.icloud.com:443/1234567890/calendars/</href></cal:calendar-home-set></prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>"
+          }
+        }
+      ],
+      "expect": {
+        "output": {
+          "server": "p07-caldav.icloud.com",
+          "reachable": false,
+          "calendars": []
+        }
+      }
+    },
+    {
+      "name": "the other tools refuse that server before sending anything to it",
+      "tool": "list_events",
+      "input": {
+        "from": "2026-11-16T00:00:00Z",
+        "to": "2026-11-23T00:00:00Z"
+      },
+      "fetch": [
+        {
+          "method": "PROPFIND",
+          "url": "https://caldav.icloud.com/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/root.xml"
+        },
+        {
+          "method": "PROPFIND",
+          "url": "https://caldav.icloud.com/1234567890/principal/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": {
+            "inline": "<?xml version=\"1.0\"?><multistatus xmlns=\"DAV:\" xmlns:cal=\"urn:ietf:params:xml:ns:caldav\"><response><href>/1234567890/principal/</href><propstat><prop><cal:calendar-home-set><href>https://p07-caldav.icloud.com:443/1234567890/calendars/</href></cal:calendar-home-set></prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>"
+          }
+        }
+      ],
+      "expect": {
+        "error": {
+          "stage": "tool-run",
+          "errorClass": "host-not-allowed"
+        }
+      }
+    },
+    {
+      "name": "a week of events across every calendar, in time order, unescaped and unfolded",
+      "tool": "list_events",
+      "input": {
+        "from": "2026-11-16T00:00:00Z",
+        "to": "2026-11-23T00:00:00Z"
+      },
+      "fetch": [
+        {
+          "method": "PROPFIND",
+          "url": "https://caldav.icloud.com/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/root.xml"
+        },
+        {
+          "method": "PROPFIND",
+          "url": "https://caldav.icloud.com/1234567890/principal/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/principal.xml"
+        },
+        {
+          "method": "PROPFIND",
+          "url": "https://p01-caldav.icloud.com/1234567890/calendars/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/home.xml"
+        },
+        {
+          "method": "REPORT",
+          "url": "https://p01-caldav.icloud.com/1234567890/calendars/home/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/home-week.xml"
+        },
+        {
+          "method": "REPORT",
+          "url": "https://p01-caldav.icloud.com/1234567890/calendars/work/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/work-week.xml"
+        }
+      ],
+      "expect": {
+        "output": {
+          "events": [
+            {
+              "calendar": "home",
+              "title": "Dentist",
+              "start": "2026-11-18T09:00:00Z",
+              "end": "2026-11-18T10:00:00Z",
+              "allDay": false,
+              "timeZone": null,
+              "location": "12 High St, Sydney"
+            },
+            {
+              "calendar": "work",
+              "title": "Stand-up",
+              "start": "2026-11-18T23:00:00Z",
+              "end": "2026-11-18T23:15:00Z",
+              "allDay": false,
+              "timeZone": null,
+              "location": null
+            },
+            {
+              "calendar": "home",
+              "title": "Dinner, with friends",
+              "start": "2026-11-20T08:00:00Z",
+              "end": "2026-11-20T11:00:00Z",
+              "allDay": false,
+              "timeZone": null,
+              "location": null
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "local times and all-day events from one calendar",
+      "tool": "list_events",
+      "input": {
+        "from": "2026-11-16T00:00:00Z",
+        "to": "2026-11-23T00:00:00Z",
+        "calendar": "work"
+      },
+      "fetch": [
+        {
+          "method": "PROPFIND",
+          "url": "https://caldav.icloud.com/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/root.xml"
+        },
+        {
+          "method": "PROPFIND",
+          "url": "https://caldav.icloud.com/1234567890/principal/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/principal.xml"
+        },
+        {
+          "method": "REPORT",
+          "url": "https://p01-caldav.icloud.com/1234567890/calendars/work/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": {
+            "inline": "<?xml version=\"1.0\"?><d:multistatus xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\"><d:response><d:href>/1234567890/calendars/work/a.ics</d:href><d:propstat><d:prop><c:calendar-data>BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:a\r\nDTSTART;TZID=Australia/Sydney:20261119T090000\r\nDTEND;TZID=Australia/Sydney:20261119T093000\r\nSUMMARY:Planning\\; then review\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:b\r\nDTSTART;VALUE=DATE:20261121\r\nDTEND;VALUE=DATE:20261122\r\nSUMMARY:Offsite\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n</c:calendar-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat><d:propstat><d:prop><d:getetag/></d:prop><d:status>HTTP/1.1 404 Not Found</d:status></d:propstat></d:response></d:multistatus>"
+          }
+        }
+      ],
+      "expect": {
+        "output": {
+          "events": [
+            {
+              "calendar": "work",
+              "title": "Planning; then review",
+              "start": "2026-11-19T09:00:00",
+              "end": "2026-11-19T09:30:00",
+              "allDay": false,
+              "timeZone": "Australia/Sydney",
+              "location": null
+            },
+            {
+              "calendar": "work",
+              "title": "Offsite",
+              "start": "2026-11-21",
+              "end": "2026-11-22",
+              "allDay": true,
+              "timeZone": null,
+              "location": null
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a range longer than 62 days",
+      "tool": "list_events",
+      "input": {
+        "from": "2026-01-01T00:00:00Z",
+        "to": "2026-06-01T00:00:00Z"
+      },
+      "expect": {
+        "error": {
+          "stage": "tool-input",
+          "errorClass": "invalid"
+        }
+      }
+    },
+    {
+      "name": "a wrong app-specific password",
+      "tool": "list_calendars",
+      "input": {},
+      "fetch": [
+        {
+          "method": "PROPFIND",
+          "url": "https://caldav.icloud.com/",
+          "status": 401,
+          "contentType": "application/xml; charset=utf-8",
+          "body": {
+            "inline": ""
+          }
+        }
+      ],
+      "expect": {
+        "error": {
+          "stage": "tool-run",
+          "errorClass": "auth-failed"
+        }
+      }
+    },
+    {
+      "name": "adding an event",
+      "tool": "add_event",
+      "input": {
+        "calendar": "home",
+        "title": "Lunch, then a walk",
+        "start": "2026-11-21T01:00:00Z",
+        "end": "2026-11-21T02:00:00Z",
+        "location": "Hyde Park"
+      },
+      "fetch": [
+        {
+          "method": "PROPFIND",
+          "url": "https://caldav.icloud.com/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/root.xml"
+        },
+        {
+          "method": "PROPFIND",
+          "url": "https://caldav.icloud.com/1234567890/principal/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/principal.xml"
+        },
+        {
+          "method": "PUT",
+          "url": "https://p01-caldav.icloud.com/1234567890/calendars/home/valet-212eb1fee4b82934.ics",
+          "status": 201,
+          "contentType": "text/plain",
+          "body": {
+            "inline": ""
+          }
+        }
+      ],
+      "expect": {
+        "output": {
+          "uid": "valet-212eb1fee4b82934",
+          "created": true
+        }
+      }
+    },
+    {
+      "name": "adding the same event again changes nothing",
+      "tool": "add_event",
+      "input": {
+        "calendar": "home",
+        "title": "Lunch, then a walk",
+        "start": "2026-11-21T01:00:00Z",
+        "end": "2026-11-21T02:00:00Z",
+        "location": "Hyde Park"
+      },
+      "fetch": [
+        {
+          "method": "PROPFIND",
+          "url": "https://caldav.icloud.com/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/root.xml"
+        },
+        {
+          "method": "PROPFIND",
+          "url": "https://caldav.icloud.com/1234567890/principal/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/principal.xml"
+        },
+        {
+          "method": "PUT",
+          "url": "https://p01-caldav.icloud.com/1234567890/calendars/home/valet-212eb1fee4b82934.ics",
+          "status": 412,
+          "contentType": "text/plain",
+          "body": {
+            "inline": ""
+          }
+        }
+      ],
+      "expect": {
+        "output": {
+          "created": false
+        }
+      }
+    },
+    {
+      "name": "an end before the start",
+      "tool": "add_event",
+      "input": {
+        "calendar": "home",
+        "title": "Backwards",
+        "start": "2026-11-21T02:00:00Z",
+        "end": "2026-11-21T01:00:00Z"
+      },
+      "expect": {
+        "error": {
+          "stage": "tool-input",
+          "errorClass": "invalid"
+        }
+      }
+    }
+  ]
+}

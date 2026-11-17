@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "id": "icloud-calendar",
+  "name": "iCloud Calendar",
+  "version": "0.1.0",
+  "description": "Your iCloud calendars over CalDAV: list them, read events in a date range, and add an event. An example of an http adapter speaking WebDAV (PROPFIND, REPORT, PUT) with a kept credential: Valet adds your Apple ID and app-specific password to each request, and the tool code never sees them.",
+  "runtime": "http",
+  "egress": ["caldav.icloud.com", "p01-caldav.icloud.com"],
+  "secrets": {},
+  "credentials": {
+    "icloud": {
+      "description": "Your Apple ID and an app-specific password for iCloud (appleid.apple.com, Sign-In and Security, App-Specific Passwords)",
+      "kind": "password",
+      "custody": "kept",
+      "use": {
+        "header": { "name": "authorization", "format": "Basic {basic}" },
+        "hosts": ["caldav.icloud.com", "p01-caldav.icloud.com"]
+      }
+    }
+  },
+  "session": { "cookieDomains": [], "storage": [], "probe": { "kind": "none" } },
+  "auth": { "steps": [], "frameOrigins": [] },
+  "requests": [
+    { "method": "PROPFIND", "host": "caldav.icloud.com", "path": "/", "purpose": "read" },
+    { "method": "PROPFIND", "host": "caldav.icloud.com", "path": "/:account/principal", "purpose": "read" },
+    { "method": "PROPFIND", "host": "p01-caldav.icloud.com", "path": "/:account/calendars", "purpose": "read" },
+    { "method": "REPORT", "host": "p01-caldav.icloud.com", "path": "/:account/calendars/:calendar", "purpose": "read" },
+    { "method": "PUT", "host": "p01-caldav.icloud.com", "path": "/:account/calendars/:calendar/:event", "purpose": "write" }
+  ],
+  "tools": [
+    {
+      "name": "list_calendars",
+      "title": "List calendars",
+      "description": "Your iCloud calendars that hold events: each one's id, name and colour. Also names the iCloud server your account is on.",
+      "sideEffect": "read"
+    },
+    {
+      "name": "list_events",
+      "title": "List events",
+      "description": "Events between two dates (at most 62 days apart), from one calendar or all of them: each one's title, start, end and location.",
+      "sideEffect": "read"
+    },
+    {
+      "name": "add_event",
+      "title": "Add event",
+      "description": "Adds an event to one of your calendars: a title, a start and end time (UTC), and a location if you give one. Adding the same event again changes nothing.",
+      "sideEffect": "write",
+      "idempotent": true
+    }
+  ],
+  "settings": {},
+  "limits": {
+    "requestsPerRun": 12,
+    "minGapMs": 250,
+    "requestsPerHour": 600,
+    "requestsPerMinute": 60,
+    "gapJitterPercent": 20,
+    "cooldownSeconds": 600,
+    "maxCooldownSeconds": 7200
+  }
+}

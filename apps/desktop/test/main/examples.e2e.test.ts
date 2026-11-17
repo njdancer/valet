@@ -146,8 +146,8 @@ async function fromExample(example: string, adapterId = `my-${example}`) {
 /** Every case passes and nothing is an error: what valet_submit_draft needs. */
 async function expectPasses(h: Awaited<ReturnType<typeof fromExample>>) {
   const report = await h.authoring.check(AGENT, h.draftId)
-  expect(report.findings.filter((f) => f.level === 'error')).toEqual([])
   expect(report.cases.filter((c) => !c.passed)).toEqual([])
+  expect(report.findings.filter((f) => f.level === 'error')).toEqual([])
   expect(report.cases.length).toBeGreaterThan(0)
   expect(report.ok).toBe(true)
   return report
@@ -246,6 +246,21 @@ describe('the feed reader (http, RSS and Atom)', () => {
     const refused = await h.authoring.liveTrial(AGENT, h.draftId, 'get_headlines', { section: 'world' })
     expect(refused).toMatchObject({ ok: false })
     expect(JSON.stringify(refused)).toContain('undeclared-request')
+    expect(services.seen.length).toBe(before)
+  }, 60_000)
+})
+
+describe('iCloud Calendar (http, CalDAV, a kept password)', () => {
+  it('passes its check and every case, the cases with a placeholder for the kept credential', async () => {
+    await expectPasses(await fromExample('icloud-calendar'))
+  }, 60_000)
+
+  it('gets no credential in a live trial, so nothing reaches iCloud', async () => {
+    const h = await fromExample('icloud-calendar')
+    const before = services.seen.length
+    const report = await h.authoring.liveTrial(AGENT, h.draftId, 'list_calendars', {})
+    expect(report).toMatchObject({ ok: false })
+    expect(JSON.stringify(report)).toContain('not-granted')
     expect(services.seen.length).toBe(before)
   }, 60_000)
 })
