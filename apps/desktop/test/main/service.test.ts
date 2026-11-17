@@ -4569,7 +4569,6 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
         mailReader: (account) =>
           new HostMailReader({
             host,
-            idleMs: 200,
             account: async (ref) => {
               asked.push(ref)
               const found = await account(ref)
@@ -4742,24 +4741,27 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
         const filer = await t.install(mailPackage('filer', 'write'))
         await t.grantMail('filer', filer)
         expect(await t.s.api.grants.vaultItems('mail')).toEqual({ status: 'ok', items: [] })
-        await new Promise((r) => setTimeout(r, 300))
-        // The kept session ended, and its connection is recorded as the mail account's.
-        expect(readAudit(t.s.paths.audit)).toContainEqual(
-          expect.objectContaining({
-            type: 'egress-connection',
-            adapterId: 'mailbox',
-            callId: 'sign-in-mail',
-          }),
-        )
+        // At once, though a session was still kept from the last lookup.
         await expect(t.lookup(asked)).rejects.toMatchObject({ failure: 'not-found' })
+        // That session ended, and its connection is recorded as the mail account's.
+        await vi.waitFor(() =>
+          expect(readAudit(t.s.paths.audit)).toContainEqual(
+            expect.objectContaining({
+              type: 'egress-connection',
+              adapterId: 'mailbox',
+              callId: 'sign-in-mail',
+            }),
+          ),
+        )
         await t.s.api.credentials.revoke('filer', 'mail')
         expect(await t.s.api.grants.vaultItems('mail')).toMatchObject({
           items: [{ id: 'mailbox/mail' }],
         })
 
         // Revoking the mail account's own password stops sign-in mail too: nothing is copied.
+        const again = await t.lookup(asked)
+        again.dispose()
         await t.s.api.credentials.revoke('mailbox', 'mail')
-        await new Promise((r) => setTimeout(r, 300))
         await expect(t.lookup(asked)).rejects.toMatchObject({ failure: 'not-found' })
         expect(await t.s.api.grants.vaultItems('mail')).toEqual({ status: 'ok', items: [] })
 

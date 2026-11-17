@@ -69,6 +69,28 @@ const linkQuery = {
 }
 
 describe('HostMailReader', () => {
+  it('asks for the account on every lookup, and ends a kept session once it is gone', async () => {
+    let gone = false
+    const t = await setup()
+    const inner = (t.reader as unknown as { options: { account: (r: string) => Promise<unknown> } }).options
+    const account = inner.account
+    inner.account = async (ref) => (gone ? null : account(ref))
+    const asked = new Date(Date.now() - 1_000)
+    t.server.deliver('INBOX', { raw: message(`Sign in: ${ORIGIN}/magic?t=one`) })
+    ;(await t.reader.find(linkQuery, asked)).dispose()
+    expect(t.accounts).toEqual(['icloud-mail/mail'])
+    ;(await t.reader.find(linkQuery, asked)).dispose()
+    // Asked again, though the session was kept: one sign-in, two asks.
+    expect(t.accounts).toEqual(['icloud-mail/mail', 'icloud-mail/mail'])
+    expect(t.server.logins).toHaveLength(1)
+    gone = true
+    await expect(t.reader.find(linkQuery, asked)).rejects.toMatchObject({ failure: 'not-found' })
+    gone = false
+    ;(await t.reader.find(linkQuery, asked)).dispose()
+    // The kept session was ended: a new one signed in.
+    expect(t.server.logins).toHaveLength(2)
+  })
+
   it('finds a link that arrived after the login asked, reusing one session', async () => {
     const t = await setup()
     const asked = new Date(Date.now() - 1_000)
