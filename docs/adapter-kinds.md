@@ -71,6 +71,41 @@ Each entry is an IP literal, so DNS can't be redirected. It is never a port Vale
 for an adapter's hash, not just 30 minutes of authoring. A kept secret is never sent over
 unencrypted `http`.
 
+#### As built (workstream A)
+
+- `@valet/egress` is the broker: `EgressBroker(endpoints, options)` with `fetch(url, request, run)`,
+  `websocket(url, options, run)` and `tunnels(run, { admit, plainTcp })`. A `RunContext` is
+  `{ meter, signal, record }`: one `RunMeter` per call holds its upload budget, and `record` writes
+  each connection's `egress-connection` audit event with bytes up and down.
+- `packages/runtime/src/guarded-http.ts` is `ctx.http`. It shares the request checks with the
+  page's fetch (`call-gate.ts`): the request surface with private hosts and exact ports, the
+  tool's side effect and unlocks, the ceiling, the site's pace and breaker (a 429 or a 403 HTML
+  page trips it, as in the browser), and a sticky `request-blocked` refusal.
+- An `http` adapter gets `noBrowserDriver()`: no browser window at all; `ctx.page` refuses
+  everything with `tool-run/not-granted`.
+- Drafts: `valet_create_draft` takes `runtime: "http"` for a blank http draft. Cases answer
+  `ctx.http` from the case's `fetch` list through the real guard. Live trials of an http draft go
+  through the broker with read-only rules and reach the draft's public hosts only.
+
+#### Decisions for Nick's review (workstream A)
+
+Taken while Nick was away, each the recommendation. Any can be changed.
+
+1. **Bodies are capped at 2 MB, not 4 MB.** A response crosses into the sandbox as JSON text, and
+   the channel's message limit is 4 million characters; 2 MB still fits once written as base64.
+2. **Feeds are a library function, not a capability.** Tool code imports `parseFeed` from
+   `@valet/core`. It's pure JS, so it runs in the sandbox either way, and it needs no grant.
+3. **A WebSocket message doesn't count as a request.** Opening a socket does (ceiling and pace).
+   Counting every message would end a ticker after a few ticks; bytes sent are bounded by the
+   upload budget instead.
+4. **Live trials of a draft never reach its private hosts**, even with a `private-network`
+   authoring grant. Cases cover them; the first real call is after the person approves the
+   adapter, whose card lists each private host as a high-risk line.
+5. **Authorization is refused outright** in tool code's headers. Once secrets v2 lands, it only
+   ever comes from a kept credential the runtime adds.
+6. **No signed-in http adapters yet.** An http manifest's probe is `none`; a `fetch` probe through
+   `ctx.http` waits for credentials (workstream B).
+
 ### F2. Secrets, version 2
 
 The rule in security-model.md, "adapter code never obtains a secret's value", becomes:
@@ -150,16 +185,19 @@ The manifest gets `credentials`, next to the existing `secrets`, which keep mean
   or `frameOrigins`. `session.probe` is `none`, or a `fetch` probe that runs through `ctx.http`.
 - `ctx.http.fetch(url, { method, headers, body, credential? })` returns
   `{ status, headers, body }`. Redirects come back unfollowed. Valet refuses the `host`,
-  `cookie` and hop-by-hop headers, and the header a named credential fills. Responses are capped
-  at 4 MB, with 30 s time limits.
+  `cookie` and hop-by-hop headers, and the header a named credential fills. Bodies are capped at
+  2 MB each way (so a body still fits the tool channel as base64), with 30 s time limits.
 - WebDAV verbs (`PROPFIND`, `REPORT`, `MKCOL`, `MKCALENDAR`, `COPY`, `MOVE`) are added to the
   request methods, so CalDAV and CardDAV (iCloud calendars and contacts) work. `PROPFIND` and
   `REPORT` may be declared `read`.
 - `ctx.http.websocket(url, { credential?, protocols? })` opens a socket on a declared `GET`
-  path. Each message counts against the run's ceiling and upload budget. Each message is capped
-  in size, and the socket closes when the call ends.
-- `ctx.feeds.parse(text)` parses RSS, Atom and JSON Feed into one shape. It's a pure-JS parser
-  bundled into the sandbox prelude, so parsing never happens in the main process.
+  path marked `websocket: true`. Opening it counts against the run's ceiling and takes a pacing
+  slot; each message sent is spent from the upload budget. Messages are capped at 1 MB, at most
+  four sockets are open per call, and they close when the call ends.
+- `parseFeed(text)` (imported from `@valet/core` in tool code) parses RSS, Atom and JSON Feed into
+  one shape, and `parseXml(text)` reads CalDAV and CardDAV answers with namespaces resolved. Both
+  are pure JS in the tool library the sandbox loads, so parsing never happens in the main
+  process, and neither takes a DOCTYPE, so no entity tricks.
 - The authoring guide's API-as-home workaround (#111, #112) is kept for browser adapters that
   also call an API, and dropped as the advice for pure APIs.
 
