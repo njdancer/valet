@@ -250,10 +250,14 @@ export class ClientRegistry {
     if (existing === null) return false
     const changed = existing.reportedName !== reportedName || existing.transport !== transport
     const at = this.now().toISOString()
+    const last = existing.lastSeen === null ? Number.NaN : Date.parse(existing.lastSeen)
+    // Written at most once a minute unless what it shows changed: sessions opening and closing in
+    // a loop don't rewrite the registry each time.
+    const stale = !(this.now().getTime() - last < 60_000)
     this.clients = this.clients.map((c) =>
       c.id === id ? { ...c, lastSeen: at, reportedName: reportedName.slice(0, 200), transport } : c,
     )
-    void this.save().catch(() => undefined)
+    if (changed || stale) void this.save().catch(() => undefined)
     return changed || existing.lastSeen === null
   }
 

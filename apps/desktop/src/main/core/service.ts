@@ -1156,7 +1156,8 @@ export class AppService {
    * config) say nothing about the site. True when the items changed.
    */
   private noteFinished(event: Extract<AuditEvent, { type: 'tool-finished' }>, at: string): boolean {
-    if (event.outcome === 'failed' && event.stage === 'config') return false
+    // A refusal before the site was reached (bad input, setup) says nothing about the adapter's health.
+    if (event.outcome === 'failed' && (event.stage === 'config' || event.stage === 'tool-input')) return false
     const before = this.repairs.get(event.adapterId)
     if (event.outcome === 'failed' && event.errorClass !== undefined && NEEDS_REPAIR.has(event.errorClass)) {
       this.repairs.set(event.adapterId, { callId: event.callId, errorClass: event.errorClass, at })
@@ -4295,7 +4296,11 @@ export class AppService {
           const client = await this.clients.add(name)
           // A stopped endpoint issues the client its token when it next starts.
           await this.endpoint?.addClient({ id: client.id, configPath: this.clients.configPath(client.id) })
-          await this.audit.append({ type: 'client-added', clientId: `local:${client.id}` })
+          // The client exists either way: a log that can't be written (its own Needs you item says
+          // so) doesn't make adding it look failed.
+          await this.audit
+            .append({ type: 'client-added', clientId: `local:${client.id}` })
+            .catch(() => undefined)
           this.emit('clients-changed')
           return (await this.clientInfos()).find((c) => c.id === client.id) as ClientInfo
         },
@@ -4309,7 +4314,9 @@ export class AppService {
             await rm(this.clients.configPath(clientId), { force: true })
           }
           await this.clients.reset(clientId)
-          await this.audit.append({ type: 'client-reset', clientId: `local:${clientId}` })
+          await this.audit
+            .append({ type: 'client-reset', clientId: `local:${clientId}` })
+            .catch(() => undefined)
           this.emit('clients-changed')
           this.emit('endpoint-changed')
         },
@@ -4318,15 +4325,19 @@ export class AppService {
           const label = `local:${clientId}`
           // The registry first: if the app quits part-way, the next start issues it no token.
           await this.clients.revoke(clientId)
-          await this.audit.append({ type: 'client-revoked', clientId: label })
           // Its token is refused from here on. A call of its waiting on a confirmation ends now, as
           // cancelled by the revoke (not as the person's decline), and its answer still reaches it
-          // before its sessions close; so do its other calls (removeClient).
+          // before its sessions close; so do its other calls (removeClient). All of it happens before
+          // the audit record, so a log that can't be written never leaves a revoked app working.
           this.endpoint?.refuseClient(clientId)
           this.cancelConfirmationsOf(label)
           await this.approvalBroker?.withdrawClient(label).catch(() => 0)
-          await this.endpoint?.removeClient(clientId)
-          await rm(this.clients.configPath(clientId), { force: true })
+          try {
+            await this.endpoint?.removeClient(clientId)
+            await rm(this.clients.configPath(clientId), { force: true })
+          } finally {
+            await this.audit.append({ type: 'client-revoked', clientId: label }).catch(() => undefined)
+          }
           this.emit('clients-changed')
           this.emit('endpoint-changed')
         },
@@ -4354,24 +4365,40 @@ export class AppService {
           if (before === null || !(await this.clients.setCapabilities(clientId, patch)))
             throw new ValetError('config', 'not-found')
           const after = this.clients.capabilities(clientId) ?? before
+          // Turning Ask for changes on widens what the app may do: every change is recorded, and
+          // one that can't be recorded is undone before the app could use it.
+          if (capabilityNames(before).join() !== capabilityNames(after).join()) {
+            try {
+              await this.audit.append({
+                type: 'client-access-changed',
+                clientId: `local:${clientId}`,
+                before: capabilityNames(before),
+                after: capabilityNames(after),
+              })
+            } catch (error) {
+              await this.clients.setCapabilities(clientId, before)
+              throw error
+            }
+          }
           this.refreshEndpoint()
           this.emit('clients-changed')
-          // Turning Ask for changes on widens what the app may do: every change is recorded.
-          if (capabilityNames(before).join() !== capabilityNames(after).join()) {
-            await this.audit.append({
-              type: 'client-access-changed',
-              clientId: `local:${clientId}`,
-              before: capabilityNames(before),
-              after: capabilityNames(after),
-            })
-          }
         },
         turnToolOn: async (clientId, qualified) => {
           if (!(await this.clients.turnOnTool(clientId, qualified)))
             throw new ValetError('config', 'not-found')
+          // Recorded before the app can use it; undone if it can't be.
+          try {
+            await this.audit.append({
+              type: 'client-tool-on',
+              clientId: `local:${clientId}`,
+              tool: qualified,
+            })
+          } catch (error) {
+            await this.clients.turnOffTool(clientId, qualified)
+            throw error
+          }
           this.refreshEndpoint()
           this.emit('clients-changed')
-          await this.audit.append({ type: 'client-tool-on', clientId: `local:${clientId}`, tool: qualified })
         },
       },
       attention: {

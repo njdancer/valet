@@ -1979,6 +1979,31 @@ describe('endpoint, settings, audit and the app', () => {
     expect([...s.endpoint.clients.keys()]).toEqual([desktop.id])
   })
 
+  /** An audit log that refuses every append, as a broken chain or a full disk does. */
+  function breakAudit(service: unknown): void {
+    const audit = (service as { audit: { append: () => Promise<never> } }).audit
+    audit.append = () => Promise.reject(new Error('audit log refused'))
+  }
+
+  it('still cuts a revoked client off when the audit log can’t be written', async () => {
+    const s = await approved()
+    const code = await s.api.clients.add('Claude Code')
+    breakAudit(s.service)
+    await s.api.clients.revoke(code.id)
+    expect(s.endpoint.ops).toContain(`refuse ${code.id}`)
+    expect(s.endpoint.ops).toContain(`remove ${code.id}`)
+    expect(existsSync(join(s.paths.clientConfigs, `${code.id}.json`))).toBe(false)
+  })
+
+  it('undoes widening an app’s access when the change can’t be recorded', async () => {
+    const s = await approved()
+    const code = await s.api.clients.add('Claude Code')
+    const before = await s.api.clients.access(code.id)
+    breakAudit(s.service)
+    await expect(s.api.clients.setAccess(code.id, { askForChanges: !before.askForChanges })).rejects.toThrow()
+    expect((await s.api.clients.access(code.id)).askForChanges).toBe(before.askForChanges)
+  })
+
   it('deletes the shared bridge config left from before per-client tokens', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sa-service-'))
     dirs.push(dir)

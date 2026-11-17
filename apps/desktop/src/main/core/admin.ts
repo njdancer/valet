@@ -435,6 +435,15 @@ function aboutOtherAgent(event: AuditEvent, others: ReadonlySet<string>, mine: s
   if (event.type === 'approval-requested') return event.clientId !== null && event.clientId !== mine
   // Another agent's refused calls, like its calls: they carry its own name for itself.
   if (event.type === 'call-refused' || event.type === 'refusals-dropped') return event.clientId !== mine
+  // What the person did to another app (added, reset, revoked, access changed): that app's business.
+  if (
+    event.type === 'client-added' ||
+    event.type === 'client-reset' ||
+    event.type === 'client-revoked' ||
+    event.type === 'client-access-changed' ||
+    event.type === 'client-tool-on'
+  )
+    return event.clientId !== mine
   const callId = 'callId' in event ? event.callId : null
   return typeof callId === 'string' && others.has(callId)
 }
