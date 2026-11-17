@@ -15,6 +15,9 @@
     "@valet/runtime": "workspace:*"
   },
   "devDependencies": {
-    "@valet/fake-imap": "workspace:*"
+    "@types/smtp-server": "^3.5.13",
+    "@valet/fake-imap": "workspace:*",
+    "@valet/fake-woolworths-site": "workspace:*",
+    "smtp-server": "3.13.6"
   }
 }

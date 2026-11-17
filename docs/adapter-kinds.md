@@ -337,7 +337,7 @@ touches the server.
 | Protocol | Library (to confirm in the thread) | Read                                                                                                                                                    | Write                                               | Irreversible                                                                                  |
 | -------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------- |
 | IMAP     | Valet's own ([imap.md](imap.md))   | List folders. Open a folder read-only (`EXAMINE`), so a fetch never marks mail as read. Search. Fetch envelopes, structure, and bodies with `BODY.PEEK` | Set flags, copy, move, append, create folders       | Expunge, delete folders                                                                       |
-| SMTP     | `nodemailer`                       | None                                                                                                                                                    | None                                                | Send, through `confirm()`; `From` fixed to the account; optional recipient allow-list setting |
+| SMTP     | Valet's own ([smtp.md](smtp.md))   | None                                                                                                                                                    | None                                                | Send, through `confirm()`; `From` fixed to the account; optional recipient allow-list setting |
 | SFTP     | `ssh2`                             | List, stat and read under declared roots                                                                                                                | Write, make folders and rename under declared roots | Remove                                                                                        |
 
 - The manifest declares `protocols: { imap?: { endpoint, credential, folders? }, smtp?: {…}, sftp?:
@@ -494,6 +494,35 @@ note it here. Each one can be reversed.
   C's follow-up), and the mail grant needs a card in the app alongside secrets v2's grant cards.
   Until both land, the app registers no IMAP backend or mail reader, so protocol adapters' tools
   answer not-granted and mail sign-in steps answer unavailable.
+
+**Workstream G (SMTP, [smtp.md](smtp.md)):**
+
+- **Valet's own SMTP client, not `nodemailer`.** Sending one message needs a few hundred lines,
+  and owning them means every line on the wire is built from checked values. It also keeps the
+  sandboxed host free of outside code, as for IMAP.
+- **Two confirmations for a send.** The irreversible tool's own confirmation before it runs, then
+  one for each message, showing Valet's rendering of it. The second is what makes the yes about
+  the email itself, since the tool's input needn't be the message. Merging them into one card
+  could follow, at the cost of asking before the tool has decided what to send.
+- **From is the signed-in account, shown as "your account at smtp.mail.me.com".** The username is
+  only known once the credential is used, which is after the person says yes. Showing the address
+  itself would mean reading the credential before the confirmation.
+- **No headers of tool code's own, no HTML, no attachments.** Plain text only, sent as base64, so
+  no text can start a header or end the DATA. These can come later as typed fields.
+- **Only an irreversible tool may send**, and a send from any other tool is a sticky violation.
+- **Recipients may be limited to exact addresses or `@domain`**, with no subdomains. Bcc counts
+  like any other recipient, and the confirmation lists it.
+- **One send per host.** Each send starts a fresh host and signs in again, so nothing carries
+  between messages. A tool sending ten messages signs in ten times.
+- **Caps:** 50 recipients, a 300-character subject, 100,000 characters of text, 20 references.
+- **The Message-ID is random, at the server's own domain** (`<uuid@smtp.mail.me.com>`), so it
+  says nothing about the Mac. EHLO says `[127.0.0.1]` for the same reason.
+- **Invisible characters are refused, emoji joined with a zero-width joiner among them.** The red
+  team showed hidden text could ride an approved message. Emoji that stand alone still work.
+- **`%` and `!` are refused in addresses**, so an `@domain` rule never relies on the domain's
+  server refusing old-style relaying. An exact address rule ignores case, as nearly every mail
+  server does.
+- **The approval card doesn't list the recipients list yet**, as it doesn't list IMAP folders.
 
 **Workstream C (the Node runtime, [node-runtime.md](node-runtime.md)):**
 

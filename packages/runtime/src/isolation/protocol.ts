@@ -48,6 +48,8 @@ export const CAPABILITIES = [
   'http.ws.close',
   // The protocol host (docs/imap.md): one capability, the operation's name and its arguments.
   'imap.op',
+  // Sending mail (workstream G): one message per call of it; GuardedSmtp checks and confirms it.
+  'smtp.send',
 ] as const
 export type Capability = (typeof CAPABILITIES)[number]
 

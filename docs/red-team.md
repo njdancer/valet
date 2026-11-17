@@ -209,3 +209,41 @@ revoke and Pause ordering in `service.ts`, and the keys-changed notice (`keys-ch
   the audit record, undoing the change if the write fails. For the few milliseconds of that write
   the app holds the capability unrecorded. Only the person can make this change, so no agent can
   use the window.
+
+### 2026-11-17: hostile tool code and server against SMTP sending (workstream G)
+
+Scope: `ctx.smtp.send` end to end, before merge: the message rules (`core/smtp-policy.ts`), the
+main process's checks and confirmation (`runtime/guarded-smtp.ts`, `tool-host.ts`), the isolated
+process channel, the protocol host and the SMTP client, and what the confirmation window shows.
+Focus: header injection, recipient smuggling, confirm bypass, a hostile server.
+
+- **Nothing reached the wire.** No attack got a header into the sent bytes, a send to an address
+  the person wasn't shown or the manifest doesn't allow, or a send without a yes for that exact
+  message. Each hole below was stopped by a later layer, and each is now fixed where it was found.
+- **Fixed (medium):** References was sent but not shown. The confirmation now lists it.
+- **Fixed (medium):** tag characters, zero-width characters, separators that render as line
+  breaks, fillers and private-use characters passed the subject and text checks, so the person
+  could approve "Hi Ann" with hidden text for a reader or an AI. Format, separator, private-use and
+  unassigned characters, blank fillers and text variation selectors are now refused, and so is a
+  lone carriage return. Emoji still work, except sequences joined with a zero-width joiner.
+- **Fixed (low):** an in-process tool's array with its own `Symbol.iterator` was checked by index
+  but copied through the iterator. Lists are now copied by index and then checked, and holes,
+  extra properties and subclasses are refused. The host's own check already stopped it, and an
+  isolated tool can only pass JSON.
+- **Fixed (low):** a server could inject complete continuation lines in the clear after its
+  STARTTLS reply, and they joined the first EHLO reply over TLS (a fake SIZE or AUTH). Unfinished
+  replies now count as injection, and every buffer is cleared at the upgrade.
+- **Fixed (low):** two sends at once raised two confirmations at once. Sends from one call now go
+  one at a time.
+- **Fixed (info):** `%` and `!` routing in a local part could pass an `@domain` rule if the
+  domain's server still relays them. They're refused. Message ids are dot-atom on both sides.
+- **Changed (info):** the email preview is taller, so recipients and more of the text are in view
+  without scrolling.
+- **Tried, held:** line breaks, bidi and C1 controls in any field; extra keys, `__proto__`, class
+  instances, String objects, getters and Proxies; display names, commas, quotes, source routes,
+  address literals and RCPT parameters; subdomains and Bcc off the list; sends from a write tool;
+  a retry after a decline; a second send on one approval; the request ceiling; cancel and
+  time-out; raw operations from the isolated process; no STARTTLS, a complete injected reply,
+  sign-in before TLS, oversized replies, and a refused recipient.
+- Proofs: `core/test/smtp-policy.redteam.test.ts`, `protocols/test/smtp-client.redteam.test.ts`,
+  and the last tests of `runtime/test/smtp.e2e.test.ts`.

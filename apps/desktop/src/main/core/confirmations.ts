@@ -13,7 +13,7 @@
 //   as the person's decline.
 
 import { type AdapterManifest, unlockedBy } from '@valet/core'
-import type { ConfirmationAnswer, ConfirmationPrompt, ConfirmationRequest } from '@valet/runtime'
+import type { ConfirmationAnswer, ConfirmationPrompt, ConfirmationRequest, MailPreview } from '@valet/runtime'
 import type { ConfirmationItem, PreviewPart } from '../../shared/api'
 import { shownTransport } from './clients'
 import type { AppWindow } from './ipc'
@@ -128,11 +128,18 @@ export class ConfirmationBroker implements ConfirmationPrompt {
       // Only the runtime's own confirmation before an irreversible tool unlocks anything, and only
       // the declarations that tool names (C15).
       unlocks: irreversible ? unlockedBy(adapter.manifest.requests, declaration.unlocks) : [],
-      requests: irreversible
-        ? []
-        : request.requests.map(({ method, path, purpose }) => ({ method, path, purpose })),
-      input: irreversible ? previewParts(request.input ?? {}).parts : (call?.input ?? []),
-      adapterNote: irreversible ? null : request.note,
+      requests:
+        request.kind === 'tool-request'
+          ? request.requests.map(({ method, path, purpose }) => ({ method, path, purpose }))
+          : [],
+      // A send shows the message itself, as Valet will build it, in full.
+      input:
+        request.kind === 'irreversible-tool'
+          ? previewParts(request.input ?? {}).parts
+          : request.kind === 'mail-send'
+            ? [{ kind: 'text', text: mailPreviewText(request.mail) }]
+            : (call?.input ?? []),
+      adapterNote: request.kind === 'tool-request' ? request.note : null,
       ref: null,
     }
     return new Promise<ConfirmationAnswer>((resolve) => {
@@ -280,4 +287,20 @@ export class ConfirmationBroker implements ConfirmationPrompt {
     }
     return count
   }
+}
+
+/** A send as the confirmation shows it: the envelope, then the text, every recipient named. */
+export function mailPreviewText(mail: MailPreview): string {
+  const host = mail.endpoint.slice(0, mail.endpoint.lastIndexOf(':'))
+  return [
+    `From: your account at ${host}`,
+    `To: ${mail.to.join(', ')}`,
+    ...(mail.cc.length > 0 ? [`Cc: ${mail.cc.join(', ')}`] : []),
+    ...(mail.bcc.length > 0 ? [`Bcc (not shown to the others): ${mail.bcc.join(', ')}`] : []),
+    `Subject: ${mail.subject === '' ? '(no subject)' : mail.subject}`,
+    ...(mail.inReplyTo === null ? [] : [`In reply to: ${mail.inReplyTo}`]),
+    ...(mail.references.length > 0 ? [`References: ${mail.references.join(' ')}`] : []),
+    '',
+    mail.text,
+  ].join('\n')
 }

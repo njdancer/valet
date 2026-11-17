@@ -143,6 +143,8 @@ export const BOOTSTRAP = `(function (send) {
         while (args.length > 0 && args[args.length - 1] === undefined) args.pop()
         return call('imap.op', name, args)
       }]))),
+    // Sending mail, for a protocol adapter with SMTP: each send waits for the person.
+    smtp: Object.freeze({ send: (message) => call('smtp.send', message) }),
   })
   return function deliver(text) {
     const m = JSON.parse(text)

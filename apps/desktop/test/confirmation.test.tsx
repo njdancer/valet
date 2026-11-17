@@ -283,6 +283,32 @@ describe('the confirmation window', () => {
     expect(screen.getByRole('button', { name: 'Approve Place order' })).toBeTruthy()
   })
 
+  it('shows a send as the email itself, with every recipient, and a danger Send button', async () => {
+    const SEND: ConfirmationItem = {
+      ...CHECKOUT,
+      id: 'cf_mail',
+      tool: 'send_mail',
+      toolTitle: 'Send mail',
+      trigger: 'mail-send',
+      unlocks: [],
+      input: [
+        {
+          kind: 'text',
+          text: 'From: your account at smtp.mail.me.com\nTo: ann@example.com\nBcc (not shown to the others): bo@example.com\nSubject: Hello\n\nHi Ann',
+        },
+      ],
+    }
+    renderWindow('cf_mail', withAttention(createFakeApi({ now: NOW }), [SEND]))
+    const send = await armed('Send this email')
+    expect(send.className).toContain('bg-danger-solid')
+    expect(screen.getByText(/It wants to send the email below/)).toBeTruthy()
+    expect(screen.getByTitle('The email, exactly as Valet will send it').textContent).toContain(
+      'Bcc (not shown to the others): bo@example.com',
+    )
+    expect(screen.getByText(/Every recipient, Bcc included, is listed above/)).toBeTruthy()
+    expect(screen.queryByText('Input from the client')).toBeNull()
+  })
+
   it('can’t be answered once it has timed out, and says it was missed', async () => {
     const user = userEvent.setup()
     const fake = createFakeApi({ now: NOW })

@@ -42,6 +42,7 @@ import {
   type SecretValue,
   type SessionDriver,
   type SettingChoice,
+  type SmtpProtocol,
   settingToolNames,
   sha256Hex,
   type ToolDeclaration,
@@ -78,6 +79,7 @@ import {
   type RuntimeDiagnostic,
   SecretRedactionSet,
   type Sleep,
+  type SmtpBackend,
   sensitiveMatcher,
   ToolHost,
   type ToolProcessFactory,
@@ -306,6 +308,8 @@ export interface ServiceDeps {
    * Without it, every ctx.imap call is not-granted.
    */
   readonly imap?: (protocol: ImapProtocol) => ImapBackend
+  /** The protocol host behind ctx.smtp, for protocols.smtp. Without it, every send is not-granted. */
+  readonly smtp?: (protocol: SmtpProtocol) => SmtpBackend
   /** Builds an adapter's driver, with the reporters its refusals outside a run go to. */
   readonly createDriver: (manifest: AdapterManifest, reporters: DriverReporters) => Promise<SessionDriver>
   readonly credentials: Credentials
@@ -2078,6 +2082,11 @@ export class AppService {
       manifest.protocols?.imap === undefined
         ? {}
         : { imap: this.deps.imap(manifest.protocols.imap) }),
+      ...(this.deps.smtp === undefined ||
+      runtimeOf(manifest) !== 'protocol' ||
+      manifest.protocols?.smtp === undefined
+        ? {}
+        : { smtp: this.deps.smtp(manifest.protocols.smtp) }),
       ...(start === undefined || adapter.toolScript === null
         ? {}
         : {
