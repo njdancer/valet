@@ -57,8 +57,8 @@ import {
   rendererBase,
   userDataDir,
 } from '../core/launch'
-import { addOwnPort, ownPorts, recordOwnPorts } from '../core/own-ports'
 import { devHelperPath } from '../core/native-helpers'
+import { addOwnPort, ownPorts, recordOwnPorts } from '../core/own-ports'
 import { macName, relayFromEnv } from '../core/phones'
 import { AppService } from '../core/service'
 import { SHOWCASE_BUILD_MARKER } from '../core/showcase'

@@ -12,7 +12,11 @@ export const HELPER_APPS: Readonly<Record<string, string>> = {
 }
 
 /** `buildDir` is swift-bridge/.build. Null if neither form of the helper is there. */
-export function devHelperPath(name: string, buildDir: string, exists: (path: string) => boolean): string | null {
+export function devHelperPath(
+  name: string,
+  buildDir: string,
+  exists: (path: string) => boolean,
+): string | null {
   const bundle = HELPER_APPS[name]
   if (bundle !== undefined) {
     const inBundle = join(buildDir, 'apps', 'Debug', bundle, 'Contents', 'MacOS', name)
