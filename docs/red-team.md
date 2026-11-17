@@ -302,3 +302,26 @@ the fixes are merged on green CI and the choices are listed in
 - Proofs: `*.xkind-cred.redteam.test.ts`, `*.xkind-approve.redteam.test.ts` and
   `*.xkind-net.redteam.test.ts` in `apps/desktop/test/main`, `packages/runtime/test`,
   `packages/egress/test`, `packages/browser-electron/test` and `packages/node-runtime/test`.
+
+#### Sweep: SFTP, the examples and protocol draft cases
+
+After SFTP (#153), the six examples (#156) and IMAP draft cases (#158) merged, one more hostile
+agent swept them.
+
+- **Fixed (high):** an update that removed a read-only SFTP root nested inside a broader writable
+  root (`/share` irreversible, `/share/readonly` read) showed only "removed: Read files in
+  /share/readonly". The deepest root decides a path's access, so that subtree had become
+  irreversible, yet the review said the update added no permissions and the kept SSH key carried
+  over. A path whose access now ranks higher than before (`escalatedSftpPaths`) is now a widening:
+  the card gets a "widened" line at the new access's risk, the review asks for the tick and the key
+  grant doesn't carry over.
+- **Gap closed:** SFTP drafts had no `ctx.sftp` in their cases, so an SFTP adapter could never pass
+  its check. Cases now take an `sftp` script like the `imap` one, answered by the script, with no
+  credential and no network; the roots are still enforced before the script is asked.
+- **Tried, held:** SFTP path checks (case folding only ever restricts, `.`/`..`/backslash and control
+  characters refused, nothing normalised before the check); the wire guard (open flags, no
+  SETSTAT/SYMLINK/LINK/EXTENDED, handles bound to their purpose, renames within equal access, no
+  write through a link); hostile server packets (size caps before buffering, wrong ids end the
+  session); an SFTP key pinned to its protocol and endpoint; drafts from examples inherit no grant,
+  hash or pin; IMAP case answers reach only the author's own tool code. The macOS sandbox wasn't
+  exercised in this sweep (static analysis and Linux PoCs).

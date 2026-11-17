@@ -8,7 +8,7 @@ import { z } from 'zod'
 import { canonicalAddress, isPrivateHostAddress, parseEndpoint } from './addresses'
 import { type CredentialDeclaration, isEndpoint } from './credential'
 import { folderAllowed } from './imap-policy'
-import { isSftpPath, rootAllows, SFTP_PURPOSE_RANK } from './sftp-policy'
+import { accessRank, isSftpPath, rootAllows, SFTP_PURPOSE_RANK } from './sftp-policy'
 import { isMailAddress, recipientAllowed } from './smtp-policy'
 
 /** A folder name as the manifest writes it: no control characters, and no LIST wildcards. */
@@ -310,7 +310,24 @@ export function widenedSftpRoots(
     was.username === now.username &&
     was.hostKeySha256 === now.hostKeySha256
   if (!same) return now.roots.map((r) => r.path)
-  return now.roots.filter((r) => !rootAllows(r.path, was.roots, r.access)).map((r) => r.path)
+  const added = now.roots.filter((r) => !rootAllows(r.path, was.roots, r.access)).map((r) => r.path)
+  return [...added, ...escalatedSftpPaths(was.roots, now.roots).filter((p) => !added.includes(p))]
+}
+
+/**
+ * The old roots' paths that the new list lets tools do more in, though no new root names them: a
+ * removed nested root (`/share/readonly` read inside `/share` irreversible) leaves its subtree to
+ * the root above it (sweep red team, workstream I). Access only changes at a root's path, so the
+ * old roots' paths are the only places a removal can widen.
+ */
+export function escalatedSftpPaths(
+  before: readonly SftpProtocol['roots'][number][],
+  after: readonly SftpProtocol['roots'][number][],
+): readonly string[] {
+  return before
+    .filter((r) => !after.some((a) => a.path === r.path))
+    .filter((r) => (accessRank(r.path, after) ?? -1) > (accessRank(r.path, before) ?? -1))
+    .map((r) => r.path)
 }
 
 /** The IMAP folders `before` allowed that `after` no longer lists (a narrowing). */

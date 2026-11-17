@@ -880,6 +880,13 @@ in [red-team.md](red-team.md#2026-11-17-cross-kind-red-team-workstream-i). Any c
 6. **The browser partition's proxy refuses a name that resolves to a non-public address**, the
    broker's rule. A site behind NAT64 (`64:ff9b::`) answers is refused too, as the broker refuses it.
 
+7. **Removing a nested SFTP root counts as widening the subtree it protected** when the root above
+   it allows more. The card line reads as that subtree's new access ("widened"), and the kept key
+   is asked for again. A removal that leaves the subtree no stronger still carries over.
+8. **SFTP drafts are tested with scripted cases**, as IMAP drafts are: each case lists the expected
+   `ctx.sftp` calls and their answers. Roots apply before the script, so a case can show a refused
+   write.
+
 Residual risks, accepted for now:
 
 - **The same password in two items.** Items are matched by id, not value, so the mail password

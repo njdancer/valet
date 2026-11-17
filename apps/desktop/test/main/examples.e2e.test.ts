@@ -777,6 +777,96 @@ describe('iCloud Mail, read only (protocol, IMAP, a kept password)', () => {
     expect(refused.cases.filter((c) => !c.passed)).toEqual([])
   })
 
+  it('an SFTP draft passes on its cases’ scripts, and a write outside its roots is refused', async () => {
+    const h = await fromExample('icloud-mail-read', 'my-nas-files')
+    const manifest = JSON.parse(await h.read('manifest.json')) as Record<string, unknown>
+    const NAS = 'nas.example.com:22'
+    await h.write(
+      'manifest.json',
+      JSON.stringify({
+        ...manifest,
+        id: 'my-nas-files',
+        name: 'NAS files',
+        description: 'Lists and files documents on the NAS.',
+        protocols: {
+          sftp: {
+            endpoint: NAS,
+            credential: 'nas',
+            hostKeySha256: 'SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s',
+            username: 'alex',
+            roots: [
+              { path: '/share/docs', access: 'write' },
+              { path: '/share/docs/archive', access: 'read' },
+            ],
+          },
+        },
+        credentials: {
+          nas: {
+            description: 'A key Valet made',
+            kind: 'ssh-key',
+            custody: 'kept',
+            use: { protocol: 'sftp', endpoint: NAS },
+          },
+        },
+        tools: [
+          {
+            name: 'list_docs',
+            title: 'List docs',
+            description: 'Lists the documents folder.',
+            sideEffect: 'read',
+          },
+        ],
+      }),
+    )
+    await h.write(
+      'src/tools.ts',
+      [
+        "import { type ToolContext, tool, ValetError } from '@valet/core'",
+        "import { z } from 'zod'",
+        'export const tools = {',
+        '  list_docs: tool({',
+        '    input: z.object({ where: z.string().max(200).optional() }),',
+        '    output: z.object({ names: z.array(z.string()) }),',
+        '    async run(ctx: ToolContext, input: { where?: string }) {',
+        "      if (ctx.sftp === undefined) throw new ValetError('tool-run', 'not-granted')",
+        "      if (input.where !== undefined) await ctx.sftp.write(input.where, 'x', { mode: 'create' })",
+        "      const entries = await ctx.sftp.list('/share/docs')",
+        '      return { names: entries.map((e) => e.name) }',
+        '    },',
+        '  }),',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    const listed = {
+      name: 'lists the documents folder',
+      tool: 'list_docs',
+      input: {},
+      sftp: [{ op: 'list', args: ['/share/docs'], answer: [{ name: 'a.pdf', type: 'file', size: 1 }] }],
+      expect: { output: { names: ['a.pdf'] } },
+    }
+    await h.write('test/inbox.json', JSON.stringify({ cases: [listed] }))
+    const ok = await h.authoring.check(AGENT, h.draftId)
+    expect(ok.cases.filter((c) => !c.passed)).toEqual([])
+    expect(ok.cases.length).toBe(1)
+    // Writing into the nested read-only root is refused before any script step is asked.
+    await h.write(
+      'test/inbox.json',
+      JSON.stringify({
+        cases: [
+          {
+            ...listed,
+            name: 'a write into the read-only archive is refused',
+            input: { where: '/share/docs/archive/x.txt' },
+            expect: { error: { stage: 'request-surface' } },
+          },
+        ],
+      }),
+    )
+    const refused = await h.authoring.check(AGENT, h.draftId)
+    expect(refused.cases.filter((c) => !c.passed)).toEqual([])
+  })
+
   it('as installed: reads the inbox through the real protocol host, signs in itself and changes nothing', async () => {
     const server = await startFakeImap({
       mailboxes: {
