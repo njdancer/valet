@@ -15,6 +15,7 @@ import {
   openElectronScratchBrowser,
   partitionName,
   startEgressProxy,
+  trialPartitionName,
 } from '@valet/browser-electron'
 import { DEFAULT_SANDBOX } from '@valet/core'
 import { KeychainHelper, KeychainTokenSource, messagesHelperSocketPath } from '@valet/credentials'
@@ -481,11 +482,24 @@ async function main(): Promise<void> {
       })
       return { page: browser.page, close: () => browser.close() }
     },
+    // In demo mode a trial reaches the fake shop too, on its own port, as the installed one does.
     trialDriver: (manifest, label, allowPrivate, session) =>
       createElectronSessionDriver(
         manifest,
-        { trialLabel: label, ...(session === null ? {} : { trialSession: session }) },
-        { dial: authoringDial(allowPrivate) },
+        {
+          trialLabel: label,
+          ...(session === null ? {} : { trialSession: session }),
+          ...(demoSite === null ? {} : { egressPorts: [443, demoSite.site.port] }),
+        },
+        {
+          dial:
+            demoSite === null
+              ? authoringDial(allowPrivate)
+              : demoSite.forTrial(
+                  [trialPartitionName('tool', label), trialPartitionName('auth', label)],
+                  authoringDial(allowPrivate),
+                ),
+        },
       ),
     startEndpoint: (caller, clients, onSessionsChanged, admin, authoring) =>
       startEndpoint({

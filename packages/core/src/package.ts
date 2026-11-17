@@ -23,7 +23,10 @@ export const PACKAGE_LIMITS = {
   segments: 8,
 } as const
 
-/** Why a package was refused. `detail` names the path or the first problem; never file contents. */
+/**
+ * Why a package was refused. `detail` names the path, or the manifest's problems (up to
+ * MAX_MANIFEST_ISSUES of them); never other files' contents.
+ */
 export type PackageRule =
   | 'path'
   | 'placement'
@@ -116,15 +119,13 @@ export function checkPackage(input: PackageFiles): CheckedPackage {
   let json: unknown
   try {
     json = JSON.parse(files[PACKAGE_MANIFEST] as string)
-  } catch {
-    throw new PackageError('manifest-invalid', 'not JSON')
+  } catch (error) {
+    // JSON.parse's own words carry the position: "... in JSON at position 8 (line 1 column 9)".
+    const why = error instanceof Error && error.message !== '' ? `: ${error.message}` : ''
+    throw new PackageError('manifest-invalid', clip(`not JSON${why}`, 300))
   }
   const parsed = manifestSchema.safeParse(json)
-  if (!parsed.success) {
-    const issue = parsed.error.issues[0]
-    const where = issue === undefined ? '' : issue.path.join('.')
-    throw new PackageError('manifest-invalid', clip(`${where}: ${issue?.message ?? 'invalid'}`))
-  }
+  if (!parsed.success) throw new PackageError('manifest-invalid', manifestProblems(parsed.error.issues))
   const manifest = parsed.data
   return {
     manifest,
@@ -153,6 +154,161 @@ export function packageOf(manifest: AdapterManifest, files: PackageFiles): Recor
   return { ...files, [PACKAGE_MANIFEST]: `${JSON.stringify(manifest, null, 2)}\n` }
 }
 
-function clip(text: string): string {
-  return text.length > 120 ? `${text.slice(0, 117)}...` : text
+function clip(text: string, max = 120): string {
+  return text.length > max ? `${text.slice(0, max - 3)}...` : text
+}
+
+/** How many of the manifest's problems a refusal lists. */
+export const MAX_MANIFEST_ISSUES = 5
+
+/** Keys people reach for that the manifest calls something else. */
+const KEY_SYNONYMS: Readonly<Record<string, string>> = {
+  endpoints: 'requests',
+  endpoint: 'requests',
+  apis: 'requests',
+  api: 'requests',
+  routes: 'requests',
+  paths: 'requests',
+  urls: 'requests',
+  hosts: 'egress',
+  domains: 'egress',
+  allowedHosts: 'egress',
+  allowlist: 'egress',
+  origins: 'navigation',
+  url: 'home',
+  homepage: 'home',
+  homeUrl: 'home',
+  baseUrl: 'home',
+  login: 'auth',
+  title: 'name',
+  side_effect: 'sideEffect',
+  sideEffects: 'sideEffect',
+}
+
+interface ManifestIssue {
+  readonly code: string
+  readonly path: readonly PropertyKey[]
+  readonly message: string
+  readonly keys?: readonly string[]
+}
+
+/**
+ * The manifest's first few problems, each with where it is ("(top level)" for the manifest itself)
+ * and, for a key the manifest doesn't have, the nearest one it does.
+ */
+function manifestProblems(issues: readonly ManifestIssue[]): string {
+  const shown = issues.slice(0, MAX_MANIFEST_ISSUES).map((issue) => {
+    const where = issue.path.length === 0 ? '(top level)' : pathText(issue.path)
+    let text = `${where}: ${issue.message}`
+    if (issue.code === 'unrecognized_keys') {
+      const known = keysAt(manifestSchema, issue.path)
+      const hints = (issue.keys ?? []).flatMap((key) => {
+        const near = nearestKey(key, known)
+        return near === null ? [] : [`"${near}" for "${key}"`]
+      })
+      if (hints.length > 0) text += ` (did you mean ${hints.join(', ')}?)`
+    }
+    return clip(text, 200)
+  })
+  const more = issues.length - shown.length
+  return `${shown.join('; ')}${more > 0 ? `; and ${more} more` : ''}`
+}
+
+function pathText(path: readonly PropertyKey[]): string {
+  let out = ''
+  for (const part of path) {
+    if (typeof part === 'number') out += `[${part}]`
+    else out += out === '' ? String(part) : `.${String(part)}`
+  }
+  return out
+}
+
+interface SchemaDef {
+  readonly type?: string
+  readonly shape?: Readonly<Record<string, unknown>>
+  readonly innerType?: unknown
+  readonly element?: unknown
+  readonly valueType?: unknown
+  readonly in?: unknown
+  readonly options?: readonly unknown[]
+}
+
+function defOf(schema: unknown): SchemaDef {
+  return ((schema as { _zod?: { def?: SchemaDef } } | null)?._zod?.def ?? {}) as SchemaDef
+}
+
+/** The schemas `schema` stands for once wrappers are taken off: a union's options, each. */
+function unwrapped(schema: unknown, depth = 0): unknown[] {
+  if (depth > 20) return []
+  const def = defOf(schema)
+  switch (def.type) {
+    case 'default':
+    case 'prefault':
+    case 'optional':
+    case 'nullable':
+    case 'readonly':
+    case 'catch':
+      return unwrapped(def.innerType, depth + 1)
+    case 'pipe':
+      return unwrapped(def.in, depth + 1)
+    case 'union':
+      return (def.options ?? []).flatMap((option) => unwrapped(option, depth + 1))
+    default:
+      return [schema]
+  }
+}
+
+/** The keys the object schemas at `path` know, for suggesting one. */
+function keysAt(schema: unknown, path: readonly PropertyKey[]): readonly string[] {
+  let here = unwrapped(schema)
+  for (const part of path) {
+    here = here.flatMap((s) => {
+      const def = defOf(s)
+      if (def.type === 'object' && typeof part === 'string' && def.shape !== undefined)
+        return Object.hasOwn(def.shape, part) ? unwrapped(def.shape[part]) : []
+      if (def.type === 'array' && typeof part === 'number') return unwrapped(def.element)
+      if (def.type === 'record' && typeof part === 'string') return unwrapped(def.valueType)
+      return []
+    })
+  }
+  const keys = new Set<string>()
+  for (const s of here) {
+    const def = defOf(s)
+    if (def.type === 'object' && def.shape !== undefined)
+      for (const key of Object.keys(def.shape)) keys.add(key)
+  }
+  return [...keys]
+}
+
+/** A known key `key` is likely a slip for: a usual other name, or one a couple of edits away. */
+function nearestKey(key: string, known: readonly string[]): string | null {
+  const synonym = Object.hasOwn(KEY_SYNONYMS, key) ? KEY_SYNONYMS[key] : undefined
+  if (synonym !== undefined && known.includes(synonym)) return synonym
+  const lower = key.toLowerCase()
+  const caseOnly = known.find((k) => k.toLowerCase() === lower)
+  if (caseOnly !== undefined) return caseOnly
+  let best: string | null = null
+  let bestDistance = Math.max(1, Math.min(3, Math.floor(key.length / 3)))
+  for (const candidate of known) {
+    const distance = editDistance(lower, candidate.toLowerCase())
+    if (distance <= bestDistance) {
+      best = candidate
+      bestDistance = distance - 1
+    }
+  }
+  return best
+}
+
+function editDistance(a: string, b: string): number {
+  if (a.length > 64 || b.length > 64) return Number.POSITIVE_INFINITY
+  let previous = Array.from({ length: b.length + 1 }, (_, i) => i)
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i]
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1
+      current[j] = Math.min((previous[j] ?? 0) + 1, (current[j - 1] ?? 0) + 1, (previous[j - 1] ?? 0) + cost)
+    }
+    previous = current
+  }
+  return previous[b.length] ?? Number.POSITIVE_INFINITY
 }

@@ -780,6 +780,9 @@ export async function withAnswers(
   } catch {
     return result
   }
+  // An answer the result already says (valet_get_approval lists them) isn't said twice.
+  const said = result.content.flatMap((item) => (item.type === 'text' ? [item.text] : []))
+  lines = lines.filter((line) => !said.some((text) => text.includes(line)))
   if (lines.length === 0) return result
   const block = `Answers to your requests:\n${lines.join('\n')}`
   try {

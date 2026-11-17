@@ -1343,6 +1343,7 @@ export class ToolHost {
 /** How each refusal the driver reports is reported as an error, and in the audit log. */
 const BLOCKED_REASON = {
   'host-not-allowed': ['egress', 'host-not-allowed'],
+  'port-not-allowed': ['egress', 'host-not-allowed'],
   undeclared: ['request-surface', 'undeclared-request'],
   'denied-path': ['request-surface', 'denied-path'],
   'ambiguous-path': ['request-surface', 'ambiguous-path'],

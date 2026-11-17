@@ -855,10 +855,11 @@ describe('tool partition proxy', () => {
     expect(allow('www.example.com', 3478)).toBe(false)
     expect(allow('session-token-value.evil.test', 443)).toBe(false)
     expect(allow('127.0.0.1', 443)).toBe(false)
-    const connect = (target: string) =>
-      ({ method: 'CONNECT', target, reason: 'host-not-allowed', initiator: 'page' }) as const
+    const connect = (target: string, reason = 'host-not-allowed') =>
+      ({ method: 'CONNECT', target, reason, initiator: 'page' }) as const
     expect(blocked).toEqual([
-      connect('https://www.example.com:3478'),
+      // An egress host on another port says it is the port.
+      connect('https://www.example.com:3478', 'port-not-allowed'),
       connect('https://session-token-value.evil.test'),
       connect('https://127.0.0.1'),
     ])

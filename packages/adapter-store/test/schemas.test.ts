@@ -75,6 +75,23 @@ describe('toolSchemas', () => {
     expect(() => toolSchemas(null)).toThrow(SchemaError)
   })
 
+  it('tells a missing schema from one that is not representable', () => {
+    const problemOf = (described: unknown): string => {
+      try {
+        toolSchemas(described)
+      } catch (error) {
+        if (error instanceof SchemaError) return `${error.problem}: ${error.detail}`
+        throw error
+      }
+      return 'none'
+    }
+    expect(problemOf({ input: 'missing', output: OUTPUT })).toBe('missing: input')
+    expect(problemOf({ output: OUTPUT })).toBe('missing: input')
+    expect(problemOf({ input: object({}), output: 'missing' })).toBe('missing: output')
+    expect(problemOf({ input: null, output: OUTPUT })).toBe('convert: input not representable')
+    expect(problemOf({ input: object({}), output: null })).toBe('convert: output not representable')
+  })
+
   it('runs no adapter regex: a catastrophic pattern costs nothing in this process', () => {
     const schemas = toolSchemas({
       input: object({ a: { type: 'string', pattern: '^(\\d*)*\\d*\\d*x$' } }),

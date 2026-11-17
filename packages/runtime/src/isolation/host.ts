@@ -48,6 +48,11 @@ export function runIsolated(
   ctx: ToolContext,
   tool: string,
   input: unknown,
+  /**
+   * `detail`: keep what tool code's failure said, for failureDetail. Only for an author's cases on
+   * their own fixtures: a real site's page text or a session value could be in it.
+   */
+  options: { readonly detail?: boolean } = {},
 ): Promise<unknown> {
   return new Promise<unknown>((resolve, reject) => {
     if (ctx.signal.aborted) {
@@ -113,7 +118,7 @@ export function runIsolated(
       if (m.t === 'ready') return
       if (m.t === 'done') {
         if (m.ok === true) return finish({ ok: true, value: m.value })
-        return finish({ ok: false, error: decodeError(m.error) })
+        return finish({ ok: false, error: decodeError(m.error, options.detail === true) })
       }
       if (m.t !== 'call') return violation()
       const { id, capability, args } = m
@@ -125,7 +130,7 @@ export function runIsolated(
     })
     ctx.signal.addEventListener('abort', onAbort, { once: true })
     send({ t: 'init', script })
-    send({ t: 'run', tool, input, url: url() })
+    send({ t: 'run', tool, input, url: url(), ...(options.detail === true ? { detail: true as const } : {}) })
   })
 }
 

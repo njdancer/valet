@@ -381,6 +381,21 @@ describe('answers on every result (R23)', () => {
     )
   })
 
+  it('leave out an answer the result already gives, as valet_get_approval with no ref does', async () => {
+    const ended: RequestView = {
+      ...WAITING,
+      state: 'approved',
+      at: '2026-11-12T08:41:00.000Z',
+      device: 'mac',
+    }
+    const w = writer({ approvals: async () => [ended], answers: async () => [ended] })
+    const listed = await runWriteTool(tool('valet_get_approval'), reader(w), {}, LOCAL, WORDING)
+    const result = await withAnswers(listed, reader(w), LOCAL, WORDING)
+    expect(result.content).toHaveLength(1)
+    expect(text(result).match(/Approved by the person at 7:41 pm: approval 7B3F/g)).toHaveLength(1)
+    expect(text(result)).not.toContain('Answers to your requests')
+  })
+
   it('leave the result alone without Ask for changes, while locked down, or when the answer leaks', async () => {
     const ended: RequestView = { ...WAITING, state: 'declined', at: WAITING.askedAt, note: 'hunter2' }
     const base: CallToolResult = { content: [{ type: 'text', text: '{}' }] }
