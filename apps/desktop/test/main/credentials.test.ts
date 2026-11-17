@@ -658,6 +658,7 @@ describe('erasing for a reset or an uninstall', () => {
       serviceAccountReady: async () => true,
       keychainHelper: HELPER,
       copyService: 'valet.dev.copy',
+      keyService: 'valet.dev.key',
       ...(options.ownsToken === undefined ? {} : { ownsToken: options.ownsToken }),
       messagesHelper: { binary: MESSAGES_HELPER, socketPath: '/tmp/helper.sock' },
     })
@@ -676,7 +677,11 @@ describe('erasing for a reset or an uninstall', () => {
     expect([...keychain.items.keys()].sort()).toEqual([TOKEN_KEY, 'valet.copy\u0000release#password'].sort())
     expect(helperRan.map((r) => r.args[0])).toEqual(['status', 'unregister'])
     // Nothing was read to do it: no Keychain prompt for a secret.
-    expect(keychain.calls.map((c) => c.args[0])).toEqual(['purge'])
+    // Copies, then Valet-made SSH keys: both are this build's own Keychain items.
+    expect(keychain.calls.map((c) => c.args.slice(0, 2))).toEqual([
+      ['purge', 'valet.dev.copy'],
+      ['purge', 'valet.dev.key'],
+    ])
     expect(credentials.otpReader()).toBe(disabledOtpReader)
   })
 
@@ -686,6 +691,7 @@ describe('erasing for a reset or an uninstall', () => {
     expect(keychain.items.has(TOKEN_KEY)).toBe(false)
     expect(keychain.calls.map((c) => c.args.slice(0, 3))).toEqual([
       ['purge', 'valet.dev.copy'],
+      ['purge', 'valet.dev.key'],
       ['delete', 'valet', 'onepassword-service-account'],
     ])
   })
@@ -699,7 +705,7 @@ describe('erasing for a reset or an uninstall', () => {
   it('tries every part, and names the ones that failed', async () => {
     const { keychain, credentials } = setup({ ownsToken: true, unregister: 1, keychainExit: () => 1 })
     expect(await credentials.erase()).toEqual(['keychain-copies', 'keychain-token', 'messages-helper'])
-    expect(keychain.calls.map((c) => c.args[0])).toEqual(['purge', 'delete'])
+    expect(keychain.calls.map((c) => c.args[0])).toEqual(['purge', 'purge', 'delete'])
     const unknown = setup({ status: { code: 1 } })
     expect(await unknown.credentials.erase()).toEqual(['messages-helper'])
     expect(unknown.helperRan.map((r) => r.args[0])).toEqual(['status'])

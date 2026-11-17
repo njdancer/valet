@@ -28,6 +28,8 @@ export function feedbackRepo(value: string | undefined): string {
  */
 export function nativeNames(release: boolean): {
   copyService: string
+  /** Where Valet-made SSH keys live (secrets v2). */
+  keyService: string
   messagesHelperLabel: string
   /** The packaged app's bundle id (electron-builder.config.ts), which macOS files its caches under. */
   bundleId: string
@@ -35,6 +37,7 @@ export function nativeNames(release: boolean): {
   const bundleId = release ? 'me.dncr.valet' : 'me.dncr.valet.dev'
   return {
     copyService: release ? 'valet.copy' : 'valet.dev.copy',
+    keyService: release ? 'valet.key' : 'valet.dev.key',
     messagesHelperLabel: `${bundleId}.messages-helper`,
     bundleId,
   }
@@ -79,6 +82,8 @@ export interface DataPaths {
   readonly dir: string
   readonly grants: string
   readonly grantItems: string
+  /** Credential grants (secrets v2), one per adapter version and credential. */
+  readonly credentialGrants: string
   readonly approvals: string
   readonly manifests: string
   readonly audit: string
@@ -132,6 +137,7 @@ export function dataPaths(dir: string): DataPaths {
     dir,
     grants: join(dir, 'grants.json'),
     grantItems: join(dir, 'grant-items.json'),
+    credentialGrants: join(dir, 'credential-grants.json'),
     approvals: join(dir, 'approvals.json'),
     manifests: join(dir, 'approved-manifests.json'),
     audit: join(dir, 'audit.jsonl'),

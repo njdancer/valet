@@ -121,6 +121,23 @@ function requests(macId: string): ApprovalRequest[] {
       },
     },
     {
+      ...base('3C7E', day),
+      kind: 'credential-grant',
+      tier: 'approve',
+      subject: {
+        adapterId: 'mail-raw',
+        adapterHash: HASH_A,
+        credential: 'mail',
+        kind: 'password',
+        custody: 'entrusted',
+        provider: 'keychain-copy',
+        itemTitle: 'iCloud app password',
+        itemFingerprint: 'fedcba9876543210',
+        targets: ['imap.mail.me.com:993', 'fd00::1:22'],
+        description: 'The adapter’s own code gets the password, for the 2 endpoints listed.',
+      },
+    },
+    {
       ...base('9D02', day),
       kind: 'tool-enable',
       tier: 'approve',

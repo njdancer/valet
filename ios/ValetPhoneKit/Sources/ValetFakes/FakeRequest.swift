@@ -144,6 +144,20 @@ public struct FakeRequest: Sendable {
     ])
   }
 
+  /// Secrets v2: a credential for an adapter's own code, kept by Valet or entrusted to it.
+  public static func credential(id: String? = nil, entrusted: Bool = false) -> FakeRequest {
+    FakeRequest(id: id, kind: .credentialGrant, subject: .object([
+      ("adapterId", .string("mail-raw")), ("adapterHash", .string(hashA)), ("credential", .string("mail")),
+      ("kind", .string("password")), ("custody", .string(entrusted ? "entrusted" : "kept")),
+      ("provider", .string("keychain-copy")), ("itemTitle", .string("iCloud app password")),
+      ("itemFingerprint", .string("fedcba9876543210")),
+      ("targets", .array([.string("imap.mail.me.com:993")])),
+      ("description", .string(entrusted
+        ? "The adapter\u{2019}s own code gets the password, for imap.mail.me.com:993."
+        : "Valet signs in to imap.mail.me.com:993 over IMAP with the password.")),
+    ]), requester: agent(claudeCode, "Claude Code"), agentNote: nil, display: [client("Claude Code", "local")])
+  }
+
   /// The browser that started the flow shows `code`; the person types it on the card.
   public static func connect(id: String? = nil, code: String = "KQXM-RPDT") -> FakeRequest {
     FakeRequest(id: id, kind: .remoteClient, subject: .object([
