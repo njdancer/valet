@@ -7,10 +7,10 @@ import {
   type AuthStep,
   type Condition,
   canonicalJson,
+  credentialCardItems,
   credentialsOf,
   credentialTargets,
   DEFAULT_SANDBOX,
-  describeCredentialUse,
   describeDeclaration,
   describeException,
   exceptionKey,
@@ -131,10 +131,8 @@ export function credentialEntries(manifest: AdapterManifest): CredentialDiffEntr
     custody: credential.custody,
     use: useKind(credential.use),
     targets: [...credentialTargets(credential)],
-    text:
-      'header' in credential.use
-        ? `${describeCredentialUse(name, credential)} Format: ${credential.use.header.format}`
-        : describeCredentialUse(name, credential),
+    items: credentialCardItems(name, credential),
+    format: 'header' in credential.use ? credential.use.header.format : null,
   }))
 }
 

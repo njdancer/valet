@@ -82,8 +82,25 @@ describe('credential permission lines', () => {
         change: 'added',
         items: [
           'Valet signs in to imap.mail.me.com:993 for mail (IMAP) with your password "mail". The adapter never sees it.',
-          'The adapter is given your token "ha" and can use it only with 192.168.1.20:8123 and 192.168.1.21:8123.',
-          'Valet sends your token "api" to api.example.com in the authorization header. The adapter never sees it. Format: Bearer {value}',
+        ],
+        risk: 'high',
+      },
+      {
+        area: 'credential',
+        change: 'added',
+        // Several targets: the sentence counts them, and each is an item of its own.
+        items: [
+          'The adapter is given your token "ha" and can use it only with the 2 endpoints listed. Use a token or app password you can revoke.',
+          '192.168.1.20:8123',
+          '192.168.1.21:8123',
+        ],
+        risk: 'high',
+      },
+      {
+        area: 'credential',
+        change: 'added',
+        items: [
+          'Valet sends your token "api" to api.example.com in the authorization header. The adapter never sees it.',
         ],
         risk: 'high',
       },

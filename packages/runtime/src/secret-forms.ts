@@ -33,6 +33,9 @@ export const MIN_FORM_LENGTH = 6
 /** Each line of a multi-line secret at least this long is matched on its own. */
 export const MIN_LINE_LENGTH = 16
 const ARMOUR = /^-----(BEGIN|END) [A-Z0-9 ]+-----$/
+/** Long secrets are also matched by overlapping windows of the value (see encodedForms). */
+const WINDOW = 16
+const WINDOW_FROM = 24
 
 /**
  * Every encoded form of `secret` other than the secret itself, each a SecretValue the caller owns
@@ -44,19 +47,32 @@ export function encodedForms(secret: SecretValue): SecretForm[] {
     const exact = new Set<string>()
     const caseless = new Set<string>()
     const bytes = Buffer.from(plain, 'utf8')
-    try {
-      for (const core of base64Cores(bytes)) {
+    const encodeBase64 = (data: Buffer) => {
+      for (const core of base64Cores(data)) {
         exact.add(core)
         exact.add(core.replaceAll('+', '-').replaceAll('/', '_'))
       }
+    }
+    try {
+      encodeBase64(bytes)
+      // The same text as UTF-16 (what a Windows or Java client encodes), and as Latin-1 where it
+      // differs, and base64 applied twice (red team B4).
+      withBuffer(Buffer.from(plain, 'utf16le'), encodeBase64)
+      if ([...plain].some((c) => c.charCodeAt(0) > 0x7f) && [...plain].every((c) => c.charCodeAt(0) <= 0xff))
+        withBuffer(Buffer.from(plain, 'latin1'), encodeBase64)
+      withBuffer(Buffer.from(bytes.toString('base64')), encodeBase64)
       caseless.add(bytes.toString('hex'))
       caseless.add([...bytes].map((b) => `%${b.toString(16).padStart(2, '0')}`).join(''))
       const uri = encodeURIComponentSafe(plain)
       if (uri !== null) {
-        exact.add(uri)
-        exact.add(uri.replaceAll('%20', '+'))
+        caseless.add(uri)
+        caseless.add(uri.replaceAll('%20', '+'))
       }
-      exact.add([...plain].reverse().join(''))
+      caseless.add(new URLSearchParams({ v: plain }).toString().slice(2))
+      // The value itself and reversed, in any case: a token of one case or of hex digits leaks
+      // just as well upper-cased.
+      caseless.add(plain)
+      caseless.add([...plain].reverse().join(''))
       exact.add(JSON.stringify(plain).slice(1, -1))
       caseless.add(
         [...plain]
@@ -64,30 +80,41 @@ export function encodedForms(secret: SecretValue): SecretForm[] {
           .map((u) => `\\u${u.toString(16).padStart(4, '0')}`)
           .join(''),
       )
+      let body = plain
       if (/[\r\n]/.test(plain)) {
-        for (const line of plain.split(/\r?\n/)) {
-          const trimmed = line.trim()
-          // PEM armour ("-----BEGIN ... KEY-----") is the same in every key: it is not the secret.
-          if (trimmed.length >= MIN_LINE_LENGTH && !ARMOUR.test(trimmed)) exact.add(trimmed)
-        }
-        const joined = plain.replace(/\s+/g, '')
-        if (joined.length >= MIN_LINE_LENGTH) exact.add(joined)
+        const lines = plain.split(/\r?\n/).map((line) => line.trim())
+        // PEM armour ("-----BEGIN ... KEY-----") is the same in every key: it is not the secret.
+        const kept = lines.filter((line) => !ARMOUR.test(line))
+        for (const line of kept) if (line.length >= MIN_LINE_LENGTH) exact.add(line)
+        body = kept.join('').replace(/\s+/g, '')
+        if (body.length >= MIN_LINE_LENGTH) exact.add(body)
       }
+      // Any long enough run of the value, however the rest of it was cut, wrapped or rewrapped:
+      // 16-character windows every 8 characters, so any 24 characters in a row are caught.
+      if (body.length >= WINDOW_FROM)
+        for (let at = 0; at + WINDOW <= body.length; at += WINDOW / 2) exact.add(body.slice(at, at + WINDOW))
     } finally {
       bytes.fill(0)
     }
     exact.delete(plain)
-    exact.delete('')
-    caseless.delete('')
     const forms: SecretForm[] = []
-    for (const value of exact) forms.push({ value: SecretValue.fromString(value), ignoreCase: false })
-    for (const value of caseless) {
-      // A caseless form that is the plain value, or another exact form, in some case is still worth
-      // matching caselessly; only an exact duplicate is dropped.
-      forms.push({ value: SecretValue.fromString(value), ignoreCase: true })
-    }
+    // Every form but the value itself is long enough not to be chance (red team B5).
+    for (const value of exact)
+      if (value.length >= MIN_FORM_LENGTH)
+        forms.push({ value: SecretValue.fromString(value), ignoreCase: false })
+    for (const value of caseless)
+      if (value === plain || value.length >= MIN_FORM_LENGTH)
+        forms.push({ value: SecretValue.fromString(value), ignoreCase: true })
     return forms
   })
+}
+
+function withBuffer(data: Buffer, use: (data: Buffer) => void): void {
+  try {
+    use(data)
+  } finally {
+    data.fill(0)
+  }
 }
 
 /**

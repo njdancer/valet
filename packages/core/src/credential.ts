@@ -9,6 +9,7 @@
 // kind may make, what a grant of one may cover, and the words a card uses to say so.
 
 import { z } from 'zod'
+import { MESSAGES_SECRET } from './credentials'
 import { isHostname } from './origins'
 
 /** What a credential is. Each kind has the item fields it may read (CREDENTIAL_FIELDS). */
@@ -51,34 +52,23 @@ export const SECRET_FIELD_OF: Readonly<Record<CredentialKind, ItemField>> = {
 }
 
 /**
- * Headers a credential may never fill: they decide where a request goes, how it is framed or
- * which session it rides on, so filling one would be a way round the broker, not a login.
+ * The headers a credential may fill: an allow-list, not a deny-list, because some front ends
+ * honour headers that rewrite the request (x-original-url, x-http-method-override and the like),
+ * and filling one would be a way round the broker's request checks, not a login (red team B3).
  */
-const FORBIDDEN_HEADERS = new Set([
-  'host',
-  'cookie',
-  'cookie2',
-  'set-cookie',
-  'content-length',
-  'content-type',
-  'content-encoding',
-  'transfer-encoding',
-  'connection',
-  'keep-alive',
-  'upgrade',
-  'te',
-  'trailer',
-  'expect',
-  'origin',
-  'referer',
-  'forwarded',
-  'via',
-  'x-forwarded-for',
-  'x-forwarded-host',
-  'x-forwarded-proto',
-  'x-real-ip',
+const CREDENTIAL_HEADERS = new Set([
+  'authorization',
+  'x-api-key',
+  'api-key',
+  'apikey',
+  'x-auth-token',
+  'x-access-token',
+  'private-token',
 ])
-const FORBIDDEN_HEADER_PREFIXES = ['proxy-', 'sec-', 'access-control-']
+/** A vendor's own key or token header, such as x-gitlab-token or x-figma-key. */
+const VENDOR_HEADER = /^x-[a-z0-9]+(-[a-z0-9]+)*-(key|token)$/
+/** Vendor-shaped names that still steer a request. */
+const STEERING = /^x-(forwarded|original|rewrite|http-method|method|real|client|host|proxy)/
 
 /** A header name: a lower-case token. */
 const HEADER_NAME = /^[a-z][a-z0-9-]{0,63}$/
@@ -88,12 +78,15 @@ const HEADER_TEXT = /^[\x20-\x7e]*$/
 /** The placeholders a header format may use, each at most once and only one per format. */
 export const HEADER_PLACEHOLDERS = ['{value}', '{basic}'] as const
 
+/**
+ * A header format: the placeholder alone, or after one short scheme word ("Bearer", "Token",
+ * "Basic"). Nothing else, so the format can't carry a path, a second value or words for a card.
+ */
+const HEADER_FORMAT = /^(?:[A-Za-z][A-Za-z0-9-]{0,19} )?\{(?:value|basic)\}$/
+
 export function isCredentialHeaderName(value: string): boolean {
-  return (
-    HEADER_NAME.test(value) &&
-    !FORBIDDEN_HEADERS.has(value) &&
-    !FORBIDDEN_HEADER_PREFIXES.some((prefix) => value.startsWith(prefix))
-  )
+  if (!HEADER_NAME.test(value)) return false
+  return CREDENTIAL_HEADERS.has(value) || (VENDOR_HEADER.test(value) && !STEERING.test(value))
 }
 
 /**
@@ -136,10 +129,22 @@ function isIpv6(value: string): boolean {
   }
 }
 
-const endpoint = z.string().max(260).refine(isEndpoint, 'must be host:port, e.g. imap.mail.me.com:993')
+/**
+ * Hosts are at most 100 characters, so a card line never has to cut one to fit (red team B1).
+ * Real service hosts are far shorter.
+ */
+export const MAX_CREDENTIAL_HOST = 100
+/** Names are at most 40 characters, so a card's sentence always fits in 200. */
+export const MAX_CREDENTIAL_NAME = 40
+
+const endpoint = z
+  .string()
+  .max(MAX_CREDENTIAL_HOST + 6)
+  .refine(isEndpoint, 'must be host:port, e.g. imap.mail.me.com:993')
+  .refine((v) => (parseEndpoint(v)?.host.length ?? 0) <= MAX_CREDENTIAL_HOST, 'host is too long')
 const credentialHost = z
   .string()
-  .max(253)
+  .max(MAX_CREDENTIAL_HOST)
   .refine(isCredentialHost, 'must be a bare lower-case hostname or an IPv4 address: no scheme, port or path')
 
 export const credentialUseSchema = z.union([
@@ -151,7 +156,12 @@ export const credentialUseSchema = z.union([
       header: z
         .object({
           name: z.string().refine(isCredentialHeaderName, 'a lower-case header name a credential may fill'),
-          format: z.string().min(1).max(200).regex(HEADER_TEXT, 'printable ASCII only'),
+          format: z
+            .string()
+            .min(1)
+            .max(40)
+            .regex(HEADER_TEXT, 'printable ASCII only')
+            .regex(HEADER_FORMAT, 'the placeholder alone, or after one scheme word: "Bearer {value}"'),
         })
         .strict(),
       hosts: z.array(credentialHost).min(1).max(10),
@@ -251,6 +261,9 @@ export function credentialIssues(
     }
     // One name, one thing: audit records and grants name it without saying which map it is in.
     if (secretNames.includes(name)) issues.push(`credential ${name} has the same name as a secret`)
+    if (name.length > MAX_CREDENTIAL_NAME)
+      issues.push(`credential ${name}: a credential name is at most ${MAX_CREDENTIAL_NAME} characters`)
+    if (name === MESSAGES_SECRET) issues.push(`credential name ${MESSAGES_SECRET} is reserved`)
   }
   return issues
 }
@@ -290,37 +303,51 @@ const PROTOCOL_WORDS: Readonly<Record<CredentialProtocol, string>> = {
 
 /**
  * What a credential does, in Valet's own words, built only from the declaration's structured
- * fields: the name, kind, custody and targets. The author's description is never part of it; a
- * card shows that separately, as the adapter's claim. The one wording source for the Mac's
- * permission lines and both devices' grant cards. At most 200 characters, cut at a target.
+ * fields: the name, kind, custody and use. The author's description is never part of it; a card
+ * shows that separately, as the adapter's claim. The one wording source for the Mac's permission
+ * lines and both devices' grant cards. At most 200 characters.
+ *
+ * Targets are named in the sentence only when there is one. With more, the sentence counts them
+ * and the card lists every one as its own item (credentialCardItems), never cut (red team B1).
  */
 export function describeCredentialUse(name: string, credential: CredentialDeclaration): string {
-  const what = `your ${KIND_WORDS[credential.kind]} "${name}"`
   const targets = credentialTargets(credential)
+  if (targets.length === 1) {
+    const inline = sentence(name, credential, targets[0] as string)
+    if (inline.length <= 200) return inline
+  }
+  return sentence(name, credential, listedTargets(credential))
+}
+
+/** Whether the card lists the targets as items of their own, after the sentence. */
+function targetsListed(name: string, credential: CredentialDeclaration): boolean {
+  return describeCredentialUse(name, credential) === sentence(name, credential, listedTargets(credential))
+}
+
+function listedTargets(credential: CredentialDeclaration): string {
+  const count = credentialTargets(credential).length
+  const noun = 'header' in credential.use ? 'host' : 'endpoint'
+  return count === 1 ? `the ${noun} listed` : `the ${count} ${noun}s listed`
+}
+
+function sentence(name: string, credential: CredentialDeclaration, where: string): string {
+  const what = `your ${KIND_WORDS[credential.kind]} "${name}"`
   const { use } = credential
-  let sentence: string
   if ('protocol' in use) {
-    sentence = `Valet signs in to ${use.endpoint} for ${PROTOCOL_WORDS[use.protocol]} with ${what}. The adapter never sees it.`
-  } else if ('header' in use) {
-    sentence = `Valet sends ${what} to ${listed(targets)} in the ${use.header.name} header. The adapter never sees it.`
-  } else {
-    sentence = `The adapter is given ${what} and can use it only with ${listed(targets)}.`
+    return `Valet signs in to ${where} for ${PROTOCOL_WORDS[use.protocol]} with ${what}. The adapter never sees it.`
   }
-  return sentence.length <= 200 ? sentence : shorten(sentence, targets)
+  if ('header' in use) {
+    return `Valet sends ${what} to ${where} in the ${use.header.name} header. The adapter never sees it.`
+  }
+  return `The adapter is given ${what} and can use it only with ${where}. Use a token or app password you can revoke.`
 }
 
-function listed(targets: readonly string[]): string {
-  if (targets.length === 1) return targets[0] as string
-  return `${targets.slice(0, -1).join(', ')} and ${targets.at(-1)}`
-}
-
-/** The same sentence with fewer targets named, and a count of the rest. */
-function shorten(sentence: string, targets: readonly string[]): string {
-  const full = listed(targets)
-  for (let shown = targets.length - 1; shown >= 1; shown--) {
-    const short = `${targets.slice(0, shown).join(', ')} and ${targets.length - shown} more`
-    const candidate = sentence.replace(full, short)
-    if (candidate.length <= 200) return candidate
-  }
-  return `${sentence.slice(0, 199)}…`
+/**
+ * A credential's card items: Valet's sentence, then each target on its own when there are
+ * several. Every item is at most 200 characters without cutting: names are at most 64 characters
+ * and hosts at most 100.
+ */
+export function credentialCardItems(name: string, credential: CredentialDeclaration): string[] {
+  const targets = credentialTargets(credential)
+  return [describeCredentialUse(name, credential), ...(targetsListed(name, credential) ? targets : [])]
 }

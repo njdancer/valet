@@ -31,13 +31,14 @@ describe('sensitiveMatcher', () => {
     expect(sensitive('https://www.example.com/')).toBe(false)
   })
 
-  it('with ignoreCase, still matches secrets exactly, since a SecretValue cannot be folded unrevealed', () => {
+  it('matches secrets in any case, with or without ignoreCase (secrets v2: a re-cased secret still leaks)', () => {
     const secrets = new SecretRedactionSet()
     secrets.register(SecretValue.fromString('Canary-Pa55word'))
     const sensitive = sensitiveMatcher([], secrets, { ignoreCase: true })
 
     expect(sensitive('x Canary-Pa55word x')).toBe(true)
-    expect(sensitive('x canary-pa55word x')).toBe(false)
+    expect(sensitive('x canary-pa55word x')).toBe(true)
+    expect(sensitive('x CANARY-PA55WORD x')).toBe(true)
   })
 
   it('ignores short session values that are flags, not credentials', () => {

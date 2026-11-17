@@ -265,7 +265,10 @@ export interface CredentialDiffEntry {
   readonly custody: 'kept' | 'entrusted'
   readonly use: 'protocol' | 'header' | 'entrusted'
   readonly targets: readonly string[]
-  readonly text: string
+  /** Valet's sentence, then each target on its own when the sentence doesn't name them. */
+  readonly items: readonly string[]
+  /** A header credential's format, e.g. "Bearer {value}"; null otherwise. */
+  readonly format: string | null
 }
 
 /** Which selector an auth step types which secret field into. */

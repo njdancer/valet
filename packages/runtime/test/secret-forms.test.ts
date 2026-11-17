@@ -166,7 +166,8 @@ describe('the forms’ lifetime', () => {
     const forms = encodedForms(value)
     expect(forms.length).toBeGreaterThan(5)
     expect(forms.every((f) => !f.value.disposed)).toBe(true)
-    expect(forms.some((f) => f.value.reveal((v) => v === SECRET))).toBe(false)
+    // The value itself appears only as its caseless form; the set keeps the exact clone itself.
+    expect(forms.filter((f) => f.value.reveal((v) => v === SECRET)).map((f) => f.ignoreCase)).toEqual([true])
     for (const f of forms) f.value.dispose()
     value.dispose()
     expect(() => encodedForms(value)).toThrow()
@@ -186,5 +187,95 @@ describe('the forms’ lifetime', () => {
     // are not kept, so ordinary base64 passes; the secret encoded on its own is still found.
     expect(sensitive(b64('xxxx hello'))).toBe(false)
     expect(sensitive(b64('abcd'))).toBe(true)
+  })
+})
+
+describe('red team B4 and B5: the forms that slipped past the first cut', () => {
+  const TOKEN = 'ghp_A1b2C3d4E5f6G7h8I9j0KlMnOpQrStUv/+x~!'
+  const { sensitive } = matcherFor(TOKEN)
+  const leaks: [string, string][] = [
+    ['upper-cased', TOKEN.toUpperCase()],
+    ['reversed and upper-cased', [...TOKEN].reverse().join('').toUpperCase()],
+    [
+      'full-width',
+      [...TOKEN]
+        .map((c) => (c >= '!' && c <= '~' ? String.fromCharCode(c.charCodeAt(0) + 0xfee0) : c))
+        .join(''),
+    ],
+    ['zero-width spaces between characters', [...TOKEN].join('​')],
+    [
+      'MIME base64 wrapped at 76',
+      (b64(`prefix ${TOKEN} and a long tail to wrap`).match(/.{1,76}/g) ?? []).join('\r\n'),
+    ],
+    ['base64 of UTF-16LE', Buffer.from(TOKEN, 'utf16le').toString('base64')],
+    ['base64 twice', b64(b64(TOKEN))],
+    [
+      'lower-case percent escapes',
+      [...Buffer.from(TOKEN)].map((b) => `%${b.toString(16).padStart(2, '0')}`).join(''),
+    ],
+    ['URLSearchParams encoding', new URLSearchParams({ q: TOKEN }).toString()],
+    ['double percent-encoding', encodeURIComponent(encodeURIComponent(TOKEN))],
+    ['PHP slash escaping', TOKEN.replaceAll('/', '\\/')],
+    ['HTML numeric entities', [...TOKEN].map((c) => `&#${c.charCodeAt(0)};`).join('')],
+    ['hex entities', [...TOKEN].map((c) => `&#x${c.charCodeAt(0).toString(16)};`).join('')],
+    ['one character dropped from each end', TOKEN.slice(1, -1)],
+    ['the middle 24 characters', TOKEN.slice(8, 32)],
+  ]
+
+  it.each(leaks)('catches the %s form', (_, form) => {
+    expect(sensitive(form)).toBe(true)
+  })
+
+  it('catches a secret split across two values: each long half is redacted, else the call fails', () => {
+    for (const cut of [4, 12, 20, 30]) {
+      const out = redactOutput({ a: TOKEN.slice(0, cut), b: TOKEN.slice(cut) }, sensitive) as Record<
+        string,
+        string
+      >
+      expect(`${out['a']}${out['b']}`).not.toContain(TOKEN.slice(cut - 4, cut + 4))
+    }
+    // A secret too short for windows, split in two, fails the call.
+    const { sensitive: s } = matcherFor('short-secret-20chars')
+    expect(() => redactOutput(['short-secret', '-20chars'], s)).toThrow(ValetError)
+  })
+
+  it('catches a password the way Python’s json.dumps escapes it, and in NFD', () => {
+    const { sensitive: s } = matcherFor('päss-wörd-ünïcode')
+    expect(
+      s(
+        JSON.stringify('päss-wörd-ünïcode').replace(
+          /[^\x00-\x7f]/g,
+          (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
+        ),
+      ),
+    ).toBe(true)
+    expect(s('päss-wörd-ünïcode'.normalize('NFD'))).toBe(true)
+    expect(s(Buffer.from('päss-wörd-ünïcode', 'latin1').toString('base64'))).toBe(true)
+  })
+
+  it('catches an SSH key rewrapped at 64 columns', () => {
+    const bodyText =
+      'b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZWQyNTUxOQAAACBbc2VjcmV0LWtleS1tYXRlcmlhbC1oZXJlXQ'
+    const pem = `-----BEGIN OPENSSH PRIVATE KEY-----\n${(bodyText.match(/.{1,70}/g) ?? []).join('\n')}\n-----END OPENSSH PRIVATE KEY-----\n`
+    const { sensitive: s } = matcherFor(pem)
+    const rewrapped = (bodyText.match(/.{1,64}/g) ?? []).join('\n')
+    expect(s(rewrapped)).toBe(true)
+    expect(s(bodyText.slice(10, 40))).toBe(true)
+  })
+
+  it('doesn’t fail a call because a short secret is part of the redaction marker', () => {
+    const { sensitive: s } = matcherFor('acted')
+    expect(redactOutput({ a: 'this was acted on', b: 'fine' }, s)).toEqual({ a: REDACTED, b: 'fine' })
+  })
+
+  it('still leaves ordinary text alone', () => {
+    for (const text of [
+      'hello world',
+      'Mail from nick@icloud.example',
+      b64('an unrelated document body'),
+      '%20%2F',
+    ]) {
+      expect(sensitive(text), text).toBe(false)
+    }
   })
 })

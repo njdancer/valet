@@ -125,12 +125,16 @@ B's follow-up. Where each part lives, for the workstreams that use it:
   - Endpoints are `host:port`: a lower-case DNS name, an IPv4 literal or a bracketed IPv6 literal.
     Header hosts are a lower-case DNS name or an IPv4 literal (a private host). Neither has
     wildcards. The broker (A) decides which of them are reachable.
-  - A header credential fills one lower-case header that doesn't steer or frame the request:
-    never `host`, `cookie`, `content-*`, hop-by-hop headers, `origin`, `referer`, forwarding
-    headers, or anything starting `proxy-`, `sec-` or `access-control-`. Its format is printable
-    ASCII with exactly one placeholder: `{value}`, or `{basic}` (RFC 7617 `username:password` in
-    base64, for a password credential only). `credentialHeaderNames(manifest)` lists the names
-    tool code must never set itself.
+  - A header credential fills one header from an allow-list: `authorization`, `x-api-key`,
+    `api-key`, `apikey`, `x-auth-token`, `x-access-token`, `private-token`, or a vendor's own
+    `x-<vendor>-key` or `x-<vendor>-token` (never one starting `x-forwarded`, `x-original`,
+    `x-rewrite`, `x-http-method`, `x-method`, `x-real`, `x-client`, `x-host` or `x-proxy`). Its
+    format is the placeholder alone or after one scheme word (`Bearer {value}`, `Token {value}`,
+    `Basic {basic}`), so it can't carry a path or words for a card. `{basic}` is RFC 7617
+    `username:password` in base64, for a password credential only. The filled value must be
+    printable ASCII. `credentialHeaderNames(manifest)` lists the names tool code must never set.
+  - Hosts are at most 100 characters and credential names at most 40, so a card never cuts one.
+    `messages` is reserved.
   - Fields per kind: a password is `username` and `password`, a token is `token`, an SSH key is
     `ssh-key` and an optional `username`. 1Password references: `token` reads an API Credential
     item's `credential` field, `ssh-key` reads an SSH Key item's `private key` in OpenSSH format.
@@ -160,10 +164,26 @@ B's follow-up. Where each part lives, for the workstreams that use it:
   hands it over. If either step fails, nothing is handed over.
 - **Redaction.** `packages/runtime/src/secret-forms.ts` adds each secret's encoded forms to the
   run's redaction set: base64 and base64url at all three alignments (so a secret inside a longer
-  string encoded as a whole is still found), hex, every byte percent-encoded, URL and form
-  encoding, the value reversed, JSON and `\uXXXX` escapes, and for an SSH key each line and the
-  lines joined. Hex, percent and `\u` forms match in either case. It applies to browser secrets
-  too.
+  string encoded as a whole is still found), of the UTF-8, UTF-16LE and Latin-1 bytes, and twice
+  over; hex; percent, URL, form and `URLSearchParams` encoding; JSON and `\uXXXX` escapes; the
+  value and its reverse in any case; for an SSH key each line and the body joined; and for a value
+  of 24 characters or more, 16-character windows every 8, so any 24 characters of it in a row are
+  caught however the rest was cut or rewrapped. Each string is also matched after decoding
+  (`normalisedViews`: NFKC, format characters removed, percent escapes up to three deep, HTML
+  entities, `\u` and `\/` escapes, white space removed). `redactOutput` finally checks the
+  whole output and every string run together, and fails the call if a secret is still there (a
+  secret split across two values). Forms shorter than 6 characters are dropped, and a username is
+  never registered, so mail addresses and paths survive. It applies to browser secrets too.
+- **Residual risks (red team, 2026-11-17).** Redaction is a backstop for what a hostile `raw`
+  adapter does with an entrusted value: a transform it doesn't list (ROT13, octal, XOR, a cipher,
+  hex with separators, one character per call) is not caught. The boundaries are the endpoints and
+  the upload budget (A, F). Two duties fall on the workstreams that call the gate:
+  - **A:** a server can echo a kept header (a debug endpoint returning `Authorization`).
+    `ctx.http` must redact responses, headers and bodies, against the run's set before they reach
+    QuickJS, or the adapter would see a kept value.
+  - **F:** a raw adapter process lives across calls, so an entrusted value it was given in one call
+    can come back in a later one. Its values belong in a redaction set that lives as long as the
+    process, not the call.
 - **Cards.** `describeCredentialUse` builds one sentence from the declaration's structured fields
   only, never the author's description. The Mac's install lines use the new `credential` area,
   always `high` and never `critical`, so a `raw` adapter is approved on the phone or the Mac like
@@ -349,3 +369,18 @@ once, counting other work.
 broker API. B owns `credentials` and the redaction contract. C owns the runtime host protocol
 and the profile generator. D, E and G own their own `protocols.*` entries. Each workstream merges
 `main` often. A change to someone else's contract goes through that workstream's thread.
+
+## Decisions for Nick's review
+
+Nick was away (2026-11-17) and asked threads to take their own recommendation and flag it here.
+
+- **B: entrusted passwords are allowed, with a warning.** A `raw` adapter may be entrusted a
+  `password` as well as a `token`, because app-specific passwords (iCloud's) are passwords. The
+  card adds "Use a token or app password you can revoke." The alternative was to refuse entrusted
+  passwords outright.
+- **B: credential headers come from an allow-list**, not a deny-list: `authorization`, the common
+  API-key headers and `x-<vendor>-key`/`-token`. A site needing another header name waits for a
+  change to the list.
+- **B: usernames aren't redacted** from tool output. Only the secret is, so a mail adapter's
+  `from` and `to` fields survive. A username is not a secret, and redacting it made mail and
+  SFTP adapters unusable.

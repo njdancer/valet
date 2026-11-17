@@ -150,10 +150,19 @@ describe('headerFor', () => {
     expect(out).toEqual({ echoed: REDACTED, also: REDACTED })
   })
 
-  it('matches the host without regard to case, and never another host', async () => {
+  it('matches the host exactly as declared, and never another host or another spelling', async () => {
     const w = world()
-    await expect(w.gate.headerFor('api', 'API.Example.com')).resolves.toBeTruthy()
-    for (const host of ['evil.example.com', 'api.example.com.evil.test', 'example.com', '']) {
+    await expect(w.gate.headerFor('api', 'api.example.com')).resolves.toBeTruthy()
+    for (const host of [
+      'API.Example.com',
+      // The Kelvin sign lower-cases to "k" (red team B7).
+      'api.e\u212Axample.com',
+      'api.example.com.',
+      'evil.example.com',
+      'api.example.com.evil.test',
+      'example.com',
+      '',
+    ]) {
       await expect(world().gate.headerFor('api', host)).rejects.toMatchObject({
         stage: 'credential',
         errorClass: 'origin-mismatch',
@@ -368,5 +377,32 @@ describe('order of hand-over', () => {
       errorClass: 'locked',
     })
     expect(w.audit).toEqual([])
+  })
+})
+
+describe('red team fixes', () => {
+  it('doesn’t register a username for redaction, so mail addresses in output survive (B5)', async () => {
+    const w = world()
+    await w.gate.signIn('mail', 'imap', 'imap.mail.me.com:993')
+    const out = redactOutput({ from: 'nick@icloud.example', subject: 'hi' }, sensitiveMatcher([], w.set))
+    expect(out).toEqual({ from: 'nick@icloud.example', subject: 'hi' })
+  })
+
+  it('refuses a header value with anything but printable ASCII (B9)', async () => {
+    for (const bad of ['tok x', 'tok\u0080x', 'tøk']) {
+      const w = world({ resolve: async () => SecretValue.fromString(bad) })
+      await expect(w.gate.headerFor('api', 'api.example.com')).rejects.toMatchObject({
+        errorClass: 'invalid',
+      })
+    }
+  })
+
+  it('refuses a grant whose targets aren’t a real array of strings (B8)', async () => {
+    const fake = { length: 1, every: () => true, includes: () => true, filter: () => [] }
+    const w = world({}, { mail: { ...grantFor('mail'), targets: fake as unknown as string[] } })
+    await expect(w.gate.signIn('mail', 'imap', 'imap.mail.me.com:993')).rejects.toMatchObject({
+      errorClass: 'not-granted',
+    })
+    expect(w.resolved).toEqual([])
   })
 })

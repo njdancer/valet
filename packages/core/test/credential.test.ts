@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   type CredentialDeclaration,
   canonicalJson,
+  credentialCardItems,
   credentialDeclarationSchema,
   credentialHeaderNames,
   credentialIssues,
@@ -75,7 +76,14 @@ describe('parseEndpoint', () => {
 
 describe('credential header names', () => {
   it('accepts ordinary credential headers', () => {
-    for (const name of ['authorization', 'x-api-key', 'private-token', 'x-auth-token']) {
+    for (const name of [
+      'authorization',
+      'x-api-key',
+      'private-token',
+      'x-auth-token',
+      'x-gitlab-token',
+      'x-figma-key',
+    ]) {
       expect(isCredentialHeaderName(name), name).toBe(true)
     }
   })
@@ -96,6 +104,23 @@ describe('credential header names', () => {
       'authorization ',
       'x_api_key',
       '',
+      // Red team B3: headers some front ends honour to rewrite the request.
+      'x-original-url',
+      'x-rewrite-url',
+      'x-http-method-override',
+      'x-method-override',
+      'x-forwarded-port',
+      'x-forwarded-prefix',
+      'x-host',
+      'x-original-host',
+      'true-client-ip',
+      'x-client-ip',
+      'range',
+      'accept-encoding',
+      'max-forwards',
+      'early-data',
+      'x-forwarded-token',
+      'x-original-key',
     ]) {
       expect(isCredentialHeaderName(name), name).toBe(false)
     }
@@ -207,6 +232,12 @@ describe('credentialIssues', () => {
     ])
   })
 
+  it('reserves the Messages name and keeps names short enough for a card', () => {
+    expect(credentialIssues({ messages: imap }, 'protocol')).toEqual(['credential name messages is reserved'])
+    expect(credentialIssues({ ['n'.repeat(41)]: imap }, 'protocol')).toHaveLength(1)
+    expect(credentialIssues({ ['n'.repeat(40)]: imap }, 'protocol')).toEqual([])
+  })
+
   it('has nothing to say about a manifest without credentials', () => {
     expect(credentialIssues(undefined, 'browser')).toEqual([])
   })
@@ -231,7 +262,7 @@ describe('describeCredentialUse', () => {
       'Valet sends your token "api" to api.example.com in the authorization header. The adapter never sees it.',
     )
     expect(describeCredentialUse('ha', entrusted)).toBe(
-      'The adapter is given your token "ha" and can use it only with 192.168.1.20:8123.',
+      'The adapter is given your token "ha" and can use it only with 192.168.1.20:8123. Use a token or app password you can revoke.',
     )
   })
 
@@ -240,23 +271,64 @@ describe('describeCredentialUse', () => {
     expect(describeCredentialUse('ha', sly)).not.toContain('never sees')
   })
 
-  it('stays display text of at most 200 characters, however many targets', () => {
-    const many: CredentialDeclaration = {
-      ...entrusted,
-      use: {
-        entrusted: {
-          endpoints: Array.from(
-            { length: 20 },
-            (_, i) => `host-${i}.a-rather-long-domain-name.example.com:${1000 + i}`,
-          ),
-        },
+  it('lists every target as its own item when there are several, never cut (red team B1)', () => {
+    const endpoints = [
+      `api.${'x'.repeat(40)}.example.com:443`,
+      `uploads.${'x'.repeat(40)}.example.com:443`,
+      'collector.evil.net:443',
+    ]
+    const many: CredentialDeclaration = { ...entrusted, use: { entrusted: { endpoints } } }
+    const items = credentialCardItems('ha', many)
+    expect(items[0]).toBe(
+      'The adapter is given your token "ha" and can use it only with the 3 endpoints listed. Use a token or app password you can revoke.',
+    )
+    expect(items.slice(1)).toEqual(endpoints)
+    expect(credentialCardItems('ha', entrusted)).toEqual([describeCredentialUse('ha', entrusted)])
+  })
+
+  it('moves one long target out of the sentence rather than cut it', () => {
+    const host = `${'a'.repeat(60)}.${'b'.repeat(30)}.evil.net`
+    const long: CredentialDeclaration = { ...bearer, use: { ...bearer.use, hosts: [host] } }
+    expect(credentialDeclarationSchema.safeParse(long).success).toBe(true)
+    const name = 'x'.repeat(40)
+    const items = credentialCardItems(name, long)
+    expect(items[0]).toContain('the host listed')
+    expect(items[1]).toBe(host)
+  })
+
+  it('fits every item in 200 characters of display text at the limits', () => {
+    const name = 'n'.repeat(40)
+    const host = `${'h'.repeat(63)}.${'i'.repeat(28)}.example`
+    const declarations: CredentialDeclaration[] = [
+      { ...imap, use: { protocol: 'smtp', endpoint: `${host}:65535` } },
+      {
+        ...bearer,
+        use: { header: { name: `x-${'v'.repeat(55)}-token`, format: 'Bearer {value}' }, hosts: [host] },
       },
+      {
+        ...entrusted,
+        kind: 'password',
+        use: { entrusted: { endpoints: Array.from({ length: 20 }, (_, i) => `${host}:${1000 + i}`) } },
+      },
+    ]
+    for (const d of declarations) {
+      expect(credentialDeclarationSchema.safeParse(d).success, JSON.stringify(d.use)).toBe(true)
+      for (const item of credentialCardItems(name, d)) {
+        expect(item.length, item).toBeLessThanOrEqual(200)
+        expect(isDisplayText(item)).toBe(true)
+      }
     }
-    const text = describeCredentialUse('a_long_credential_name_for_this_test', many)
-    expect(text.length).toBeLessThanOrEqual(200)
-    expect(isDisplayText(text)).toBe(true)
-    expect(text).toContain('more')
-    expect(text).toMatch(/^The adapter is given/)
+  })
+
+  it('refuses a host too long to show whole', () => {
+    const host = `${'a'.repeat(60)}.${'b'.repeat(40)}.example`
+    expect(
+      credentialDeclarationSchema.safeParse({ ...bearer, use: { ...bearer.use, hosts: [host] } }).success,
+    ).toBe(false)
+    expect(
+      credentialDeclarationSchema.safeParse({ ...imap, use: { protocol: 'imap', endpoint: `${host}:993` } })
+        .success,
+    ).toBe(false)
   })
 })
 

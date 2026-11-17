@@ -398,7 +398,7 @@ export function PermissionChanges({ review }: { readonly review: PendingReview }
         <Section title="Passwords, tokens and keys Valet uses for it">
           {diff.credentials.unchanged.map((c) => (
             <Unchanged key={c.name}>
-              <SecretBadge name={c.name} /> <Muted>{c.text}</Muted>
+              <SecretBadge name={c.name} /> <Muted>{c.items[0]}</Muted>
             </Unchanged>
           ))}
           {diff.credentials.added.map((c) => (
@@ -406,9 +406,15 @@ export function PermissionChanges({ review }: { readonly review: PendingReview }
               key={c.name}
               tone="secret"
               tag={c.custody === 'entrusted' ? 'given to the adapter' : 'kept by Valet'}
-              why={`${c.text} The adapter describes it as “${capText(c.description)}”.`}
+              why={`${c.items[0]} The adapter describes it as “${capText(c.description)}”.`}
             >
               <SecretBadge name={c.name} /> <Code>{c.targets.join(', ')}</Code>
+              {c.format === null ? null : (
+                <>
+                  {' '}
+                  <Muted>header format</Muted> <Code>{c.format}</Code>
+                </>
+              )}
             </Added>
           ))}
           {diff.credentials.removed

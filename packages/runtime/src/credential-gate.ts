@@ -19,6 +19,7 @@ import {
   type CredentialProtocol,
   credentialTargets,
   type ItemField,
+  isCredentialHost,
   SecretValue,
   type UseKind,
   useKind,
@@ -71,10 +72,13 @@ export class CredentialGate {
    * in place. The caller adds it to that one request only, and disposes the value.
    */
   async headerFor(credential: string, host: string): Promise<{ name: string; value: SecretValue }> {
-    const { declaration, grant } = await this.#check(credential, 'header', host.toLowerCase())
+    // The host exactly as declared: no case folding, which Unicode would stretch (the Kelvin sign
+    // lower-cases to "k"). The broker hands over the host it will connect to (red team B7).
+    if (!isCredentialHost(host)) throw new ValetError('credential', 'origin-mismatch')
+    const target = host
+    const { declaration, grant } = await this.#check(credential, 'header', target)
     if (!('header' in declaration.use)) throw new ValetError('credential', 'invalid')
     const { name, format } = declaration.use.header
-    const target = host.toLowerCase()
     const usesBasic = format.includes('{basic}')
     const username = usesBasic ? await this.#field(grant, 'username') : null
     let secret: SecretValue | null = null
@@ -83,7 +87,7 @@ export class CredentialGate {
       const value = buildHeader(format, secret, username)
       try {
         this.#remember(value)
-        await this.#hand(declaration, credential, username === null ? [secret] : [username, secret], target)
+        await this.#hand(declaration, credential, [secret], target)
       } catch (error) {
         value.dispose()
         throw error
@@ -126,7 +130,7 @@ export class CredentialGate {
     try {
       // A username is optional: an item may hold only the secret (a token, a Valet-made key).
       username = await this.#optionalUsername(grant, declaration)
-      await this.#hand(declaration, credential, username === null ? [secret] : [username, secret], target)
+      await this.#hand(declaration, credential, [secret], target)
       return { username, secret }
     } catch (error) {
       secret.dispose()
@@ -156,6 +160,10 @@ export class CredentialGate {
       throw new ValetError('credential', 'unavailable')
     }
     if (grant === null) throw new ValetError('credential', 'not-granted')
+    // The app's own store hands back checked, frozen grants; anything else is checked here too.
+    if (!Array.isArray(grant.targets) || !grant.targets.every((t) => typeof t === 'string')) {
+      throw new ValetError('credential', 'not-granted')
+    }
     // The grant must be for exactly this adapter version, credential, kind and custody, and allow
     // only targets the declaration still names.
     if (
@@ -201,7 +209,12 @@ export class CredentialGate {
     }
   }
 
-  /** Registers each value for redaction, then audits the use. Only then may the caller have them. */
+  /**
+   * Registers each value for redaction, then audits the use. A username is not a secret, and
+   * registering one would redact every mail address or path that contains it (red team B5), so
+   * only the secret itself, and a header built from it, are registered. Only then may the caller
+   * have them.
+   */
   async #hand(
     declaration: CredentialDeclaration,
     credential: string,
@@ -240,7 +253,9 @@ function secretField(declaration: CredentialDeclaration): ItemField {
 }
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting control characters is the point
-const CONTROL = /[\u0000-\u001f\u007f]/
+const C0 = /[\u0000-\u001f\u007f]/
+/** Anything but printable ASCII: a header value carries nothing else (red team B9). */
+const CONTROL = /[^\x20-\x7e]/
 
 /** The header value: the format with its one placeholder filled. Built inside reveal(). */
 function buildHeader(format: string, secret: SecretValue, username: SecretValue | null): SecretValue {
@@ -249,7 +264,7 @@ function buildHeader(format: string, secret: SecretValue, username: SecretValue 
     return username.reveal((user) =>
       secret.reveal((password) => {
         // RFC 7617: a user-id with a colon can't be told apart from the password.
-        if (user.includes(':') || CONTROL.test(user) || CONTROL.test(password))
+        if (user.includes(':') || C0.test(user) || C0.test(password))
           throw new ValetError('credential', 'invalid')
         const basic = Buffer.from(`${user}:${password}`, 'utf8')
         try {

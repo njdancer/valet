@@ -114,12 +114,23 @@ function parseComment(comment: string): { publicKey: string; createdAt: string }
   return { publicKey, createdAt }
 }
 
-/** The raw 32-byte public key and 32-byte seed. The caller zeroes the seed. */
+/**
+ * The raw 32-byte public key and 32-byte seed, from DER buffers (RFC 8410: each ends with its
+ * 32 key bytes), so the seed is never a JS string. The caller zeroes the seed (red team B12).
+ */
 function ed25519Pair(): { publicKey: Buffer; privateKey: Buffer } {
-  const pair = generateKeyPairSync('ed25519')
-  const jwk = pair.privateKey.export({ format: 'jwk' })
-  if (typeof jwk.d !== 'string' || typeof jwk.x !== 'string') throw new CredentialError('unavailable')
-  return { publicKey: Buffer.from(jwk.x, 'base64url'), privateKey: Buffer.from(jwk.d, 'base64url') }
+  const pair = generateKeyPairSync('ed25519', {
+    publicKeyEncoding: { type: 'spki', format: 'der' },
+    privateKeyEncoding: { type: 'pkcs8', format: 'der' },
+  })
+  const der = pair.privateKey
+  if (der.length !== 48 || pair.publicKey.length !== 44) {
+    der.fill(0)
+    throw new CredentialError('unavailable')
+  }
+  const privateKey = Buffer.from(der.subarray(16))
+  der.fill(0)
+  return { publicKey: Buffer.from(pair.publicKey.subarray(12)), privateKey }
 }
 
 function sshString(value: Buffer): Buffer {
