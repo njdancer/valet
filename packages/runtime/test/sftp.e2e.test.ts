@@ -47,6 +47,7 @@ const manifest = parseManifest({
       roots: [
         { path: '/docs', access: 'read' },
         { path: '/inbox', access: 'write' },
+        { path: '/archive', access: 'irreversible' },
       ],
     },
   },
@@ -221,6 +222,12 @@ describe('ctx.sftp through the tool host', () => {
       errorClass: 'command-not-allowed',
     })
     body = async (ctx) => ctx.sftp?.rename('/inbox', '/inbox2')
+    expect(await setup().run('file_files')).toMatchObject({
+      status: 'failed',
+      errorClass: 'command-not-allowed',
+    })
+    // Never into a root where it could then be removed (the red team's F1).
+    body = async (ctx) => ctx.sftp?.rename('/inbox/a.txt', '/archive/a.txt')
     expect(await setup().run('file_files')).toMatchObject({
       status: 'failed',
       errorClass: 'command-not-allowed',

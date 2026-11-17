@@ -53,7 +53,11 @@ again in the protocol host against the paths the server itself resolves. This is
 
   A path is under the deepest root that holds it, so `/docs` as `read` with `/docs/inbox` as
   `write` lets tools add files to the inbox only. A root itself is never changed, renamed or
-  removed, nor is a folder that holds one. `/` is allowed and is shown as "everything this
+  removed, nor is a folder that holds one. A rename stays between roots of the same access, so a
+  file can't be moved from a `write` root into an `irreversible` one and deleted there. Roots are
+  compared as written to grant, and also with case, Unicode normalisation and trailing dots and
+  spaces folded to limit, so on a server that ignores case `/scratch/KEEP` is still held to a
+  read-only `/scratch/keep`. `/` is allowed and is shown as "everything this
   account can reach".
 - An adapter uses one protocol: `protocols.imap` or `protocols.sftp`, not both.
 
@@ -137,9 +141,13 @@ No new permission areas: the card shows
 
 - under **Network**, `SFTP as alex to nas.example.com:22` and `host key SHA256:…` (medium); for a
   private address, under **Your network**, `… on your network` (high);
-- under **Requests**, one line per root: `Read files in /volume1/docs` (low), `Read, add and rename
-files in /volume1/inbox` (medium), `Read, add, rename, replace and delete files in
-/volume1/scratch` (high).
+- under **Requests**, one line per root: `Read files in /volume1/docs` (low), `Read, add, append to
+  and rename files in /volume1/inbox` (medium), `Read, add, append to, rename, replace and delete
+  files in /volume1/scratch` (high). A root at `/` that allows changes is high.
+
+Write access is more than it sounds: appending can change a script or `authorized_keys`, and
+renaming a file away and writing a new one in its place swaps its contents. Give a home folder or
+`/` write access only when that is meant.
 
 An update that changes the server, key or roots shows the change like any other.
 
@@ -164,5 +172,16 @@ An update that changes the server, key or roots shows the change like any other.
 
 ## Red team
 
-See [adapter-kinds.md](adapter-kinds.md#decisions-for-nicks-review) for the decisions and the red
-team's findings.
+An agent-driven red team (2026-11-17) found four gaps, all fixed, with regressions in
+`packages/protocols/test/sftp.redteam.test.ts`:
+
+1. A rename from a `write` root into an `irreversible` one let a tool delete or replace a file the
+   card said it could only add and rename. Renames now stay between roots of the same access.
+2. On a server that ignores case (macOS on APFS, Windows on NTFS), `/scratch/KEEP/x` slipped past
+   a read-only `/scratch/keep`. Roots now limit after folding.
+3. The card understated write access, which can append to any file and swap one by renaming. It now
+   says "append to", and a writable `/` is high risk.
+4. Reading a packet dripped a few bytes at a time cost quadratic time; now linear.
+
+What held, and the residual risks, are in
+[adapter-kinds.md](adapter-kinds.md#decisions-for-nicks-review).

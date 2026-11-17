@@ -256,7 +256,8 @@ describe('checkRequest', () => {
     expect(check({ type: 'RENAME', from: '/inbox/a', to: '/docs/a' }, 'irreversible')).toBe('not-allowed')
     expect(check({ type: 'RENAME', from: '/docs/a', to: '/inbox/a' }, 'irreversible')).toBe('not-allowed')
     expect(check({ type: 'RENAME', from: '/inbox', to: '/scratch/x' }, 'irreversible')).toBe('not-allowed')
-    expect(check({ type: 'RENAME', from: '/inbox/a', to: '/scratch/a' }, 'write')).toBeNull()
+    expect(check({ type: 'RENAME', from: '/inbox/a', to: '/scratch/a' }, 'write')).toBe('not-allowed')
+    expect(check({ type: 'RENAME', from: '/inbox/a', to: '/inbox/b' }, 'write')).toBeNull()
     expect(
       check({ type: 'OPEN', path: '/inbox', flags: OPEN_FLAGS.WRITE | OPEN_FLAGS.APPEND }, 'write'),
     ).toBe('not-allowed')

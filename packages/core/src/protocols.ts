@@ -65,7 +65,7 @@ export const sftpRootSchema = z
     /** An absolute folder on the server, exactly as the server names it: no "..", no trailing "/". */
     path: z
       .string()
-      .max(150)
+      .max(140)
       .refine(isSftpPath, 'an absolute path such as /volume1/photos, with no "." or ".." parts'),
     /** The most a tool may do under it: read, write (undoable changes) or irreversible. */
     access: z.enum(['read', 'write', 'irreversible']),

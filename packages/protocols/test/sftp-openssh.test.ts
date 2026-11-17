@@ -57,7 +57,10 @@ describe.runIf(OPENSSH_SFTP_SERVER !== undefined)('OpenSSH’s sftp-server', () 
     await ops.run('write', [p('/inbox/a.txt'), 'two\n', { mode: 'append' }])
     expect(await readFile(server.at(p('/inbox/a.txt')), 'utf8')).toBe('one\ntwo\n')
     await expect(ops.run('write', [p('/inbox/a.txt'), 'x'])).rejects.toMatchObject({ code: 'ALREADYEXISTS' })
-    await ops.run('rename', [p('/inbox/a.txt'), p('/scratch/a.txt')])
+    await expect(ops.run('rename', [p('/inbox/a.txt'), p('/scratch/a.txt')])).rejects.toMatchObject({
+      failure: 'not-allowed',
+    })
+    await ops.run('rename', [p('/inbox/a.txt'), p('/inbox/b.txt')])
     await ops.run('write', [p('/scratch/a.txt'), 'new', { mode: 'replace' }])
     expect(await readFile(server.at(p('/scratch/a.txt')), 'utf8')).toBe('new')
     await ops.run('remove', [p('/scratch/a.txt')])

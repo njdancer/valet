@@ -150,7 +150,7 @@ export interface SftpRoot {
   readonly access: Purpose
 }
 
-/** The deepest root that holds `path`, or null if none does. */
+/** The deepest root that holds `path`, exactly as written, or null if none does. */
 export function rootOf(path: string, roots: readonly SftpRoot[]): SftpRoot | null {
   let best: SftpRoot | null = null
   for (const root of roots) {
@@ -159,23 +159,87 @@ export function rootOf(path: string, roots: readonly SftpRoot[]): SftpRoot | nul
   return best
 }
 
-/** Whether `purpose` may act on `path` under `roots`: the deepest root decides. */
-export function rootAllows(path: string, roots: readonly SftpRoot[], purpose: Purpose): boolean {
-  const root = rootOf(path, roots)
-  return root !== null && SFTP_PURPOSE_RANK[root.access] >= SFTP_PURPOSE_RANK[purpose]
+/**
+ * `path` as a server that ignores case, Unicode normalisation, or a name's trailing dots and
+ * spaces (macOS on APFS, Windows on NTFS) may take it. Used only to refuse more: a root that
+ * matches a path this way limits it, but never grants anything.
+ */
+export function foldPath(path: string): string {
+  return path
+    .split('/')
+    .map((segment) =>
+      segment
+        .normalize('NFKC')
+        .toUpperCase()
+        .toLowerCase()
+        .normalize('NFKC')
+        .replace(/[. ]+$/u, ''),
+    )
+    .join('/')
 }
 
-/** Whether `path` is one of the roots itself. */
-export function isRootPath(path: string, roots: readonly SftpRoot[]): boolean {
-  return roots.some((r) => r.path === path)
+function depth(path: string): number {
+  return path === '/' ? 0 : path.split('/').length - 1
 }
 
 /**
- * Whether a root lies inside `path` (below it, not equal). Renaming such a folder would carry a
- * read-only root's files somewhere writable, so it is refused, as is removing it.
+ * What `roots` allow on `path`, as a purpose rank: the deepest root that holds it exactly as
+ * written grants (null if none does), and any root that holds it once folded (foldPath), at least
+ * as deep, caps. So `/scratch/KEEP/x` is held to a read-only `/scratch/keep` on a server that
+ * ignores case, and is still not granted by `/Scratch` on one that doesn't.
+ */
+function accessOf(path: string, roots: readonly SftpRoot[]): { granted: number | null; cap: number } {
+  const exact = rootOf(path, roots)
+  const granted = exact === null ? null : SFTP_PURPOSE_RANK[exact.access]
+  const least = exact === null ? 0 : depth(exact.path)
+  const folded = foldPath(path)
+  let cap = Number.POSITIVE_INFINITY
+  for (const root of roots) {
+    if (depth(root.path) >= least && isWithin(folded, foldPath(root.path))) {
+      cap = Math.min(cap, SFTP_PURPOSE_RANK[root.access])
+    }
+  }
+  return { granted, cap }
+}
+
+/** The most `roots` allow on `path`, as a purpose rank, or null if no root grants it. */
+export function accessRank(path: string, roots: readonly SftpRoot[]): number | null {
+  const { granted, cap } = accessOf(path, roots)
+  return granted === null ? null : Math.min(granted, cap)
+}
+
+/** Whether `purpose` may act on `path` under `roots`: the deepest root decides. */
+export function rootAllows(path: string, roots: readonly SftpRoot[], purpose: Purpose): boolean {
+  const rank = accessRank(path, roots)
+  return rank !== null && rank >= SFTP_PURPOSE_RANK[purpose]
+}
+
+/** Whether `path` is one of the roots itself, compared folded (foldPath). */
+export function isRootPath(path: string, roots: readonly SftpRoot[]): boolean {
+  const folded = foldPath(path)
+  return roots.some((r) => foldPath(r.path) === folded)
+}
+
+/**
+ * Whether a root lies inside `path` (below it, not equal), compared folded. Renaming such a folder
+ * would carry a read-only root's files somewhere writable, so it is refused, as is removing it.
  */
 export function holdsRoot(path: string, roots: readonly SftpRoot[]): boolean {
-  return roots.some((r) => r.path !== path && isWithin(r.path, path))
+  const folded = foldPath(path)
+  return roots.some((r) => {
+    const root = foldPath(r.path)
+    return root !== folded && isWithin(root, folded)
+  })
+}
+
+/**
+ * Whether a rename from `from` to `to` keeps a file under the same access. Moving a file from a
+ * write root into an irreversible one would let it be removed or replaced there, and moving it
+ * back would replace a file in place, so a rename may not cross roots of different access.
+ */
+export function renameAllowed(from: string, to: string, roots: readonly SftpRoot[]): boolean {
+  const a = accessRank(from, roots)
+  return a !== null && a === accessRank(to, roots)
 }
 
 /** Operations that move or remove a folder with everything in it. */
@@ -210,13 +274,11 @@ export function wireAllows(
   resolved: readonly SftpRoot[],
 ): boolean {
   if (!isSftpPath(path)) return false
-  const a = rootOf(path, declared)
-  const b = rootOf(path, resolved)
-  if (a === null && b === null) return false
+  const a = accessOf(path, declared)
+  const b = accessOf(path, resolved)
+  if (a.granted === null && b.granted === null) return false
   const rank = SFTP_PURPOSE_RANK[purpose]
-  return (
-    (a === null || SFTP_PURPOSE_RANK[a.access] >= rank) && (b === null || SFTP_PURPOSE_RANK[b.access] >= rank)
-  )
+  return [a, b].every((x) => (x.granted === null || x.granted >= rank) && x.cap >= rank)
 }
 
 /** SFTP version 3 request types Valet sends, with the purpose each needs. */

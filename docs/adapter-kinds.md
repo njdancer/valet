@@ -488,6 +488,13 @@ note it here. Each one can be reversed.
   Valet's check and its use; SFTP has no way to open relative to a checked handle. A root that the
   server resolves to `/` widens what the resolved-path check allows to everything that account can
   reach. File names come back as the server sends them (bidirectional characters included).
+  Windows short names (`KEEP~1`) aren't folded, so a nested narrower root on a Windows server can
+  still be reached that way; avoid nesting roots there.
+- **Red team (2026-11-17).** Four findings, all fixed ([sftp.md](sftp.md#red-team)): renames
+  across roots of different access, case-insensitive servers reaching a nested narrower root, card
+  wording for write access, and quadratic packet reading. It found no way past the path form, the
+  link checks (both kinds of `REALPATH`), the purpose checks at the wire, or the host key pin
+  (checked on every key exchange, re-keys included).
 
 **Workstream D (IMAP and email sign-in, [imap.md](imap.md)):**
 

@@ -7,7 +7,8 @@
 // 1. the call is still live (not aborted, blocked, or past a guard violation);
 // 2. the operation's purpose (sftp-policy.ts) is within the tool's declared side effect;
 // 3. every path it names is in Valet's form and under a root that allows that purpose, and a change
-//    never names a root itself, nor renames or removes a folder holding one;
+//    never names a root itself, nor renames or removes a folder holding one, and a rename never
+//    crosses roots of different access;
 // 4. it counts against the run's request ceiling, and waits for the site's pace and breaker;
 // 5. the first one opens the call's connection: the host process, signed in just in time with the
 //    kept key, through the broker's tunnel to the one declared endpoint, the host key pinned.
@@ -20,6 +21,7 @@ import {
   isSftpPath,
   type Purpose,
   pathAllowed,
+  renameAllowed,
   type SecretValue,
   SFTP_PATH_ARGS,
   SFTP_PURPOSE_RANK,
@@ -117,6 +119,12 @@ export class GuardedSftp implements SftpAccess {
       if (!pathAllowed(name, path, needed, this.options.backend.roots)) {
         return this.deny('request-surface', 'command-not-allowed', name, path)
       }
+    }
+    if (
+      name === 'rename' &&
+      !renameAllowed(list[0] as string, list[1] as string, this.options.backend.roots)
+    ) {
+      return this.deny('request-surface', 'command-not-allowed', name, list[1] as string)
     }
     state.requests++
     if (state.requests > this.options.manifest.limits.requestsPerRun) {

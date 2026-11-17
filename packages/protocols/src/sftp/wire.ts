@@ -321,23 +321,38 @@ export function decodeReply(packet: Buffer): { readonly id: number; readonly rep
 export class PacketReader {
   private buffered: Buffer[] = []
   private size = 0
+  /** The length of the packet being gathered, once its first four bytes are in. */
+  private wanted: number | null = null
 
   push(chunk: Buffer): Buffer[] {
     this.buffered.push(chunk)
     this.size += chunk.length
     const out: Buffer[] = []
-    while (this.size >= 4) {
-      const all = this.buffered.length === 1 ? (this.buffered[0] as Buffer) : Buffer.concat(this.buffered)
-      this.buffered = [all]
-      const length = all.readUInt32BE(0)
-      if (length === 0) throw new SftpError('malformed')
-      if (length > MAX_PACKET) throw new SftpError('too-large')
-      if (all.length < 4 + length) break
-      out.push(Buffer.from(all.subarray(4, 4 + length)))
-      const rest = all.subarray(4 + length)
-      this.buffered = rest.length === 0 ? [] : [rest]
-      this.size = rest.length
+    for (;;) {
+      if (this.wanted === null) {
+        if (this.size < 4) break
+        const head = this.take(4)
+        const length = head.readUInt32BE(0)
+        if (length === 0) throw new SftpError('malformed')
+        if (length > MAX_PACKET) throw new SftpError('too-large')
+        this.wanted = length
+      }
+      // Chunks are joined only once a whole packet is in, so small chunks cost nothing extra.
+      if (this.size < this.wanted) break
+      out.push(this.take(this.wanted))
+      this.wanted = null
     }
     return out
+  }
+
+  /** The first `n` buffered bytes, as a copy, removed from the buffer. */
+  private take(n: number): Buffer {
+    const all =
+      this.buffered.length === 1 ? (this.buffered[0] as Buffer) : Buffer.concat(this.buffered, this.size)
+    const taken = Buffer.from(all.subarray(0, n))
+    const rest = all.subarray(n)
+    this.buffered = rest.length === 0 ? [] : [rest]
+    this.size = rest.length
+    return taken
   }
 }

@@ -12,6 +12,7 @@
 // that stays inside; writes, renames and removals act on the name itself and never go through a link.
 
 import {
+  accessRank,
   isSftpName,
   isSftpPath,
   joinPath,
@@ -19,6 +20,7 @@ import {
   OPEN_FLAGS,
   parentOf,
   pathAllowed,
+  renameAllowed,
   rootOf,
   SFTP_PURPOSE_RANK,
   type SftpOperation,
@@ -314,10 +316,15 @@ export class SftpOperations {
   }
 
   private async rename(from: string, to: string) {
+    // Never across roots of different access (sftp-policy.ts renameAllowed).
+    if (!renameAllowed(from, to, this.declared)) throw notAllowed()
     const source = await this.placed(from, 'write')
     if ((await this.lstat(source)) === null) throw new SftpError('no', 'NONEXISTENT')
     const destination = await this.placed(to, 'write')
     if ((await this.lstat(destination)) !== null) throw new SftpError('no', 'ALREADYEXISTS')
+    // Where the server really puts them, the access must match too.
+    const resolved = this.client.resolvedRoots
+    if (accessRank(source, resolved) !== accessRank(destination, resolved)) throw notAllowed()
     this.ok(await this.client.request({ type: 'RENAME', from: source, to: destination }))
     return { from, to }
   }

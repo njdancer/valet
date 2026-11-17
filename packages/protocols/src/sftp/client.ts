@@ -5,6 +5,7 @@
 
 import type { Duplex } from 'node:stream'
 import {
+  accessRank,
   holdsRoot,
   isRootPath,
   openPurpose,
@@ -82,6 +83,10 @@ export function checkRequest(
     }
     case 'RENAME':
       if (isRoot(request.from) || isRoot(request.to) || holds(request.from)) return 'not-allowed'
+      // Never across roots of different access, as declared or as the server resolved them.
+      for (const roots of [declared, resolved]) {
+        if (accessRank(request.from, roots) !== accessRank(request.to, roots)) return 'not-allowed'
+      }
       return wireAllows(request.from, needed, declared, resolved) &&
         wireAllows(request.to, needed, declared, resolved)
         ? null

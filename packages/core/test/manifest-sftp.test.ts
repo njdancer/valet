@@ -176,7 +176,7 @@ describe('the card', () => {
       {
         area: 'requests',
         change: 'added',
-        items: ['Read, add and rename files in /volume1/inbox'],
+        items: ['Read, add, append to and rename files in /volume1/inbox'],
         risk: 'medium',
       },
       { area: 'requests', change: 'added', items: ['Read files in /volume1/docs'], risk: 'low' },
@@ -221,13 +221,15 @@ describe('the card', () => {
       {
         area: 'requests',
         change: 'added',
-        items: ['Read, add, rename, replace and delete files in / (everything this account can reach)'],
+        items: [
+          'Read, add, append to, rename, replace and delete files in / (everything this account can reach)',
+        ],
         risk: 'high',
       },
       {
         area: 'requests',
         change: 'added',
-        items: ['Read, add and rename files in /volume1/docs'],
+        items: ['Read, add, append to and rename files in /volume1/docs'],
         risk: 'medium',
       },
       { area: 'requests', change: 'removed', items: ['Read files in /volume1/docs'], risk: 'low' },
@@ -240,7 +242,7 @@ describe('the card', () => {
     long.protocols.sftp.username = 'u'.repeat(32)
     long.protocols.sftp.endpoint = `${'a'.repeat(60)}.${'b'.repeat(39)}:65535`
     long.credentials.nas.use.endpoint = long.protocols.sftp.endpoint
-    long.protocols.sftp.roots = [{ path: `/${'p'.repeat(149)}`, access: 'irreversible' }]
+    long.protocols.sftp.roots = [{ path: `/${'p'.repeat(139)}`, access: 'irreversible' }]
     for (const change of runtimePermissionChanges(null, parseManifest(long)))
       for (const item of change.items) expect(item.length).toBeLessThanOrEqual(200)
   })

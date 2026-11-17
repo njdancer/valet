@@ -80,8 +80,8 @@ export function describeSftpServer(sftp: SftpProtocol): [string, string] {
 
 const ROOT_WORDS: Readonly<Record<SftpProtocol['roots'][number]['access'], string>> = {
   read: 'Read files in',
-  write: 'Read, add and rename files in',
-  irreversible: 'Read, add, rename, replace and delete files in',
+  write: 'Read, add, append to and rename files in',
+  irreversible: 'Read, add, append to, rename, replace and delete files in',
 }
 
 /** One root as the card says it. */
@@ -93,6 +93,11 @@ const ROOT_RISK: Readonly<Record<SftpProtocol['roots'][number]['access'], Risk>>
   read: 'low',
   write: 'medium',
   irreversible: 'high',
+}
+
+/** A root that may change everything the account reaches (`/`) is high, whatever else it allows. */
+function rootRisk(root: SftpProtocol['roots'][number]): Risk {
+  return root.path === '/' && root.access !== 'read' ? 'high' : ROOT_RISK[root.access]
 }
 
 /**
@@ -120,7 +125,7 @@ export function sftpPermissionChanges(
   const had = new Map((before?.roots ?? []).map((r) => [describeSftpRoot(r), r]))
   const has = new Map((after?.roots ?? []).map((r) => [describeSftpRoot(r), r]))
   for (const level of ['high', 'medium', 'low'] as const) {
-    const added = [...has].filter(([text, r]) => !had.has(text) && ROOT_RISK[r.access] === level)
+    const added = [...has].filter(([text, r]) => !had.has(text) && rootRisk(r) === level)
     if (added.length > 0)
       changes.push({ area: 'requests', change: 'added', items: added.map(([text]) => text), risk: level })
   }
