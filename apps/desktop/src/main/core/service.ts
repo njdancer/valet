@@ -576,7 +576,10 @@ export class AppService {
         relayListener: () => this.remote.relayListener(),
         relayConsent: (id, query, source) => this.remote.relayConsent(id, query, source),
         hubAuthorization: (grantId) => this.remote.hubAuthorization(grantId),
-        hubGrantsChanged: (live) => this.remote.hubGrantsChanged(live),
+        hubGrantsChanged: (live) => {
+          this.remote.hubGrantsChanged(live)
+          this.emit('remote-changed')
+        },
       },
     })
     const { paths } = deps
@@ -4386,6 +4389,27 @@ export class AppService {
         revokeClient: async (id) => {
           if (!(await this.remote.revokeClient(id))) throw new ValetError('config', 'not-found')
           await this.dropRemoteCapabilities(id)
+        },
+        hubAgents: async () => {
+          const agents = this.phones.hubAgents
+          return (agents?.grants() ?? []).map(({ id, grant }) => ({
+            id,
+            host: grant.host,
+            clientName: grant.clientName,
+            approvedAt: grant.at,
+            expiresAt: grant.expiresAt,
+            approvedHere: grant.by === agents?.macId,
+          }))
+        },
+        revokeHubAgent: async (id) => {
+          const agent = this.phones.hubAgents?.grants().find((g) => g.id === id)
+          if (agent === undefined || !this.phones.revokeHubAgent(id))
+            throw new ValetError('config', 'not-found')
+          await this.audit.append({
+            type: 'remote-revoked',
+            clientId: `hub:${agent.grant.clientId}`,
+            clients: 1,
+          })
         },
         revokeAllClients: async () => {
           const ids = this.remote.remoteClients().map((c) => c.id)

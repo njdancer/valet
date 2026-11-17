@@ -47,3 +47,6 @@ conventional-style subjects (`feat(runtime): …`, `test(core): …`, `docs: …
   test that tries to get past it.
 - Fakes live next to the tests that use them, or in `fakes/*` when several packages share them.
   No test talks to a real site, 1Password, or the Messages database.
+- Anything that crosses parts (the app, the relay, the hub, a browser, an agent) gets an end-to-end
+  test that runs those real parts together, before anyone is asked to try it by hand. The hub's is
+  `apps/desktop/e2e/hub.spec.ts`; don't deploy the relay or hub unless it passed on that commit.

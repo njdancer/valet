@@ -177,7 +177,7 @@ export class HubOAuth {
     if (request.method === 'GET') {
       if (path.startsWith('/.well-known/oauth-protected-resource')) return this.resourceMetadata()
       if (path === '/.well-known/oauth-authorization-server') return this.serverMetadata()
-      if (path === '/authorize') return this.authorize(url, source)
+      if (path === '/authorize') return this.authorize(request, url, source)
       if (path === '/authorize/status') return this.status(request, url)
       if (path === '/authorize/done') return this.done(request, url)
     }
@@ -308,7 +308,7 @@ export class HubOAuth {
 
   // ---------- Authorisation ----------
 
-  private async authorize(url: URL, source: string): Promise<Response> {
+  private async authorize(request: Request, url: URL, source: string): Promise<Response> {
     const q = url.searchParams
     const client = this.client(q.get('client_id'))
     const redirect = q.get('redirect_uri')
@@ -338,7 +338,10 @@ export class HubOAuth {
       return consentPage('problem', 'Too many sign-ins are waiting. Try again in a few minutes.', 429)
 
     const id = token(16)
-    const browser = token(32)
+    // One browser keeps one token across its sign-ins: a fresh one per sign-in replaced the cookie,
+    // so a sign-in started earlier in another tab of the same browser could never finish.
+    const held = cookie(request, CONSENT_COOKIE)
+    const browser = held !== null && /^[A-Za-z0-9_-]{43}$/.test(held) ? held : token(32)
     const code = linkCode()
     this.db.run(
       `INSERT INTO oauth_consents (id, client_id, redirect_uri, challenge, state, code, browser_hash, source,

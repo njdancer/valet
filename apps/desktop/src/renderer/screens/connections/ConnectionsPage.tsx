@@ -34,7 +34,13 @@ import {
 } from '@valet/ui'
 import { Cable, Plus } from 'lucide-react'
 import { useState } from 'react'
-import type { ClientInfo, EndpointStatus, RemoteClientItem, RemoteSetup } from '../../../shared/api'
+import type {
+  ClientInfo,
+  EndpointStatus,
+  HubAgentItem,
+  RemoteClientItem,
+  RemoteSetup,
+} from '../../../shared/api'
 import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
 import { formatAgo, formatDay, plural } from '../../lib/format'
 import { href } from '../../lib/router'
@@ -161,7 +167,10 @@ function remoteWords(setup: RemoteSetup): { tone: 'success' | 'warning' | 'neutr
 function RemoteCard() {
   const setup = useLoad((a) => a.remote.setup(), [], ['remote-changed', 'approvals-changed'])
   const agents = useLoad((a) => a.remote.clients(), [], ['remote-changed'])
-  const approved = agents.status === 'ready' ? agents.data.filter((c) => c.grant !== null).length : 0
+  const viaHub = useLoad((a) => a.remote.hubAgents(), [], ['remote-changed'])
+  const approved =
+    (agents.status === 'ready' ? agents.data.filter((c) => c.grant !== null).length : 0) +
+    (viaHub.status === 'ready' ? viaHub.data.length : 0)
   return (
     <Card>
       <CardHeader className="items-center">
@@ -334,7 +343,9 @@ function AppsSection({
 
 function CloudAgentsSection() {
   const agents = useLoad((a) => a.remote.clients(), [], ['remote-changed'])
+  const viaHub = useLoad((a) => a.remote.hubAgents(), [], ['remote-changed'])
   const approved = agents.status === 'ready' ? agents.data.filter((c) => c.grant !== null) : []
+  const hubAgents = viaHub.status === 'ready' ? viaHub.data : []
   return (
     <Section
       id="cloud-agents"
@@ -343,11 +354,78 @@ function CloudAgentsSection() {
     >
       <AskingToConnect />
       {agents.status === 'error' ? <Failed failed what="load the cloud agents" /> : null}
-      {agents.status === 'ready' && approved.length === 0 ? (
+      {viaHub.status === 'error' ? (
+        <Failed failed what="load the agents approved through your account" />
+      ) : null}
+      {agents.status === 'ready' && viaHub.status === 'ready' && approved.length + hubAgents.length === 0 ? (
         <Text tone="muted">None approved yet.</Text>
       ) : null}
+      {hubAgents.length > 0 ? <HubAgentTable agents={hubAgents} /> : null}
       {approved.length > 0 ? <CloudAgentTable agents={approved} /> : null}
     </Section>
+  )
+}
+
+/**
+ * Agents approved through the Valet account (relay-hub.md): they reach every Mac on it, so removing
+ * one here removes it everywhere, at once.
+ */
+export function HubAgentTable({ agents }: { readonly agents: readonly HubAgentItem[] }) {
+  const api = useApi()
+  const action = useAction()
+  return (
+    <>
+      <Table aria-label="Agents through your Valet account">
+        <THead>
+          <TR>
+            <TH>Through your Valet account</TH>
+            <TH>Approved</TH>
+            <TH>Until</TH>
+            <TH align="right">
+              <span className="sr-only">Remove</span>
+            </TH>
+          </TR>
+        </THead>
+        <TBody>
+          {agents.map((a) => (
+            <TR key={a.id}>
+              <TD className="py-2">
+                <Inline gap={2} wrap={false}>
+                  <AppTile name={a.host} />
+                  <span className="flex min-w-0 flex-col">
+                    <span className="font-mono">{a.host}</span>
+                    <span className="truncate text-sm text-fg-muted">
+                      calls itself “{clientLabel(a.clientName)}” · not verified
+                    </span>
+                  </span>
+                </Inline>
+              </TD>
+              <TD className="whitespace-nowrap text-sm">
+                {formatDay(a.approvedAt)}
+                {a.approvedHere ? '' : ' · on another device'}
+              </TD>
+              <TD className="whitespace-nowrap text-sm">{formatDay(a.expiresAt)}</TD>
+              <TD align="right">
+                <Button
+                  size="sm"
+                  aria-label={`Remove ${a.host}`}
+                  disabled={action.busy}
+                  onClick={() =>
+                    void action.run(async () => {
+                      await api.remote.revokeHubAgent(a.id)
+                      toast(`Removed ${a.host}. It has to sign in again to use your tools.`)
+                    })
+                  }
+                >
+                  Remove
+                </Button>
+              </TD>
+            </TR>
+          ))}
+        </TBody>
+      </Table>
+      <Failed failed={action.failed} what="remove the agent" />
+    </>
   )
 }
 

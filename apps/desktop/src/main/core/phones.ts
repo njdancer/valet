@@ -300,6 +300,14 @@ export class Phones implements PhoneOutbox {
     return this.agents
   }
 
+  /** Removes an agent approved through the hub; this Mac stops serving it at once. */
+  revokeHubAgent(grantId: string): boolean {
+    const agents = this.agents
+    if (agents === null || !agents.revoke(grantId)) return false
+    this.options.remote?.hubGrantsChanged(new Set(agents.grants().map((g) => g.id)))
+    return true
+  }
+
   /** A page on the hub the relay named, https only; null when there is none. */
   hubPage(path: '/' | '/link'): string | null {
     const hub = this.hub
