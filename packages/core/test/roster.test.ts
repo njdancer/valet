@@ -1,6 +1,7 @@
 import { generateKeyPairSync, sign } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
+  joinRecordDevice,
   keyId,
   nextRosterChange,
   ROSTER_MAX_DEVICES,
@@ -195,5 +196,41 @@ describe('the account roster', () => {
       }),
     )
     expect(verifyRoster([...chain, moved])).toMatchObject({ ok: false, reason: 'wrong-account' })
+  })
+})
+
+describe('a Mac asking to join a list another device started', () => {
+  const record = (mac: Device, fields: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      v: 1,
+      ...mac.record,
+      macId: mac.record.deviceId,
+      pairedAt: AT,
+      ...fields,
+    })
+
+  it('gives the keys of the Mac’s own record, signed by its own approval key', () => {
+    const mac = device('mac', 'Studio')
+    const signed = mac.sign(record(mac), SIGNING_DOMAINS.deviceRecord)
+    expect(joinRecordDevice(signed)).toEqual(mac.record)
+    expect(joinRecordDevice(signed, { macId: mac.record.deviceId })).toEqual(mac.record)
+  })
+
+  it('refuses another Mac’s id, another key’s signature, another domain, or a phone', () => {
+    const mac = device('mac')
+    const other = device('mac')
+    const payload = record(mac)
+    expect(
+      joinRecordDevice(mac.sign(payload, SIGNING_DOMAINS.deviceRecord), { macId: other.record.deviceId }),
+    ).toBeNull()
+    expect(joinRecordDevice(other.sign(payload, SIGNING_DOMAINS.deviceRecord))).toBeNull()
+    expect(joinRecordDevice(mac.sign(payload))).toBeNull()
+    const phone = device('phone')
+    expect(
+      joinRecordDevice(
+        phone.sign(record(phone, { macId: mac.record.deviceId }), SIGNING_DOMAINS.deviceRecord),
+      ),
+    ).toBeNull()
+    expect(joinRecordDevice({ payload: 'not json', signature: mac.sign('x').signature })).toBeNull()
   })
 })

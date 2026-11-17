@@ -330,7 +330,10 @@ e2e suite): the built app, the relay and hub in a local Workers runtime
 the person's browser, and the MCP SDK's own OAuth client as the agent. It signs up, puts the Mac
 on the account, signs an agent in with the code its browser shows, lists and calls a tool at
 `/mcp`, approves one of several waiting sign-ins and declines the rest, removes an agent from
-Connections, restarts the relay, and re-links the Mac after it lost its keys.
+Connections, restarts the relay, and re-links the Mac after it lost its keys. Then a phone
+(written in TypeScript, as the iPhone app speaks) pairs once and goes on the account's list; the
+Mac loses its keys again, the phone adds the new Mac at the hub, its approvals reach the new Mac
+without pairing, and an agent the old Mac approved still works.
 `apps/relay/test/hub-browser.test.ts` runs in the same job. **No hub or relay deploy unless both
 passed on the commit being deployed.**
 
@@ -390,6 +393,31 @@ so the account outlives any one Mac.
 6. **Settings › Devices (4c-4)**, in the order Nick chose: the account's status first, then the
    devices on the account, then the relay and domain fields under Advanced. Direct pairing leaves
    the UI. Nick's phone signs in once more this way, and never again.
+
+**Built in 4c-1 (decided by recommendation, needs Nick's review).**
+
+- _How a Mac proves it is asking._ The join request is the Mac's own device record (devices.ts),
+  signed by its own approval key: the Secure Enclave helper already signs that, so nothing on the
+  Mac needs rebuilding. It costs one Touch ID prompt when the Mac joins, and the helper words it
+  "update this Mac's device record"; better wording needs a helper change, left for later. The
+  phone adds exactly the keys in that record, never what the hub says.
+- _How a phone reaches the hub._ Two plain HTTPS calls rather than a socket (core's
+  `hub-phone.ts`): `POST /phone/challenge`, then `POST /phone/account` with the transport key's
+  answer over the same relay-auth payload it signs for a Mac's relay object, with the hub's origin
+  in it. The hub lets in only a phone on the account's verified list. The answer has the chain, the
+  Macs waiting to join (each with its signed record) and the account's Macs; the same call can
+  append changes the phone signed. With no push, the phone asks when it opens, as it does for
+  cards. Step 4c-2 may add a socket if the app needs live updates.
+- _The Mac that started the list._ Removing it on the hub's page resets the list (#125) only when
+  no phone is on it. Otherwise the list stays, the old Mac stays on it until a phone removes it,
+  and grants it signed keep working through the new Mac, which the end-to-end test checks.
+- _Phones the Mac didn't pair._ The Mac trusts every phone on the list it verified, in memory,
+  from each verified list: one the list drops stops counting at once. It registers each with its
+  relay object, and a phone the relay knows but the Mac doesn't is let go 30 seconds after the
+  relay's `ready`, giving the hub's list time to arrive.
+- _Trust on first use._ The Mac pins a list it didn't start only while a ledger flag says the
+  person just added it with its code (`rosterJoin`, cleared once pinned or on leaving), and only
+  if the list adds it with exactly its own three keys.
 
 **What stays the same.** The hub still can't add a device: every change is signed by a device on
 the list, and every node checks the chain itself. Removing the Mac that started the list resets it

@@ -1462,7 +1462,9 @@ export class AppService {
     const signer = this.deps.approvalKeys.signer
     const devices = this.deviceStore
     if (signer.rotateChannel === undefined || devices === null) throw new ValetError('config', 'not-found')
-    for (const phone of devices.activePhones()) {
+    // Phones paired here only: one on the account's list stays on it (revoking it here would
+    // take it off the account).
+    for (const phone of devices.activePhones().filter((p) => !devices.isAccountPhone(p.deviceId))) {
       this.phones.unpair(phone.deviceId)
       await devices.revoke(phone.deviceId, 'mac-ui', new Date(this.deps.now()).toISOString())
       await this.audit.append({ type: 'device-revoked', deviceId: phone.deviceId, by: 'mac-ui' })

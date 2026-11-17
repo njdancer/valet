@@ -153,6 +153,7 @@ export interface HubLink {
   consentDecline(macId: string, consentId: string): Promise<HubAnswer>
   /** The person removed an agent signed in through the hub, on this Mac. */
   grantRevoke(macId: string, grantId: string): Promise<HubAnswer>
+  rosterJoin(macId: string, record: { payload: string; signature: string }): Promise<HubAnswer>
 }
 
 /** What the hub tells a Mac: its status, and the account's device list when that is news. */
@@ -576,6 +577,8 @@ export class RelayCore {
         return this.toHub((hub) => hub.consentDecline(this.options.macId, frame.consentId))
       case 'hub-grant-revoke':
         return this.toHub((hub) => hub.grantRevoke(this.options.macId, frame.grantId))
+      case 'hub-roster-join':
+        return this.toHub((hub) => hub.rosterJoin(this.options.macId, frame.record))
       case 'recovery-register': {
         const stored = await this.state()
         if (stored === null || stored.recoveryCodeHash === frame.codeHash) return
