@@ -186,4 +186,37 @@ The host script patches two things:
 
 ## Red team
 
-The red-team findings and their fixes are added here before this workstream merges.
+An adversarial pass looked for ways agent-written code, a hostile npm package or a hand-written
+lockfile could get out. Each finding has a test in `test/redteam/escapes.test.ts`, and each was
+fixed before this merged:
+
+1. **Memory outside the heap.** `--max-old-space-size` caps V8's heap only. Buffers and
+   ArrayBuffers live outside it, so an adapter could take all of the Mac's memory. Valet now samples
+   the process's resident memory from outside (`ps`, every half second) and ends it over 1 GB
+   (`maxRssMb`).
+2. **Ending a call while it starts.** If a call ended while the broker was still opening the
+   tunnels, the tunnels and the temporary folder were left behind. The start now cleans up whatever
+   it made after the call ended.
+3. **A lockfile that lies about names.** The store is keyed by integrity alone, and the approval
+   card names packages from the lockfile. So a hand-written lockfile could put one package's code
+   under another's name, and the card would show the wrong package. A tarball's own `package.json`
+   must now match its `name@version`, both when it is added and whenever it is loaded.
+4. **An `imports` map that loops.** Two `#` entries naming each other overflowed the compile
+   worker's stack. Node refuses a `#` target that names another `#` entry, and so does the resolver
+   now.
+
+What was tried and held, also in those tests:
+
+- Around the shim: Node's TCP binding, a fresh `require` of `net`, TLS, the synthetic DNS range with
+  an undeclared port, IPv6 and IPv4-mapped loopback, look-alike host names and Unix sockets.
+- Out of the process: signalling the parent, the inspector, WASI, `dlopen`, the `fs` binding, and
+  reading outside the temporary folder by path, relative climb, URL, Buffer and symlink.
+- On macOS, `profile.test.ts` repeats the network, file, program and signal refusals with the shim
+  and Node's permission model both off, so each refusal is Seatbelt's alone.
+
+Known limits, left as they are:
+
+- **The temporary folder has no size cap.** An adapter can fill the disk during a call (at most 10
+  minutes). It is deleted when the call ends.
+- **The profile allows a few harmless reads at start.** These are the root folder's names, the OS
+  version, and `kern.bootargs`. Node aborts without them.
