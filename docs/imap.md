@@ -135,7 +135,7 @@ Some sites sign in by emailing a link or a code. A browser adapter's login can r
 mail account Valet already holds, without any adapter code seeing the mail.
 
 ```json
-{ "op": "openMailLink", "from": "login@shop.example", "linkOrigin": "https://www.shop.example", "maxAgeSeconds": 600 }
+{ "op": "openMailLink", "from": "login@shop.example", "subjectContains": "Sign in", "linkOrigin": "https://www.shop.example", "maxAgeSeconds": 600 }
 { "op": "otp", "selector": "#code", "source": { "mail": { "from": "login@shop.example", "pattern": "code: ([0-9]{6})", "maxAgeSeconds": 300 } } }
 ```
 
@@ -144,23 +144,35 @@ mail account Valet already holds, without any adapter code seeing the mail.
   the reserved secret name `mail` with provider `mail`. Its item is
   `<adapterId>/<credential> <sender>`. Every mail step in a manifest names the same sender, and a
   link's origin must be in `navigation`.
+- **The account must be read-only for INBOX.** A message that an IMAP client appends skips the
+  receiving server, so its own forged Authentication-Results would be the topmost one. A mail
+  account whose adapter has any tool that may change INBOX (core's `mayWriteInbox`) can't serve
+  sign-in mail, and the mail reader refuses it.
 - **The lookup.** It's one built-in, read-only operation in the protocol host (`imap/signin.ts`),
   signed in with the mail account's own kept credential (the app wires this through that adapter's
   credential gate in a follow-up, so the use is audited there too). It examines INBOX
   and takes only messages that pass all of these checks:
-  - The message arrived after the login asked for it (allowing two minutes of clock skew between
-    the server and Valet) and inside `maxAgeSeconds`.
+  - The message arrived after the login asked for it, inside `maxAgeSeconds`. The server's clock
+    may be up to 30 seconds behind Valet's, or two minutes ahead.
   - Its From is exactly one address, the approved sender. A display name doesn't count.
-  - Its subject contains `subjectContains`, if the step gives one.
+  - Its subject contains `subjectContains`. A link step must give one, because anyone can make a
+    site send its other mail (an invitation, a share) from the same address.
   - The topmost Authentication-Results header, which the receiving server added, shows
-    `dmarc=pass` for the sender's domain or a DKIM pass aligned with it. A message with no such
-    header is accepted, because not every server adds one.
+    `dmarc=pass` for the sender's domain, or `dkim=pass` with a signing domain (`header.d`, never
+    `header.i`) aligned with it. Any other DMARC result for the domain refuses the message.
+    Comments and quoted strings are dropped before the header is read, because the server copies
+    sender-chosen text into them. A message with no such header is accepted, because not every
+    server adds one.
+  - Its From address is compared in ASCII lower case only, so a look-alike such as a Kelvin sign
+    never folds into an approved address.
 - **The link.** The newest message that counts is read. A link must be `https` on exactly
   `linkOrigin`, with no user info. A code must be 4 to 10 letters or digits. The value is checked
   again in the main process, and once more before it is used.
 - **Its use.** A code is typed like any other one-time code. A link is opened in the auth
   partition, but first it is kept for redaction, audited as `secret-used`, and paced like any
-  navigation. Neither ever reaches tool code, tool output or MCP.
+  navigation. Valet's lookup never hands either to tool code, tool output or MCP. The mail itself
+  stays unread in INBOX, so a mail adapter's own read tool on the same account can still read it,
+  within that tool's boundary like any other mail.
 - **Waiting.** The login asks again every five seconds until `maxAgeSeconds` or the flow's
   deadline passes. One host session per account is kept for 30 seconds between asks, so the server
   sees one sign-in rather than one per ask.

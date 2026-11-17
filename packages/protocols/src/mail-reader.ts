@@ -27,6 +27,11 @@ export interface MailAccount {
   /** Records the connection, as the adapter's own calls are recorded. */
   readonly record?: RunContext['record']
   readonly broker?: BrokerOptions
+  /**
+   * Whether any tool of the account's adapters may change INBOX (core's mayWriteInbox). Such an
+   * account is refused: a write tool could plant a sign-in mail with forged headers.
+   */
+  readonly mayWriteInbox: boolean
 }
 
 export interface HostMailReaderOptions {
@@ -107,6 +112,7 @@ export class HostMailReader implements MailReader {
     if (existing !== undefined) this.drop(ref)
     const account = await this.options.account(ref)
     if (account === null) throw new CredentialError('not-found')
+    if (account.mayWriteInbox !== false) throw new CredentialError('unavailable')
     const folders = account.protocol.folders
     if (folders !== undefined && !folders.some((f) => f.toUpperCase() === 'INBOX'))
       throw new CredentialError('unavailable')

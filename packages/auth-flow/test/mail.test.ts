@@ -72,7 +72,7 @@ const CODE_STEPS = manifestWithSteps([
 
 const LINK_STEPS = manifestWithSteps([
   { op: 'goto', url: LOGIN_PAGE },
-  { op: 'openMailLink', from: SENDER, linkOrigin: WWW, maxAgeSeconds: 300 },
+  { op: 'openMailLink', from: SENDER, subjectContains: 'Sign in', linkOrigin: WWW, maxAgeSeconds: 300 },
 ])
 
 function mailWorld(value: string, at = START + 7_000) {
@@ -138,7 +138,10 @@ describe('a link from a sign-in mail', () => {
       field: 'otp',
       origin: WWW,
     })
-    expect(w.reader.calls[0]?.query.extract).toEqual({ linkOrigin: WWW })
+    expect(w.reader.calls[0]?.query).toMatchObject({
+      subjectContains: 'Sign in',
+      extract: { linkOrigin: WWW },
+    })
     expect(w.reader.issued.every((s) => s.disposed)).toBe(true)
   })
 

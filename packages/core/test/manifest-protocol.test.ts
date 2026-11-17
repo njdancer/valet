@@ -163,6 +163,7 @@ const SHOP: ManifestInput = {
       {
         op: 'openMailLink',
         from: 'login@shop.test',
+        subjectContains: 'Sign in',
         linkOrigin: 'https://www.shop.test',
         maxAgeSeconds: 600,
       },
@@ -190,7 +191,13 @@ describe('email sign-in', () => {
   it('parses a mail link and a mail code, and lists them as mail sources', () => {
     const manifest = parseManifest(shop())
     expect(mailSourcesIn(manifest.auth.steps)).toEqual([
-      { kind: 'link', from: 'login@shop.test', linkOrigin: 'https://www.shop.test', maxAgeSeconds: 600 },
+      {
+        kind: 'link',
+        from: 'login@shop.test',
+        subjectContains: 'Sign in',
+        linkOrigin: 'https://www.shop.test',
+        maxAgeSeconds: 600,
+      },
       { kind: 'code', from: 'login@shop.test', pattern: 'code: ([0-9]{6})', maxAgeSeconds: 300 },
     ])
   })
@@ -199,6 +206,12 @@ describe('email sign-in', () => {
     const input = shop()
     input.auth.steps[3].linkOrigin = 'https://evil.test'
     expect(issues(input)).toContain('openMailLink linkOrigin https://evil.test is not in navigation')
+  })
+
+  it('needs a subject for a link, so other mail from the sender is not taken for it', () => {
+    const input = shop()
+    delete input.auth.steps[3].subjectContains
+    expect(issues(input).length).toBeGreaterThan(0)
   })
 
   it('names one sender for every mail step', () => {

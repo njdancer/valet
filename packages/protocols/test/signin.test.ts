@@ -67,11 +67,12 @@ const linkQuery = (extra: Partial<SignInQuery> = {}): SignInQuery => ({
   after: NOW - 60_000,
   now: NOW,
   maxAgeSeconds: 600,
+  subjectContains: 'sign-in',
   extract: { linkOrigin: ORIGIN },
   ...extra,
 })
 const codeQuery = (extra: Partial<SignInQuery> = {}): SignInQuery =>
-  linkQuery({ extract: { pattern: 'code:? ([0-9]{6})' }, ...extra })
+  linkQuery({ extract: { pattern: 'code:? ([0-9]{6})' }, subjectContains: undefined, ...extra })
 
 async function lookup(messages: MessageInput[], query: SignInQuery) {
   server = await fake({ mailboxes: { INBOX: messages } })
@@ -199,6 +200,8 @@ describe('findSignInMail', () => {
       linkQuery({ extract: { linkOrigin: 'http://shop.test' } }),
       linkQuery({ extract: { linkOrigin: 'https://shop.test/path' } }),
       linkQuery({ subjectContains: 'x'.repeat(201) }),
+      linkQuery({ subjectContains: undefined }),
+      linkQuery({ subjectContains: '' }),
       codeQuery({ extract: { pattern: 'x'.repeat(201) } }),
     ]) {
       await expect(findSignInMail(client, bad)).rejects.toBeInstanceOf(ImapError)
@@ -242,8 +245,18 @@ describe('helpers', () => {
     expect(authenticated(fields, 'mail.shop.test')).toBe(true)
     expect(authenticated(fields, 'shop.test')).toBe(false)
     expect(
-      authenticated([['authentication-results', 'x; dkim=pass header.i=@shop.test']], 'login.shop.test'),
+      authenticated([['authentication-results', 'x; dkim=pass header.d=shop.test']], 'login.shop.test'),
     ).toBe(true)
+    // header.i alone isn't the signing domain; a DMARC failure for the domain refuses it outright.
+    expect(authenticated([['authentication-results', 'x; dkim=pass header.i=@shop.test']], 'shop.test')).toBe(
+      false,
+    )
+    expect(
+      authenticated(
+        [['authentication-results', 'x; dkim=pass header.d=shop.test; dmarc=fail header.from=shop.test']],
+        'shop.test',
+      ),
+    ).toBe(false)
     expect(
       authenticated([['authentication-results', 'x; dkim=pass header.d=evilshop.test']], 'shop.test'),
     ).toBe(false)

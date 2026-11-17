@@ -34,8 +34,13 @@ export interface SignInQuery {
 
 export type SignInResult = { readonly found: true; readonly value: string } | { readonly found: false }
 
-/** How far the mail server's clock may be behind Valet's. */
+/** How far the mail server's clock may be ahead of Valet's. */
 export const CLOCK_SKEW_MS = 120_000
+/**
+ * How far it may be behind: mail that seems to have arrived up to this long before the login asked
+ * still counts. Kept short, since anyone can ask a site to mail a sign-in link to an address.
+ */
+export const ARRIVAL_SKEW_MS = 30_000
 /** Messages looked at per lookup, newest first. */
 const CANDIDATES = 10
 const MAX_TEXT_BYTES = 256 * 1024
@@ -81,20 +86,78 @@ function aligned(domain: string, fromDomain: string): boolean {
 }
 
 /**
+ * An Authentication-Results value with its comments removed and every quoted string emptied
+ * (RFC 8601 syntax). Receiving servers copy text the sender chose, such as the SMTP MAIL FROM and
+ * HELO name, into quoted strings and comments, so neither may start or change a result.
+ */
+export function withoutCommentsOrQuotes(value: string): string {
+  let out = ''
+  let depth = 0
+  for (let i = 0; i < value.length; i++) {
+    const c = value[i] as string
+    if (c === '\\' && depth > 0) {
+      i++
+      continue
+    }
+    if (depth > 0) {
+      if (c === '(') depth++
+      else if (c === ')') depth--
+      continue
+    }
+    if (c === '(') {
+      depth = 1
+      out += ' '
+      continue
+    }
+    if (c === '"') {
+      // Skip to the closing quote, honouring backslash escapes.
+      for (i++; i < value.length && value[i] !== '"'; i++) if (value[i] === '\\') i++
+      out += '""'
+      continue
+    }
+    out += c
+  }
+  return out
+}
+
+/**
  * Whether the topmost Authentication-Results (the one the receiving server added last) vouches for
- * `fromDomain`. True when there is none to read: not every server adds one.
+ * `fromDomain`: DMARC passed for it, or a DKIM signature whose signing domain (header.d) is aligned
+ * with it. A DMARC result other than pass for the domain refuses it outright. True when there is no
+ * header to read: not every server adds one.
  */
 export function authenticated(fields: readonly [string, string][], fromDomain: string): boolean {
   const top = fields.find(([name]) => name === 'authentication-results')
   if (top === undefined) return true
-  const value = top[1].toLowerCase()
-  for (const clause of value.split(';').map((c) => c.trim())) {
-    const dmarc = /^dmarc=pass\b.*\bheader\.from=([a-z0-9.-]+)/.exec(clause)
-    if (dmarc !== null && aligned(dmarc[1] as string, fromDomain)) return true
-    const dkim = /^dkim=pass\b.*\bheader\.(?:d|i)=@?([a-z0-9.-]+)/.exec(clause)
-    if (dkim !== null && aligned(dkim[1] as string, fromDomain)) return true
+  // The first element is the authserv-id; each one after it is `method=result property=value ...`.
+  const results = withoutCommentsOrQuotes(top[1].toLowerCase())
+    .split(';')
+    .slice(1)
+    .map((clause) => {
+      const tokens = clause.trim().split(/\s+/)
+      const head = /^([a-z0-9-]+)=([a-z]+)$/.exec(tokens[0] ?? '')
+      const props = new Map<string, string>()
+      for (const token of tokens.slice(1)) {
+        const eq = token.indexOf('=')
+        if (eq > 0 && !props.has(token.slice(0, eq))) props.set(token.slice(0, eq), token.slice(eq + 1))
+      }
+      return head === null ? null : { method: head[1] as string, result: head[2] as string, props }
+    })
+  let vouched = false
+  for (const r of results) {
+    if (r === null) continue
+    if (r.method === 'dmarc') {
+      const domain = r.props.get('header.from')
+      if (domain === undefined || domain !== fromDomain) continue
+      if (r.result !== 'pass') return false
+      vouched = true
+    } else if (r.method === 'dkim' && r.result === 'pass') {
+      // Only the signing domain counts. header.i may carry a local part the signer chose.
+      const domain = r.props.get('header.d')
+      if (domain !== undefined && /^[a-z0-9.-]+$/.test(domain) && aligned(domain, fromDomain)) vouched = true
+    }
   }
-  return false
+  return vouched
 }
 
 const ENTITIES: Readonly<Record<string, string>> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" }
@@ -162,10 +225,31 @@ export function firstCode(pattern: string, texts: readonly string[]): string | n
   return null
 }
 
-function stripTags(html: string): string {
-  return decodeEntities(
-    html.replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]*>/g, ' '),
-  ).replace(/\s+/g, ' ')
+/** HTML as text, in one pass: tags become spaces, and script and style bodies are left out. */
+export function stripTags(html: string): string {
+  let out = ''
+  let i = 0
+  const lower = html.toLowerCase()
+  while (i < html.length) {
+    const open = html.indexOf('<', i)
+    if (open === -1) {
+      out += html.slice(i)
+      break
+    }
+    out += html.slice(i, open)
+    const close = html.indexOf('>', open)
+    if (close === -1) break
+    const name = /^<\s*(script|style)\b/.exec(lower.slice(open, Math.min(close + 1, open + 20)))
+    if (name !== null) {
+      const end = lower.indexOf(`</${name[1]}`, close)
+      if (end === -1) break
+      const after = html.indexOf('>', end)
+      if (after === -1) break
+      i = after + 1
+    } else i = close + 1
+    out += ' '
+  }
+  return decodeEntities(out).replace(/\s+/g, ' ')
 }
 
 function checkQuery(query: SignInQuery): void {
@@ -187,6 +271,9 @@ function checkQuery(query: SignInQuery): void {
       typeof query.extract.pattern === 'string' &&
       query.extract.pattern.length <= 200) ||
       ('linkOrigin' in query.extract &&
+        // A link is taken only from mail whose subject says what it is (see the manifest).
+        typeof query.subjectContains === 'string' &&
+        query.subjectContains.length > 0 &&
         typeof query.extract.linkOrigin === 'string' &&
         /^https:\/\/[a-z0-9.-]+(:\d+)?$/.test(query.extract.linkOrigin)))
   if (!ok) throw new ImapError('invalid')
@@ -210,7 +297,7 @@ function section(map: Map<string, Value>, prefix: string): Buffer | null {
 /** Finds the sign-in link or code. Never changes the mailbox. */
 export async function findSignInMail(client: ImapClient, query: SignInQuery): Promise<SignInResult> {
   checkQuery(query)
-  const since = Math.max(query.after - CLOCK_SKEW_MS, query.now - query.maxAgeSeconds * 1000)
+  const since = Math.max(query.after - ARRIVAL_SKEW_MS, query.now - query.maxAgeSeconds * 1000)
   await client.open('INBOX', true)
   const day = new Date(since - 86_400_000)
   const sinceDate = `${day.getUTCDate()}-${MONTHS[day.getUTCMonth()]?.replace(/^./, (c) => c.toUpperCase())}-${day.getUTCFullYear()}`

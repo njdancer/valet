@@ -33,7 +33,7 @@ const message = (body: string, from = SENDER) =>
     '',
   ].join('\r\n')
 
-async function setup(options: { folders?: string[]; password?: string } = {}) {
+async function setup(options: { folders?: string[]; password?: string; mayWriteInbox?: boolean } = {}) {
   server = await fake({ mailboxes: { INBOX: [] } })
   const host = await hostOptions(server)
   const accounts: string[] = []
@@ -53,6 +53,7 @@ async function setup(options: { folders?: string[]; password?: string } = {}) {
           options.password === undefined ? DEFAULT_USER : { ...DEFAULT_USER, password: options.password },
         ),
         broker: brokerTo(server as FakeImap),
+        mayWriteInbox: options.mayWriteInbox ?? false,
       }
     },
   })
@@ -62,6 +63,7 @@ async function setup(options: { folders?: string[]; password?: string } = {}) {
 const linkQuery = {
   account: 'icloud-mail/mail',
   from: SENDER,
+  subjectContains: 'sign in',
   maxAgeSeconds: 300,
   extract: { linkOrigin: ORIGIN },
 }
@@ -117,6 +119,12 @@ describe('HostMailReader', () => {
 
   it('refuses an account whose folders leave out INBOX', async () => {
     const t = await setup({ folders: ['Receipts'] })
+    await expect(t.reader.find(linkQuery, new Date())).rejects.toMatchObject({ failure: 'unavailable' })
+    expect(t.server.logins).toEqual([])
+  })
+
+  it('refuses an account whose tools may change INBOX, where mail could be planted', async () => {
+    const t = await setup({ mayWriteInbox: true })
     await expect(t.reader.find(linkQuery, new Date())).rejects.toMatchObject({ failure: 'unavailable' })
     expect(t.server.logins).toEqual([])
   })

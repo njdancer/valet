@@ -5,6 +5,7 @@
 
 import { z } from 'zod'
 import { type CredentialDeclaration, isEndpoint } from './credential'
+import { folderAllowed } from './imap-policy'
 
 /** A folder name as the manifest writes it: no control characters, and no LIST wildcards. */
 export const imapFolderSchema = z
@@ -89,4 +90,19 @@ export function protocolIssues(manifest: {
       issues.push(`credential ${name}: an imap credential that protocols.imap doesn't use`)
   }
   return issues
+}
+
+/**
+ * Whether any of a protocol adapter's tools may change INBOX (append, copy or move into it, set
+ * flags). Such an account can't serve email sign-in (docs/imap.md#email-sign-in): a message an
+ * IMAP client appends skips the receiving server, so its own forged Authentication-Results would
+ * be the topmost one, and the sign-in lookup could take a planted link.
+ */
+export function mayWriteInbox(manifest: {
+  readonly tools: readonly { readonly sideEffect: string }[]
+  readonly protocols?: Protocols | undefined
+}): boolean {
+  const imap = manifest.protocols?.imap
+  if (imap === undefined) return false
+  return manifest.tools.some((t) => t.sideEffect !== 'read') && folderAllowed('INBOX', imap.folders ?? null)
 }

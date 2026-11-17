@@ -148,7 +148,7 @@ export type AuthStep =
        */
       readonly op: 'openMailLink'
       readonly from: string
-      readonly subjectContains?: string
+      readonly subjectContains: string
       /** The link must be https on exactly this origin, which must be a navigation origin. */
       readonly linkOrigin: string
       readonly maxAgeSeconds: number
@@ -182,7 +182,11 @@ export const authStepSchema: z.ZodType<AuthStep> = z.lazy(() =>
       .object({
         op: z.literal('openMailLink'),
         from: mailSender,
-        subjectContains: z.string().min(1).max(100).optional(),
+        /**
+         * Required for a link: the sender's other mail (an invitation, a shared item) can be set off
+         * by anyone, and must not be taken for the sign-in mail.
+         */
+        subjectContains: z.string().min(1).max(100),
         linkOrigin: origin,
         maxAgeSeconds: z.number().int().min(10).max(1800),
       })

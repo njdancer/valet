@@ -32,6 +32,14 @@ export function headerText(value: Value | undefined): string | null {
   return truncate(visibleOnly(decodeHeader(raw)), MAX_HEADER_TEXT).text
 }
 
+/**
+ * Lower case for ASCII letters only. String#toLowerCase folds some non-ASCII letters to ASCII (the
+ * Kelvin sign to `k`), which would let a look-alike address compare equal to an approved one.
+ */
+export function asciiLower(text: string): string {
+  return text.replace(/[A-Z]/g, (c) => c.toLowerCase())
+}
+
 function addresses(value: Value | undefined): Address[] {
   if (!Array.isArray(value)) return []
   const out: Address[] = []
@@ -44,7 +52,7 @@ function addresses(value: Value | undefined): Address[] {
     const local = text(mailbox)
     const domain = text(host)
     const address =
-      local === null || domain === null ? null : oneLine(`${local}@${domain}`).toLowerCase().slice(0, 320)
+      local === null || domain === null ? null : asciiLower(oneLine(`${local}@${domain}`)).slice(0, 320)
     out.push({ name: headerText(name), address })
   }
   return out

@@ -475,6 +475,17 @@ note it here. Each one can be reversed.
   When it adds one, the topmost must show DMARC, or DKIM aligned with the sender's domain, as a
   pass. Refusing mail without the header would break servers that don't add it. iCloud adds it.
 - **One sender per manifest**, so the person approves one address for a site's sign-in mail.
+- **A link step needs `subjectContains`** (the design had it optional). The red team showed that
+  a site's other mail from the same address, which anyone can trigger, would otherwise be taken
+  for the sign-in mail. A code step may still leave it out, since a code must match the pattern.
+- **Sign-in mail needs an account no tool can write INBOX in.** A message appended over IMAP
+  carries whatever Authentication-Results its author wrote. The mail reader refuses an account
+  whose adapter has any tool that may change INBOX. The app wiring must also check every other
+  adapter on the same account when the grant is made.
+- **Sign-in mail stays readable by the account's own read tools.** The lookup reads with
+  `BODY.PEEK`, so the mail stays unread. An agent with a mail adapter that may read INBOX could
+  read a sign-in link or code there, as Nick noted on 2026-11-17. Hiding sign-in mail from read
+  tools, or redacting recently found links from every tool's output, could follow if wanted.
 - **The mail grant's item is `<adapterId>/<credential> <sender>`**, under the reserved secret
   name `mail`, the same shape as a Messages grant.
 - **Sign-in mail is polled every five seconds**, with one host session per account kept for 30
