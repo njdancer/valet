@@ -18,10 +18,6 @@ const profile = nodeRuntimeProfile({
 console.log(profile)
 const extras: [string, string][] = [
   ['base', ''],
-  ['sysctl+root', '(allow sysctl-read (sysctl-name "security.mac.lockdown_mode_state") (sysctl-name "kern.bootargs"))\n(allow file-read-data (literal "/"))'],
-  ['+map-exec', '(allow sysctl-read (sysctl-name "security.mac.lockdown_mode_state") (sysctl-name "kern.bootargs"))\n(allow file-read-data (literal "/"))\n(allow file-map-executable)'],
-  ['+mach', '(allow sysctl-read (sysctl-name "security.mac.lockdown_mode_state") (sysctl-name "kern.bootargs"))\n(allow file-read-data (literal "/"))\n(allow file-map-executable)\n(allow mach-lookup)'],
-  ['+ipc-iokit', '(allow sysctl-read (sysctl-name "security.mac.lockdown_mode_state") (sysctl-name "kern.bootargs"))\n(allow file-read-data (literal "/"))\n(allow file-map-executable)\n(allow mach-lookup)\n(allow iokit-open)\n(allow ipc-posix-shm*)\n(allow ipc-posix-sem)\n(allow system-fsctl)\n(allow user-preference-read)\n(allow sysctl-read)'],
   ['allow-default', '(allow default)'],
 ]
 for (const [label, extra] of extras) {
@@ -35,6 +31,14 @@ for (const [label, extra] of extras) {
       ['-f', join(temp, 'profile.sb'), realpathSync(process.execPath), ...args],
       { encoding: 'utf8', env: { HOME: temp, TMPDIR: `${temp}/` }, cwd: temp },
     )
-    console.log(`[${label}] status`, r.status, r.signal, 'stdout', JSON.stringify(r.stdout), 'stderr', r.stderr.slice(0, 2000))
+    console.log(
+      `[${label}] status`,
+      r.status,
+      r.signal,
+      'stdout',
+      JSON.stringify(r.stdout),
+      'stderr',
+      r.stderr.slice(0, 2000),
+    )
   }
 }

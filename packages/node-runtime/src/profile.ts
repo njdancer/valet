@@ -42,11 +42,15 @@ export const SYSTEM_READ_PATHS = [
   '/private/var/db/timezone',
   // ICU's data, should a library ask the system's copy for it.
   '/usr/share/icu',
+  // OpenSSL's configuration, which Node reads at start and refuses to start without.
+  '/System/Library/OpenSSL',
 ] as const
 
 /** Single files Node reads at start. */
 export const SYSTEM_READ_FILES = [
   '/private/etc/localtime',
+  // The OS version, for os.release() and friends.
+  '/System/Library/CoreServices/SystemVersion.plist',
   '/dev/null',
   '/dev/zero',
   '/dev/random',
@@ -98,6 +102,10 @@ export const SYSCTL_NAMES = [
   'kern.secure_kernel',
   'kern.usrstack64',
   'kern.version',
+  // libsystem reads these at start, and Node aborts without them.
+  'kern.bootargs',
+  'kern.iossupportversion',
+  'security.mac.lockdown_mode_state',
   'sysctl.proc_cputype',
   'vm.loadavg',
 ] as const
@@ -175,7 +183,9 @@ export function nodeRuntimeProfile(input: ProfileInput): string {
     `(allow file-read* ${literals([node, host, ...SYSTEM_READ_FILES])})`,
     `(allow file-read* ${subpaths(SYSTEM_READ_PATHS)})`,
     `(allow file-read* file-write* (subpath ${sbplString(temp)}))`,
-    `(allow file-write-data ${literals(['/dev/null', '/dev/zero'])})`,
+    `(allow file-write-data ${literals(['/dev/null', '/dev/zero', '/dev/dtracehelper'])})`,
+    // The root folder's listing, which the runtime reads at start: names only, nothing under them.
+    '(allow file-read-data (literal "/"))',
     '(allow file-ioctl (literal "/dev/dtracehelper"))',
   ]
   if (reads.length > 0) lines.push(`(allow file-read* ${subpaths(reads)})`)

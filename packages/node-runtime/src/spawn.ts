@@ -8,7 +8,7 @@
 // macOS only. Without sandbox-exec the runtime is unavailable, never unconfined. Tests off macOS may
 // pass `withoutSeatbelt`, which the app never does.
 
-import { type ChildProcess, spawn } from 'node:child_process'
+import { type ChildProcess, execFile, spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -27,6 +27,12 @@ export const SANDBOX_EXEC = '/usr/bin/sandbox-exec'
 export const HOST_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), 'host', 'runtime-host.cjs')
 
 export const DEFAULT_HEAP_MB = 256
+/**
+ * The whole process's resident memory. The heap cap leaves out memory outside V8's heap (Buffers,
+ * ArrayBuffers), so Valet samples the process from outside and ends it over this.
+ */
+export const DEFAULT_MAX_RSS_MB = 1024
+export const RSS_SAMPLE_MS = 500
 /** A backstop: the tool host's own deadline normally ends a call long before this. */
 export const DEFAULT_MAX_LIFETIME_MS = 10 * 60_000
 /** What is kept of the process's stderr, for diagnostics. Its stdout goes nowhere. */
@@ -49,7 +55,10 @@ export interface NodeRuntimeOptions {
   /** More places to deny whatever else allows them (Valet's own data folder, say). */
   readonly alsoForbidden?: readonly string[]
   readonly heapMb?: number
+  readonly maxRssMb?: number
   readonly maxLifetimeMs?: number
+  /** Tests only: how the process's resident memory is read, in kilobytes. */
+  readonly sampleRss?: (pid: number) => Promise<number | null>
   /** Where the process's stderr goes, capped. */
   readonly onStderr?: (text: string) => void
   /** Called once per process with the profile it ran under (tests and diagnostics). */
@@ -74,6 +83,16 @@ export async function forbiddenUnderHome(home: string): Promise<string[]> {
     out.add(await realpath(named).catch(() => named))
   }
   return [...out]
+}
+
+/** A process's resident memory in kilobytes, from `ps`, or null if it can't be read. */
+export function psRss(pid: number): Promise<number | null> {
+  return new Promise((resolve) => {
+    execFile('/bin/ps', ['-o', 'rss=', '-p', String(pid)], { timeout: 2_000 }, (error, stdout) => {
+      const kb = Number(String(stdout).trim())
+      resolve(error === null && Number.isFinite(kb) && kb > 0 ? kb : null)
+    })
+  })
 }
 
 /** Resolves a declared path, refusing one that is, or resolves into, a never-grantable place. */
@@ -136,9 +155,11 @@ export function nodeRuntimeProcess(options: NodeRuntimeOptions): ToolProcessFact
     let tempDir: string | null = null
     let tunnels: TunnelSet | null = null
     let lifetime: NodeJS.Timeout | null = null
+    let watchdog: NodeJS.Timeout | null = null
 
     const cleanUp = (): void => {
       if (lifetime !== null) clearTimeout(lifetime)
+      if (watchdog !== null) clearInterval(watchdog)
       tunnels?.close()
       tunnels = null
       if (tempDir !== null) {
@@ -180,10 +201,11 @@ export function nodeRuntimeProcess(options: NodeRuntimeOptions): ToolProcessFact
       )
       const nodeBinary = await realpath(options.nodeBinary)
       const hostScript = await realpath(options.hostScript ?? HOST_SCRIPT)
+      // Ended while starting: whatever was made after exit() ran is cleaned up here instead.
       tempDir = await realpath(await mkdtemp(join(tmpdir(), 'valet-node-')))
-      if (killed) return
+      if (killed) return cleanUp()
       tunnels = await options.openTunnels(endpoints.map((e) => e.key))
-      if (killed) return
+      if (killed) return cleanUp()
       const tunnelMap: Record<string, number> = {}
       for (const e of endpoints) {
         const port = tunnels.ports.get(e.key)
@@ -224,6 +246,22 @@ export function nodeRuntimeProcess(options: NodeRuntimeOptions): ToolProcessFact
       })
       child = proc
       lifetime = setTimeout(exit, options.maxLifetimeMs ?? DEFAULT_MAX_LIFETIME_MS)
+      const maxRssKb = (options.maxRssMb ?? DEFAULT_MAX_RSS_MB) * 1024
+      const sample = options.sampleRss ?? psRss
+      let sampling = false
+      watchdog = setInterval(() => {
+        const pid = proc.pid
+        if (sampling || pid === undefined || exited) return
+        sampling = true
+        void sample(pid)
+          .then((kb) => {
+            if (kb !== null && kb > maxRssKb) exit()
+          })
+          .finally(() => {
+            sampling = false
+          })
+      }, RSS_SAMPLE_MS)
+      watchdog.unref?.()
       proc.once('close', exit)
       proc.once('error', exit)
       let stderr = 0

@@ -131,7 +131,8 @@ function createNpmResolver(lock, packages, builtins) {
       if (from === null) return fail('may not import ' + spec)
       const pj = json(from.key, 'package.json') || {}
       const t = pj.imports && typeof pj.imports === 'object' ? throughMap(pj.imports, spec, conditionsFor(kind)) : undefined
-      if (typeof t !== 'string') return fail(nameOf(from.key) + ' has no ' + spec)
+      // Node allows a relative file or a bare package here, never another # name (no loops).
+      if (typeof t !== 'string' || t.startsWith('#')) return fail(nameOf(from.key) + ' has no ' + spec)
       if (t.startsWith('./')) {
         const path = norm(t.slice(2))
         const found = path !== null && exists(from.key, path) ? path : probe(from.key, path)

@@ -240,7 +240,13 @@ export async function addDependency(
       try {
         checkIntegrity(bytes, integrity)
         // Unpacked once here so a native addon or a malformed tarball is refused now, not at check.
-        unpackTarball(bytes)
+        const files = unpackTarball(bytes)
+        let manifest: { name?: unknown; version?: unknown } | null = null
+        try {
+          manifest = JSON.parse(Buffer.from(files.get('package.json') ?? []).toString('utf8'))
+        } catch {}
+        if (manifest?.name !== pkg || manifest?.version !== version)
+          throw new DependencyError('integrity', `${pkg}@${version}’s tarball holds another package`)
       } catch (error) {
         if (error instanceof TarballError) {
           if (error.rule === 'native-addon')
@@ -250,7 +256,10 @@ export async function addDependency(
             )
           if (error.rule === 'integrity')
             throw new DependencyError('integrity', `${pkg}@${version} doesn’t match its integrity`)
-          throw new DependencyError('too-large', `${pkg}@${version}: ${error.message}`)
+          throw new DependencyError(
+            error.rule === 'too-large' ? 'too-large' : 'registry',
+            `${pkg}@${version}: ${error.message}`,
+          )
         }
         throw error
       }

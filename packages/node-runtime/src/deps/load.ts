@@ -3,7 +3,7 @@
 // and unpacked into memory. A tarball the store doesn't have is fetched again from where the lockfile
 // says, only when the caller allows it, and only from the registry.
 
-import type { DependencyLock } from '@valet/core'
+import { type DependencyLock, parsePackageKey } from '@valet/core'
 import { DependencyError, NPM_REGISTRY } from './registry'
 import type { TarballStore } from './store'
 import { bundleableFiles, checkIntegrity, TARBALL_LIMITS, TarballError, unpackTarball } from './tarball'
@@ -48,13 +48,30 @@ export async function loadDependencies(
       await store.put(entry.integrity, fetched)
       bytes = fetched
     }
+    let files: ReturnType<typeof bundleableFiles>
     try {
-      out[key] = bundleableFiles(unpackTarball(bytes))
+      files = bundleableFiles(unpackTarball(bytes))
     } catch (error) {
       if (error instanceof TarballError && error.rule === 'native-addon')
         throw new DependencyError('native-addon', `${key} carries a native addon (${error.detail})`)
       throw error
     }
+    // The approval card names packages from the lockfile, so the code must be what the key says: a
+    // hand-written lockfile can't put one package's tarball under another's name.
+    const named = parsePackageKey(key)
+    const manifest = parseManifest(files['package.json'])
+    if (named === null || manifest?.name !== named.name || manifest?.version !== named.version)
+      throw new DependencyError('integrity', `${key} isn’t the package its tarball holds`)
+    out[key] = files
   }
   return out
+}
+
+function parseManifest(text: string | undefined): { name?: unknown; version?: unknown } | null {
+  try {
+    const parsed: unknown = JSON.parse(text ?? 'null')
+    return typeof parsed === 'object' ? (parsed as { name?: unknown; version?: unknown } | null) : null
+  } catch {
+    return null
+  }
 }
