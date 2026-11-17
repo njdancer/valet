@@ -144,9 +144,23 @@ export interface SiteReach {
   readonly logins: readonly GrantInfo[]
 }
 
-/** The hosts a site's calls may contact: its pages and its allowed requests, as host names. */
+/**
+ * The hosts a site's calls may contact: its pages and its allowed requests, as host names. A port
+ * isn't part of the name a person knows the site by, so `www.shop.test:8443` and `www.shop.test`
+ * (one from its pages, one from its requests) are listed once.
+ */
 export function siteHosts(detail: AdapterDetail): string[] {
-  return [...new Set([...detail.navigation.map(hostOf), ...detail.egress.map(hostOf)])]
+  return [...new Set([...detail.navigation, ...detail.egress].map(hostNameOf))]
+}
+
+/** `https://www.shop.test:8443` or `www.shop.test` (an egress host) as `www.shop.test`. */
+function hostNameOf(entry: string): string {
+  if (!entry.includes('://')) return entry.replace(/:\d+$/, '')
+  try {
+    return new URL(entry).hostname
+  } catch {
+    return hostOf(entry)
+  }
 }
 
 /**

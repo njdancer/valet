@@ -98,10 +98,26 @@ function reachItems(reach: readonly SiteReach[]) {
   }
 }
 
+/**
+ * Valet's own stop, which refuses every call whatever an app's access: "Has access" and "Can reach 7
+ * tools" under a lockdown read as if nothing had stopped.
+ */
+function useStopped(): 'locked-down' | 'paused' | null {
+  const app = useLoad((a) => a.app.status(), [], ['app-changed'])
+  if (app.status !== 'ready') return null
+  return app.data.lockedDown ? 'locked-down' : app.data.paused ? 'paused' : null
+}
+
+const STOPPED_WORDING = {
+  'locked-down': 'Valet is locked down, so this app can’t reach anything until you unlock it.',
+  paused: 'Valet is paused, so this app’s calls are refused until you resume.',
+} as const
+
 function AppPage({ client }: { readonly client: ClientInfo }) {
   const api = useApi()
   const now = useNow(60_000)
   const reach = useReach()
+  const stopped = useStopped()
   const action = useAction()
   const [asking, setAsking] = useState<'reset' | 'revoke' | null>(null)
   const [announce, setAnnounce] = useState('')
@@ -130,7 +146,17 @@ function AppPage({ client }: { readonly client: ClientInfo }) {
         }
         leading={<AppTile name={client.name} size="lg" />}
         title={client.name}
-        status={revoked ? <Badge>Revoked</Badge> : <Badge tone="success">Has access</Badge>}
+        status={
+          revoked ? (
+            <Badge>Revoked</Badge>
+          ) : stopped === 'locked-down' ? (
+            <Badge tone="danger">Locked down</Badge>
+          ) : stopped === 'paused' ? (
+            <Badge tone="warning">Paused</Badge>
+          ) : (
+            <Badge tone="success">Has access</Badge>
+          )
+        }
         description={
           revoked
             ? `Revoked ${formatDay(client.revokedAt)}. It can’t call Valet; its calls stay in Activity and the audit log.`
@@ -152,7 +178,9 @@ function AppPage({ client }: { readonly client: ClientInfo }) {
           {announce}
         </span>
         <Failed failed={action.failed} what={`change ${client.name}’s access`} />
-        {revoked ? null : (
+        {revoked ? null : stopped !== null ? (
+          <Text tone="muted">{STOPPED_WORDING[stopped]}</Text>
+        ) : (
           <Stack gap={2}>
             {items !== null ? (
               <CanReach title="Can reach" tools={items.tools} hosts={items.hosts} logins={items.logins} />
@@ -196,8 +224,8 @@ function AppPage({ client }: { readonly client: ClientInfo }) {
                   value: revoked
                     ? `Withdrawn ${formatDay(client.revokedAt)}`
                     : client.accessResetAt === null
-                      ? `Its own · issued ${formatDay(client.addedAt)} · never reset`
-                      : `Its own · reset ${formatDay(client.accessResetAt)}`,
+                      ? 'Its own · a new one each time Valet starts'
+                      : `Its own · a new one each time Valet starts · you last reset it ${formatDay(client.accessResetAt)}`,
                 },
                 { term: 'Added', value: formatDay(client.addedAt) },
                 {

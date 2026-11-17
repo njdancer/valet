@@ -4,8 +4,9 @@
 // one action that answers it (IA section 5).
 
 import type { NeedsUserReason } from '@valet/core'
+import { MESSAGES_SECRET } from '@valet/core/vocab'
 import { needsYouTitle } from '@valet/core/vocabulary'
-import type { AttentionItem, ReviewItem, ValetApi } from '../../shared/api'
+import type { AttentionItem, KeysChangedItem, ReviewItem, ValetApi } from '../../shared/api'
 import { href } from './routes'
 import { needsUserWording } from './wording'
 
@@ -31,6 +32,8 @@ export interface NeedsYouView {
   readonly tone: 'accent' | 'warning' | 'danger'
   /** Missed items stay a day, muted, with a follow-up action instead. */
   readonly missed: boolean
+  /** The person can put it away (attention.dismiss) before its cause is over. Absent: false. */
+  readonly dismissable?: boolean
 }
 
 function time(iso: string | null | undefined): number | null {
@@ -48,8 +51,34 @@ export function confirmTitle(toolTitle: string, adapterName: string): string {
   return needsYouTitle({ kind: 'confirmation', adapterName, toolTitle })
 }
 
-export function reviewTitle(adapterName: string, version: string, firstInstall: boolean): string {
-  return needsYouTitle({ kind: 'review', adapterName, version, firstInstall })
+export function reviewTitle(
+  adapterName: string,
+  version: string,
+  firstInstall: boolean,
+  approvedBefore = false,
+): string {
+  return needsYouTitle({ kind: 'review', adapterName, version, firstInstall, approvedBefore })
+}
+
+/** One site's part of the keys-changed notice: "Woolworths (approve again, login, SMS codes)". */
+function keysChangedSite(site: KeysChangedItem['sites'][number]): string {
+  const parts = [
+    ...(site.review ? ['approve again'] : []),
+    ...new Set(site.logins.map((s) => (s === MESSAGES_SECRET ? 'SMS codes' : 'login'))),
+  ]
+  return `${site.adapterName} (${parts.join(', ')})`
+}
+
+/** The keys-changed notice's one action: the first thing to do again. */
+function keysChangedAction(item: KeysChangedItem): { label: string; to: `#/${string}` } {
+  const site = item.sites[0]
+  if (site === undefined) return { label: 'Open Sites', to: href.sites() }
+  if (site.review) return { label: `Review ${site.adapterName} again`, to: href.review(site.adapterId) }
+  const secret = site.logins[0] ?? ''
+  return {
+    label: secret === MESSAGES_SECRET ? 'Allow SMS codes again…' : `Choose ${site.adapterName} login…`,
+    to: href.grant(site.adapterId, secret),
+  }
 }
 
 /**
@@ -112,17 +141,20 @@ export function needsYouView(
         tone: 'warning',
       }
     case 'review': {
-      const first = item.firstInstall ?? firstInstall(item.adapterId)
+      const again = item.approvedBefore === true
+      const first = !again && (item.firstInstall ?? firstInstall(item.adapterId))
       return {
         ...base,
-        title: reviewTitle(item.adapterName, item.version, first),
-        description: reviewDescription(item, first),
+        title: reviewTitle(item.adapterName, item.version, first, again),
+        description: again
+          ? 'This Mac’s approval keys changed, so your earlier approval no longer counts. Its tools are off until you approve it again.'
+          : reviewDescription(item, first),
         adapterId: item.adapterId,
         adapterName: item.adapterName,
         callId: null,
         deadline: null,
         at: 0,
-        actionLabel: first ? 'Review' : 'Review update',
+        actionLabel: first || again ? 'Review' : 'Review update',
         action: { kind: 'route', to: href.review(item.adapterId) },
         tone: 'accent',
       }
@@ -204,6 +236,27 @@ export function needsYouView(
         action: { kind: 'route', to: href.needsYou(item.id) },
         tone: 'accent',
       }
+    case 'keys-changed': {
+      const next = keysChangedAction(item)
+      return {
+        ...base,
+        dismissable: true,
+        title: needsYouTitle({ kind: 'keys-changed' }),
+        description:
+          `The approvals and logins you gave before no longer count. Review each site again to turn it back on: ${item.sites.map(keysChangedSite).join('; ')}.` +
+          (item.others > 0
+            ? ' Other approvals, such as access for cloud agents, are asked for again when needed.'
+            : ''),
+        adapterId: null,
+        adapterName: null,
+        callId: null,
+        deadline: null,
+        at: 0,
+        actionLabel: next.label,
+        action: { kind: 'route', to: next.to },
+        tone: 'warning',
+      }
+    }
     case 'missed':
       return {
         ...base,

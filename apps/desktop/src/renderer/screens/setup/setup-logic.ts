@@ -134,7 +134,20 @@ export function useSetupFacts(): Loaded<SetupFacts> {
  */
 export function useSetupLeft(): number | null {
   const facts = useSetupFacts()
+  const setup = useLoad((a) => a.setup.status(), [], ['settings-changed'])
+  const attention = useLoad((a) => a.attention.list(), [], ['attention-changed'])
   if (facts.status !== 'ready') return null
   const left = stepsLeft(stepsDone(facts.data))
-  return left > 0 ? left : null
+  if (left === 0) return null
+  // Setup was finished, and then this Mac's approval keys changed: the steps read as undone because
+  // the old approvals no longer count, not because setup never happened. The keys-changed item says
+  // what to do again; a "Finish setup" beside it would say the person never set Valet up.
+  if (
+    setup.status === 'ready' &&
+    setup.data.completedAt !== null &&
+    attention.status === 'ready' &&
+    attention.data.some((i) => i.kind === 'keys-changed')
+  )
+    return null
+  return left
 }

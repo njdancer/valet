@@ -137,6 +137,8 @@ async function setup(
     toolProcess?: ToolProcessFactory
     sandbox?: ServiceDeps['sandbox']
     trialDriver?: ServiceDeps['trialDriver']
+    /** Collects the diagnostics log's lines (their types). */
+    diagnostics?: string[]
   } = {},
 ) {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'sa-service-'))
@@ -214,6 +216,9 @@ async function setup(
     ...(options.toolProcess === undefined ? {} : { toolProcess: options.toolProcess }),
     ...(options.sandbox === undefined ? {} : { sandbox: options.sandbox }),
     ...(options.trialDriver === undefined ? {} : { trialDriver: options.trialDriver }),
+    ...(options.diagnostics === undefined
+      ? {}
+      : { diagnostics: (d: { readonly type: string }) => options.diagnostics?.push(d.type) }),
     createDriver: async (_manifest, reporters) => {
       driver.reporters = reporters
       return driver
@@ -706,9 +711,12 @@ describe('an update', () => {
     ;(first.presence as { answer: boolean }).answer = true
     await restarted.api.approvals.approve('shop', next.hash)
     expect((await restarted.api.adapters.list())[0]?.secrets).toEqual([{ name: 'login', granted: true }])
-    // A rejected update takes the kept grant with it: the install's evidence is what backs it.
+    // A rejected update takes the kept grant with it: the install's evidence is what backs it. The
+    // copy left in grants.json reads as given before and no longer counting, never as given.
     await restarted.api.approvals.reject('shop', next.hash)
-    expect((await restarted.api.adapters.list())[0]?.secrets).toEqual([{ name: 'login', granted: false }])
+    expect((await restarted.api.adapters.list())[0]?.secrets).toEqual([
+      { name: 'login', granted: false, lapsed: true },
+    ])
   })
 
   it('keeps nothing when the approved snapshot was edited to hide a widening', async () => {
@@ -1048,6 +1056,18 @@ describe('tool calls', () => {
     s.endpoint.sessionsChanged?.(s.endpoint.live)
     expect(s.events).toEqual([{ type: 'endpoint-changed' }])
     expect((await s.api.endpoint.status()).connectedClients).toBe(2)
+    // One app with a second session (it reconnected, leaving the first behind) is still one app
+    // (persona QA: "2 apps connected" with one app).
+    const again = s.endpoint.live.sessions[1] as LiveSessions['sessions'][number]
+    s.endpoint.live = {
+      ...s.endpoint.live,
+      total: 3,
+      http: 2,
+      sessions: [...s.endpoint.live.sessions, again],
+    }
+    expect((await s.api.endpoint.status()).connectedClients).toBe(2)
+    s.endpoint.live = { total: 2, bridge: 0, http: 2, sessions: [again, again] }
+    expect((await s.api.endpoint.status()).connectedClients).toBe(1)
     const desktop = await s.api.clients.add('Desktop')
     const code = await s.api.clients.add('Code')
     const id = (clientId: string) => ({ origin: 'local' as const, clientId })
@@ -2233,6 +2253,8 @@ describe('an adapter setting (D69)', () => {
       adapterId: 'shop',
     })
     if (item?.kind !== 'agent-request') throw new Error('no item')
+    // The site by the name the person knows it by, not its adapter id (persona QA).
+    expect(item.details[0]).toBe('A Shop setting.')
     expect(item.choices?.map((c) => c.value)).toContain('12')
     expect(item.ref).toMatch(/^[0-9A-F]{4}$/)
     expect(await s.api.attention.approveRequest(asked.requestId, '12')).toBe(true)
@@ -4456,3 +4478,122 @@ function readAudit(path: string): { type: string; [key: string]: unknown }[] {
     .filter((line) => line.trim() !== '')
     .map((line) => (JSON.parse(line) as { event: { type: string } }).event)
 }
+
+describe('when this Mac’s approval keys change (persona QA, key loss)', () => {
+  const grantRequest = (hash: string, secret: 'login' | 'messages') =>
+    secret === 'login'
+      ? {
+          adapterId: 'shop',
+          adapterHash: hash,
+          secret,
+          provider: 'fake' as const,
+          itemRef: 'demo-woolworths',
+          origins: ['https://login.shop.test'],
+        }
+      : {
+          adapterId: 'shop',
+          adapterHash: hash,
+          secret,
+          provider: 'messages' as const,
+          itemRef: 'ShopBank',
+          origins: ['https://login.shop.test'],
+        }
+
+  /** Approved, both grants made, then the Mac's keys are lost and made again at the next start. */
+  async function afterKeyLoss() {
+    const first = await approved()
+    await first.api.grants.make(grantRequest(first.adapter.hash, 'login'))
+    await first.api.grants.make(grantRequest(first.adapter.hash, 'messages'))
+    await first.service.stop()
+    rmSync(join(first.dir, 'approval-keys.json'))
+    const diagnostics: string[] = []
+    const again = await setup({ dir: first.dir, diagnostics })
+    return { ...again, diagnostics }
+  }
+
+  it('still counts nothing the old keys signed, and says so in plain words', async () => {
+    const s = await afterKeyLoss()
+    // The safe outcome stays: no approval, no grant, no call.
+    const summary = (await s.api.adapters.list())[0]
+    expect(summary?.approval).toBe('unapproved')
+    expect(summary?.approvedBefore).toBe(true)
+    expect(await s.api.grants.list()).toEqual([])
+    expect(await s.call('echo', { text: 'hi' })).toMatchObject({ status: 'failed' })
+    expect(s.endpoint.caller?.listTools()).toEqual([])
+    expect(s.diagnostics).toContain('approval-keys-changed')
+
+    const items = await s.api.attention.list()
+    expect(items).toContainEqual({
+      kind: 'keys-changed',
+      id: 'keys-changed',
+      sites: [{ adapterId: 'shop', adapterName: 'Shop', review: true, logins: ['login', 'messages'] }],
+      others: 0,
+    })
+    // The review reads as approving again, not as a first look.
+    expect(items).toContainEqual(
+      expect.objectContaining({
+        kind: 'review',
+        adapterId: 'shop',
+        firstInstall: false,
+        approvedBefore: true,
+      }),
+    )
+    expect((await s.api.approvals.pending())[0]?.approvedBefore).toBe(true)
+    // An agent can tell why a tool is missing.
+    const status = await (s.endpoint.admin as AdminReader).status()
+    expect(status.sites).toMatchObject({ installed: 1, approved: 0, toApproveAgain: 1 })
+  })
+
+  it('lists what is left until each is given again, and never shows a lapsed grant as given', async () => {
+    const s = await afterKeyLoss()
+    const hash = s.adapter.hash
+    await s.api.approvals.approve('shop', hash)
+    const keysItem = async () => (await s.api.attention.list()).find((i) => i.kind === 'keys-changed')
+    expect(await keysItem()).toMatchObject({ sites: [{ review: false, logins: ['login', 'messages'] }] })
+    let summary = (await s.api.adapters.list())[0]
+    expect(summary?.approval).toBe('approved')
+    expect(summary?.approvedBefore).toBeUndefined()
+    expect(summary?.secrets).toEqual([{ name: 'login', granted: false, lapsed: true }])
+    expect(summary?.messagesSources).toEqual([{ sender: 'ShopBank', granted: false, lapsed: true }])
+
+    await s.api.grants.make(grantRequest(hash, 'login'))
+    expect(await keysItem()).toMatchObject({ sites: [{ review: false, logins: ['messages'] }] })
+    summary = (await s.api.adapters.list())[0]
+    expect(summary?.secrets).toEqual([{ name: 'login', granted: true }])
+    // The code grant left in grants.json still doesn't count, and the summary says so.
+    expect(summary?.messagesSources).toEqual([{ sender: 'ShopBank', granted: false, lapsed: true }])
+
+    await s.api.grants.make(grantRequest(hash, 'messages'))
+    expect(await keysItem()).toBeUndefined()
+    summary = (await s.api.adapters.list())[0]
+    expect(summary?.messagesSources).toEqual([{ sender: 'ShopBank', granted: true }])
+  })
+
+  it('can be dismissed, and comes back only if the keys change again', async () => {
+    const s = await afterKeyLoss()
+    await s.api.attention.dismiss('keys-changed')
+    expect((await s.api.attention.list()).some((i) => i.kind === 'keys-changed')).toBe(false)
+    // The review stays: dismissing the notice approves nothing.
+    expect((await s.api.attention.list()).some((i) => i.kind === 'review')).toBe(true)
+    await s.service.stop()
+    const same = await setup({ dir: s.dir })
+    expect((await same.api.attention.list()).some((i) => i.kind === 'keys-changed')).toBe(false)
+    await same.service.stop()
+    rmSync(join(s.dir, 'approval-keys.json'))
+    const changed = await setup({ dir: s.dir })
+    expect((await changed.api.attention.list()).some((i) => i.kind === 'keys-changed')).toBe(true)
+  })
+
+  it('raises nothing on a Mac whose keys never changed', async () => {
+    const diagnostics: string[] = []
+    const first = await approved()
+    await first.api.grants.make(grantRequest(first.adapter.hash, 'login'))
+    await first.service.stop()
+    const again = await setup({ dir: first.dir, diagnostics })
+    expect((await again.api.attention.list()).some((i) => i.kind === 'keys-changed')).toBe(false)
+    expect(diagnostics).not.toContain('approval-keys-changed')
+    await expect(again.api.attention.dismiss('keys-changed')).rejects.toEqual(
+      new ValetError('config', 'not-found'),
+    )
+  })
+})

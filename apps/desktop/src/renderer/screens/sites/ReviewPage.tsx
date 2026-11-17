@@ -312,13 +312,17 @@ function Review({
         name={review.name}
         crumb={`Review ${version}`}
         title={
-          firstInstall
-            ? `Review ${review.name} before first use`
-            : `Review the ${review.name} update (${version})`
+          review.approvedBefore === true
+            ? `Approve ${review.name} again`
+            : firstInstall
+              ? `Review ${review.name} before first use`
+              : `Review the ${review.name} update (${version})`
         }
         status={
           <span className="inline-flex flex-wrap items-center gap-1.5">
-            {firstInstall ? (
+            {review.approvedBefore === true ? (
+              <Badge tone="warning">Approved before · keys changed</Badge>
+            ) : firstInstall ? (
               <Badge tone="info">Not approved yet</Badge>
             ) : review.staged === true && review.from !== null ? (
               <Badge tone="info">Calls use {review.from.version} until you decide</Badge>
@@ -358,6 +362,12 @@ function Review({
         {turnedDown ? (
           <Banner tone="warning" title={`You turned down ${review.name} ${review.to.version}`}>
             Its tools stay off until you approve it. If you’ve changed your mind, review it again below.
+          </Banner>
+        ) : null}
+        {review.approvedBefore === true ? (
+          <Banner tone="warning" title="This Mac’s approval keys changed">
+            You approved {review.name} before, but that approval was signed with this Mac’s old keys, so it no
+            longer counts. Check it as you would a new site, then approve it again to turn its tools back on.
           </Banner>
         ) : null}
         {review.diff.sandbox.unsandboxed ? (

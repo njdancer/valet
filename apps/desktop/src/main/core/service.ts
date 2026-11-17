@@ -88,6 +88,7 @@ import type {
   DraftPage,
   EndpointStatus,
   HashRoute,
+  KeysChangedItem,
   PendingReview,
   RemoteConsentItem,
   RemoteConsentRequest,
@@ -178,6 +179,13 @@ import { FeedbackDeskImpl } from './feedback'
 import { ensurePrivateDir, JsonDocument } from './files'
 import { carriesOver, checkGrantRequest, grantInfo } from './grants'
 import type { AppWindow, MainApi } from './ipc'
+import {
+  KEYS_CHANGED_ID,
+  KeysNotice,
+  keysChangedItem,
+  type OldKeysSigned,
+  signedByOldKeys,
+} from './keys-changed'
 import { createAuthRunner, Handoffs, isBlockedPage, SessionTracker } from './login'
 import { type AppNotification, attentionTitle, Notifier } from './notifications'
 import { type FolderInstall, InstallError, installReason, PackageManager, rollbackEligible } from './packages'
@@ -531,6 +539,14 @@ export class AppService {
   private readonly appState: AppStateStore
   /** Needs you items nobody answered in time, kept 24 hours. */
   private readonly missed: MissedItems
+  /** Whether the person dismissed the approval-keys-changed notice (keys-changed.ts). */
+  private readonly keysNotice: KeysNotice
+  /** signedByOldKeys's answer for the ledger's evidence as last read. */
+  private oldKeys: {
+    readonly evidence: unknown
+    readonly macId: string
+    readonly signed: OldKeysSigned | null
+  } | null = null
   private missedTimer: unknown = null
   private consentTimer: unknown = null
   /** Per adapter: its most recent call, when that failed in a way only an adapter update fixes. */
@@ -599,6 +615,7 @@ export class AppService {
         this.emit('attention-changed')
       },
     })
+    this.keysNotice = new KeysNotice(paths.keysNotice)
     this.audit = new ObservedAudit(new AuditLog(paths.audit, clock), (record) => this.observe(record))
     this.approvals = new ApprovalStore(paths.approvals, this.audit)
     this.grants = new FileGrantStore({ path: paths.grants })
@@ -759,6 +776,7 @@ export class AppService {
     await this.appState.load()
     await this.openApprovals()
     await this.missed.load()
+    await this.keysNotice.load()
     this.scheduleMissedExpiry()
     await this.loadRepairs()
     // Before per-client tokens, every client shared one token in this file. Nothing reads it now,
@@ -1179,7 +1197,7 @@ export class AppService {
     return [
       ...removals,
       ...(this.approvalBroker?.list() ?? []).flatMap((r) => {
-        const item = agentRequestItem(r)
+        const item = agentRequestItem(r, (id) => this.adapter(id)?.definition.manifest.name ?? null)
         return item === null ? [] : [item]
       }),
     ]
@@ -1436,6 +1454,10 @@ export class AppService {
           this.tidyDraftsSoon()
         },
       })
+      // New keys (lost, or made again) void what the old ones signed. Nothing of it counts; the
+      // diagnostics log and Needs you (keysChangedItems) say why.
+      if (signedByOldKeys(ledger.data.evidence, devices.macId) !== null)
+        this.deps.diagnostics?.({ type: 'approval-keys-changed' })
       await this.openPhones(this.approvalBroker, devices, ledger)
     } catch {
       this.approvalBroker = null
@@ -3343,8 +3365,59 @@ export class AppService {
 
   private async states(): Promise<AdapterState[]> {
     const records = await this.reader.records()
-    const grants = await this.signedGrants.list().catch(() => [] as readonly Grant[])
-    return Promise.all(this.installed.map((a) => this.state(a, records, grants)))
+    const stored = await this.grants.list().catch(() => [] as readonly Grant[])
+    const grants = stored.filter((g) => this.grantSigned(g))
+    // Given before and not signed now (the Mac's keys changed, or the file was edited): never
+    // handed out, and shown as to give again rather than as ready.
+    const lapsed = stored.filter((g) => !grants.includes(g))
+    const old = this.oldKeysSigned()
+    const all = await Promise.all(this.installed.map((a) => this.state(a, records, grants)))
+    return all.map((state) => {
+      const id = state.adapter.definition.manifest.id
+      return {
+        ...state,
+        lapsed: lapsed.filter((g) => g.adapterId === id && g.adapterHash === state.adapter.hash),
+        approvedBefore: !state.approved && (old?.installs.has(id) ?? false),
+      }
+    })
+  }
+
+  /** What this Mac's earlier approval keys signed and no longer counts, or null (keys-changed.ts). */
+  private oldKeysSigned(): OldKeysSigned | null {
+    const ledger = this.ledger
+    const macId = this.deviceStore?.macId
+    if (ledger === null || macId === undefined) return null
+    const evidence = ledger.data.evidence
+    if (this.oldKeys?.evidence !== evidence || this.oldKeys.macId !== macId)
+      this.oldKeys = { evidence, macId, signed: signedByOldKeys(evidence, macId) }
+    return this.oldKeys.signed
+  }
+
+  /** The approval-keys-changed notice, while a site still has something to do again and it isn't dismissed. */
+  private keysChangedItems(states: readonly AdapterState[]): KeysChangedItem[] {
+    const old = this.oldKeysSigned()
+    const macId = this.deviceStore?.macId
+    if (old === null || macId === undefined || this.keysNotice.dismissed(macId)) return []
+    const item = keysChangedItem(
+      old,
+      states.map((state) => {
+        const manifest = state.adapter.definition.manifest
+        const declared = new Set(Object.keys(manifest.secrets))
+        if (messagesSourcesIn(manifest.auth.steps).length > 0) declared.add(MESSAGES_SECRET)
+        return {
+          adapterId: manifest.id,
+          adapterName: manifest.name,
+          approved: state.approved,
+          declared,
+          granted: new Set(
+            state.grants
+              .filter((g) => g.adapterId === manifest.id && g.adapterHash === state.adapter.hash)
+              .map((g) => g.secret),
+          ),
+        }
+      }),
+    )
+    return item === null ? [] : [item]
   }
 
   /**
@@ -4130,8 +4203,11 @@ export class AppService {
         status: async (): Promise<EndpointStatus> => ({
           listening: this.endpoint !== null,
           url: this.endpoint?.url ?? null,
-          // Sessions open now, bridged or HTTP, as the endpoint counts them.
-          connectedClients: this.endpoint?.sessions().total ?? 0,
+          // Apps with a session open now, bridged or HTTP: one app reconnecting, or leaving a
+          // session behind when it went away without ending it, is still one app.
+          connectedClients: new Set(
+            (this.endpoint?.sessions().sessions ?? []).map((session) => identityLabel(session.identity)),
+          ).size,
         }),
         setListening: async (listening) => {
           if (listening) {
@@ -4224,9 +4300,16 @@ export class AppService {
             ...states.flatMap(missingItems),
             ...this.repairItems(),
             ...this.missed.list(),
+            ...this.keysChangedItems(states),
           ])
         },
         dismiss: async (id) => {
+          const macId = this.deviceStore?.macId
+          if (id === KEYS_CHANGED_ID && macId !== undefined && this.oldKeysSigned() !== null) {
+            await this.keysNotice.dismiss(macId)
+            this.emit('attention-changed')
+            return
+          }
           if (!this.missed.dismiss(id)) throw new ValetError('config', 'not-found')
         },
         approveRequest: async (id, choice) => {
