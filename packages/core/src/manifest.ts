@@ -2,11 +2,18 @@
 // what a person reviews and approves, and what the runtime enforces. See docs/security-model.md.
 
 import { z } from 'zod'
+import { hostPort, isPrivateHostAddress } from './addresses'
 import { MESSAGES_SECRET } from './credentials'
 import { type ERROR_CLASSES, NEEDS_USER_REASONS, type NeedsUserReason } from './errors'
 import { hostAllowed, isBareOrigin, isHostname, isHostPattern } from './origins'
 import { isScreenedPattern } from './regex-screen'
-import { describeDeclaration } from './request-surface'
+import {
+  BROWSER_METHODS,
+  describeDeclaration,
+  privateHostKey,
+  READ_ONLY_WEBDAV,
+  REQUEST_METHODS,
+} from './request-surface'
 import { sandboxDeclarationSchema } from './sandbox'
 
 const name = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, 'lower snake_case, at most 64 characters')
@@ -16,13 +23,6 @@ const hostPattern = z
   .refine(
     isHostPattern,
     'must be a bare hostname such as api.example.com, optionally prefixed with "*.": no https:// and no path',
-  )
-/** One exact host: a request declaration's, which must also be on an egress host. */
-const exactHost = z
-  .string()
-  .refine(
-    (value) => isHostname(value) && value === value.toLowerCase(),
-    'must be a bare lower-case hostname such as api.example.com: no https://, no path, no "*."',
   )
 const selector = z.string().min(1).max(500)
 const timeoutMs = z.number().int().min(100).max(120_000)
@@ -213,7 +213,67 @@ export const probeSchema = z.discriminatedUnion('kind', [
 ])
 export type Probe = z.infer<typeof probeSchema>
 
-const requestMethod = z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
+const requestMethod = z.enum(REQUEST_METHODS)
+
+/**
+ * The kinds of adapter (docs/adapter-kinds.md): where its code runs and how it reaches the outside.
+ * `browser` drives a real browser's tool partition; `http` calls APIs through Valet's own HTTPS and
+ * WebSocket client, the egress broker; `protocol` and `raw` are designed and not built yet.
+ */
+export const RUNTIME_KINDS = ['browser', 'http', 'protocol', 'raw'] as const
+export type RuntimeKind = (typeof RUNTIME_KINDS)[number]
+/** The kinds a manifest may name today. A workstream that builds a kind adds it here. */
+export const AVAILABLE_RUNTIMES: readonly RuntimeKind[] = ['browser', 'http']
+
+/** The manifest's kind: `browser` when it doesn't say, so every older manifest means what it did. */
+export function runtimeOf(manifest: { readonly runtime?: RuntimeKind | undefined }): RuntimeKind {
+  return manifest.runtime ?? 'browser'
+}
+
+/**
+ * A host on the person's own network (docs/adapter-kinds.md#f1-the-egress-broker). It is an IP
+ * literal in a private range, never a name, so DNS can't move it; never loopback or link-local; and
+ * never a port Valet itself listens on (refused when the broker connects, since those are chosen
+ * at run time). `certSha256` pins a self-signed certificate: the SHA-256 of its DER encoding, in
+ * lower-case hex. A secret Valet keeps is never sent to one over plain `http`.
+ */
+export const privateHostSchema = z
+  .object({
+    address: z
+      .string()
+      .refine(
+        isPrivateHostAddress,
+        'must be a private IP address written in its canonical form, such as 192.168.1.20 or fd00::5: no names, loopback or link-local',
+      ),
+    port: z.number().int().min(1).max(65_535),
+    scheme: z.enum(['https', 'http']).optional(),
+    certSha256: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/, 'the SHA-256 of the certificate, 64 lower-case hex characters')
+      .optional(),
+  })
+  .strict()
+  .refine((host) => !(host.scheme === 'http' && host.certSha256 !== undefined), {
+    message: 'certSha256 pins an https certificate; a plain http host has none',
+  })
+export type PrivateHost = z.infer<typeof privateHostSchema>
+
+/** A request declaration's `host`: an exact egress host name, or a private host's `address:port`. */
+const requestHost = z
+  .string()
+  .max(60)
+  .refine(
+    (value) => (isHostname(value) && value === value.toLowerCase()) || isPrivateHostKey(value),
+    'must be a bare lower-case hostname such as api.example.com, or a private host as address:port: no https://, no path, no "*."',
+  )
+
+function isPrivateHostKey(value: string): boolean {
+  const match = /^(?:\[([0-9a-f:]+)\]|([0-9.]+)):(\d{1,5})$/.exec(value)
+  if (match === null) return false
+  const address = (match[1] ?? match[2]) as string
+  const port = Number(match[3])
+  return isPrivateHostAddress(address) && port >= 1 && port <= 65_535 && hostPort(address, port) === value
+}
 
 export const toolDeclarationSchema = z
   .object({
@@ -314,17 +374,38 @@ export const manifestSchema = z
     name: z.string().min(1).max(80),
     version: z.string().regex(/^\d+\.\d+\.\d+$/),
     description: z.string().min(1).max(1000),
-    /** The site's home page, opened in the tool partition before tool code runs. */
-    home: z.url({ protocol: /^https$/ }),
+    /**
+     * `browser` (the default), or another kind of adapter (docs/adapter-kinds.md). Optional with no
+     * default, so manifests without it hash exactly as before.
+     */
+    runtime: z.enum(RUNTIME_KINDS).optional(),
+    /**
+     * The site's home page, opened in the tool partition before tool code runs. A browser adapter
+     * must give it; an `http` adapter must not, and parsing sets it to its first endpoint, which is
+     * then only the name its pacing and breaker are kept under (nothing opens it).
+     */
+    home: z.url({ protocol: /^https$/ }).optional(),
     /**
      * The site's own cart page, which Valet opens in the person's own browser so they can check out
      * there (Valet never places orders). Must be on a navigation origin. Optional.
      */
     cartUrl: z.url({ protocol: /^https$/ }).optional(),
-    /** Origins the auth partition may navigate to. Anything else aborts the auth action. */
-    navigation: z.array(origin).min(1),
-    /** Hosts the tool partition may send any request to. Everything else is blocked. */
-    egress: z.array(hostPattern).min(1),
+    /**
+     * Origins the auth partition may navigate to. Anything else aborts the auth action. At least
+     * one for a browser adapter; none for an `http` adapter, which opens no pages.
+     */
+    navigation: z.array(origin).default([]),
+    /**
+     * Hosts the tool partition may send any request to. Everything else is blocked. At least one
+     * for a browser adapter. For an `http` adapter, the exact hosts (no "*.") its requests go to,
+     * on port 443 only; it may have none if it reaches only private hosts.
+     */
+    egress: z.array(hostPattern).default([]),
+    /**
+     * `http` adapters only: hosts on the person's own network, by address and port
+     * (docs/adapter-kinds.md#f1-the-egress-broker). Each is a high-risk line on the approval card.
+     */
+    privateHosts: z.array(privateHostSchema).max(10).optional(),
     /** Left out, with session and auth, for a site that needs no login. */
     secrets: z.record(name, secretRequestSchema).default({}),
     session: z
@@ -358,9 +439,15 @@ export const manifestSchema = z
             /**
              * The egress host this request is sent to, for an API on another host than home's
              * (`hacker-news.firebaseio.com`, say). Left out, the declaration applies on every
-             * egress host.
+             * egress host. An `http` adapter names one on every declaration: an egress host, or a
+             * private host as `address:port`.
              */
-            host: exactHost.optional(),
+            host: requestHost.optional(),
+            /**
+             * `http` adapters only: this GET opens a WebSocket (ctx.http.websocket) and may be used
+             * for nothing else. Every message sent on it counts against the run's limits.
+             */
+            websocket: z.literal(true).optional(),
             path: sitePath(300),
             purpose: purposeSchema,
             /**
@@ -406,6 +493,15 @@ export const manifestSchema = z
          * (D28): 50 makes every gap between 1 and 1.5 times minGapMs. Never shorter. Unset: none.
          */
         gapJitterPercent: z.number().int().min(0).max(100).optional(),
+        /**
+         * Adapters other than `browser`: the bytes a `read` tool's run may send, across all its
+         * requests and messages (docs/adapter-kinds.md#f1-the-egress-broker). It grows by 1 KB for
+         * every 100 KB the run receives. Past it the connection is closed and the call fails
+         * `egress/upload-budget`, so a read can't carry much out. Unset: 64 KB.
+         */
+        uploadBytesPerRun: z.number().int().min(1024).max(16_777_216).optional(),
+        /** The same for a `write` or `irreversible` tool's run. Unset: 16 MB. */
+        writeUploadBytesPerRun: z.number().int().min(1024).max(67_108_864).optional(),
         /** First circuit-breaker cool-down after the site blocks or rate-limits us; doubles each time. */
         cooldownSeconds: z.number().int().min(60).max(86_400).default(600),
         maxCooldownSeconds: z.number().int().min(60).max(86_400).default(7200),
@@ -421,6 +517,7 @@ export const manifestSchema = z
   })
   .strict()
   .superRefine((manifest, ctx) => {
+    for (const issue of runtimeIssues(manifest)) ctx.addIssue({ code: 'custom', message: issue })
     // No login is all or nothing: a login needs steps, a probe and somewhere to hand the session.
     const noLogin = manifest.session.probe.kind === 'none'
     const loginParts = [
@@ -483,8 +580,16 @@ export const manifestSchema = z
     }
     for (const request of manifest.requests) {
       const label = describeDeclaration(request)
-      if (request.host !== undefined && !hostAllowed(request.host, manifest.egress)) {
-        ctx.addIssue({ code: 'custom', message: `${label}: host ${request.host} is not on an egress host` })
+      const privateKeys = (manifest.privateHosts ?? []).map(privateHostKey)
+      if (
+        request.host !== undefined &&
+        !privateKeys.includes(request.host) &&
+        !(request.host.includes(':') ? false : hostAllowed(request.host, manifest.egress))
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `${label}: host ${request.host} is not on an egress host or a declared private host`,
+        })
       }
       // Only a read may be answered from a cache, and only a write's response may fill one. An
       // irreversible request is never cached, never fills the cache and is never replayed.
@@ -525,7 +630,11 @@ export const manifestSchema = z
     if (manifest.limits.cooldownSeconds > manifest.limits.maxCooldownSeconds) {
       ctx.addIssue({ code: 'custom', message: 'cooldownSeconds exceeds maxCooldownSeconds' })
     }
-    if (manifest.cartUrl !== undefined && !manifest.navigation.includes(new URL(manifest.cartUrl).origin)) {
+    if (
+      manifest.cartUrl !== undefined &&
+      runtimeOf(manifest) === 'browser' &&
+      !manifest.navigation.includes(new URL(manifest.cartUrl).origin)
+    ) {
       ctx.addIssue({ code: 'custom', message: `cartUrl ${manifest.cartUrl} is not on a navigation origin` })
     }
     for (const [secretName, request] of Object.entries(manifest.secrets)) {
@@ -539,13 +648,124 @@ export const manifestSchema = z
       }
     }
   })
+  .transform((manifest) => ({ ...manifest, home: manifest.home ?? endpointHome(manifest) }))
+
+/**
+ * What an `http` adapter's `home` is set to: its first endpoint as an https URL. Nothing opens it;
+ * the runtime keys the site's pacing and breaker by its host, and the app shows it.
+ */
+function endpointHome(manifest: {
+  readonly egress: readonly string[]
+  readonly privateHosts?: readonly PrivateHost[] | undefined
+}): string {
+  const host = manifest.egress[0]
+  if (host !== undefined) return `https://${host}/`
+  const first = manifest.privateHosts?.[0]
+  // runtimeIssues refuses a manifest with neither, so this is never reached with one.
+  if (first === undefined) throw new Error('an http adapter needs an endpoint')
+  return `https://${first.address.includes(':') ? `[${first.address}]` : first.address}/`
+}
+
+/**
+ * Why a manifest's fields don't fit its kind (docs/adapter-kinds.md#the-kinds-in-detail), as
+ * messages. A browser adapter keeps every rule it had; an `http` adapter opens no pages, so it has
+ * no home, navigation, login or cart, reaches only exact hosts, and names a host on every request.
+ */
+function runtimeIssues(manifest: {
+  readonly runtime?: RuntimeKind | undefined
+  readonly home?: string | undefined
+  readonly cartUrl?: string | undefined
+  readonly navigation: readonly string[]
+  readonly egress: readonly string[]
+  readonly privateHosts?: readonly PrivateHost[] | undefined
+  readonly requests: readonly {
+    readonly method: string
+    readonly host?: string | undefined
+    readonly path: string
+    readonly purpose: string
+    readonly websocket?: true | undefined
+  }[]
+  readonly limits: {
+    readonly uploadBytesPerRun?: number | undefined
+    readonly writeUploadBytesPerRun?: number | undefined
+  }
+}): string[] {
+  const kind = runtimeOf(manifest)
+  if (!AVAILABLE_RUNTIMES.includes(kind)) return [`runtime ${kind} is not available yet`]
+  const issues: string[] = []
+  const nonBrowser = (field: string) => `${field} is only for adapters whose runtime is not browser`
+  if (kind === 'browser') {
+    if (manifest.home === undefined) issues.push('a browser adapter needs home')
+    if (manifest.navigation.length === 0)
+      issues.push('a browser adapter needs at least one navigation origin')
+    if (manifest.egress.length === 0) issues.push('a browser adapter needs at least one egress host')
+    if (manifest.privateHosts !== undefined) issues.push(nonBrowser('privateHosts'))
+    if (manifest.limits.uploadBytesPerRun !== undefined) issues.push(nonBrowser('limits.uploadBytesPerRun'))
+    if (manifest.limits.writeUploadBytesPerRun !== undefined)
+      issues.push(nonBrowser('limits.writeUploadBytesPerRun'))
+    for (const request of manifest.requests) {
+      const label = describeDeclaration(request)
+      if (!(BROWSER_METHODS as readonly string[]).includes(request.method))
+        issues.push(`${label}: ${request.method} is only for http adapters`)
+      if (request.websocket !== undefined) issues.push(`${label}: websocket is only for http adapters`)
+    }
+    return issues
+  }
+  // http
+  if (manifest.home !== undefined) issues.push('an http adapter has no home: it opens no pages')
+  if (manifest.navigation.length > 0) issues.push('an http adapter has no navigation origins')
+  if (manifest.cartUrl !== undefined) issues.push('an http adapter has no cartUrl')
+  for (const host of manifest.egress)
+    if (host.startsWith('*.')) issues.push(`egress ${host}: an http adapter names exact hosts, no "*."`)
+  const privateHosts = manifest.privateHosts ?? []
+  if (manifest.egress.length === 0 && privateHosts.length === 0)
+    issues.push('an http adapter needs an egress host or a private host')
+  const keys = privateHosts.map(privateHostKey)
+  if (new Set(keys).size !== keys.length) issues.push('privateHosts lists the same address and port twice')
+  for (const request of manifest.requests) {
+    const label = describeDeclaration(request)
+    if (request.host === undefined) issues.push(`${label}: an http adapter names the host of every request`)
+    if (request.websocket !== undefined && request.method !== 'GET')
+      issues.push(`${label}: a websocket is opened with GET`)
+    const webdav = !(BROWSER_METHODS as readonly string[]).includes(request.method)
+    if (webdav && request.purpose === 'read' && !READ_ONLY_WEBDAV.includes(request.method))
+      issues.push(`${label}: ${request.method} changes something, so it can't be a read`)
+  }
+  return issues
+}
+
+/** The default upload budgets (docs/adapter-kinds.md#f1-the-egress-broker), in bytes. */
+export const DEFAULT_READ_UPLOAD_BYTES = 64 * 1024
+export const DEFAULT_WRITE_UPLOAD_BYTES = 16 * 1024 * 1024
+
+/**
+ * The bytes one run of a tool with this side effect may send, before what it receives earns it
+ * more: the manifest's limit or the default. A read's budget is the tighter one.
+ */
+export function uploadBudget(
+  manifest: {
+    readonly limits: {
+      readonly uploadBytesPerRun?: number | undefined
+      readonly writeUploadBytesPerRun?: number | undefined
+    }
+  },
+  sideEffect: 'read' | 'write' | 'irreversible',
+): number {
+  return sideEffect === 'read'
+    ? (manifest.limits.uploadBytesPerRun ?? DEFAULT_READ_UPLOAD_BYTES)
+    : (manifest.limits.writeUploadBytesPerRun ?? DEFAULT_WRITE_UPLOAD_BYTES)
+}
 
 /**
  * Why every call of this manifest's tools would fail before tool code runs, or null. The tool page
  * opens home first, so home's host must be on the egress list. Not a schema rule, so that a stored
  * package written before it still loads; drafts are checked against it (valet_check_draft).
  */
-export function homeUnreachable(manifest: Pick<AdapterManifest, 'home' | 'egress'>): string | null {
+export function homeUnreachable(
+  manifest: Pick<AdapterManifest, 'home' | 'egress'> & { readonly runtime?: RuntimeKind | undefined },
+): string | null {
+  // Only a browser adapter opens home.
+  if (runtimeOf(manifest) !== 'browser') return null
   const host = new URL(manifest.home).hostname
   return hostAllowed(host, manifest.egress)
     ? null

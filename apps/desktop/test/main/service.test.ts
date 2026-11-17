@@ -653,7 +653,7 @@ describe('an update', () => {
       {
         ...SHOP,
         version: '1.1.0',
-        navigation: [...SHOP.navigation, 'https://sso.shop.test'],
+        navigation: [...(SHOP.navigation ?? []), 'https://sso.shop.test'],
         secrets: {
           login: { ...SHOP_LOGIN, origins: ['https://login.shop.test', 'https://sso.shop.test'] },
         } as typeof SHOP.secrets,
