@@ -372,6 +372,9 @@ importers:
       '@valet/core':
         specifier: workspace:*
         version: link:../core
+      '@valet/egress':
+        specifier: workspace:*
+        version: link:../egress
       zod:
         specifier: ^4.6.7
         version: 4.6.7
@@ -379,6 +382,9 @@ importers:
       '@valet/adapter-woolworths':
         specifier: workspace:*
         version: link:../../adapters/woolworths
+      '@valet/fake-http-api':
+        specifier: workspace:*
+        version: link:../../fakes/http-api
       '@valet/fake-woolworths-site':
         specifier: workspace:*
         version: link:../../fakes/woolworths-site

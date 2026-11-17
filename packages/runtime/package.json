@@ -15,10 +15,12 @@
   "dependencies": {
     "@valet/auth-flow": "workspace:*",
     "@valet/core": "workspace:*",
+    "@valet/egress": "workspace:*",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@valet/adapter-woolworths": "workspace:*",
+    "@valet/fake-http-api": "workspace:*",
     "@valet/fake-woolworths-site": "workspace:*"
   }
 }

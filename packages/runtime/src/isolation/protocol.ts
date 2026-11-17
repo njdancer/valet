@@ -38,6 +38,12 @@ export const CAPABILITIES = [
   'local.service',
   'local.run',
   'local.appleScript',
+  // The egress broker (docs/adapter-kinds.md#ctxhttp): not-granted unless the runtime isn't browser.
+  'http.fetch',
+  'http.ws.open',
+  'http.ws.send',
+  'http.ws.receive',
+  'http.ws.close',
 ] as const
 export type Capability = (typeof CAPABILITIES)[number]
 

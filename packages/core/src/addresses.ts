@@ -5,6 +5,8 @@
 // one of those)? And is it an address on the person's own network that a manifest may name as a
 // private host (an IP literal, never a name, so DNS can't redirect it)?
 
+import { isHostname } from './origins'
+
 /** Four bytes, or null unless `value` is a dotted quad in plain decimal with no leading zeros. */
 export function parseIPv4(value: string): number[] | null {
   const parts = value.split('.')
@@ -196,4 +198,20 @@ export function isPrivateHostAddress(address: string): boolean {
 /** `address:port` as a URL's host would say it: IPv6 in brackets. */
 export function hostPort(address: string, port: number): string {
   return `${address.includes(':') ? `[${address}]` : address}:${port}`
+}
+
+/**
+ * `host:port` as the runtime writes a raw adapter's endpoint: lower case, an IP literal canonical
+ * and without brackets, a port from 1 to 65535. Null if it isn't one.
+ */
+export function parseEndpoint(value: string): { readonly host: string; readonly port: number } | null {
+  if (typeof value !== 'string') return null
+  const match = /^(.+):(\d{1,5})$/.exec(value)
+  if (match === null) return null
+  const host = (match[1] as string).toLowerCase()
+  const port = Number(match[2])
+  if (port < 1 || port > 65_535) return null
+  const literal = canonicalAddress(host)
+  if (literal !== null) return literal === host ? { host, port } : null
+  return isHostname(host) ? { host, port } : null
 }

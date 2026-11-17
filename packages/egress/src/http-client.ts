@@ -7,8 +7,9 @@ import { request as httpRequest, type IncomingMessage } from 'node:http'
 import type { Socket } from 'node:net'
 import { ValetError } from '@valet/core'
 
-export const MAX_RESPONSE_BYTES = 4 * 1024 * 1024
-export const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024
+/** 2 MB, so that a body still fits the tool channel once written as base64. */
+export const MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+export const MAX_REQUEST_BODY_BYTES = 2 * 1024 * 1024
 export const EXCHANGE_TIMEOUT_MS = 30_000
 /** Response headers past this many bytes are refused, like an oversized body. */
 export const MAX_RESPONSE_HEADER_BYTES = 64 * 1024

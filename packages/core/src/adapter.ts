@@ -2,6 +2,7 @@
 
 import { z } from 'zod'
 import type { ErrorClass, NeedsUserReason, Stage } from './errors'
+import type { HttpAccess } from './http-access'
 import type { LocalAccess } from './local-access'
 import type { AdapterManifest } from './manifest'
 import type { ToolPage } from './page'
@@ -68,6 +69,12 @@ export interface ToolContext {
    * runtime's own contexts and older tests; tool code in the tool process always has it.
    */
   readonly local?: LocalAccess
+  /**
+   * The egress broker, for an `http` adapter (docs/adapter-kinds.md#ctxhttp). Every call from a
+   * browser adapter rejects with `tool-run/not-granted`. Optional for the runtime's own contexts and
+   * older tests; tool code in the tool process always has it.
+   */
+  readonly http?: HttpAccess
 }
 
 export interface ToolImplementation<

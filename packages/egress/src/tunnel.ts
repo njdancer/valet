@@ -14,7 +14,7 @@
 //   when the call's signal aborts.
 
 import { createServer, type Server, type Socket } from 'node:net'
-import { canonicalAddress, type ErrorClass, hostPort, isHostname, ValetError } from '@valet/core'
+import { type ErrorClass, hostPort, parseEndpoint, ValetError } from '@valet/core'
 import type { RunContext } from './broker'
 import { type DialOptions, type DialTarget, dial } from './dial'
 import { MAX_CLIENT_HELLO_BYTES, readClientHello } from './sni'
@@ -29,17 +29,7 @@ export const HELLO_TIMEOUT_MS = 10_000
 /** Connections one tunnel set may carry at once. */
 export const MAX_TUNNEL_CONNECTIONS = 16
 
-/** `host:port` as the runtime writes it: lower case, IPv6 without brackets. Null if it isn't one. */
-export function parseEndpoint(value: string): { readonly host: string; readonly port: number } | null {
-  const match = /^(.+):(\d{1,5})$/.exec(value)
-  if (match === null) return null
-  const host = (match[1] as string).toLowerCase()
-  const port = Number(match[2])
-  if (port < 1 || port > 65_535) return null
-  const literal = canonicalAddress(host)
-  if (literal !== null) return literal === host ? { host, port } : null
-  return isHostname(host) ? { host, port } : null
-}
+export { parseEndpoint }
 
 export interface TunnelEndpointRule {
   /** The endpoint's traffic must be TLS with this host as its SNI. False only for a plain-TCP protocol. */
