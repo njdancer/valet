@@ -182,6 +182,14 @@ function Consent({
       }
     >
       <Stack gap={5}>
+        {answer === 'approved' ? (
+          // Approving one of several leaves the rest here: say the approval worked, and what is left.
+          <Banner live tone="success" title="Approved. Your browser carries on to the connector by itself.">
+            {state.requests.length === 1
+              ? 'Another request is still waiting. If you didn’t start it, decline it.'
+              : `${state.requests.length} other requests are still waiting. If you didn’t start them, decline them.`}
+          </Banner>
+        ) : null}
         <div role="note">
           <Banner
             tone="warning"

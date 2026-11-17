@@ -929,6 +929,16 @@ describe('agents signing in at the hub', () => {
     await mac.online()
     await until(() => mac.grants.length > 1)
     expect(((await result('tools/list')) as { tools: unknown[] }).tools).toHaveLength(1)
+
+    // The person removes the agent on the Mac: its token stops working at once, and every node
+    // hears the grants without it. A grant id the account doesn't hold changes nothing.
+    const heard = mac.grants.length
+    mac.client.send({ type: 'hub-grant-revoke', grantId: 'f'.repeat(64) })
+    await delay(200)
+    expect((await mcp('tools/list')).status).toBe(200)
+    mac.client.send({ type: 'hub-grant-revoke', grantId: hubGrantId(signed) })
+    await until(() => mac.grants.slice(heard).some((g) => g.grants.length === 0))
+    expect((await mcp('tools/list')).status).toBe(401)
   }, 30_000)
 
   it('starts the device list again when the Mac that started it is removed, taking its grants', async () => {

@@ -155,6 +155,9 @@ const BODIES = {
     .strict(),
   internalGrant: z.object({ macId: z.string().regex(KEY_ID), grant: signedHubGrantSchema }).strict(),
   internalDecline: z.object({ macId: z.string().regex(KEY_ID), consentId: hubConsentIdSchema }).strict(),
+  internalRevoke: z
+    .object({ macId: z.string().regex(KEY_ID), grantId: z.string().regex(/^[0-9a-f]{64}$/) })
+    .strict(),
 } as const
 
 export class Hub extends DurableObject<Env> {
@@ -355,6 +358,22 @@ export class Hub extends DurableObject<Env> {
         if (node === null) return this.answer(macId, false)
         this.oauth.decline(consentId)
         await this.tellNodes(node.account_id, macId)
+        return this.answer(macId, true)
+      }
+      case '/node/grant-revoke': {
+        const { macId, grantId } = BODIES.internalRevoke.parse(body)
+        const node = this.node(macId)
+        if (node === null) return this.answer(macId, false)
+        const held = this.one<{ id: string }>(
+          'SELECT id FROM grants WHERE id = ? AND account_id = ?',
+          grantId,
+          node.account_id,
+        )
+        if (held !== null) {
+          this.oauth.revokeGrant(grantId)
+          this.run('DELETE FROM grants WHERE id = ?', grantId)
+          await this.tellNodes(node.account_id, macId)
+        }
         return this.answer(macId, true)
       }
       default:

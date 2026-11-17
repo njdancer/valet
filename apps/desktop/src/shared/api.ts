@@ -1143,6 +1143,19 @@ export interface RemoteClientItem {
   readonly askForChanges: boolean
 }
 
+/** An agent approved through the Valet account: one grant the hub holds and this Mac checked. */
+export interface HubAgentItem {
+  /** The grant's id, 64 hex characters. */
+  readonly id: string
+  readonly host: string
+  /** What it calls itself: a claim. */
+  readonly clientName: string
+  readonly approvedAt: IsoTime
+  readonly expiresAt: IsoTime
+  /** Approved on this Mac (otherwise on another device on the account). */
+  readonly approvedHere: boolean
+}
+
 /** What a cloud agent may do beyond Use tools, ticked on the consent sheet. */
 export type RemoteCapability = 'see-valet' | 'ask-for-changes'
 
@@ -1503,6 +1516,10 @@ export interface ValetApi {
     clients(): Promise<readonly RemoteClientItem[]>
     /** Deletes one client's registration, grant and tokens, and closes its sessions. */
     revokeClient(clientId: string): Promise<void>
+    /** Agents approved through the Valet account (relay-hub.md), as this Mac checked their grants. */
+    hubAgents(): Promise<readonly HubAgentItem[]>
+    /** Removes one at the hub: its tokens stop working on every Mac at once. */
+    revokeHubAgent(grantId: string): Promise<void>
     /**
      * Lets one approved cloud agent ask for changes (with Touch ID), or stops it (at once). Its
      * open sessions close, so its next one has the authoring tools or loses them.

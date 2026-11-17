@@ -11,6 +11,7 @@
 
 import {
   type HubGrant,
+  hubGrantId,
   hubGrantSchema,
   type MacToRelay,
   type RelayToMac,
@@ -42,7 +43,9 @@ export interface HubAgentsOptions {
   readonly channel: ChannelKeys
   /** The account's device list as this Mac verified it, or null while it has none. */
   readonly roster: () => Roster | null
-  readonly send: (frame: Extract<MacToRelay, { type: 'hub-grant' | 'hub-consent-decline' }>) => boolean
+  readonly send: (
+    frame: Extract<MacToRelay, { type: 'hub-grant' | 'hub-consent-decline' | 'hub-grant-revoke' }>,
+  ) => boolean
   readonly now: () => number
   /** The waiting sign-ins changed. `opened`: one this Mac hadn't seen before arrived. */
   readonly onChange: (opened: boolean) => void
@@ -53,6 +56,11 @@ export class HubAgents {
   private held: readonly SignedText[] = []
 
   constructor(private readonly options: HubAgentsOptions) {}
+
+  /** This Mac's id: whose approval key signs the grants it makes. */
+  get macId(): string {
+    return this.options.macId
+  }
 
   /** Sign-ins still waiting, oldest first. */
   consents(): HubConsent[] {
@@ -139,6 +147,18 @@ export class HubAgents {
   /** The hub's grants, whole. Checked when used, against the list as it is then. */
   grantsReceived(grants: readonly SignedText[]): void {
     this.held = grants
+  }
+
+  /**
+   * Removes an agent that signed in through the hub: the hub deletes the grant and the agent's
+   * tokens, and every node stops honouring it. This Mac stops at once, before the hub answers.
+   * False if this Mac holds no such grant or isn't connected.
+   */
+  revoke(grantId: string): boolean {
+    if (!this.grants().some((g) => g.id === grantId)) return false
+    if (!this.options.send({ type: 'hub-grant-revoke', grantId })) return false
+    this.held = this.held.filter((signed) => hubGrantId(signed) !== grantId)
+    return true
   }
 
   /** Grants this Mac checked against the account's list: what it may serve agents through the hub for. */
