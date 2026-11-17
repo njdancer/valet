@@ -1,5 +1,5 @@
 // Reads a package from a development folder (docs/adapter-packages.md#the-package). Only what a
-// package may hold is read: manifest.json and README.md at the top, and the src/, test/ and
+// package may hold is read: manifest.json, README.md and valet-lock.json at the top, and the src/, test/ and
 // fixtures/ folders; anything else at the top (package.json, configs) is left alone, and dotfiles
 // and node_modules are skipped everywhere. Symlinks and anything else that isn't a plain file or
 // folder are refused, checked with lstat and never followed. The files are read into memory once;
@@ -9,7 +9,7 @@ import { lstat, readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PACKAGE_LIMITS, PackageError, type PackageFiles } from '@valet/core'
 
-const TOP_FILES = ['manifest.json', 'README.md']
+const TOP_FILES = ['manifest.json', 'README.md', 'valet-lock.json']
 const TOP_FOLDERS = ['src', 'test', 'fixtures']
 
 export async function readPackageFolder(root: string): Promise<PackageFiles> {

@@ -29,6 +29,7 @@
     "@valet/core": "workspace:*",
     "@valet/credentials": "workspace:*",
     "@valet/mcp-server": "workspace:*",
+    "@valet/node-runtime": "workspace:*",
     "@valet/runtime": "workspace:*",
     "@valet/sandbox": "workspace:*",
     "electron-updater": "^6.8.11",

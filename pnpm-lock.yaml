@@ -113,6 +113,9 @@ importers:
       '@valet/mcp-server':
         specifier: workspace:*
         version: link:../../packages/mcp-server
+      '@valet/node-runtime':
+        specifier: workspace:*
+        version: link:../../packages/node-runtime
       '@valet/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
@@ -331,6 +334,28 @@ importers:
       '@valet/adapter-woolworths':
         specifier: workspace:*
         version: link:../../adapters/woolworths
+
+  packages/node-runtime:
+    dependencies:
+      '@valet/core':
+        specifier: workspace:*
+        version: link:../core
+      '@valet/runtime':
+        specifier: workspace:*
+        version: link:../runtime
+      semver:
+        specifier: 7.8.6
+        version: 7.8.6
+    devDependencies:
+      '@types/semver':
+        specifier: ^7.8.0
+        version: 7.8.0
+      '@valet/adapter-store':
+        specifier: workspace:*
+        version: link:../adapter-store
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
 
   packages/runtime:
     dependencies:
@@ -2401,6 +2426,9 @@ packages:
 
   '@types/responselike@1.0.3':
     resolution: {integrity: sha512-H/+L+UkTV33uf49PH5pCAUBVPNj2nDBXTN+qS1dOwyyg24l3CcicicCA7ca+HMvJBZcFgl5r8e+RR6elsb4Lyw==}
+
+  '@types/semver@7.8.0':
+    resolution: {integrity: sha512-1mAINjtQCXXeLkJ9ehXkwOcBpqtLxiVtKhpUf83DdRNdQKV0iXZpaHYqRr7nj+wvxuJzoAmAwXI+sCNMv1CzLQ==}
 
   '@typescript/typescript-aix-ppc64@7.0.2':
     resolution: {integrity: sha512-MTKKkWB7p/0E9xi1d1tHtZ5PiLkGEMIq88pK2CubZjOsLtYTLqhgIgi6zepFa+9GHZ6h05NMCkQxGKiPXMxXtQ==}
@@ -6340,6 +6368,8 @@ snapshots:
   '@types/responselike@1.0.3':
     dependencies:
       '@types/node': 24.19.2
+
+  '@types/semver@7.8.0': {}
 
   '@typescript/typescript-aix-ppc64@7.0.2':
     optional: true

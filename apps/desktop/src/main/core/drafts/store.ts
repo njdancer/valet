@@ -336,7 +336,7 @@ function checkPath(path: string): void {
     if (error instanceof PackageError)
       throw new DraftError(
         error.rule === 'placement'
-          ? `Not written: ${error.detail} isn’t a place a package may hold that file. src/ holds .ts, test/ .ts and .json, fixtures/ .json, .html and .txt; manifest.json and README.md sit at the top.`
+          ? `Not written: ${error.detail} isn’t a place a package may hold that file. src/ holds .ts, test/ .ts and .json, fixtures/ .json, .html and .txt; manifest.json, README.md and (for a raw adapter) valet-lock.json sit at the top.`
           : `Not written: ${error.detail} isn’t a package path. Use lowercase letters, digits, dots, dashes and underscores, separated by /.`,
       )
     throw error

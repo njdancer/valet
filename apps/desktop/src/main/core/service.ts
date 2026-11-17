@@ -59,6 +59,7 @@ import {
   type ToolCall,
   type ToolCaller,
 } from '@valet/mcp-server'
+import { addDependency, diskTarballStore } from '@valet/node-runtime'
 import {
   ApprovalStore,
   AuditLog,
@@ -2773,6 +2774,11 @@ export class AppService {
       },
       notify: (text) => this.notifier.draftActivity(text),
       now: this.deps.now,
+      // Raw drafts' npm packages, kept by integrity in Valet's own folder (docs/node-runtime.md).
+      dependencies: {
+        add: (lock, name, range) =>
+          addDependency(lock, name, range, diskTarballStore(join(this.deps.paths.dir, 'npm-tarballs'))),
+      },
       ...(this.deps.scratch === undefined ? {} : { research: this.scratchSessions(this.deps.scratch) }),
       ...(this.deps.fixtureBrowser === undefined ? {} : { caseBrowser: this.deps.fixtureBrowser }),
       ...(this.deps.trialDriver === undefined
