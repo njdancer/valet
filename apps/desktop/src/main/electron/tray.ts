@@ -7,6 +7,7 @@
 // it revokes every remote access token, fails remote calls in flight and closes the listener.
 
 import { dialog, Menu, nativeImage, Tray } from 'electron'
+import { waitingCount } from '../../shared/waiting-count'
 import type { MainApi } from '../core/ipc'
 import { remoteTrayState, type TrayRemote } from '../core/tray-remote'
 import type { AppWindows } from './windows'
@@ -35,7 +36,7 @@ export function createTray(windows: AppWindows, api: MainApi, demo: boolean, rem
     void api.attention
       .list()
       .then((items) => {
-        needsYou = items.filter((i) => i.kind !== 'missed').length
+        needsYou = waitingCount(items)
         show()
       })
       .catch(() => undefined)

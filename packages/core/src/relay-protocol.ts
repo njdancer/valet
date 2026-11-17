@@ -537,6 +537,12 @@ export const macToRelaySchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('hub-grant'), grant: signedHubGrantSchema }).strict(),
   /** The person declined an agent's sign-in at the hub. */
   z.object({ type: z.literal('hub-consent-decline'), consentId: hubConsentIdSchema }).strict(),
+  /**
+   * The person removed an agent that signed in at the hub: the hub deletes its grant and the agent's
+   * tokens at once, and every node hears the account's grants without it. Any node on the account
+   * may ask; taking access away needs no signature.
+   */
+  z.object({ type: z.literal('hub-grant-revoke'), grantId: z.string().regex(/^[0-9a-f]{64}$/) }).strict(),
 ])
 export type MacToRelay = z.infer<typeof macToRelaySchema>
 
