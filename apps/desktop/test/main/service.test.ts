@@ -39,6 +39,7 @@ import { MemoryKeychain, ValetKeys } from '@valet/credentials'
 import { EgressBroker, type OpenTunnels } from '@valet/egress'
 import { startFakeApi } from '@valet/fake-http-api'
 import { DEFAULT_USER, startFakeImap } from '@valet/fake-imap'
+import { fingerprint, keyPair, startFakeSftp } from '@valet/fake-sftp'
 import {
   ADMIN_LOCKED_DOWN_RESULT,
   ADMIN_OTHER_AGENT_RESULT,
@@ -64,8 +65,8 @@ import {
   withAnswers,
 } from '@valet/mcp-server'
 import { loadDependencies, memoryTarballStore, nodeRuntimeProcess } from '@valet/node-runtime'
-import { HostMailReader, imapBackend, type ProtocolHostOptions } from '@valet/protocols'
-import { writeProtocolHost } from '@valet/protocols/build'
+import { HostMailReader, imapBackend, type ProtocolHostOptions, sftpBackend } from '@valet/protocols'
+import { writeProtocolHost, writeSftpHost } from '@valet/protocols/build'
 import { LoginAttemptMarker, type ToolProcessFactory } from '@valet/runtime'
 import { inMemoryToolProcess } from '@valet/runtime/in-context'
 import { buildToolLibrary } from '@valet/runtime/tool-script'
@@ -157,6 +158,7 @@ async function setup(
     diagnostics?: string[]
     egress?: ServiceDeps['egress']
     imap?: ServiceDeps['imap']
+    sftp?: ServiceDeps['sftp']
     mailReader?: ServiceDeps['mailReader']
     raw?: ServiceDeps['raw']
   } = {},
@@ -241,6 +243,7 @@ async function setup(
       : { diagnostics: (d: { readonly type: string }) => options.diagnostics?.push(d.type) }),
     ...(options.egress === undefined ? {} : { egress: options.egress }),
     ...(options.imap === undefined ? {} : { imap: options.imap }),
+    ...(options.sftp === undefined ? {} : { sftp: options.sftp }),
     ...(options.mailReader === undefined ? {} : { mailReader: options.mailReader }),
     ...(options.raw === undefined ? {} : { raw: options.raw }),
     createDriver: async (_manifest, reporters) => {
@@ -4762,6 +4765,141 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
       status: 'failed',
       errorClass: 'not-granted',
     })
+  })
+
+  describe('SFTP adapters (docs/sftp.md)', () => {
+    const NAS = 'nas.example.test:22'
+    const hostKey = keyPair()
+    const nasManifest: ManifestInput = {
+      schemaVersion: 1,
+      id: 'nas-files',
+      name: 'NAS files',
+      version: '1.0.0',
+      description: 'Reads documents on the NAS.',
+      runtime: 'protocol',
+      protocols: {
+        sftp: {
+          endpoint: NAS,
+          credential: 'nas',
+          hostKeySha256: fingerprint(hostKey.public),
+          username: 'nick',
+          roots: [{ path: '/docs', access: 'read' }],
+        },
+      },
+      credentials: {
+        nas: {
+          description: 'A key Valet made for the NAS',
+          kind: 'ssh-key',
+          custody: 'kept',
+          use: { protocol: 'sftp', endpoint: NAS },
+        },
+      },
+      tools: [{ name: 'readme', title: 'Read me', description: 'Reads the readme.', sideEffect: 'read' }],
+    } as ManifestInput
+    const nasTools = [
+      "import { z } from 'zod'",
+      'export const tools = {',
+      '  readme: { input: z.object({}), output: z.unknown(), run: async (ctx) => {',
+      "    const listed = await ctx.sftp.list('/docs')",
+      "    const read = await ctx.sftp.read('/docs/readme.txt', { encoding: 'utf8' })",
+      '    let wrote = null',
+      "    try { await ctx.sftp.write('/docs/x.txt', 'x') } catch (e) { wrote = String(e.message ?? e) }",
+      '    return { names: listed.entries.map((e) => e.name), text: read.text, wrote }',
+      '  } },',
+      '}',
+    ].join('\n')
+
+    it('runs ctx.sftp through the SFTP host, signed in with a key Valet made, the host key pinned', async () => {
+      const keys = new ValetKeys({ keychain: new MemoryKeychain(), service: 'valet.test.sftp' })
+      const credentials: Credentials = { ...testCredentials(disabledOtpReader), valetKeys: () => keys }
+      const home = mkdtempSync(join(tmpdir(), 'sa-sftp-home-'))
+      dirs.push(home)
+      const hostDir = mkdtempSync(join(tmpdir(), 'sa-sftp-host-'))
+      dirs.push(hostDir)
+      const host = {
+        nodeBinary: process.execPath,
+        hostScript: await writeSftpHost(join(hostDir, 'sftp-host.cjs')),
+        home,
+        withoutSeatbelt: process.platform !== 'darwin',
+        operationTimeoutMs: 15_000,
+      } as ProtocolHostOptions
+      const at = { port: 0 }
+      const broker = {
+        lookup: (_n: string, cb: (e: Error | null, a: { address: string; family: number }[]) => void) =>
+          cb(null, [{ address: '127.0.0.1', family: 4 }]),
+        testing: { allowAddresses: ['127.0.0.1'], route: () => ({ address: '127.0.0.1', port: at.port }) },
+      }
+      const start = inMemoryToolProcess()
+      const prelude = await buildToolLibrary()
+      const picked = { next: null as PackageFiles | null }
+      const s = await setup({
+        packages: {
+          builtins: [],
+          runtime: { prelude, start },
+          build: buildRecord('0.1.0', prelude),
+          folders: { pick: async () => picked.next },
+        },
+        toolProcess: start,
+        credentials,
+        // The app's own wiring (electron/app.ts), with the broker sent to the fake server.
+        sftp: (protocol) => sftpBackend({ protocol, host, broker }),
+      })
+      let server: Awaited<ReturnType<typeof startFakeSftp>> | null = null
+      try {
+        picked.next = packageOf(parseManifest(nasManifest), { 'src/tools.ts': nasTools })
+        const installed = await s.api.adapters.installFromFolder()
+        expect(installed).toMatchObject({ ok: true })
+        const hash = (await s.api.approvals.pending()).find((r) => r.adapterId === 'nas-files')?.to.hash ?? ''
+        await s.api.approvals.approve('nas-files', hash)
+        const key = await s.api.credentials.generateKey('nas-files', 'nas')
+        expect(key.publicKey).toMatch(/^ssh-ed25519 /)
+        server = await startFakeSftp({
+          hostKey: hostKey.private,
+          authorizedKey: key.publicKey,
+          files: { '/docs/readme.txt': 'hello from the NAS', '/docs/notes/': '' },
+        })
+        at.port = server.port
+        const call = () =>
+          (s.endpoint.caller as ToolCaller).call({
+            adapterId: 'nas-files',
+            tool: 'readme',
+            input: {},
+            client: 'Claude Code',
+            callId: `call_sftp_${Math.random().toString(36).slice(2)}`,
+            transport: 'http',
+          })
+        // Not granted: refused before the server hears anything.
+        expect(await call()).toMatchObject({ status: 'failed', errorClass: 'not-granted' })
+        expect(server.logins).toEqual([])
+        await s.api.credentials.make({
+          adapterId: 'nas-files',
+          adapterHash: hash,
+          credential: 'nas',
+          provider: 'valet-key',
+          itemId: key.itemRef,
+        })
+        const result = await call()
+        // The write is refused in the main process, which ends the call: a read tool never writes.
+        expect(result).toMatchObject({ status: 'failed', errorClass: 'command-not-allowed' })
+        expect(server.logins.filter((l) => l.ok)).toEqual([
+          { username: 'nick', method: 'publickey', ok: true },
+        ])
+        expect(server.requests.some((r) => r.type === 'OPEN' && r.path === '/docs/readme.txt')).toBe(true)
+        expect(server.requests.some((r) => r.type === 'WRITE' || r.path === '/docs/x.txt')).toBe(false)
+        const audit = readAudit(s.paths.audit)
+        expect(audit).toContainEqual(
+          expect.objectContaining({ type: 'request-blocked', adapterId: 'nas-files', method: 'SFTP' }),
+        )
+        await vi.waitFor(() =>
+          expect(readAudit(s.paths.audit)).toContainEqual(
+            expect.objectContaining({ type: 'egress-connection', adapterId: 'nas-files', kind: 'tunnel' }),
+          ),
+        )
+      } finally {
+        await s.service.stop()
+        await server?.close()
+      }
+    }, 60_000)
   })
 
   describe('mail adapters and sign-in mail (docs/imap.md)', () => {

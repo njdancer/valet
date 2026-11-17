@@ -8,6 +8,9 @@ import { join } from 'node:path'
 export const PROTOCOL_HOST_FILE = 'protocol-host.cjs'
 /** Its path inside the app's files, which electron-builder unpacks beside app.asar. */
 export const PROTOCOL_HOST_PACKAGED = `out/main/${PROTOCOL_HOST_FILE}`
+/** The SFTP host (docs/sftp.md#the-protocol-host): its own bundle, since it carries ssh2. */
+export const SFTP_HOST_FILE = 'sftp-host.cjs'
+export const SFTP_HOST_PACKAGED = `out/main/${SFTP_HOST_FILE}`
 export interface ProtocolHostPlaces {
   readonly packaged: boolean
   /** process.resourcesPath: Contents/Resources when packaged. */
@@ -23,8 +26,17 @@ export interface ProtocolHostPlaces {
  * and sign-in mail is unavailable.
  */
 export function protocolHostScript(places: ProtocolHostPlaces): string | null {
-  const hostScript = places.packaged
-    ? join(places.resourcesPath, 'app.asar.unpacked', PROTOCOL_HOST_PACKAGED)
-    : join(places.mainDir, PROTOCOL_HOST_FILE)
-  return places.exists(hostScript) ? hostScript : null
+  return hostScript(places, PROTOCOL_HOST_FILE, PROTOCOL_HOST_PACKAGED)
+}
+
+/** The bundled SFTP host script, or null if it is missing: then SFTP adapters' calls end not-granted. */
+export function sftpHostScript(places: ProtocolHostPlaces): string | null {
+  return hostScript(places, SFTP_HOST_FILE, SFTP_HOST_PACKAGED)
+}
+
+function hostScript(places: ProtocolHostPlaces, file: string, packaged: string): string | null {
+  const script = places.packaged
+    ? join(places.resourcesPath, 'app.asar.unpacked', packaged)
+    : join(places.mainDir, file)
+  return places.exists(script) ? script : null
 }

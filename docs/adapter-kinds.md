@@ -706,9 +706,10 @@ note it here. Each one can be reversed.
   code). SSH sends small writes one at a time; without it each operation took about a second.
 - **No authoring support yet.** `valet_create_draft` makes `browser` and `http` drafts only, as for
   IMAP, so the guide doesn't describe `ctx.sftp` until drafts can be `protocol` ones.
-- **The app wiring is a separate pull request**, following IMAP's (the SFTP host bundled beside
-  the IMAP one, on the raw runtime's Node binary). Until it lands, the app registers no SFTP
-  backend, so SFTP tools answer not-granted.
+- **The app ships the SFTP host as its own file** (`out/main/sftp-host.cjs`, unpacked beside
+  app.asar like the IMAP host) and runs it on the raw runtime's Node binary. Without either, SFTP
+  tools answer not-granted. ssh2's `child_process`, `dns` and `fs` are replaced in the bundle by
+  stubs that throw: the host never spawns, looks up a name or reads a file.
 - **Residual risks.** Another client of the same server can swap a folder for a link between
   Valet's check and its use; SFTP has no way to open relative to a checked handle. A root that the
   server resolves to `/` widens what the resolved-path check allows to everything that account can

@@ -183,6 +183,9 @@ importers:
       '@valet/fake-onepassword':
         specifier: workspace:*
         version: link:../../fakes/onepassword
+      '@valet/fake-sftp':
+        specifier: workspace:*
+        version: link:../../fakes/sftp
       '@valet/fake-woolworths-site':
         specifier: workspace:*
         version: link:../../fakes/woolworths-site
