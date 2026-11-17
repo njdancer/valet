@@ -2,6 +2,7 @@
 // replies come back in five types, which the redis-parser npm package reads, however the bytes are
 // split across packets. Pure apart from the parser it is handed.
 
+// biome-ignore lint/suspicious/noExplicitAny: Node's require, which tool code has untyped
 declare const require: (id: string) => any
 declare const Buffer: { from(text: string, encoding: string): unknown }
 

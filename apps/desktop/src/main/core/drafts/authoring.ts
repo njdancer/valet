@@ -54,6 +54,7 @@ import {
   lint,
   siteDomain,
 } from './checks'
+import { draftFromExample, EXAMPLES, type Example } from './examples'
 import type { RepairTicket } from './repairs'
 import {
   draftDomains,
@@ -67,7 +68,6 @@ import {
 } from './research'
 import { siteInputType, siteMethod, siteMime, siteRole, siteTag } from './site-text'
 import { DRAFT_LIMITS, DraftError, type DraftRecord, type DraftStore, type TrialSummary } from './store'
-import { draftFromExample, EXAMPLES, type Example } from './examples'
 import { blankDraft, blankHttpDraft, blankRawDraft } from './template'
 import { runTrial, type SignedInTrial, TRIAL_LIMITS, type TrialDeps, type TrialResult } from './trial'
 

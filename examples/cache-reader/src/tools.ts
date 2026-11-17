@@ -11,6 +11,7 @@ import { type ToolContext, tool, ValetError } from '@valet/core'
 import { z } from 'zod'
 import { decodeAll, encode, type Reply, replyReader } from './resp'
 
+// biome-ignore lint/suspicious/noExplicitAny: Node's require, which tool code has untyped
 declare const require: (id: string) => any
 
 const HOST = 'cache.example.com'

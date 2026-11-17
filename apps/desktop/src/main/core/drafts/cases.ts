@@ -34,10 +34,10 @@ import { type ExchangeResult, type RunContext, RunMeter, requestSize } from '@va
 import {
   CallState,
   CredentialGate,
+  type EgressSocket,
   failureDetail,
   GuardedHttp,
   GuardedToolPage,
-  type EgressSocket,
   type HttpEgress,
   NO_HTTP_ACCESS,
   NO_PAGE,

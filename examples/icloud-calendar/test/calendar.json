@@ -215,7 +215,7 @@
           "status": 207,
           "contentType": "application/xml; charset=utf-8",
           "body": {
-            "inline": "<?xml version=\"1.0\"?><d:multistatus xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\"><d:response><d:href>/1234567890/calendars/work/a.ics</d:href><d:propstat><d:prop><c:calendar-data>BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:a\r\nDTSTART;TZID=Australia/Sydney:20261119T090000\r\nDTEND;TZID=Australia/Sydney:20261119T093000\r\nSUMMARY:Planning\\; then review\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:b\r\nDTSTART;VALUE=DATE:20261121\r\nDTEND;VALUE=DATE:20261122\r\nSUMMARY:Offsite\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n</c:calendar-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat><d:propstat><d:prop><d:getetag/></d:prop><d:status>HTTP/1.1 404 Not Found</d:status></d:propstat></d:response></d:multistatus>"
+            "inline": "<?xml version=\"1.0\"?><d:multistatus xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\"><d:response><d:href>/1234567890/calendars/work/a.ics</d:href><d:propstat><d:prop><c:calendar-data>BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:a\r\nDTSTART;TZID=Australia/Sydney:20261119T090000\r\nDTEND;TZID=Australia/Sydney:20261119T093000\r\nSUMMARY:Planning\\; then review\\\\notes\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:b\r\nDTSTART;VALUE=DATE:20261121\r\nDTEND;VALUE=DATE:20261122\r\nSUMMARY:Offsite\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n</c:calendar-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat><d:propstat><d:prop><d:getetag/></d:prop><d:status>HTTP/1.1 404 Not Found</d:status></d:propstat></d:response></d:multistatus>"
           }
         }
       ],
@@ -224,7 +224,7 @@
           "events": [
             {
               "calendar": "work",
-              "title": "Planning; then review",
+              "title": "Planning; then review\\notes",
               "start": "2026-11-19T09:00:00",
               "end": "2026-11-19T09:30:00",
               "allDay": false,

@@ -21,7 +21,7 @@ export function unfold(text: string): string[] {
 }
 
 export function unescapeText(value: string): string {
-  return value.replace(/\\([\;,nN])/g, (_m, c: string) => (c === 'n' || c === 'N' ? '\n' : c))
+  return value.replace(/\\([\\;,nN])/g, (_m, c: string) => (c === 'n' || c === 'N' ? '\n' : c))
 }
 
 export function escapeText(value: string): string {
