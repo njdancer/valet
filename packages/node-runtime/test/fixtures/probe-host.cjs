@@ -41,7 +41,7 @@ const actions = {
     new Promise((resolve) => {
       const socket = require('node:dgram').createSocket('udp4')
       socket.on('error', (e) => resolve(code(e)))
-      socket.send('x', a.port, a.host, (e) => {
+      socket.send('x', a.port === 'tunnel' ? Object.values(tunnels)[0] : a.port, a.host, (e) => {
         socket.close()
         resolve(e ? code(e) : 'ok')
       })

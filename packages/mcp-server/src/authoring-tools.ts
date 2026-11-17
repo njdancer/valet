@@ -319,10 +319,12 @@ export interface Authoring {
     viewer: ClientIdentity,
     request: {
       readonly adapterId: string
-      readonly from: 'blank' | 'installed'
+      readonly from: 'blank' | 'installed' | 'example'
       readonly name?: string
       /** For a blank draft: what kind of adapter it starts as (docs/adapter-kinds.md). */
       readonly runtime?: 'browser' | 'http' | 'raw'
+      /** For from "example": which worked example to copy. */
+      readonly example?: string
     },
   ): Promise<DraftDetail>
   listDrafts(viewer: ClientIdentity, all: boolean): Promise<DraftList>
@@ -469,21 +471,29 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
     title: 'Start an adapter draft',
     description:
       'Starts a draft adapter for one site. from "blank" writes a starter package to edit (manifest.json, ' +
-      'src/tools.ts, test/example.json); from "installed" copies the installed adapter with that id, to update ' +
-      'or repair it. The person is told a draft was started. Then write files with valet_write_draft_file, run ' +
+      'src/tools.ts, test/example.json); from "example" copies one of Valet’s worked examples (named in ' +
+      'valet_authoring_guide: an http API, feeds, CalDAV, CardDAV, a WebSocket device, a raw npm client) to adapt; ' +
+      'from "installed" copies the installed adapter with that id, to update or repair it. The person is told a draft was started. Then write files with valet_write_draft_file, run ' +
       'valet_check_draft until it passes, and valet_submit_draft to ask the person to install it. ' +
       'valet_authoring_guide has the manifest, sign-in, tool code and case formats. Look at other ' +
       'people’s adapters on the web for reference if you like, but write your own: Valet never installs anyone ' +
       'else’s.',
     input: z.object({
       adapterId: z.string().regex(ADAPTER_ID).describe('The adapter’s id: lowercase, e.g. "yahoo-finance".'),
-      from: z.enum(['blank', 'installed']).default('blank'),
+      from: z.enum(['blank', 'installed', 'example']).default('blank'),
+      example: z
+        .string()
+        .regex(/^[a-z0-9-]{1,40}$/)
+        .optional()
+        .describe(
+          'With from "example": the example’s name, e.g. "hacker-news". valet_authoring_guide lists them.',
+        ),
       name: z
         .string()
         .min(1)
         .max(80)
         .optional()
-        .describe('The site’s name, for a blank draft, e.g. "Yahoo Finance".'),
+        .describe('The site’s name, for a blank draft or one from an example, e.g. "Yahoo Finance".'),
       runtime: z
         .enum(['browser', 'http', 'raw'])
         .optional()
@@ -505,7 +515,8 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
     run: (a, args, s) =>
       a.createDraft(s.viewer, {
         adapterId: args['adapterId'] as string,
-        from: (args['from'] as 'blank' | 'installed' | undefined) ?? 'blank',
+        from: (args['from'] as 'blank' | 'installed' | 'example' | undefined) ?? 'blank',
+        ...(typeof args['example'] === 'string' ? { example: args['example'] } : {}),
         ...(typeof args['name'] === 'string' ? { name: args['name'] } : {}),
         ...(args['runtime'] === 'http' || args['runtime'] === 'browser' || args['runtime'] === 'raw'
           ? { runtime: args['runtime'] }

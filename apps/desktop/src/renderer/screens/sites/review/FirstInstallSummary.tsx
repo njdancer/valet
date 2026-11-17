@@ -14,7 +14,7 @@ import {
 } from '@valet/ui'
 import type { PendingReview } from '../../../../shared/api'
 import { hostOf, plural } from '../../../lib/format'
-import { reviewLogsIn } from '../../../lib/permissions'
+import { reachLines, reviewLogsIn } from '../../../lib/permissions'
 import { FIELD_WORDING } from '../../../lib/wording'
 import { capText, PURPOSE_WORDING } from './words'
 
@@ -29,7 +29,23 @@ export function FirstInstallSummary({ review }: { readonly review: PendingReview
   const counts = PURPOSES.filter((p) => of(p).length > 0).map(
     (p) => `${of(p).length} ${p === 'read' ? 'read' : p === 'write' ? 'change things' : 'can’t be undone'}`,
   )
+  // The kind, raw endpoints, private hosts, mail folders and recipients, as the signed card says them.
+  const reach = reachLines(diff).flatMap((line) => line.items)
   const items = [
+    ...(reach.length === 0
+      ? []
+      : [
+          {
+            term: 'Kind and reach',
+            value: (
+              <span className="flex flex-col gap-1.5">
+                {reach.map((item) => (
+                  <span key={item}>{item}</span>
+                ))}
+              </span>
+            ),
+          },
+        ]),
     {
       term: 'Opens pages on',
       value: <Hosts hosts={diff.navigation.added.map(hostOf)} />,

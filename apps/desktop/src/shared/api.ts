@@ -16,6 +16,7 @@ import type {
   BlockedRequest,
   ErrorClass,
   NeedsUserReason,
+  PermissionChange,
   ProviderKind,
   Purpose,
   RequestDeclaration,
@@ -378,6 +379,13 @@ export interface PermissionDiff {
   readonly privateHosts?: ListDiff<string>
   /** The adapter's kind before (null for a first install) and after, as the card says it. */
   readonly runtime?: { readonly before: string | null; readonly after: string }
+  /**
+   * What the adapter's kind lets it reach, as the signed card says it: the kind, a raw adapter's
+   * endpoints, the private hosts, and a protocol adapter's folders and recipients
+   * (runtimePermissionChanges and protocolPermissionChanges). An added or widened line asks for the
+   * tick, so the Mac can't say "nothing new" where the phone's card has a line (red team I).
+   */
+  readonly reach?: readonly PermissionChange[]
 }
 
 export interface SandboxDiff {

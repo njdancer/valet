@@ -28,6 +28,9 @@ import {
   type ProviderKind,
   parseMailGrantRef,
   ValetError,
+  widenedImapFolders,
+  widenedRecipients,
+  widenedSftpRoots,
 } from '@valet/core'
 import type { GrantInfo, GrantRequest, VaultItem } from '../../shared/api'
 import { VAULT } from './constants'
@@ -258,6 +261,25 @@ export function credentialCarriesOver(
   if (a.kind !== b.kind || a.custody !== b.custody || grant.kind !== b.kind || grant.custody !== b.custody)
     return false
   if (canonicalJson(withoutTargets(a)) !== canonicalJson(withoutTargets(b))) return false
+  // A kept mail credential covers what its protocol's scope lets tools do with it: more folders, or
+  // more recipients, is a wider use of the same password, so it is asked for again (red team I).
+  const wider = (w: string | readonly string[]) => w === 'every' || w === 'anyone' || w.length > 0
+  if (
+    after.protocols?.imap?.credential === grant.credential &&
+    wider(widenedImapFolders(before.protocols, after.protocols))
+  )
+    return false
+  if (
+    after.protocols?.smtp?.credential === grant.credential &&
+    wider(widenedRecipients(before.protocols, after.protocols))
+  )
+    return false
+  // Likewise an SFTP key: a new or wider root, or another server, account or host key.
+  if (
+    after.protocols?.sftp?.credential === grant.credential &&
+    wider(widenedSftpRoots(before.protocols, after.protocols))
+  )
+    return false
   const prev = credentialTargets(a)
   const next = credentialTargets(b)
   if (!next.every((t) => prev.includes(t))) return false

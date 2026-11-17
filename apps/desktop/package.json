@@ -50,6 +50,7 @@
     "@types/qrcode": "1.5.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "@valet/fake-example-services": "workspace:*",
     "@valet/fake-http-api": "workspace:*",
     "@valet/fake-imap": "workspace:*",
     "@valet/fake-onepassword": "workspace:*",

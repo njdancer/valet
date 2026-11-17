@@ -12,6 +12,21 @@ A draft is a package: \`manifest.json\`, code under \`src/\` (entry \`src/tools.
 \`test/*.json\` and saved pages and answers under \`fixtures/\`. \`manifestSchema\` in this answer is
 the manifest's JSON Schema; valet_check_draft says what any file gets wrong.
 
+## Worked examples
+
+\`valet_create_draft\` with \`from: "example"\` and an \`example\` name copies one of these, with your id
+and name, to read or adapt. Each passes its own check; each README says what it shows.
+
+- \`hacker-news\`: an http adapter reading a public JSON API, no login.
+- \`feed-reader\`: RSS and Atom from two hosts with \`parseFeed\`.
+- \`icloud-calendar\`: CalDAV (PROPFIND, REPORT, PUT) with a kept password, discovery across hosts, an
+  idempotent write.
+- \`icloud-contacts\`: CardDAV search with a kept password.
+- \`home-hub\`: a device on the person's network, pinned by its certificate, a kept token, REST to
+  read and a WebSocket to act, with cases that script the socket.
+- \`cache-reader\`: a raw adapter speaking a cache's own protocol over TLS with an npm package (add it
+  first: \`valet_add_dependency\` redis-parser 3.0.0) and an entrusted password.
+
 ## The manifest, briefly
 
 - \`home\`, \`navigation\` (origins pages may load), \`egress\` (hosts any request may reach).
@@ -126,10 +141,27 @@ no page: tool code reaches the network only through \`ctx.http\`, and \`ctx.page
 - \`privateHosts\`: \`[{ "address": "192.168.1.20", "port": 8123, "scheme": "http" }]\` for a device on the
   person's network, by IP address (never a name), in a private range. A declaration names it as
   \`"host": "192.168.1.20:8123"\`. Each is a high-risk line on the person's card, and live trials
-  can't reach one: test it with cases, and it works once the person approves the adapter.
+  can't reach one: test it with cases, and it works once the person approves the adapter. A device
+  with its own self-signed certificate is \`"scheme": "https"\` with \`"certSha256"\`, the SHA-256 of
+  that certificate (64 lower-case hex characters, from the person): only that certificate is trusted.
+- A kept credential is added by Valet, never seen by tool code: declare it under \`credentials\`, e.g.
+  \`{ "kind": "password", "custody": "kept", "use": { "header": { "name": "authorization", "format":
+  "Basic {basic}" }, "hosts": ["caldav.icloud.com"] } }\` (\`{basic}\` is the username and password;
+  \`"Bearer {value}"\` with \`"kind": "token"\`), and name it per request:
+  \`ctx.http.fetch(url, { credential: 'icloud' })\`, or \`ctx.http.websocket(url, { credential: 'hub' })\`
+  for the socket's upgrade. It goes only to the hosts it names, only over https. The person grants it
+  once they approve the adapter; until then, and in live trials, the call fails \`tool-run/not-granted\`.
+  A credential's hosts belong to the same provider: when a server's answer names another host
+  (CalDAV discovery does), check it against that provider's pattern before reporting or using it.
+- Input text that goes into a line-based format (iCalendar, vCard, RESP, SMTP) must not be able to
+  start a new line: refuse control characters and line breaks in the schema
+  (\`.regex(/^[^\\u0000-\\u001f\\u007f\\u0085\\u2028\\u2029]*$/)\`) and escape every kind of line break
+  when writing, as \`examples/icloud-calendar/src/ics.ts\` does.
 - WebDAV methods are declared like any other: \`PROPFIND\`, \`REPORT\` (both may be reads), \`MKCOL\`,
   \`MKCALENDAR\`, \`COPY\` and \`MOVE\` (writes at least).
-- A WebSocket is a GET declaration with \`"websocket": true\`.
+- A WebSocket is a GET declaration with \`"websocket": true\`, opened with its https:// (or http://)
+  URL, never wss://. Its purpose is what any message on it could do: a socket that can act is a
+  write, so a read tool can't open it.
 - \`limits.uploadBytesPerRun\` (reads, default 64 KB) and \`limits.writeUploadBytesPerRun\` (writes,
   default 16 MB) cap what one call sends, URLs and headers included; 1 KB more is earned for every
   100 KB received. Past it the call fails with \`egress/upload-budget\`.
@@ -159,7 +191,12 @@ await socket.close()
   reads RSS, Atom and JSON Feed into \`{ format, title, link, description, items: [{ id, title, link,
   published, updated, summary, content, author }] }\`; \`parseXml(text)\` reads a CalDAV or CardDAV answer
   into elements with \`local\` names and resolved \`ns\` namespaces. Neither takes a DOCTYPE.
-- In cases, \`fetch\` entries answer \`ctx.http\` the same way they answer \`page.fetch\`; give absolute URLs.
+- Tool code runs in Valet's sandbox, which has no \`URL\` class: take an href apart with string code
+  (the iCloud examples' \`splitHref\`).
+- In cases, \`fetch\` entries answer \`ctx.http\` the same way they answer \`page.fetch\`; give absolute
+  URLs. \`sockets\` script a WebSocket (below). A kept credential is filled with a placeholder
+  (\`case-username\`, \`case-password\`, \`case-token\`) through the same checks, so a case names it as
+  the real call does.
 
 ## Adapters that run their own code (runtime "raw")
 
@@ -181,8 +218,9 @@ under src/. It has no page, no \`ctx.http\` and no \`ctx.local\`.
   \`const { value, username } = await ctx.secrets.get('mail')\` gives it, once the person has granted
   it. From then on, the call may reach only that credential's endpoints: a connection to any other
   closes, and the call fails. The value and its encodings are removed from the tool's output.
-- Cases run with no network at all: give the data in the input. Live trials reach the public
-  endpoints only, with a read's upload budget and no credential.
+- Cases run with no network at all: give the data in the input (the cache-reader example takes an
+  optional \`caseReply\` for this). Live trials reach the public endpoints only, with a read's upload
+  budget and no credential.
 
 ## Cases
 
@@ -191,6 +229,12 @@ under src/. It has no page, no \`ctx.http\` and no \`ctx.local\`.
 - \`pages\`: \`{ "<absolute url>": "fixtures/<file>.html" }\`, the pages \`goto\` loads, run in a browser
   with scripts off and no network.
 - \`fetch\`: \`[{ method?, url, status?, contentType?, body: "fixtures/<file>" | { inline } }]\` answers.
+  Fixtures are \`.json\`, \`.html\`, \`.txt\` or \`.xml\`. \`{ "inline": null }\` is the JSON \`null\`.
+- \`sockets\` (an http adapter's WebSockets): \`[{ url, steps: [...] }]\`, each step \`{ "server": msg }\`
+  (the socket hands the tool \`msg\`, JSON unless it's text), \`{ "client": msg }\` (the tool must send
+  next a message matching \`msg\`, as an output matches) or \`{ "close": 1000 }\`. Server steps after a
+  client step arrive once the tool has sent it; a case never waits, so \`receive\` answers null when
+  the script has nothing more.
 - \`session\`: \`ok\` (default), \`needs-user\` or \`failed\`: what \`ensure()\` answers in the case.
 - \`expect\`: \`{ output }\`, \`{ error: { stage, errorClass } }\` or \`{ needsUser: reason }\`.
 - \`reproduces: "R-XXXX"\` on a repair's case (see valet_list_repairs). For a page behind the sign-in,

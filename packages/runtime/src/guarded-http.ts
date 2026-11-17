@@ -31,6 +31,7 @@ import {
 import type { BrokerRequest, ExchangeResult, RunContext } from '@valet/egress'
 import { CallGate, type CallGateOptions, isRoutingOverride, SURFACE_CLASS } from './call-gate'
 import { REDACTED } from './redaction'
+import { encodedForms } from './secret-forms'
 import { blockCause } from './site-protection'
 
 /** The broker as the runtime needs it: EgressBroker implements it. */
@@ -384,7 +385,8 @@ export class GuardedHttp implements HttpAccess {
     values['accept-encoding'] = 'identity'
     const use = new CredentialUse(values, plaintext)
     // The output and audit targets are redacted for it too, whatever tool code does with a body.
-    for (const form of use.forms) {
+    // Each value registers its own encodings (secret-forms.ts) for the output and audit targets.
+    for (const form of use.bases) {
       const secret = SecretValue.fromString(form)
       state.keepSent(secret)
       secret.dispose()
@@ -408,6 +410,10 @@ export class GuardedHttp implements HttpAccess {
 class CredentialUse {
   /** Every form of the value redacted whole: as sent, its token without the scheme, base64, JSON-escaped. */
   readonly forms: readonly string[]
+  /** Forms matched in any case: hex, percent and URL encodings, the value reversed. */
+  private readonly caseless: readonly string[]
+  /** The values themselves (header, token, and Basic's pair and password), for the call's redaction. */
+  readonly bases: readonly string[]
   /** Pieces of the token: a response holding one is refused, as a credential handed back in parts. */
   private readonly windows: readonly string[]
 
@@ -417,24 +423,45 @@ class CredentialUse {
   ) {
     if (secret === null) {
       this.forms = []
+      this.caseless = []
+      this.bases = []
       this.windows = []
       return
     }
     const token = /^[A-Za-z][A-Za-z0-9-]* +(\S.*)$/.exec(secret)?.[1] ?? secret
-    const bases = [secret, token]
+    // Basic carries `user:password` in base64: the password, and the pair, are the secret too, and
+    // a server's debug or error page may echo them decoded (red team XK-2).
+    const basic = /^basic$/i.test(secret.slice(0, secret.length - token.length).trim())
+      ? basicPair(token)
+      : null
+    const bases = [secret, token, ...(basic === null ? [] : [basic.pair, basic.password])]
     const forms = new Set<string>()
+    const caseless = new Set<string>()
     for (const base of bases) {
       if (base.length < 8) continue
       forms.add(base)
       forms.add(Buffer.from(base, 'utf8').toString('base64'))
       forms.add(JSON.stringify(base).slice(1, -1))
+      // Every other encoding output redaction knows (base64 at any alignment, hex, percent and URL
+      // encoding, reversed, \\u escapes): what reaches tool code is held to the same list as what
+      // leaves the call (red team XK-2).
+      const value = SecretValue.fromString(base)
+      for (const form of encodedForms(value)) {
+        form.value.reveal((v) => (form.ignoreCase ? caseless : forms).add(v))
+        form.value.dispose()
+      }
+      value.dispose()
     }
+    for (const form of caseless) forms.delete(form)
     // Longest first, so a form inside another is never replaced first and left half visible.
     this.forms = [...forms].sort((a, b) => b.length - a.length)
+    this.caseless = [...caseless].sort((a, b) => b.length - a.length)
+    this.bases = bases.filter((b) => b.length >= 8)
     const windows = new Set<string>()
-    if (token.length > CREDENTIAL_WINDOW) {
-      for (let at = 0; at + CREDENTIAL_WINDOW <= token.length; at++)
-        windows.add(token.slice(at, at + CREDENTIAL_WINDOW))
+    for (const piece of [token, ...(basic === null ? [] : [basic.password])]) {
+      if (piece.length <= CREDENTIAL_WINDOW) continue
+      for (let at = 0; at + CREDENTIAL_WINDOW <= piece.length; at++)
+        windows.add(piece.slice(at, at + CREDENTIAL_WINDOW))
     }
     this.windows = [...windows]
   }
@@ -464,7 +491,13 @@ class CredentialUse {
     if (this.forms.length === 0)
       return encoding === 'base64' ? body.toString('base64') : body.toString('utf8')
     if (encoding === 'base64') {
-      if (this.forms.some((f) => body.includes(f)) || this.windows.some((w) => body.includes(w)))
+      const latin = body.toString('latin1')
+      const lower = latin.toLowerCase()
+      if (
+        this.forms.some((f) => latin.includes(f)) ||
+        this.caseless.some((f) => lower.includes(f.toLowerCase())) ||
+        this.windows.some((w) => latin.includes(w))
+      )
         throw new ValetError('tool-run', 'unexpected-shape')
       return body.toString('base64')
     }
@@ -476,12 +509,49 @@ class CredentialUse {
   private replaceForms(text: string): string {
     let out = text
     for (const form of this.forms) if (out.includes(form)) out = out.split(form).join(REDACTED)
+    for (const form of this.caseless) out = replaceCaseless(out, form)
     return out
   }
 
   private holdsPiece(text: string): boolean {
     return this.windows.some((w) => text.includes(w))
   }
+}
+
+/** `text` with every case-insensitive occurrence of `form` replaced. */
+function replaceCaseless(text: string, form: string): string {
+  const needle = form.toLowerCase()
+  const lower = text.toLowerCase()
+  // Lower-casing can change a string's length (rare letters): then fall back to refusing.
+  if (lower.length !== text.length) {
+    if (lower.includes(needle)) throw new ValetError('tool-run', 'unexpected-shape')
+    return text
+  }
+  let at = lower.indexOf(needle)
+  if (at < 0) return text
+  let out = ''
+  let from = 0
+  while (at >= 0) {
+    out += text.slice(from, at) + REDACTED
+    from = at + needle.length
+    at = lower.indexOf(needle, from)
+  }
+  return out + text.slice(from)
+}
+
+/** Basic's `user:password`, decoded, when the token is the base64 of one. */
+function basicPair(token: string): { pair: string; password: string } | null {
+  if (!/^[A-Za-z0-9+/]+=*$/.test(token)) return null
+  const bytes = Buffer.from(token, 'base64')
+  const pair = bytes.toString('utf8')
+  bytes.fill(0)
+  const colon = pair.indexOf(':')
+  if (
+    colon < 0 ||
+    Buffer.from(pair, 'utf8').toString('base64').replace(/=+$/, '') !== token.replace(/=+$/, '')
+  )
+    return null
+  return { pair, password: pair.slice(colon + 1) }
 }
 
 /** A header's value by its name in any case. */

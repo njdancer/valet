@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?><multistatus xmlns="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav" xmlns:card="urn:ietf:params:xml:ns:carddav" xmlns:ical="http://apple.com/ns/ical/"><response><href>/1234567890/calendars/work/ev-standup.ics</href><propstat><prop><getetag>"ev-standup-1"</getetag><cal:calendar-data>BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Fake iCloud//EN
+BEGIN:VEVENT
+UID:ev-standup
+DTSTAMP:20261101T000000Z
+DTSTART:20261118T230000Z
+DTEND:20261118T231500Z
+SUMMARY:Stand-up
+END:VEVENT
+END:VCALENDAR
+</cal:calendar-data></prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>

@@ -1534,7 +1534,7 @@ describe('helpers', () => {
       blankDraft('shop', 'Shop'),
     )
     await expect(store.write(record.id, 'tools.ts', 'x')).rejects.toThrow(
-      'Not written: tools.ts can’t sit at the top of the package. Only manifest.json and README.md (and, for a raw adapter, valet-lock.json) sit at the top; src/ holds .ts (the entry is src/tools.ts), test/ .ts and .json, and fixtures/ .json, .html and .txt.',
+      'Not written: tools.ts can’t sit at the top of the package. Only manifest.json and README.md (and, for a raw adapter, valet-lock.json) sit at the top; src/ holds .ts (the entry is src/tools.ts), test/ .ts and .json, and fixtures/ .json, .html, .txt and .xml.',
     )
     await expect(store.write(record.id, 'src/Tools.ts', 'x')).rejects.toThrow(
       /Each part of a path is lowercase/,

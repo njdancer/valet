@@ -6,8 +6,15 @@ import { canonicalAddress, parseEndpoint } from './addresses'
 import { type DependencyLock, dependencySummary } from './dependencies'
 import { type AdapterManifest, type PrivateHost, type RuntimeKind, runtimeOf } from './manifest'
 import type { PermissionChange, Risk } from './permission-change'
-import type { SftpProtocol } from './protocols'
+import {
+  narrowedImapFolders,
+  type Protocols,
+  type SftpProtocol,
+  widenedImapFolders,
+  widenedRecipients,
+} from './protocols'
 import { privateHostKey } from './request-surface'
+import { rootAllows } from './sftp-policy'
 
 /** What a kind means, as the card says it. */
 export function describeRuntime(kind: RuntimeKind): string {
@@ -143,13 +150,91 @@ export function sftpPermissionChanges(
     changes.push({ area: areaOf(before), change: 'removed', items: was, risk: 'low' })
   const had = new Map((before?.roots ?? []).map((r) => [describeSftpRoot(r), r]))
   const has = new Map((after?.roots ?? []).map((r) => [describeSftpRoot(r), r]))
+  // A root the old list already allowed at that access (on the same server) is a narrowing, not a
+  // new permission: `/inbox` read where `/inbox` was write.
+  const covered = (r: SftpProtocol['roots'][number]) =>
+    same && before !== null && rootAllows(r.path, before.roots, r.access)
+  const fresh = [...has].filter(([text]) => !had.has(text))
   for (const level of ['high', 'medium', 'low'] as const) {
-    const added = [...has].filter(([text, r]) => !had.has(text) && rootRisk(r) === level)
+    const added = fresh.filter(([, r]) => !covered(r) && rootRisk(r) === level)
     if (added.length > 0)
       changes.push({ area: 'requests', change: 'added', items: added.map(([text]) => text), risk: level })
   }
+  const narrowed = fresh.filter(([, r]) => covered(r)).map(([text]) => text)
+  if (narrowed.length > 0)
+    changes.push({ area: 'requests', change: 'narrowed', items: narrowed, risk: 'low' })
   const removed = [...had.keys()].filter((text) => !has.has(text))
   if (removed.length > 0) changes.push({ area: 'requests', change: 'removed', items: removed, risk: 'low' })
+  return changes
+}
+
+/**
+ * The lines for a protocol adapter's scope (cross-kind red team, workstream I): the IMAP folders its
+ * tools may use and who its SMTP tools may send to. Without these an update that drops a folder
+ * list (every folder, INBOX included) or a recipients list (anyone) had no line at all, and the
+ * card read "no new permissions". Every folder, INBOX and any recipient are high; another folder
+ * is medium. A first install lists its scope the same way.
+ */
+export function protocolPermissionChanges(
+  before: { readonly protocols?: Protocols | undefined } | null,
+  after: { readonly protocols?: Protocols | undefined },
+): PermissionChange[] {
+  const changes: PermissionChange[] = []
+  const had = before?.protocols
+  const has = after.protocols
+  const how = (present: boolean): PermissionChange['change'] => (present ? 'widened' : 'added')
+  const folders = widenedImapFolders(had, has)
+  if (folders === 'every') {
+    changes.push({
+      area: 'runtime',
+      change: how(had?.imap !== undefined),
+      items: ['Mail: every folder, INBOX included'],
+      risk: 'high',
+    })
+  } else {
+    const inbox = folders.filter((f) => f.toUpperCase() === 'INBOX')
+    const others = folders.filter((f) => f.toUpperCase() !== 'INBOX')
+    if (inbox.length > 0)
+      changes.push({
+        area: 'runtime',
+        change: how(had?.imap !== undefined),
+        items: ['Mail folder INBOX'],
+        risk: 'high',
+      })
+    if (others.length > 0)
+      changes.push({
+        area: 'runtime',
+        change: how(had?.imap !== undefined),
+        items: others.slice(0, 50).map((f) => `Mail folder ${f}`),
+        risk: 'medium',
+      })
+  }
+  const dropped = narrowedImapFolders(had, has)
+  if (dropped.length > 0)
+    changes.push({
+      area: 'runtime',
+      change: 'narrowed',
+      items: dropped.slice(0, 50).map((f) => `Mail folder ${f}`),
+      risk: 'low',
+    })
+  const recipients = widenedRecipients(had, has)
+  if (recipients === 'anyone') {
+    changes.push({
+      area: 'runtime',
+      change: how(had?.smtp !== undefined),
+      items: ['Sends mail to anyone (you confirm each message)'],
+      risk: 'high',
+    })
+  } else if (recipients.length > 0) {
+    changes.push({
+      area: 'runtime',
+      change: how(had?.smtp !== undefined),
+      items: recipients
+        .slice(0, 50)
+        .map((r) => `Sends mail to ${r.startsWith('@') ? `anyone at ${r.slice(1)}` : r}`),
+      risk: 'high',
+    })
+  }
   return changes
 }
 

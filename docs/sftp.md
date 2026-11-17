@@ -149,7 +149,9 @@ Write access is more than it sounds: appending can change a script or `authorize
 renaming a file away and writing a new one in its place swaps its contents. Give a home folder or
 `/` write access only when that is meant.
 
-An update that changes the server, key or roots shows the change like any other.
+An update that changes the server, account, host key or roots shows the change like any other. A
+new root, or one that may now do more, is asked about again, and the kept key's grant doesn't
+carry over to it (`widenedSftpRoots`); a root that may now do less is shown as narrowed.
 
 ## Tests
 

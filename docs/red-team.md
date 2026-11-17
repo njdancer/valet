@@ -247,3 +247,58 @@ Focus: header injection, recipient smuggling, confirm bypass, a hostile server.
   sign-in before TLS, oversized replies, and a refused recipient.
 - Proofs: `core/test/smtp-policy.redteam.test.ts`, `protocols/test/smtp-client.redteam.test.ts`,
   and the last tests of `runtime/test/smtp.e2e.test.ts`.
+
+### 2026-11-17: cross-kind red team (workstream I)
+
+Scope: everything merged for the new kinds, attacked across their boundaries: the http runtime and
+egress broker, secrets v2 and credential grants, the IMAP and SMTP protocol host with email
+sign-in, raw adapters on the Node runtime, and the Node sandbox profile. Three attackers, each a
+hostile agent that writes adapters and may run servers at its endpoints: credentials across kinds,
+network and process boundaries, and what the person approves against what runs. Nick was away;
+the fixes are merged on green CI and the choices are listed in
+[adapter-kinds.md](adapter-kinds.md#decisions-for-nicks-review-workstream-i).
+
+- **Fixed (high):** the Mac's review screen, Needs You and the tray never looked at an update's
+  kind, raw endpoints, private hosts or upload budgets, so an http adapter that became raw, or a
+  raw one that added `exfil.example.net:443` and `192.168.1.1:22`, read "This update adds no
+  permissions" and skipped the tick. Only the phone's card had the lines. The review now carries
+  the card's own lines for these (`PermissionDiff.reach`), shows them in their own section and in
+  the first-install summary, and any added or widened one asks for the tick. A bigger upload
+  budget counts as looser limits.
+- **Fixed (medium-high):** a send's signed preview put every recipient on one line and cut it at
+  200 characters, so a phone approver could approve a send whose Bcc held an address they never
+  saw. Recipients are now one per line, an address is at most 190 characters so it always fits
+  whole, and a send whose recipients don't all fit on the card is declined, never asked about.
+- **Fixed (medium):** an update that dropped a protocol adapter's folder list (every folder, INBOX
+  included) or recipients list (anyone) had no line on any card and kept its kept grant. Folders
+  and recipients are now card lines (first install too), and a kept IMAP or SMTP grant doesn't
+  carry over a widening of its protocol's scope.
+- **Fixed (medium):** sign-in mail was still served while a `raw` or `http` adapter held a grant to
+  the same mail password, because the INBOX-writer check looked only at `protocols.imap`. A raw
+  adapter can APPEND a planted sign-in link whatever its tools claim. Now only a protocol adapter
+  with no INBOX write tool may share the item, and items are compared by their 1Password id, so a
+  Keychain copy of the same item (`op://<vault>/<id>`) counts as the same item.
+- **Fixed (medium):** ctx.http redacted a kept credential's echo only in the forms it listed itself,
+  so a server echoing a Basic `user:password` decoded, or the token in hex or offset base64, handed
+  it to tool code. Responses are now checked against every encoding the run's redaction set knows,
+  for the header, the token and Basic's pair and password, and refused where a form can't be
+  cleanly redacted.
+- **Fixed (medium/low):** the browser tool partition's CONNECT proxy dialled a declared host by
+  name, so a name the agent controls answering 127.0.0.1 or a LAN address reached this Mac or the
+  person's network. It now resolves first, needs public answers that aren't this Mac, and connects
+  to the checked address, as the broker does.
+- **Fixed (low):** the broker's own-address check compared `::ffff:a.b.c.d` with this Mac's
+  `a.b.c.d` as different. Both sides are now compared as the address a socket reaches
+  (`effectiveAddress`).
+- **Fixed (low, static):** the Node runtime's profile allowed `(remote ip "localhost:PORT")`, which
+  also lets UDP and IPv6 reach other sockets holding the tunnel's number. It is now `remote tcp4`,
+  with IPv4 sockets only, and the macOS probe tries UDP and `::1` on the tunnel's own port.
+- **Tried, held:** grant carry-over across custody, kind, credential name, header and endpoint
+  changes; the CredentialGate's id, hash, kind and custody checks; capability dispatch across
+  kinds (ctx.http, ctx.imap, ctx.smtp and ctx.secrets only for their kind); drafts and trials of
+  protocol and raw kinds getting no credential, private host or file; INBOX aliases; SMTP to self;
+  tunnel narrowing races, SNI tricks, connection and request caps; one process per call for raw
+  and the protocol host; the host's JSON channel; per-call temp folders.
+- Proofs: `*.xkind-cred.redteam.test.ts`, `*.xkind-approve.redteam.test.ts` and
+  `*.xkind-net.redteam.test.ts` in `apps/desktop/test/main`, `packages/runtime/test`,
+  `packages/egress/test`, `packages/browser-electron/test` and `packages/node-runtime/test`.

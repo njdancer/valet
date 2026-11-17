@@ -2,7 +2,7 @@
 // renderer decides this from the diff itself rather than trusting a flag, so the acknowledgement
 // tick can't be skipped by a review that under-reports.
 
-import type { Purpose, RequestDeclaration } from '@valet/core'
+import type { PermissionChange, Purpose, RequestDeclaration } from '@valet/core'
 import type {
   LimitsInfo,
   PendingReview,
@@ -26,7 +26,9 @@ export function limitsLoosened(before: LimitsInfo, after: LimitsInfo): boolean {
     after.requestsPerRun > before.requestsPerRun ||
     after.minGapMs < before.minGapMs ||
     after.cooldownSeconds < before.cooldownSeconds ||
-    after.maxCooldownSeconds < before.maxCooldownSeconds
+    after.maxCooldownSeconds < before.maxCooldownSeconds ||
+    (after.uploadBytesPerRun ?? 0) > (before.uploadBytesPerRun ?? 0) ||
+    (after.writeUploadBytesPerRun ?? 0) > (before.writeUploadBytesPerRun ?? 0)
   )
 }
 
@@ -92,8 +94,14 @@ export function addsPermissions(diff: PermissionDiff): boolean {
     (diff.limits !== null && limitsLoosened(diff.limits.before, diff.limits.after)) ||
     probeChanged(diff) ||
     diff.sandbox.becameUnsandboxed ||
-    diff.sandbox.exceptions.some((e) => e.change === 'added')
+    diff.sandbox.exceptions.some((e) => e.change === 'added') ||
+    reachLines(diff).some((c) => c.change === 'added' || c.change === 'widened')
   )
+}
+
+/** The kind's own lines (kind, endpoints, private hosts, folders, recipients), as the card says them. */
+export function reachLines(diff: PermissionDiff): readonly PermissionChange[] {
+  return diff.reach ?? []
 }
 
 export function limitsChanged(diff: PermissionDiff): boolean {
@@ -103,7 +111,9 @@ export function limitsChanged(diff: PermissionDiff): boolean {
     before.requestsPerRun !== after.requestsPerRun ||
     before.minGapMs !== after.minGapMs ||
     before.cooldownSeconds !== after.cooldownSeconds ||
-    before.maxCooldownSeconds !== after.maxCooldownSeconds
+    before.maxCooldownSeconds !== after.maxCooldownSeconds ||
+    (before.uploadBytesPerRun ?? 0) !== (after.uploadBytesPerRun ?? 0) ||
+    (before.writeUploadBytesPerRun ?? 0) !== (after.writeUploadBytesPerRun ?? 0)
   )
 }
 
@@ -221,6 +231,12 @@ export function additionBadges(diff: PermissionDiff, login = diffHasLogin(diff))
     ...(diff.sandbox.becameUnsandboxed
       ? [{ label: 'runs without the sandbox', tone: 'write' as const }]
       : []),
+    ...badge(
+      reachLines(diff).filter((c) => c.change === 'added' || c.change === 'widened').length,
+      'change to what it reaches',
+      'changes to what it reaches',
+      'write',
+    ),
     ...badge(
       diff.sandbox.exceptions.filter((e) => e.change === 'added').length,
       'access on this Mac',

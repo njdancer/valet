@@ -209,14 +209,28 @@ class SocketTable {
     return id
   }
 
+  /**
+   * An open socket. One this call opened and has since closed (by close, or the far end) is
+   * unavailable, as GuardedHttp says of a closed socket; an id it never had is invalid.
+   */
   get(id: unknown): HttpSocket {
     const socket = typeof id === 'number' ? this.open.get(id) : undefined
-    if (socket === undefined) throw new ValetError('tool-run', 'invalid')
-    return socket
+    if (socket !== undefined) return socket
+    if (this.issued(id)) throw new ValetError('egress', 'unavailable')
+    throw new ValetError('tool-run', 'invalid')
+  }
+
+  /** An id this table handed out, open or closed since. */
+  issued(id: unknown): id is number {
+    return typeof id === 'number' && Number.isInteger(id) && id >= 1 && id < this.next
   }
 
   delete(id: number): void {
     this.open.delete(id)
+  }
+
+  has(id: number): boolean {
+    return this.open.has(id)
   }
 
   get size(): number {
@@ -282,6 +296,9 @@ async function dispatchHttp(
       return message
     }
     case 'http.ws.close':
+      // Closing a socket that has closed already (the far end closed it, say) does nothing, as
+      // closing one twice does in every client; tool code's `finally { close() }` relies on it.
+      if (sockets.issued(args[0]) && !sockets.has(args[0])) return null
       await sockets.get(args[0]).close()
       sockets.delete(args[0] as number)
       return null

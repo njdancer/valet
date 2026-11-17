@@ -163,6 +163,19 @@ function embeddedIPv4(bytes: readonly number[]): number[] | null {
   return null
 }
 
+/**
+ * The address a connection to `value` really reaches, canonical: an IPv4-mapped or -compatible
+ * IPv6 address as its IPv4 address, anything else as canonicalAddress writes it (null if it isn't
+ * an IP literal). Compare these, never the raw forms: `::ffff:5db8:d822` is 93.184.216.34 on a
+ * dual-stack socket (red team I).
+ */
+export function effectiveAddress(value: string): string | null {
+  const six = parseIPv4(value) === null ? parseIPv6(value) : null
+  const inner = six === null ? null : embeddedIPv4(six)
+  if (inner !== null) return inner.join('.')
+  return canonicalAddress(value)
+}
+
 /** True only for an IP literal on the public internet. A name, or anything unparseable, is false. */
 export function isPublicAddress(address: string): boolean {
   const four = parseIPv4(address)

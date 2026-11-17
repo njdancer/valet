@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "id": "icloud-contacts",
+  "name": "iCloud Contacts",
+  "version": "0.1.0",
+  "description": "Finds people in your iCloud contacts by name over CardDAV: their emails, phone numbers and organisation. An example of an http adapter speaking WebDAV (PROPFIND, REPORT) with a kept credential, read only.",
+  "runtime": "http",
+  "egress": ["contacts.icloud.com", "p01-contacts.icloud.com"],
+  "secrets": {},
+  "credentials": {
+    "icloud": {
+      "description": "Your Apple ID and an app-specific password for iCloud (appleid.apple.com, Sign-In and Security, App-Specific Passwords)",
+      "kind": "password",
+      "custody": "kept",
+      "use": {
+        "header": { "name": "authorization", "format": "Basic {basic}" },
+        "hosts": ["contacts.icloud.com", "p01-contacts.icloud.com"]
+      }
+    }
+  },
+  "session": { "cookieDomains": [], "storage": [], "probe": { "kind": "none" } },
+  "auth": { "steps": [], "frameOrigins": [] },
+  "requests": [
+    { "method": "PROPFIND", "host": "contacts.icloud.com", "path": "/", "purpose": "read" },
+    { "method": "PROPFIND", "host": "contacts.icloud.com", "path": "/:account/principal", "purpose": "read" },
+    {
+      "method": "PROPFIND",
+      "host": "p01-contacts.icloud.com",
+      "path": "/:account/carddavhome",
+      "purpose": "read"
+    },
+    {
+      "method": "REPORT",
+      "host": "p01-contacts.icloud.com",
+      "path": "/:account/carddavhome/:book",
+      "purpose": "read"
+    }
+  ],
+  "tools": [
+    {
+      "name": "find_contacts",
+      "title": "Find contacts",
+      "description": "People in your iCloud contacts whose name contains the words you give: each one's name, emails, phone numbers and organisation. At most 20.",
+      "sideEffect": "read"
+    }
+  ],
+  "settings": {},
+  "limits": {
+    "requestsPerRun": 6,
+    "minGapMs": 250,
+    "requestsPerHour": 300,
+    "requestsPerMinute": 30,
+    "gapJitterPercent": 20,
+    "cooldownSeconds": 600,
+    "maxCooldownSeconds": 7200
+  }
+}

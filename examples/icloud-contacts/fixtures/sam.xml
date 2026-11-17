@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?><multistatus xmlns="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav" xmlns:card="urn:ietf:params:xml:ns:carddav" xmlns:ical="http://apple.com/ns/ical/"><response><href>/1234567890/carddavhome/card/c-sam.vcf</href><propstat><prop><getetag>"c-sam-1"</getetag><card:address-data>BEGIN:VCARD
+VERSION:3.0
+UID:c-sam
+FN:Sam Lee
+item1.EMAIL;type=INTERNET;type=pref:sam@example.org
+TEL;type=CELL:+61 400 000 001
+ORG:Example Pty Ltd;
+END:VCARD
+</card:address-data></prop><status>HTTP/1.1 200 OK</status></propstat></response><response><href>/1234567890/carddavhome/card/c-sami.vcf</href><propstat><prop><getetag>"c-sami-1"</getetag><card:address-data>BEGIN:VCARD
+VERSION:3.0
+UID:c-sami
+FN:Samira Khan
+item1.EMAIL;type=INTERNET;type=pref:samira@example.net
+item2.EMAIL;type=INTERNET:sk@example.org
+END:VCARD
+</card:address-data></prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>

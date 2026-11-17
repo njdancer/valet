@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "id": "home-hub",
+  "name": "Home hub",
+  "version": "0.1.0",
+  "description": "Your lights, locks and sensors from a home hub on your own network: list them over its REST API, and switch a light on or off over its WebSocket API. An example of an http adapter with a private host pinned by its certificate, a WebSocket, and a kept token.",
+  "runtime": "http",
+  "egress": [],
+  "privateHosts": [
+    {
+      "address": "192.168.1.20",
+      "port": 8123,
+      "scheme": "https",
+      "certSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "secrets": {},
+  "credentials": {
+    "hub": {
+      "description": "A long-lived access token from your hub's profile page",
+      "kind": "token",
+      "custody": "kept",
+      "use": {
+        "header": {
+          "name": "authorization",
+          "format": "Bearer {value}"
+        },
+        "hosts": ["192.168.1.20"]
+      }
+    }
+  },
+  "session": {
+    "cookieDomains": [],
+    "storage": [],
+    "probe": {
+      "kind": "none"
+    }
+  },
+  "auth": {
+    "steps": [],
+    "frameOrigins": []
+  },
+  "requests": [
+    {
+      "method": "GET",
+      "host": "192.168.1.20:8123",
+      "path": "/api/states",
+      "purpose": "read"
+    },
+    {
+      "method": "GET",
+      "host": "192.168.1.20:8123",
+      "path": "/api/websocket",
+      "purpose": "write",
+      "websocket": true
+    }
+  ],
+  "tools": [
+    {
+      "name": "list_devices",
+      "title": "List devices",
+      "description": "The lights, switches, locks and sensors your hub knows: each one's id, name, state and when it last changed.",
+      "sideEffect": "read"
+    },
+    {
+      "name": "switch_light",
+      "title": "Switch a light",
+      "description": "Turns one light on or off, by its id from list_devices (light.something).",
+      "sideEffect": "write",
+      "idempotent": true
+    }
+  ],
+  "settings": {},
+  "limits": {
+    "requestsPerRun": 3,
+    "minGapMs": 250,
+    "requestsPerHour": 300,
+    "requestsPerMinute": 30,
+    "gapJitterPercent": 0,
+    "cooldownSeconds": 60,
+    "maxCooldownSeconds": 600
+  }
+}

@@ -185,7 +185,7 @@ jobs:
             test/local-command.test.ts
       - name: the Node runtime and raw adapters under Seatbelt (they run without it on Linux)
         if: matrix.part == 'fast'
-        run: pnpm exec vitest run packages/node-runtime/test apps/desktop/test/main/raw-drafts.test.ts
+        run: pnpm exec vitest run packages/node-runtime/test apps/desktop/test/main/raw-drafts.test.ts apps/desktop/test/main/examples.e2e.test.ts
       - name: the protocol hosts under Seatbelt (they run on Linux too, unsandboxed)
         if: matrix.part == 'fast'
         run: |

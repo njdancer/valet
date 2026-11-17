@@ -4369,13 +4369,16 @@ export class AppService {
     if (!(await this.installGate.isApproved(manifest.id, adapter.hash).catch(() => false))) return null
     const grant = await this.credentialKeeper.sourceFor(manifest.id, adapter.hash).findGrant(imap.credential)
     if (grant === null || grant.custody !== 'kept') return null
-    // The same item granted to an adapter that may write INBOX: possibly the same mailbox.
+    // The same item granted to an adapter that may write INBOX: possibly the same mailbox. Only a
+    // protocol adapter with no INBOX write tool is known not to: a raw adapter speaks IMAP itself
+    // whatever its tools claim, and an http one is counted too, to be safe (red team I, XK-1).
     for (const other of this.installed) {
       const m = other.definition.manifest
-      if (m.id === manifest.id || !mayWriteInbox(m)) continue
+      if (m.id === manifest.id) continue
+      if (runtimeOf(m) === 'protocol' && !mayWriteInbox(m)) continue
       for (const name of Object.keys(credentialsOf(m))) {
         const theirs = await this.credentialKeeper.sourceFor(m.id, other.hash).findGrant(name)
-        if (theirs !== null && theirs.itemRef === grant.itemRef) return null
+        if (theirs !== null && sameVaultItem(theirs.itemRef, grant.itemRef)) return null
       }
     }
     return { ref: `${manifest.id}/${imap.credential}`, grant }
@@ -5278,7 +5281,18 @@ function lastUsed(records: readonly AuditRecord[], grant: Grant): string | null 
   return null
 }
 
-/** Text a signed request may carry for a card: cut to `max`, or left out if it isn't display text. */
+/**
+ * Whether two stored references name the same vault item. A 1Password grant is `op://Valet/<id>`
+ * and a Keychain copy of the same item `op://<vault id>/<id>`; 1Password item ids are unique across
+ * vaults, so the item id decides (red team I, XK-1). Anything else compares exactly.
+ */
+export function sameVaultItem(a: string, b: string): boolean {
+  if (a === b) return true
+  if (!a.startsWith('op://') || !b.startsWith('op://')) return false
+  const id = (ref: string) => ref.slice(ref.lastIndexOf('/') + 1)
+  return id(a) !== '' && id(a) === id(b)
+}
+
 /**
  * One line of a signed preview: invisible and unprintable characters written out as codes (never
  * dropped, so nothing in it can hide), at most `max` characters with "…" where it was cut.
@@ -5315,8 +5329,15 @@ function confirmationPreview(item: ConfirmationItem): string[] {
     const kept = shown(line, 200)
     if (kept !== undefined) lines.push(kept)
   }
-  if (lines.length <= 20) return lines
-  return [...lines.slice(0, 19), `and ${lines.length - 19} more lines not shown`]
+  const kept =
+    lines.length <= 20 ? lines : [...lines.slice(0, 19), `and ${lines.length - 19} more lines not shown`]
+  // A send's recipients are what a yes is about: every one must be on the signed preview, whole, or
+  // nobody is asked at all and the send is declined (red team I). The body may be cut, and says so.
+  if (item.trigger === 'mail-send') {
+    const recipients = text.split('\n').filter((l) => /^(To|Cc|Bcc): /.test(l))
+    if (!recipients.every((l) => kept.includes(l))) throw new ValetError('tool-run', 'unavailable')
+  }
+  return kept
 }
 
 /** A remote client's registration id from its `remote:<id>` name, or null for any other. */
