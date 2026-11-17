@@ -533,3 +533,12 @@ note it here. Each one can be reversed.
 - **B: a grant carries over an update only when the update keeps the session.** That needs the
   person's signed approval of the update. A rollback never carries a grant, and revoking a carried
   grant also drops its carry record.
+- **B: an agent asks for a credential by name only** (`valet_request_credential`). The ask
+  goes to Needs you on the Mac, and **Choose and grant…** opens the site's page, where the person
+  picks the item and approves with Touch ID. It isn't answered on the phone, because the phone
+  can't choose an item. The agent never names or sees the item, and `valet_get_adapter` tells it
+  only whether each credential is granted and usable.
+- **B: credential asks have their own limits.** At most 3 per agent and 10 in all can wait at
+  once. A declined ask holds the same agent's same ask back for an hour. Asks end after 24 hours,
+  when the agent is disconnected or revoked, on lockdown, or when a new version is approved. Two
+  agents asking for the same credential get two cards rather than one shared card.

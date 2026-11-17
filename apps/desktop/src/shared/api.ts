@@ -1105,6 +1105,11 @@ export interface AgentRequestItem {
     | 'secret-grant'
     /** An agent asks to remove a site. Not signed: it only narrows, so Approve needs no Touch ID. */
     | 'uninstall'
+    /**
+     * An agent asks for a credential (valet_request_credential). The person grants it on the site's
+     * Credentials card, picking the item there; Approve here isn't offered.
+     */
+    | 'credential'
   /** Four characters of the request's digest, as the Touch ID prompt names it. */
   readonly ref: string
   /** Built by the Mac from the request's subject. */

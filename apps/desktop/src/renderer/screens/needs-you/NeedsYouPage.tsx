@@ -294,15 +294,22 @@ function AgentRequestRow({
             <Button size="sm" variant="ghost" loading={decline.busy} onClick={() => void onDecline()}>
               Decline
             </Button>
-            <Button
-              size="sm"
-              variant="primary"
-              loading={approve.busy}
-              disabled={needsChoice && choice === null}
-              onClick={() => void onApprove()}
-            >
-              Approve with Touch ID
-            </Button>
+            {item.requestKind === 'credential' && item.adapterId !== null ? (
+              // The person picks the item on the site's Credentials card, and approves there.
+              <Button size="sm" variant="primary" asChild>
+                <a href={href.site(item.adapterId)}>Choose and grant…</a>
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="primary"
+                loading={approve.busy}
+                disabled={needsChoice && choice === null}
+                onClick={() => void onApprove()}
+              >
+                Approve with Touch ID
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>

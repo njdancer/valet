@@ -86,7 +86,13 @@ import { builtinAdapter } from '../../src/main/core/registry'
 import type { RemoteAccess } from '../../src/main/core/remote'
 import { AppService, fillSelector, type ServiceDeps } from '../../src/main/core/service'
 import { disabledUpdates, type UpdatesHooks, type UpdatesPort } from '../../src/main/core/updates'
-import type { AppEvent, ConfirmationItem, HashRoute, RepairItem } from '../../src/shared/api'
+import type {
+  AgentRequestItem,
+  AppEvent,
+  ConfirmationItem,
+  HashRoute,
+  RepairItem,
+} from '../../src/shared/api'
 import {
   FakeAuthPage,
   FakeDriver,
@@ -4155,6 +4161,215 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
         await api.close()
       }
     })
+
+    it('lets an agent ask for a credential, never name the item, and sees the person grant it', async () => {
+      const api = await startFakeApi()
+      try {
+        const { credentials } = tokenCredentials()
+        const s = await withPackages(
+          notesPackage('1.0.0', ['api.example.test']),
+          undefined,
+          'answers',
+          undefined,
+          undefined,
+          brokerFor(api),
+          credentials,
+        )
+        const admin = s.endpoint.admin as AdminReader
+        const viewer: ClientIdentity = {
+          origin: 'local',
+          clientId: (await s.api.clients.add('Claude Code')).id,
+        }
+        const other: ClientIdentity = {
+          origin: 'local',
+          clientId: (await s.api.clients.add('Claude Desktop')).id,
+        }
+        const ask = async (args: WriteArgs, who = viewer) =>
+          (
+            (
+              await runWriteTool(
+                WRITE_TOOLS.find(
+                  (t) => t.name === 'valet_request_credential',
+                ) as (typeof WRITE_TOOLS)[number],
+                admin,
+                args,
+                who,
+              )
+            ).content as { text: string }[]
+          )
+            .map((c) => c.text)
+            .join('\n')
+        const asks = async () =>
+          (await s.api.attention.list()).filter(
+            (i): i is AgentRequestItem => i.kind === 'agent-request' && i.requestKind === 'credential',
+          )
+
+        await s.api.adapters.installFromFolder()
+        const hash = (await s.api.approvals.pending()).find((r) => r.adapterId === 'notes')?.to.hash ?? ''
+        const source = (s.service as unknown as { writerSource(): WriterSource }).writerSource()
+        const label = `local:${viewer.clientId}`
+        // Not approved yet: nothing to grant, and no ask is filed.
+        expect(await source.requestCredential(label, 'Claude Code', 'notes', 'api', null)).toBe(
+          'not-approved',
+        )
+        expect(await ask({ adapterId: 'notes', credential: 'api' })).not.toMatch(/^Asked/)
+        expect(await asks()).toEqual([])
+        await s.api.approvals.approve('notes', hash)
+
+        // A credential the site doesn't declare, a site that doesn't exist, a prototype name: not found.
+        for (const [adapterId, credential] of [
+          ['notes', 'other'],
+          ['nope', 'api'],
+          ['notes', 'constructor'],
+          ['notes', 'toString'],
+        ] as const)
+          expect(await source.requestCredential(label, 'Claude Code', adapterId, credential, null)).toBe(
+            'not-found',
+          )
+        expect(await asks()).toEqual([])
+
+        // valet_get_adapter lists it, not granted, in Valet's own words.
+        const before = (await admin.adapter('notes')).adapter?.credentials
+        expect(before).toEqual([
+          {
+            name: 'api',
+            kind: 'token',
+            custody: 'kept',
+            use: expect.stringContaining('api.example.test'),
+            targets: ['api.example.test'],
+            given: null,
+          },
+        ])
+
+        expect(await ask({ adapterId: 'notes', credential: 'api', note: 'To read your notes' })).toMatch(
+          /^Asked: the person will see “Grant api to Notes”/,
+        )
+        expect(await ask({ adapterId: 'notes', credential: 'api' })).toMatch(/^Already asked/)
+        expect(await ask({ adapterId: 'notes', credential: 'api' }, other)).toMatch(/^Asked/)
+        const filed = await asks()
+        expect(filed).toHaveLength(2)
+        expect(filed[0]?.details).toContain('Any app or agent that can use Notes’s tools can then use it.')
+        expect(filed[0]).toMatchObject({
+          title: 'Grant api to Notes',
+          adapterId: 'notes',
+          agentName: 'Claude Code',
+          agentNote: 'To read your notes',
+          choices: null,
+        })
+        // Approve isn't how it's answered: the person picks the item on the site's card.
+        await expect(s.api.attention.approveRequest(filed[0]?.id ?? '', null)).rejects.toThrow()
+        expect(await s.api.credentials.list()).toEqual([])
+        // Declining one leaves the other agent's, and holds that agent's same ask back for an hour.
+        expect(await s.api.attention.declineRequest(filed[1]?.id ?? '')).toBe(true)
+        expect(await asks()).toHaveLength(1)
+        expect(
+          await source.requestCredential(`local:${other.clientId}`, 'Claude Desktop', 'notes', 'api', null),
+        ).toEqual({
+          refused: 'cooling-down',
+          until: expect.any(String),
+        })
+        expect(await asks()).toHaveLength(1)
+
+        // The person grants it on the card: the ask is answered, and the agent sees it given.
+        await s.api.credentials.make({
+          adapterId: 'notes',
+          adapterHash: hash,
+          credential: 'api',
+          provider: 'onepassword-service-account',
+          itemId: 'notes-token',
+        })
+        expect(await asks()).toEqual([])
+        const after = (await admin.adapter('notes')).adapter?.credentials?.[0]
+        expect(after?.given).toMatchObject({ targets: ['api.example.test'], usable: true })
+        // Never the item: not its title, id or provider.
+        const shown = JSON.stringify(await admin.adapter('notes'))
+        expect(shown).not.toContain('Notes API token')
+        expect(shown).not.toContain('notes-token')
+        expect(shown).not.toContain('onepassword')
+        expect(await ask({ adapterId: 'notes', credential: 'api' })).toBe(
+          'Nothing to ask: api is already granted to Notes.',
+        )
+        expect(await asks()).toEqual([])
+      } finally {
+        await api.close()
+      }
+    })
+
+    it('ends an agent’s credential asks when it goes, on lockdown and on a new version, and caps them', async () => {
+      const api = await startFakeApi()
+      try {
+        const { credentials } = tokenCredentials()
+        const s = await withPackages(
+          notesPackage('1.0.0', ['api.example.test']),
+          undefined,
+          'answers',
+          undefined,
+          undefined,
+          brokerFor(api),
+          credentials,
+        )
+        await s.api.adapters.installFromFolder()
+        const hash = (await s.api.approvals.pending()).find((r) => r.adapterId === 'notes')?.to.hash ?? ''
+        await s.api.approvals.approve('notes', hash)
+        const source = (s.service as unknown as { writerSource(): WriterSource }).writerSource()
+        const asks = async () =>
+          (await s.api.attention.list()).filter(
+            (i): i is AgentRequestItem => i.kind === 'agent-request' && i.requestKind === 'credential',
+          )
+        const a = await s.api.clients.add('Claude Code')
+        const b = await s.api.clients.add('Claude Desktop')
+        expect(
+          await source.requestCredential(`local:${a.id}`, 'Claude Code', 'notes', 'api', null),
+        ).toMatchObject({
+          kind: 'credential-asked',
+        })
+        expect(
+          await source.requestCredential(`local:${b.id}`, 'Claude Desktop', 'notes', 'api', null),
+        ).toMatchObject({ kind: 'credential-asked' })
+        expect((await asks()).map((i) => i.agentName).sort()).toEqual(['Claude Code', 'Claude Desktop'])
+        // Revoking an app ends its ask, not the other's.
+        await s.api.clients.revoke(a.id)
+        expect((await asks()).map((i) => i.agentName)).toEqual(['Claude Desktop'])
+
+        // A new version ends asks made for the old one.
+        await s.service.stop()
+        const v2 = await withPackages(
+          notesPackage('1.1.0', ['api.example.test']),
+          s.dir,
+          'answers',
+          undefined,
+          undefined,
+          brokerFor(api),
+          credentials,
+        )
+        const source2 = (v2.service as unknown as { writerSource(): WriterSource }).writerSource()
+        const asks2 = async () =>
+          (await v2.api.attention.list()).filter(
+            (i) => i.kind === 'agent-request' && i.requestKind === 'credential',
+          )
+        expect(
+          await source2.requestCredential(`local:${b.id}`, 'Claude Desktop', 'notes', 'api', null),
+        ).toMatchObject({ kind: 'credential-asked' })
+        expect(await asks2()).toHaveLength(1)
+        expect(await v2.api.adapters.installFromFolder()).toMatchObject({ ok: true })
+        const next = (await v2.api.approvals.pending()).find((r) => r.adapterId === 'notes')?.to.hash ?? ''
+        await v2.api.approvals.approve('notes', next)
+        expect(await asks2()).toEqual([])
+
+        // At most 10 waiting in all: ten agents' asks are filed, and the eleventh is refused.
+        const filed = []
+        for (let i = 0; i < 11; i++)
+          filed.push(await source2.requestCredential(`remote:agent${i}`, `Agent ${i}`, 'notes', 'api', null))
+        expect(filed.slice(0, 10).every((r) => typeof r === 'object' && 'kind' in r)).toBe(true)
+        expect(filed[10]).toEqual({ refused: 'too-many-total' })
+        expect(await asks2()).toHaveLength(10)
+        // Lockdown ends them all.
+        await v2.api.app.setLockedDown(true)
+        expect(await asks2()).toEqual([])
+      } finally {
+        await api.close()
+      }
+    })
   })
 
   it('installs from a folder: the new version waits for approval, says it takes the session, and can be rolled back', async () => {
@@ -4260,15 +4475,15 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
 
     // An agent asks: it waits in Needs you until the person says yes there.
     const source = (s.service as unknown as { writerSource(): WriterSource }).writerSource()
-    expect(await source.requestRemoval('c_1', 'Claude Code', 'library', 'Done testing')).toEqual({
+    expect(await source.requestRemoval('local:c_1', 'Claude Code', 'library', 'Done testing')).toEqual({
       kind: 'removal-asked',
       siteName: 'Library',
     })
-    expect(await source.requestRemoval('c_1', 'Claude Code', 'library', null)).toMatchObject({
+    expect(await source.requestRemoval('local:c_1', 'Claude Code', 'library', null)).toMatchObject({
       kind: 'removal-already',
     })
-    expect(await source.requestRemoval('c_1', 'Claude Code', 'shop', null)).toBe('built-in')
-    expect(await source.requestRemoval('c_1', 'Claude Code', 'nope', null)).toBe('not-found')
+    expect(await source.requestRemoval('local:c_1', 'Claude Code', 'shop', null)).toBe('built-in')
+    expect(await source.requestRemoval('local:c_1', 'Claude Code', 'nope', null)).toBe('not-found')
     const ask = (await s.api.attention.list()).find(
       (i) => i.kind === 'agent-request' && i.requestKind === 'uninstall',
     )
