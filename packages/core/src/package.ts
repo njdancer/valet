@@ -70,7 +70,7 @@ const SEGMENT = /^[a-z0-9][a-z0-9._-]*$/
 const PLACEMENT: Readonly<Record<string, readonly string[]>> = {
   src: ['.ts'],
   test: ['.ts', '.json'],
-  fixtures: ['.json', '.html', '.txt'],
+  fixtures: ['.json', '.html', '.txt', '.xml'],
 }
 const TOP_LEVEL = new Set([PACKAGE_MANIFEST, 'README.md', DEPENDENCY_LOCK])
 

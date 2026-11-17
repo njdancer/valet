@@ -9,6 +9,7 @@ import type { PackageFiles } from '@valet/core'
 const SOURCES = import.meta.glob<string>(
   [
     '../../../../../../examples/*/manifest.json',
+    '../../../../../../examples/*/README.md',
     '../../../../../../examples/*/src/**/*.ts',
     '../../../../../../examples/*/test/*.json',
     '../../../../../../examples/*/fixtures/**/*',

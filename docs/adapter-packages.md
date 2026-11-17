@@ -43,7 +43,7 @@ manifest.json            the adapter's manifest; core's manifestSchema parses it
 src/tools.ts             the entry: exports `tools`, one implementation per declared tool
 src/**/*.ts              the rest of the tool code
 test/**/*.ts             tests (F runs them against fixtures; the app never runs them)
-fixtures/**              recorded or synthetic responses: .json, .html, .txt
+fixtures/**              recorded or synthetic responses: .json, .html, .txt, .xml
 README.md                optional
 ```
 
@@ -56,7 +56,7 @@ every path in (folder, built-in, draft):
   characters. Lowercase ASCII only, so no two paths differ by case or Unicode normalisation (APFS
   is case-insensitive by default). No `.` or `..` segments, no leading `/`, no backslashes.
 - **Where files may be:** `manifest.json` and `README.md` at the top; `src/` holds `.ts` files
-  only; `test/` holds `.ts` and `.json`; `fixtures/` holds `.json`, `.html` and `.txt`. Nothing
+  only; `test/` holds `.ts` and `.json`; `fixtures/` holds `.json`, `.html`, `.txt` and `.xml` (feeds and WebDAV answers). Nothing
   else, so nothing unexpected (a `.node` binary, a `package.json` with scripts) can ride along.
 - **Sizes:** at most 200 files, 1 MiB each, 8 MiB in all. Text must be valid UTF-8 with no NUL.
 - **Manifest:** valid JSON, parsed by `manifestSchema`; `src/tools.ts` exists.

@@ -214,3 +214,38 @@ describe('Hacker News (http)', () => {
     })
   }, 60_000)
 })
+
+describe('the feed reader (http, RSS and Atom)', () => {
+  it('passes its check and every case', async () => {
+    await expectPasses(await fromExample('feed-reader'))
+  }, 60_000)
+
+  it('reads RSS from one host and Atom from another in live trials', async () => {
+    const h = await fromExample('feed-reader')
+    const news = await h.authoring.liveTrial(AGENT, h.draftId, 'get_headlines', { section: 'technology' })
+    expect(news).toMatchObject({
+      ok: true,
+      output: { fromSite: { headlines: [{ title: 'New phone has a bigger screen' }] } },
+    })
+    const releases = await h.authoring.liveTrial(AGENT, h.draftId, 'list_releases', {
+      owner: 'nodejs',
+      repo: 'node',
+    })
+    expect(releases).toMatchObject({
+      ok: true,
+      output: {
+        fromSite: { releases: [{ tag: 'v24.11.1', summary: 'Security release.' }, { tag: 'v24.11.0' }] },
+      },
+    })
+    // A section the manifest's paths don't cover is refused before anything is sent.
+    const before = services.seen.length
+    await h.write(
+      'src/tools.ts',
+      (await h.read('src/tools.ts')).replace("'/news/world/rss.xml'", "'/sport/rss.xml'"),
+    )
+    const refused = await h.authoring.liveTrial(AGENT, h.draftId, 'get_headlines', { section: 'world' })
+    expect(refused).toMatchObject({ ok: false })
+    expect(JSON.stringify(refused)).toContain('undeclared-request')
+    expect(services.seen.length).toBe(before)
+  }, 60_000)
+})
