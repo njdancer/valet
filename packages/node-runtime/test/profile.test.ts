@@ -208,15 +208,7 @@ describe.runIf(mac)('Seatbelt alone, on macOS', () => {
     expect(results['declared']).toBe('ok')
     // The root folder's names are the one listing allowed: Node aborts at start without it.
     expect(results['listRoot']).toBe('ok')
-    for (const name of [
-      'secret',
-      'listHome',
-      'hosts',
-      'keychains',
-      'userKeychains',
-      'ssh',
-      'otherUsers',
-    ])
+    for (const name of ['secret', 'listHome', 'hosts', 'keychains', 'userKeychains', 'ssh', 'otherUsers'])
       expect([name, results[name]]).toEqual([name, 'EPERM'])
   })
 
