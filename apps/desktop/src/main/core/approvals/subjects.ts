@@ -8,6 +8,7 @@ import {
   type ApprovalSubject,
   type Grant,
   isDisplayText,
+  MAIL_SECRET,
   MESSAGES_SECRET,
   type ProviderKind,
   ValetError,
@@ -21,8 +22,6 @@ export function subjectProvider(provider: ProviderKind): ApprovalSubject<'secret
   if (provider === 'fake') return 'keychain-copy'
   // A Valet-made SSH key is only ever a credential's, never a browser login's secret.
   if (provider === 'valet-key') throw new ValetError('grant', 'invalid')
-  // Granting sign-in mail in the app comes with the credential grant screens (docs/imap.md).
-  if (provider === 'mail') throw new ValetError('grant', 'invalid')
   // The 1Password CLI reads the person's vault through the 1Password app, as the desktop one does.
   if (provider === 'onepassword-cli') return 'onepassword-desktop'
   return provider
@@ -54,8 +53,12 @@ export function grantSubject(
   grant: Grant,
   itemTitle: string,
 ): ApprovalSubject<'secret-grant'> {
+  // Messages and sign-in mail give a code (or a link, which is a login secret of the same kind).
   const fields =
-    grant.provider === 'messages' || grant.secret === MESSAGES_SECRET
+    grant.provider === 'messages' ||
+    grant.secret === MESSAGES_SECRET ||
+    grant.provider === 'mail' ||
+    grant.secret === MAIL_SECRET
       ? (['otp'] as const)
       : (manifest.secrets[grant.secret]?.fields ?? [])
   return {

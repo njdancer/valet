@@ -2,6 +2,7 @@
 // fix beside it, then one card per thing the person sets or watches: store, login, trolley, today's
 // calls and who made them, and what a call can reach.
 
+import { MAIL_SECRET } from '@valet/core/vocab'
 import {
   Badge,
   Banner,
@@ -25,7 +26,13 @@ import {
   Value,
 } from '@valet/ui'
 import { type ReactNode, useState } from 'react'
-import type { AdapterDetail, ClientInfo, PendingReview, RunSummary } from '../../../shared/api'
+import type {
+  AdapterDetail,
+  ClientInfo,
+  MailSourceInfo,
+  PendingReview,
+  RunSummary,
+} from '../../../shared/api'
 import { useAction, useApi, useNow } from '../../lib/api-context'
 import { callRef, formatAgo, formatClock, formatTime, hostOf, plural } from '../../lib/format'
 import { href } from '../../lib/router'
@@ -311,7 +318,7 @@ function LoginCard({ adapter }: { readonly adapter: AdapterDetail }) {
   const approved = adapter.approval === 'approved'
   const now = useNow(30_000)
   const { session } = adapter
-  if (adapter.secretRequests.length === 0 && adapter.messages.length === 0) {
+  if (adapter.secretRequests.length === 0 && adapter.messages.length === 0 && adapter.mail === null) {
     return (
       <SiteCard title="Login">
         <Text tone="muted">{adapter.name} needs no login. Valet never signs in here.</Text>
@@ -357,6 +364,7 @@ function LoginCard({ adapter }: { readonly adapter: AdapterDetail }) {
               />
             </Stack>
           ))}
+          {adapter.mail === null ? null : <MailBlock adapter={adapter} mail={adapter.mail} />}
           <Text size="sm" tone="muted">
             Session: {SESSION_WORDING[session.state]}
             {session.checkedAt !== null ? ` · checked ${formatTime(session.checkedAt, now)}` : ''}
@@ -364,6 +372,38 @@ function LoginCard({ adapter }: { readonly adapter: AdapterDetail }) {
         </>
       )}
     </SiteCard>
+  )
+}
+
+function MailBlock({ adapter, mail }: { readonly adapter: AdapterDetail; readonly mail: MailSourceInfo }) {
+  const what = mail.reads.length === 2 ? 'links and codes' : mail.reads[0] === 'link' ? 'links' : 'codes'
+  return (
+    <Stack gap={1.5}>
+      <Inline gap={2}>
+        <Text weight="medium">Sign-in {what} by email</Text>
+        <Spacer />
+        <Button size="sm" asChild>
+          <a href={href.grant(adapter.id, MAIL_SECRET)}>{mail.grant !== null ? 'Change…' : 'Choose…'}</a>
+        </Button>
+      </Inline>
+      <DescriptionList
+        items={[
+          { term: 'From', value: <Value mono>{mail.sender}</Value> },
+          ...(mail.grant === null ? [] : [{ term: 'Looked for in', value: mail.grant.itemTitle }]),
+          {
+            term: 'Valet may read them',
+            value:
+              mail.grant !== null ? (
+                <Badge tone="success">Yes</Badge>
+              ) : mail.lapsed ? (
+                <Badge tone="warning">Not now: what you allowed before no longer counts</Badge>
+              ) : (
+                'Not yet'
+              ),
+          },
+        ]}
+      />
+    </Stack>
   )
 }
 

@@ -19,15 +19,23 @@ import {
   type BlockedRequest,
   bundleHash,
   CredentialError,
+  type CredentialGrant,
+  credentialsOf,
   DEFAULT_SANDBOX,
   describeCredentialUse,
   describeDeclaration,
+  folderAllowed,
   type Grant,
   type GrantStore,
   type ImapProtocol,
   type LocalAccess,
+  MAIL_SECRET,
   type MacToPhoneMessage,
+  type MailAccountRef,
+  type MailReader,
   MESSAGES_SECRET,
+  mailSourcesIn,
+  mayWriteInbox,
   messagesSourcesIn,
   type NeedsUserReason,
   needsYouTitle,
@@ -67,9 +75,11 @@ import {
   type ToolCaller,
 } from '@valet/mcp-server'
 import { addDependency, diskTarballStore } from '@valet/node-runtime'
+import type { MailAccount } from '@valet/protocols'
 import {
   ApprovalStore,
   AuditLog,
+  CredentialGate,
   DEFAULT_LOGIN_BACKOFF,
   type HttpEgress,
   type ImapBackend,
@@ -112,6 +122,7 @@ import type {
   Settings,
   SettingsPatch,
   UpdateStatus,
+  VaultItem,
 } from '../../shared/api'
 import { AdapterSettingsStore } from './adapter-settings'
 import { adminReader } from './admin'
@@ -326,6 +337,14 @@ export interface ServiceDeps {
    * Without it, every ctx.sftp call is not-granted.
    */
   readonly sftp?: (protocol: SftpProtocol) => SftpBackend
+  /**
+   * Reads sign-in links and codes from mail (docs/imap.md#email-sign-in), through the same protocol
+   * host, in whichever account the service says a grant names (mailAccount). Without it, sign-in
+   * mail is unavailable: it can't be granted, and a mail step ends `otp: unavailable`.
+   */
+  readonly mailReader?: (
+    account: (ref: MailAccountRef) => Promise<MailAccount | null>,
+  ) => MailReader & { close(): void }
   /** Builds an adapter's driver, with the reporters its refusals outside a run go to. */
   readonly createDriver: (manifest: AdapterManifest, reporters: DriverReporters) => Promise<SessionDriver>
   readonly credentials: Credentials
@@ -508,6 +527,8 @@ export class AppService {
   private readonly grants: FileGrantStore
   /** Credential grants (secrets v2): made, signed, carried and looked up for each call. */
   readonly credentialKeeper: CredentialKeeper
+  /** Sign-in mail's reader (deps.mailReader), or null when this Mac can't run the protocol host. */
+  private readonly mail: (MailReader & { close(): void }) | null
   private readonly markers: LoginAttemptMarker
   private readonly settings: SettingsStore
   private readonly adapterSettings: AdapterSettingsStore
@@ -686,6 +707,7 @@ export class AppService {
     this.audit = new ObservedAudit(new AuditLog(paths.audit, clock), (record) => this.observe(record))
     this.approvals = new ApprovalStore(paths.approvals, this.audit)
     this.grants = new FileGrantStore({ path: paths.grants })
+    this.mail = deps.mailReader?.((ref) => this.mailAccount(ref)) ?? null
     this.credentialKeeper = new CredentialKeeper({
       store: new FileCredentialGrantStore({ path: paths.credentialGrants }),
       adapter: (adapterId) => {
@@ -932,7 +954,10 @@ export class AppService {
       prompt: this.broker,
       authRunner: createAuthRunner({
         grants: this.signedGrants,
-        credentials: this.deps.credentials,
+        credentials:
+          this.mail === null
+            ? this.deps.credentials
+            : { ...this.deps.credentials, mailReader: () => this.mail as MailReader },
         audit: this.audit,
         clock: () => new Date(this.deps.now()),
         sleep: this.deps.sleep,
@@ -1118,6 +1143,7 @@ export class AppService {
     this.broker.declineAll()
     this.approvalBroker?.stop()
     this.handoffs.closeAll()
+    this.mail?.close()
     this.notifier.clear()
     if (this.missedTimer !== null) this.deps.timers.clearTimeout(this.missedTimer)
     if (this.consentTimer !== null) this.deps.timers.clearTimeout(this.consentTimer)
@@ -3694,6 +3720,7 @@ export class AppService {
         const manifest = state.adapter.definition.manifest
         const declared = new Set(Object.keys(manifest.secrets))
         if (messagesSourcesIn(manifest.auth.steps).length > 0) declared.add(MESSAGES_SECRET)
+        if (mailSourcesIn(manifest.auth.steps).length > 0) declared.add(MAIL_SECRET)
         return {
           adapterId: manifest.id,
           adapterName: manifest.name,
@@ -4299,7 +4326,96 @@ export class AppService {
 
   private async available(): Promise<Set<ProviderKind>> {
     const status = await this.deps.credentials.status()
-    return new Set(status.filter((s) => s.available).map((s) => s.kind))
+    const kinds = new Set(status.filter((s) => s.available).map((s) => s.kind))
+    // Sign-in mail is this Mac's own, through the protocol host: there when the host is.
+    if (this.mail !== null) kinds.add('mail')
+    return kinds
+  }
+
+  /**
+   * The mail accounts sign-in mail may be read from now (docs/imap.md#email-sign-in), as the grant
+   * sheet offers them: each installed, approved protocol adapter's kept IMAP credential that has a
+   * grant which counts, in an adapter none of whose tools may change INBOX, and whose granted item
+   * no other adapter that may change INBOX also holds (it may be the same mailbox). A forged
+   * message planted in INBOX by a write tool would skip the receiving server's checks.
+   */
+  async mailAccounts(): Promise<readonly VaultItem[]> {
+    if (this.mail === null) return []
+    const out: VaultItem[] = []
+    for (const adapter of this.installed) {
+      const account = await this.mailAccountOf(adapter).catch(() => null)
+      if (account !== null) out.push({ id: account.ref, title: adapter.definition.manifest.name })
+    }
+    return out
+  }
+
+  /** One protocol adapter as a mail account, or null when it can't serve sign-in mail now. */
+  private async mailAccountOf(
+    adapter: BuiltinAdapter,
+  ): Promise<{ readonly ref: MailAccountRef; readonly grant: CredentialGrant } | null> {
+    const manifest = adapter.definition.manifest
+    const imap = manifest.protocols?.imap
+    if (runtimeOf(manifest) !== 'protocol' || imap === undefined) return null
+    if (mayWriteInbox(manifest) || !folderAllowed('INBOX', imap.folders ?? null)) return null
+    if (!(await this.installGate.isApproved(manifest.id, adapter.hash).catch(() => false))) return null
+    const grant = await this.credentialKeeper.sourceFor(manifest.id, adapter.hash).findGrant(imap.credential)
+    if (grant === null || grant.custody !== 'kept') return null
+    // The same item granted to an adapter that may write INBOX: possibly the same mailbox.
+    for (const other of this.installed) {
+      const m = other.definition.manifest
+      if (m.id === manifest.id || !mayWriteInbox(m)) continue
+      for (const name of Object.keys(credentialsOf(m))) {
+        const theirs = await this.credentialKeeper.sourceFor(m.id, other.hash).findGrant(name)
+        if (theirs !== null && theirs.itemRef === grant.itemRef) return null
+      }
+    }
+    return { ref: `${manifest.id}/${imap.credential}`, grant }
+  }
+
+  /**
+   * The account a mail grant names, for one lookup: checked again now, so a revoked credential, an
+   * update that adds an INBOX write tool, or an uninstall stops sign-in mail at once. It signs in
+   * through the account adapter's own CredentialGate, audited as that adapter's credential use.
+   */
+  private async mailAccount(ref: MailAccountRef): Promise<MailAccount | null> {
+    const [adapterId] = ref.split('/')
+    const adapter = this.installed.find((a) => a.definition.manifest.id === adapterId)
+    if (adapter === undefined) return null
+    const found = await this.mailAccountOf(adapter)
+    const manifest = adapter.definition.manifest
+    const imap = manifest.protocols?.imap
+    if (found === null || found.ref !== ref || imap === undefined) return null
+    const source = this.credentialKeeper.sourceFor(manifest.id, adapter.hash)
+    return {
+      protocol: imap,
+      mayWriteInbox: false,
+      signIn: () =>
+        new CredentialGate({
+          adapterId: manifest.id,
+          adapterHash: adapter.hash,
+          credentials: manifest.credentials,
+          findGrant: source.findGrant,
+          resolve: source.resolve,
+          audit: this.audit,
+          // The password goes only to the protocol host; nothing it returns reaches any output.
+          remember: () => {},
+          callId: null,
+        }).signIn(imap.credential, 'imap', imap.endpoint),
+      record: (c) =>
+        void this.audit
+          .append({
+            type: 'egress-connection',
+            adapterId: manifest.id,
+            // Not a tool call: the lookup a login made for its sign-in mail.
+            callId: 'sign-in-mail',
+            endpoint: c.endpoint,
+            kind: c.kind,
+            bytesUp: c.bytesUp,
+            bytesDown: c.bytesDown,
+            errorClass: c.errorClass,
+          })
+          .catch(() => undefined),
+    }
   }
 
   /** Removes traces and screenshots older than the retention setting (D27). Never fails a caller. */
@@ -4480,6 +4596,8 @@ export class AppService {
         },
         vaultItems: async (provider) => {
           try {
+            // Sign-in mail's "items" are the mail accounts it may be read from.
+            if (provider === 'mail') return { status: 'ok', items: await this.mailAccounts() }
             return { status: 'ok', items: await deps.credentials.vaultItems(provider) }
           } catch (error) {
             // Only the kind of failure crosses to the window, and the account name the person typed.
@@ -4495,6 +4613,7 @@ export class AppService {
             installedHash: adapter.hash,
             available: await this.available(),
             vaultItems: (provider) => deps.credentials.vaultItems(provider),
+            mailAccounts: () => this.mailAccounts(),
             now: () => new Date(deps.now()),
           })
           const { grant } = checked
@@ -4527,7 +4646,11 @@ export class AppService {
         },
         revoke: async (adapterId, secret) => {
           const adapter = this.requireAdapter(adapterId)
-          if (secret !== MESSAGES_SECRET && !Object.hasOwn(adapter.definition.manifest.secrets, secret)) {
+          if (
+            secret !== MESSAGES_SECRET &&
+            secret !== MAIL_SECRET &&
+            !Object.hasOwn(adapter.definition.manifest.secrets, secret)
+          ) {
             throw new ValetError('grant', 'not-found')
           }
           const before = await this.grants.list()
@@ -5114,7 +5237,8 @@ export function fillSelector(
     if (step.op === 'otp' && field === 'otp') {
       if (
         ('secret' in step.source && step.source.secret === secret) ||
-        ('messages' in step.source && secret === MESSAGES_SECRET)
+        ('messages' in step.source && secret === MESSAGES_SECRET) ||
+        ('mail' in step.source && secret === MAIL_SECRET)
       ) {
         return step.selector
       }

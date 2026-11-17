@@ -446,6 +446,7 @@ public enum CardModel {
     case "keychain-copy": return "Keychain copy of"
     case "onepassword-service-account", "onepassword-desktop": return "1Password"
     case "messages": return "Messages"
+    case "mail": return "Sign-in mail"
     case "valet-key": return "Valet-made"
     default: return provider
     }

@@ -119,6 +119,9 @@ importers:
       '@valet/node-runtime':
         specifier: workspace:*
         version: link:../../packages/node-runtime
+      '@valet/protocols':
+        specifier: workspace:*
+        version: link:../../packages/protocols
       '@valet/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
@@ -171,6 +174,9 @@ importers:
       '@valet/fake-http-api':
         specifier: workspace:*
         version: link:../../fakes/http-api
+      '@valet/fake-imap':
+        specifier: workspace:*
+        version: link:../../fakes/imap
       '@valet/fake-onepassword':
         specifier: workspace:*
         version: link:../../fakes/onepassword

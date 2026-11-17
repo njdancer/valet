@@ -199,6 +199,24 @@ export interface MessagesSourceInfo {
   readonly grant: GrantInfo | null
 }
 
+/**
+ * A browser adapter's sign-in mail (docs/imap.md#email-sign-in): the one sender its login reads
+ * links or codes from, and the mail grant that lets Valet read them from a mail account it holds.
+ */
+export interface MailSourceInfo {
+  readonly sender: string
+  /** What the login reads from the mail: a link to open, a code to type, or both. */
+  readonly reads: readonly ('link' | 'code')[]
+  /** Origins a code may be typed on, or a link opened on: the manifest's navigation origins. */
+  readonly requestedOrigins: readonly string[]
+  /** The origins the login's mailed links open on (each a navigation origin). */
+  readonly linkOrigins: readonly string[]
+  /** The grant, its itemId the mail account (`<adapterId>/<credential>`) and its title the account's. */
+  readonly grant: GrantInfo | null
+  /** A grant was given and no longer counts. */
+  readonly lapsed: boolean
+}
+
 export type ProbeInfo =
   | {
       readonly kind: 'fetch'
@@ -237,6 +255,8 @@ export interface AdapterDetail extends AdapterSummary {
   /** Credentials the adapter's code uses outside a browser login (secrets v2), as declared. */
   readonly credentials: readonly CredentialRequestInfo[]
   readonly messages: readonly MessagesSourceInfo[]
+  /** Null when the login reads no sign-in mail. */
+  readonly mail: MailSourceInfo | null
   /**
    * What the last hand-off copied: counts only. Null when the main process can't tell (the driver
    * doesn't report hand-off counts, so today it is always null); the renderer then shows no row.
@@ -632,7 +652,10 @@ export interface GrantRequest {
   readonly adapterHash: string
   readonly secret: string
   readonly provider: ProviderKind
-  /** A VaultItem id, or for provider 'messages' the sender handle the manifest declared. */
+  /**
+   * A VaultItem id; for provider 'messages' the sender handle the manifest declared; for provider
+   * 'mail' the mail account (`<adapterId>/<credential>`, as vaultItems('mail') lists it).
+   */
   readonly itemRef: string
   readonly origins: readonly string[]
 }

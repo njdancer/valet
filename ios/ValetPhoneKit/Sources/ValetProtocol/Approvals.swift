@@ -183,7 +183,7 @@ public enum ApprovalSubject: Equatable, Sendable {
         secret: try f.string("secret", pattern: Patterns.name),
         fields: fields,
         provider: try f.oneOf("provider", [
-          "keychain-copy", "onepassword-service-account", "onepassword-desktop", "messages",
+          "keychain-copy", "onepassword-service-account", "onepassword-desktop", "messages", "mail",
         ]),
         itemTitle: try f.display("itemTitle", max: 120),
         itemFingerprint: try f.string("itemFingerprint", pattern: "[0-9a-f]{16}"),
