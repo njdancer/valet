@@ -45,6 +45,9 @@ async function answer(ctx: ToolContext, capability: string, args: readonly unkno
       return ctx.session.ensure()
     case 'confirm':
       return ctx.confirm(a[0])
+    case 'secrets.get':
+      if (ctx.secrets === undefined) throw new ValetError('tool-run', 'not-granted')
+      return ctx.secrets.get(a[0])
     case 'imap.op': {
       const [name, list] = args
       if (ctx.imap === undefined || !isOperation(name) || !Array.isArray(list))

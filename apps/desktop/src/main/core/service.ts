@@ -48,6 +48,7 @@ import {
   ValetError,
 } from '@valet/core'
 import { FileCredentialGrantStore, FileGrantStore } from '@valet/credentials'
+import type { OpenTunnels, RunContext } from '@valet/egress'
 import {
   type AdminReader,
   type Authoring,
@@ -300,7 +301,19 @@ export interface ServiceDeps {
   readonly egress?: (endpoints: {
     readonly egress: readonly string[]
     readonly privateHosts?: readonly PrivateHost[] | undefined
-  }) => HttpEgress
+    readonly endpoints?: readonly string[] | undefined
+  }) => HttpEgress & {
+    /** A raw adapter's tunnels for one call (EgressBroker.tunnels). */
+    readonly tunnels?: (run: RunContext, options: { readonly admit: () => Promise<void> }) => OpenTunnels
+  }
+  /**
+   * The Node runtime for `raw` adapters (docs/node-runtime.md): one call's process for a raw
+   * adapter's version, its tunnels opened by `openTunnels`. Without it (off macOS, or no Node
+   * binary), a raw adapter's calls are unavailable.
+   */
+  readonly raw?: {
+    start(manifest: AdapterManifest, openTunnels: OpenTunnels): ToolProcessFactory
+  }
   /**
    * The protocol host behind a protocol adapter's ctx.imap (docs/imap.md), for its protocols.imap.
    * Without it, every ctx.imap call is not-granted.
@@ -2064,15 +2077,15 @@ export class AppService {
     const sandboxed = (manifest.sandbox ?? DEFAULT_SANDBOX).mode === 'sandboxed'
     const start =
       sandbox !== undefined && sandboxed ? sandbox.forAdapter(adapter.hash) : this.deps.toolProcess
+    const kind = runtimeOf(manifest)
+    if (kind === 'raw') return this.rawRegistration(adapter, driver)
     return {
       definition: adapter.definition,
       bundleHash: adapter.hash,
       driver,
       // Each call's CredentialGate finds this version's signed grants (secrets v2).
       credentialGrants: this.credentialKeeper.sourceFor(manifest.id, adapter.hash),
-      ...(this.deps.egress === undefined || runtimeOf(manifest) !== 'http'
-        ? {}
-        : { http: this.deps.egress(manifest) }),
+      ...(this.deps.egress === undefined || kind !== 'http' ? {} : { http: this.deps.egress(manifest) }),
       ...(this.deps.imap === undefined ||
       runtimeOf(manifest) !== 'protocol' ||
       manifest.protocols?.imap === undefined
@@ -2085,6 +2098,39 @@ export class AppService {
               script: adapter.toolScript,
               start,
               ...(sandbox === undefined ? {} : { local: sandbox.local(manifest) }),
+            },
+          }),
+    }
+  }
+
+  /**
+   * A raw adapter's registration (docs/adapter-kinds.md#raw): its Node bundle runs only in the Node
+   * runtime, its network only through the broker's tunnels for its endpoints. Without either, it
+   * registers with no runtime at all and its calls are unavailable; it never falls back to another.
+   */
+  private rawRegistration(adapter: BuiltinAdapter, driver: SessionDriver) {
+    const manifest = adapter.definition.manifest
+    const raw = this.deps.raw
+    const broker = this.deps.egress?.({
+      egress: [],
+      privateHosts: manifest.privateHosts ?? [],
+      endpoints: manifest.endpoints ?? [],
+    })
+    const tunnels = broker?.tunnels
+    return {
+      definition: adapter.definition,
+      bundleHash: adapter.hash,
+      driver,
+      // Entrusted credentials come through this version's signed grants (secrets v2).
+      credentialGrants: this.credentialKeeper.sourceFor(manifest.id, adapter.hash),
+      ...(raw === undefined || tunnels === undefined || adapter.toolScript === null
+        ? {}
+        : {
+            raw: {
+              script: adapter.toolScript,
+              start: (openTunnels: OpenTunnels) => raw.start(manifest, openTunnels),
+              tunnels: (run: RunContext, options: { readonly admit: () => Promise<void> }) =>
+                tunnels.call(broker, run, options),
             },
           }),
     }
@@ -2951,6 +2997,8 @@ export class AppService {
       prepare: async (files) => (await packages.prepare(files, 'draft')).loaded,
       // Each case in a fresh one-shot sandbox window, as describing a package runs (docs/sandbox.md).
       caseProcess: runtime.start,
+      // A raw draft's cases in the Node runtime, with no network (docs/adapter-kinds.md#raw).
+      ...(runtime.raw === undefined ? {} : { rawCaseProcess: runtime.raw.start }),
       installed: async (adapterId) => {
         const adapter = this.adapter(adapterId)
         if (adapter === null) return null
@@ -3024,6 +3072,25 @@ export class AppService {
                 : {
                     egress: (endpoints: { readonly egress: readonly string[] }) =>
                       (this.deps.egress as NonNullable<ServiceDeps['egress']>)({ egress: endpoints.egress }),
+                  }),
+              // A raw draft's trial: its public endpoints only, through the broker's tunnels.
+              ...(this.deps.raw === undefined || this.deps.egress === undefined
+                ? {}
+                : {
+                    raw: {
+                      start: (manifest: AdapterManifest, openTunnels: OpenTunnels) =>
+                        (this.deps.raw as NonNullable<ServiceDeps['raw']>).start(manifest, openTunnels),
+                      tunnels: (endpoints: readonly string[]) => {
+                        const broker = (this.deps.egress as NonNullable<ServiceDeps['egress']>)({
+                          egress: [],
+                          endpoints,
+                        })
+                        return (run: RunContext, options: { readonly admit: () => Promise<void> }) => {
+                          if (broker.tunnels === undefined) throw new ValetError('tool-run', 'unavailable')
+                          return broker.tunnels(run, options)
+                        }
+                      },
+                    },
                   }),
             },
           }),

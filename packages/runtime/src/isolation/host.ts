@@ -177,6 +177,11 @@ function dispatch(
       return ctx.session.ensure()
     case 'confirm':
       return ctx.confirm(a)
+    case 'secrets.get':
+      if (typeof args[0] !== 'string' || args.length !== 1)
+        return Promise.reject(new ValetError('tool-run', 'invalid'))
+      if (ctx.secrets === undefined) return Promise.reject(new ValetError('tool-run', 'not-granted'))
+      return ctx.secrets.get(a)
     default:
       return Promise.reject(new ValetError('tool-run', 'invalid'))
   }

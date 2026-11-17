@@ -1,6 +1,7 @@
 # Adapter kinds beyond the browser
 
-Status: **Agreed direction, not built.** Nick agreed this on 2026-11-17, after discussing it from
+Status: **Agreed direction, partly built** (A `http`, B secrets v2, C the Node runtime and F `raw`; see each
+"As built"). Nick agreed this on 2026-11-17, after discussing it from
 2026-11-14 to 2026-11-17 (it started as valet-feedback #6). It replaces the earlier HTTP-only design,
 which was merged too early. Each workstream below is built in its own thread. Each one has tests
 against fakes and a red-team pass before it merges. None of it is on the path to the first
@@ -387,6 +388,114 @@ sign-in mail too.
   against the two routes no host allow-list closes: logging in to another account on a shared
   host, and slipping the secret into tool output.
 
+#### As built (workstream F)
+
+- `runtime: "raw"` is in `AVAILABLE_RUNTIMES`. Its manifest (`rawIssues` in `packages/core/src/manifest.ts`)
+  has `endpoints` and/or `privateHosts` (without `certSha256`), and no `home` (derived from the first
+  endpoint, for pacing only), `navigation`, `cartUrl`, `egress`, `requests`, login or irreversible
+  tools. Its only sandbox exceptions are `files`, which become the profile's read and read-write
+  paths (`apps/desktop/src/main/core/raw-runtime.ts`). An entrusted credential's endpoints must be
+  among its endpoints or private hosts.
+- **A call** (`ToolHost.rawFor` in `packages/runtime/src/tool-host.ts`): the Node runtime starts a
+  process for the call (`nodeRuntimeProcess`, binary `Contents/MacOS/valet-node`); its tunnels come
+  from `EgressBroker.tunnels` with the call's own `RunMeter` (the tool's upload budget), and each
+  connection takes one request from `requestsPerRun` and one pacing slot. Every connection is audited
+  as `egress-connection` (`kind: tunnel`). A connection the broker refuses for `upload-budget`,
+  `sni-mismatch` or `host-not-allowed` fails the whole call, even if tool code catches the socket
+  error. A raw adapter has no `ctx.page`, `ctx.http` or `ctx.local`; without the runtime (off macOS,
+  no binary) its calls are `tool-run/unavailable` and it never runs anywhere else.
+- **Tunnel ports are Valet's own.** Each tunnel is a `net.Server` in the main process, so
+  `own-ports.ts` records its port while it listens: no `local-service` exception can reach it, and the
+  profile lets each process reach only its own call's ports.
+- **`ctx.secrets.get(name)`** returns `{ value, username }`. It goes through a `CredentialGate`
+  (`entrusted`): declared, entrusted, granted for this exact hash, registered with its encodings for
+  the call's redaction and audited as `secret-used` before anything is handed over. Before the value
+  is returned, the call's tunnels are **narrowed** to that credential's endpoints
+  (`TunnelSet.restrict`): every open connection to another endpoint is closed, and a new one is
+  refused and fails the call. Narrowing never widens again.
+- **Loading.** A raw package compiles with `Compiler.compileNode` against its dependencies, read from
+  Valet's tarball store and checked again, and is described in the Node runtime with no network.
+- **Authoring.** `valet_create_draft` takes `runtime: "raw"` (a blank draft with one TLS endpoint and a
+  case). A raw draft's cases run in the Node runtime with no network at all, and a case naming
+  `pages` or `fetch` fails. A live trial reaches the draft's public endpoints only, through the
+  broker's tunnels, with a read's upload budget and the site's pace, and is never given a credential.
+- **Cards.** The kind is a high line, not critical, so a raw adapter is approved on the phone or the
+  Mac (Nick). Each endpoint is a high line ("its own encrypted connection; Valet checks the server
+  name"), each private host says "its own connection", and the npm packages are a high line on every
+  version's card (direct ones by name and version, and a count of the rest).
+- **Tests.** `packages/node-runtime/test/raw-adapter.e2e.test.ts` (the tool host, the real broker and
+  Node runtime, fake HTTPS API), `apps/desktop/test/main/raw-drafts.test.ts`, the raw cases in
+  `service.test.ts`, and `manifest-raw.test.ts`. CI runs the Node runtime's tests and the raw drafts'
+  under Seatbelt on the macOS runner on every PR.
+
+#### Decisions for Nick's review (workstream F)
+
+Taken while Nick was away, each the recommendation. Any can be changed.
+
+1. **Raw is high risk on the card, not critical.** Workstream C's diff rated it critical, which would
+   have made it Mac-only. Nick said raw adapters get the same approval as everything else.
+2. **No irreversible tools in a raw adapter, for now.** `confirm()` names declared requests, and a
+   raw adapter has none, so nothing could ask the person before an action that can't be undone. A
+   raw confirmation (the tool and its input on the card) is a follow-up; it needs a new card kind
+   on the phone.
+3. **Every public endpoint is TLS from its first byte, with its own name.** No plain TCP or STARTTLS
+   to a public host: the SNI check is the main defence on a shared host. IMAP and SMTP with STARTTLS
+   belong to the `protocol` kind.
+4. **Getting a credential narrows the call to its endpoints**, closing other connections, rather than
+   refusing a credential to a call that has other connections open.
+5. **What the broker refuses ends the call** (upload budget, another server name, a refused
+   endpoint), so its output never leaves.
+6. **Each connection is one request** against `requestsPerRun` and one pacing slot.
+7. **Files are the only exceptions**, as profile paths: `/*` and `/**` both mean the folder.
+8. **A trial never gets a credential**, and never reaches a private host: unapproved code is never
+   entrusted with anything.
+9. **A raw process's stderr is dropped**, not logged: it can hold anything the adapter printed.
+10. **Entrusted credentials use B's grants as they are.** A raw adapter's registration takes the same
+    `credentialKeeper.sourceFor(id, hash)` as every other kind, so an entrusted credential is
+    granted in the app like a kept one, and carries over to an update only on B's terms.
+11. **A raw adapter with an entrusted credential keeps no read-write files** (found by the red team
+    below). Narrowing and redaction are per call, so a folder that outlives the call would carry the
+    secret to a later call that never asked for it. Its per-call temporary folder is removed after
+    each call. Read-only file paths are still allowed.
+
+#### Red team (workstream F, 2026-11-17)
+
+An adversarial pass on raw adapters, as an agent that writes the manifest and the code and may run a
+server at an allowed endpoint. Fixed before merge, each with its proof of concept kept as a test
+(`*.redteam.test.ts`):
+
+- **A raw draft's live trial ran with the draft's own `files` exceptions (high).** The trial handed
+  the runtime the draft's manifest, and the runtime turns `files` into profile and permission-model
+  paths. Unapproved code could read the person's files (or write to them from a "read" trial) and
+  return or upload them before any card was shown. A trial's process now gets no file paths, like
+  every other trial and case.
+- **A read-write folder carried an entrusted secret between calls (high).** A call given the token
+  could write it to the adapter's read-write folder, and a later call that never asked for it could
+  read it and send it to any declared endpoint, or return it unredacted. Closed by decision 11.
+- **A tunnel listener's later error could crash Valet's main process (low).** A failed accept (out
+  of file descriptors) is an `'error'` event on the server, and after `listen()` nothing handled it.
+  It now closes that call's tunnels.
+
+Held: `restrict` closes connections mid-hello, mid-dial and open; narrowing asked for before the
+tunnels open applies when they open; the SNI parser refuses duplicate extensions, ECH, trailing
+bytes, zero or several names, oversized and SSLv2 hellos; held ClientHello bytes count against the
+upload budget; private hosts can't be loopback or this Mac; IP-literal public endpoints are
+dropped; at most 16 connections per call; isolation errors carry only a stage and class.
+
+Residual risks, accepted for now:
+
+- **Side effects in a raw adapter are claims.** The broker can't see inside TLS, so a tool declared
+  `read` can make any request its endpoint accepts (a `DELETE`, say) within a read's upload
+  budget. "No irreversible tools" only changes the label.
+- **Transforms redaction doesn't list.** Shifting each character code, a cipher, or similar still
+  gets an entrusted value into tool output (as workstream B noted). The endpoints and the budget
+  are the boundary.
+- **Timing channels to an allowed endpoint aren't budgeted.** When the adapter reads
+  (backpressure), when it closes connections, and how many it opens can signal a server it
+  controls. Only the per-connection request count limits this.
+- **Unverified on macOS:** the profile lets the adapter read `kern.hostname` (the Mac's name, often
+  the person's), and `(remote ip "localhost:PORT")` probably also matches `::1` on the same port.
+
 ## Approval cards and the permission diff
 
 Each new thing a manifest can ask for becomes a line in the permission diff
@@ -510,7 +619,7 @@ note it here. Each one can be reversed.
 - **A memory cap on the whole process.** Valet ends a process whose resident memory passes 1 GB
   (the heap alone is capped at 256 MB), found by the red team.
 - **Shipping the signed Node binary is a follow-up.** It touches the release signing setup, so it
-  gets its own pull request. Until then nothing uses the runtime: `raw` stays refused (workstream F).
+  gets its own pull request (#139, merged). Workstream F turned `raw` on.
 
 **Workstream B (secrets v2):**
 

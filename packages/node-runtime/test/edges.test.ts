@@ -3,7 +3,7 @@
 // midway, and the store and loader when a tarball is missing.
 
 import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { compileNodePackage } from '@valet/adapter-store'
 import { dependencySummary, EMPTY_LOCK, ValetError } from '@valet/core'
@@ -161,7 +161,18 @@ describe('the runtime, off the main path', () => {
     })
     expect(await failure(runIsolated(missing, script, context(), 'echo', {}))).toBe('tool-run/internal')
     expect(stderr.join('')).toContain('valet: tool-run/unavailable')
-    const ok = start({ readWritePaths: [folder], alsoForbidden: [join(folder, 'never')] })
-    expect(await failure(runIsolated(ok, script, context(), 'echo', { text: 'hi' }))).toBe('succeeded')
+    // On macOS the temporary folder is under /private, which is never a declared path, so the
+    // read-write folder there is one inside the checkout, under the real home.
+    const writable = mac ? await mkdtemp(join(import.meta.dirname, '.edges-rw-')) : folder
+    try {
+      const ok = start({
+        readWritePaths: [writable],
+        alsoForbidden: [join(writable, 'never')],
+        ...(mac ? { home: homedir() } : {}),
+      })
+      expect(await failure(runIsolated(ok, script, context(), 'echo', { text: 'hi' }))).toBe('succeeded')
+    } finally {
+      if (writable !== folder) await rm(writable, { recursive: true, force: true })
+    }
   })
 })

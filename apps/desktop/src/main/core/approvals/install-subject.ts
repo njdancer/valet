@@ -8,6 +8,10 @@ import {
   type ApprovalSubject,
   bundleHash,
   canonicalJson,
+  checkLock,
+  DEPENDENCY_LOCK,
+  type DependencyLock,
+  dependencyPermissionChanges,
   describeDeclaration,
   isDisplayText,
   type PermissionChange,
@@ -100,6 +104,7 @@ export function permissionChanges(
   before: AdapterManifest | null,
   after: AdapterManifest,
   unsandboxed: boolean,
+  dependencies: DependencyLock | null = null,
 ): PermissionChange[] {
   const diff = permissionDiff(before, after)
   const lines: PermissionChange[] = []
@@ -123,6 +128,9 @@ export function permissionChanges(
   for (const change of sandbox) push(change.area, change.change, change.items, change.risk)
   // The kind and the private hosts (docs/adapter-kinds.md#approval-cards-and-the-permission-diff).
   for (const change of runtimePermissionChanges(before, after))
+    push(change.area, change.change, change.items, change.risk)
+  // A raw adapter's npm packages, on every version's card (docs/node-runtime.md#dependencies).
+  for (const change of dependencyPermissionChanges(dependencies))
     push(change.area, change.change, change.items, change.risk)
   list('navigation', diff.navigation, (o) => o, 'medium')
   list('egress', diff.egress, (o) => o, 'medium')
@@ -224,7 +232,21 @@ export function installSubject(facts: InstallFacts): ApprovalSubject<'adapter-in
     source: facts.source,
     inheritsSession: facts.inheritsSession,
     references: [],
-    changes: permissionChanges(facts.previous?.manifest ?? null, facts.manifest, facts.unsandboxed),
+    changes: permissionChanges(
+      facts.previous?.manifest ?? null,
+      facts.manifest,
+      facts.unsandboxed,
+      lockOf(facts.files, facts.manifest),
+    ),
     unsandboxed: facts.unsandboxed,
   }
+}
+
+/** The package's dependency lockfile, or null without one. A package that got here was checked. */
+export function lockOf(
+  files: Readonly<Record<string, string>>,
+  manifest: AdapterManifest,
+): DependencyLock | null {
+  const text = Object.hasOwn(files, DEPENDENCY_LOCK) ? files[DEPENDENCY_LOCK] : undefined
+  return text === undefined ? null : checkLock(text, manifest)
 }
