@@ -99,7 +99,10 @@ describe('protocols.sftp', () => {
       custody: 'kept',
       use: { protocol: 'imap', endpoint: 'imap.mail.me.com:993' },
     }
-    expect(issues(extra)).toContain("credential mail: a protocol credential that protocols.sftp doesn't use")
+    expect(issues(extra)).toContain("credential mail: an imap credential that protocols.imap doesn't use")
+    const spare = copy()
+    spare.credentials.spare = { ...spare.credentials.nas }
+    expect(issues(spare)).toContain("credential spare: an sftp credential that protocols.sftp doesn't use")
   })
 
   it('pins the host key in ssh-keygen’s form', () => {
@@ -138,10 +141,13 @@ describe('protocols.sftp', () => {
     expect(issues(access).length).toBeGreaterThan(0)
   })
 
-  it('refuses imap and sftp together, and sftp outside a protocol adapter', () => {
+  it('refuses mail and sftp together, and sftp outside a protocol adapter', () => {
     const both = copy()
     both.protocols.imap = { endpoint: 'imap.mail.me.com:993', credential: 'nas' }
-    expect(issues(both)).toContain('a protocol adapter uses one protocol: imap or sftp, not both')
+    expect(issues(both)).toContain('a protocol adapter uses mail (imap, smtp) or files (sftp), not both')
+    const send = copy()
+    send.protocols.smtp = { endpoint: 'smtp.mail.me.com:587', credential: 'nas' }
+    expect(issues(send)).toContain('a protocol adapter uses mail (imap, smtp) or files (sftp), not both')
     const http = copy()
     http.runtime = 'http'
     http.egress = ['api.example.com']

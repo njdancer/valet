@@ -949,8 +949,11 @@ export interface ConfirmationItem {
   readonly tool: string
   readonly toolTitle: string
   readonly sideEffect: Purpose
-  /** irreversible-tool: the runtime asks before an irreversible tool runs. tool-request: ctx.confirm(). */
-  readonly trigger: 'irreversible-tool' | 'tool-request'
+  /**
+   * irreversible-tool: the runtime asks before an irreversible tool runs. tool-request: ctx.confirm().
+   * mail-send: tool code is sending mail; `input` is the whole message, as Valet will send it.
+   */
+  readonly trigger: 'irreversible-tool' | 'tool-request' | 'mail-send'
   /** The name the client reported in MCP initialize. A claim: any process with the token can send any name. */
   readonly client: string
   /**

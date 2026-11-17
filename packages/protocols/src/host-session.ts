@@ -39,6 +39,10 @@ export interface SignInValues {
 
 export interface StartOptions {
   readonly host: ProtocolHostOptions
+  /** Left out: IMAP. */
+  readonly protocol?: 'imap' | 'smtp'
+  /** SMTP only: the manifest's recipients list, which the host checks again; null for anyone. */
+  readonly recipients?: readonly string[] | null
   /** `host:port`, exactly as the credential and manifest declare it. */
   readonly endpoint: string
   readonly purpose: Purpose
@@ -270,7 +274,12 @@ export class ImapHostSession extends HostSession {
     return HostSession.launch((channel, timeoutMs) => new ImapHostSession(channel, timeoutMs), {
       host: options.host,
       endpoint: options.endpoint,
-      boot: { endpoint: options.endpoint, purpose: options.purpose, folders: options.folders },
+      boot: {
+        endpoint: options.endpoint,
+        purpose: options.purpose,
+        folders: options.folders,
+        ...(options.protocol === 'smtp' ? { protocol: 'smtp', recipients: options.recipients ?? null } : {}),
+      },
       openTunnels: options.openTunnels,
       signIn: options.signIn,
       login: (username, password) => ({ username, password }),
@@ -281,6 +290,24 @@ export class ImapHostSession extends HostSession {
   /** One ctx.imap operation. Its arguments were checked already; the host checks them again. */
   override operation(op: Operation, args: readonly unknown[]): Promise<unknown> {
     return super.operation(op, args)
+  }
+
+  /**
+   * SMTP: sends the one message this host may send. The host checks it again, builds it with From
+   * the signed-in account, and refuses a second send.
+   */
+  async sendMail(value: {
+    readonly message: unknown
+    readonly messageId: string
+    readonly date: number
+  }): Promise<{ readonly accepted: number }> {
+    const answer = await this.request({ t: 'send', value })
+    if (answer !== null && typeof answer === 'object' && !Array.isArray(answer)) {
+      const a = answer as Record<string, unknown>
+      if (Object.keys(a).length === 1 && Number.isInteger(a['accepted']) && (a['accepted'] as number) > 0)
+        return { accepted: a['accepted'] as number }
+    }
+    throw new ValetError('egress', 'unexpected-shape')
   }
 
   /** The built-in sign-in lookup. The host refuses it unless it was started to read. */

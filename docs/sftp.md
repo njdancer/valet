@@ -59,7 +59,7 @@ again in the protocol host against the paths the server itself resolves. This is
   spaces folded to limit, so on a server that ignores case `/scratch/KEEP` is still held to a
   read-only `/scratch/keep`. `/` is allowed and is shown as "everything this
   account can reach".
-- An adapter uses one protocol: `protocols.imap` or `protocols.sftp`, not both.
+- An adapter uses mail (`protocols.imap`, `protocols.smtp`) or files (`protocols.sftp`), not both.
 
 ## ctx.sftp
 

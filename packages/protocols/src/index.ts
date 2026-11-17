@@ -15,3 +15,4 @@ export {
 export { type ImapBackendOptions, imapBackend, UNAVAILABLE_IMAP } from './imap-backend'
 export { HostMailReader, type HostMailReaderOptions, type MailAccount } from './mail-reader'
 export { type SftpBackendOptions, sftpBackend, UNAVAILABLE_SFTP } from './sftp-backend'
+export { type SmtpBackendOptions, smtpBackend, UNAVAILABLE_SMTP } from './smtp-backend'

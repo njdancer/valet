@@ -776,7 +776,8 @@ function homeIsDerived(manifest: {
     (manifest.privateHosts ?? []).length === 0 &&
     (manifest.endpoints ?? []).length === 0 &&
     manifest.protocols?.imap === undefined &&
-    manifest.protocols?.sftp === undefined
+    manifest.protocols?.sftp === undefined &&
+    manifest.protocols?.smtp === undefined
   )
     return false
   return manifest.home === endpointHome(manifest)

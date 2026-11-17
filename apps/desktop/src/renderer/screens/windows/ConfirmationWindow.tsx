@@ -163,7 +163,8 @@ function Confirm({
   const until = Date.parse(item.expiresAt)
   const expired = answered === null && until <= now
   const irreversible = item.sideEffect === 'irreversible'
-  const allowLabel = irreversible ? `Approve ${item.toolTitle}` : item.toolTitle
+  const mail = item.trigger === 'mail-send'
+  const allowLabel = mail ? 'Send this email' : irreversible ? `Approve ${item.toolTitle}` : item.toolTitle
   // Approve waits for the signed request the Touch ID prompt will name.
   const canApprove = armed && item.ref !== null && !action.busy && !expired && answered === null
   const ref = callRef(item.callId)
@@ -212,11 +213,13 @@ function Confirm({
           <strong className="font-semibold text-fg">{clientClaim(item.client)}</strong>, connected over{' '}
           {TRANSPORT_WORDING[item.clientTransport]}, asked at {formatClock(item.requestedAt)} to run{' '}
           <strong className="font-semibold text-fg">{item.toolTitle}</strong> on {item.adapterName}.{' '}
-          {irreversible
-            ? 'This can’t be undone.'
-            : item.trigger === 'tool-request'
-              ? 'The tool stopped to ask you before it goes on.'
-              : 'It changes your account.'}
+          {mail
+            ? 'It wants to send the email below. Once sent, it can’t be taken back.'
+            : irreversible
+              ? 'This can’t be undone.'
+              : item.trigger === 'tool-request'
+                ? 'The tool stopped to ask you before it goes on.'
+                : 'It changes your account.'}
         </>
       }
       fromSite={
@@ -281,9 +284,14 @@ function Confirm({
             <>
               <Stack gap={1.5}>
                 <Text size="sm" tone="muted" weight="medium">
-                  Input from the client
+                  {mail ? 'The email, exactly as Valet will send it' : 'Input from the client'}
                 </Text>
-                <InputPreview parts={item.input} label="Input from the client" />
+                <InputPreview
+                  parts={item.input}
+                  label={mail ? 'The email, exactly as Valet will send it' : 'Input from the client'}
+                  // An email shows taller, so its recipients and more of its text are in view.
+                  {...(mail ? { className: 'max-h-80' } : {})}
+                />
               </Stack>
               <Checked item={item} />
             </>
@@ -391,6 +399,12 @@ function Checked({ item }: { readonly item: ConfirmationItem }) {
           </span>
         }
       />
+      {item.trigger === 'mail-send' ? (
+        <CheckItem
+          state="pass"
+          title="Every recipient, Bcc included, is listed above. It goes from your account, with no other headers, and only this once."
+        />
+      ) : null}
       {item.requests.length > 0 ? (
         <CheckItem
           state="pass"

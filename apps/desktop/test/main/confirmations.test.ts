@@ -165,6 +165,55 @@ describe('ConfirmationBroker', () => {
     expect(item?.sideEffect).toBe('irreversible')
   })
 
+  it('shows a send as Valet’s own rendering of the exact message, Bcc included, unlocking nothing', async () => {
+    const { broker } = setup()
+    void broker.ask(
+      {
+        adapterId: 'shop',
+        adapterName: 'Shop',
+        tool: 'order',
+        toolTitle: 'Order',
+        callId: 'call1',
+        client: 'Claude Code',
+        kind: 'mail-send',
+        mail: {
+          endpoint: 'smtp.mail.me.com:587',
+          to: ['ann@example.com'],
+          cc: ['cy@example.com'],
+          bcc: ['bo@example.com'],
+          subject: 'Hello',
+          text: 'Hi Ann\nSee you',
+          inReplyTo: '<a1@example.com>',
+          references: ['<a0@example.com>', '<a1@example.com>'],
+        },
+      },
+      new AbortController().signal,
+    )
+    const [item] = broker.list()
+    expect(item?.trigger).toBe('mail-send')
+    // Not the call's own input, and nothing the adapter wrote as a note.
+    expect(item?.input).toEqual([
+      {
+        kind: 'text',
+        text: [
+          'From: your account at smtp.mail.me.com',
+          'To: ann@example.com',
+          'Cc: cy@example.com',
+          'Bcc (not shown to the others): bo@example.com',
+          'Subject: Hello',
+          'In reply to: <a1@example.com>',
+          'References: <a0@example.com> <a1@example.com>',
+          '',
+          'Hi Ann',
+          'See you',
+        ].join('\n'),
+      },
+    ])
+    expect(item?.adapterNote).toBeNull()
+    expect(item?.unlocks).toEqual([])
+    expect(item?.requests).toEqual([])
+  })
+
   it('approves only once the Touch ID prompt the panel raised was answered', async () => {
     const { broker, signing, closed } = setup()
     const answer = broker.ask(toolRequest, new AbortController().signal)

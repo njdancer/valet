@@ -51,6 +51,7 @@ import {
   type SessionDriver,
   type SettingChoice,
   type SftpProtocol,
+  type SmtpProtocol,
   settingToolNames,
   sha256Hex,
   type ToolDeclaration,
@@ -91,6 +92,7 @@ import {
   SecretRedactionSet,
   type SftpBackend,
   type Sleep,
+  type SmtpBackend,
   sensitiveMatcher,
   ToolHost,
   type ToolProcessFactory,
@@ -332,6 +334,8 @@ export interface ServiceDeps {
    * Without it, every ctx.imap call is not-granted.
    */
   readonly imap?: (protocol: ImapProtocol) => ImapBackend
+  /** The protocol host behind ctx.smtp, for protocols.smtp. Without it, every send is not-granted. */
+  readonly smtp?: (protocol: SmtpProtocol) => SmtpBackend
   /**
    * The SFTP host behind a protocol adapter's ctx.sftp (docs/sftp.md), for its protocols.sftp.
    * Without it, every ctx.sftp call is not-granted.
@@ -2129,6 +2133,11 @@ export class AppService {
       manifest.protocols?.sftp === undefined
         ? {}
         : { sftp: this.deps.sftp(manifest.protocols.sftp) }),
+      ...(this.deps.smtp === undefined ||
+      runtimeOf(manifest) !== 'protocol' ||
+      manifest.protocols?.smtp === undefined
+        ? {}
+        : { smtp: this.deps.smtp(manifest.protocols.smtp) }),
       ...(start === undefined || adapter.toolScript === null
         ? {}
         : {

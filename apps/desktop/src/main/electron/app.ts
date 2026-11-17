@@ -22,7 +22,7 @@ import { KeychainHelper, KeychainTokenSource, messagesHelperSocketPath } from '@
 import { EgressBroker, type OpenTunnels } from '@valet/egress'
 import { startEndpoint } from '@valet/mcp-server'
 import { diskTarballStore, loadDependencies, nodeRuntimeProcess } from '@valet/node-runtime'
-import { HostMailReader, imapBackend, type ProtocolHostOptions } from '@valet/protocols'
+import { HostMailReader, imapBackend, type ProtocolHostOptions, smtpBackend } from '@valet/protocols'
 import { createLocalAccess } from '@valet/sandbox'
 import { app, clipboard, dialog, protocol, session, shell } from 'electron'
 import { href } from '../../renderer/lib/routes'
@@ -522,12 +522,13 @@ async function main(): Promise<void> {
     // Each tunnel is a server in this process, so own-ports.ts records its port as Valet's own while
     // it listens: no local-service exception or other adapter can reach it.
     ...(nodeBinary === null ? {} : { raw: { start: rawProcess } }),
-    // Protocol adapters' ctx.imap, and sign-in mail (docs/imap.md#email-sign-in) in the account a
+    // Protocol adapters' ctx.imap and ctx.smtp, and sign-in mail (docs/imap.md#email-sign-in) in the account a
     // grant names, both through the protocol host.
     ...(protocolHost === null
       ? {}
       : {
           imap: (protocol) => imapBackend({ protocol, host: protocolHost }),
+          smtp: (protocol) => smtpBackend({ protocol, host: protocolHost }),
           mailReader: (account) => new HostMailReader({ host: protocolHost, account }),
         }),
     // Demo mode keeps only the shop on this machine: the other built-ins (no login, public data)

@@ -1,6 +1,6 @@
 // A `protocol` adapter's `protocols` (docs/imap.md#the-manifest, docs/sftp.md#the-manifest): the
-// protocol clients Valet runs for it. Workstream D owns `imap`, E owns `sftp`; SMTP joins them
-// later. An adapter uses one of them. Each names its endpoint and the
+// protocol clients Valet runs for it. Workstream D owns `imap`, E owns `sftp`, G owns `smtp`. An
+// adapter uses mail (imap, smtp or both) or files (sftp). Each names its endpoint and the
 // kept credential Valet signs in with, which must be declared for exactly that protocol and
 // endpoint, so a grant of it covers one server and nothing else.
 
@@ -9,6 +9,7 @@ import { canonicalAddress, isPrivateHostAddress, parseEndpoint } from './address
 import { type CredentialDeclaration, isEndpoint } from './credential'
 import { folderAllowed } from './imap-policy'
 import { isSftpPath, SFTP_PURPOSE_RANK } from './sftp-policy'
+import { isMailAddress } from './smtp-policy'
 
 /** A folder name as the manifest writes it: no control characters, and no LIST wildcards. */
 export const imapFolderSchema = z
@@ -42,6 +43,33 @@ export const imapProtocolSchema = z
   })
   .strict()
 export type ImapProtocol = z.infer<typeof imapProtocolSchema>
+
+/** A recipients rule: an exact address, or `@domain` for every address at exactly that domain. */
+const recipientRule = z
+  .string()
+  .max(200)
+  .refine(
+    (v) => (v.startsWith('@') ? isMailAddress(`x${v}`) : isMailAddress(v)),
+    'an address, or @ and a domain, e.g. @example.com',
+  )
+
+export const smtpProtocolSchema = z
+  .object({
+    /**
+     * The server, `host:port`. Port 465 is TLS from the first byte; any other port must offer
+     * STARTTLS, and Valet never signs in or sends before TLS.
+     */
+    endpoint,
+    /** The name of the kept credential, in `credentials`, that Valet signs in with. Its username is From. */
+    credential: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
+    /**
+     * Who tools may send to. Left out, anyone; the person still sees and confirms every send.
+     * Approving a version that widens this list is approving the wider list.
+     */
+    recipients: z.array(recipientRule).min(1).max(100).optional(),
+  })
+  .strict()
+export type SmtpProtocol = z.infer<typeof smtpProtocolSchema>
 
 /** An SSH host key's fingerprint as `ssh-keygen -lf` prints it: SHA256: and 43 base64 characters. */
 export function isHostKeyFingerprint(value: unknown): value is string {
@@ -99,7 +127,11 @@ export const sftpProtocolSchema = z
 export type SftpProtocol = z.infer<typeof sftpProtocolSchema>
 
 export const protocolsSchema = z
-  .object({ imap: imapProtocolSchema.optional(), sftp: sftpProtocolSchema.optional() })
+  .object({
+    imap: imapProtocolSchema.optional(),
+    smtp: smtpProtocolSchema.optional(),
+    sftp: sftpProtocolSchema.optional(),
+  })
   .strict()
 export type Protocols = z.infer<typeof protocolsSchema>
 
@@ -121,44 +153,45 @@ export function protocolIssues(manifest: {
   if (manifest.privateHosts !== undefined) issues.push('a protocol adapter has no privateHosts yet')
   if (manifest.requests.length > 0) issues.push('a protocol adapter declares no HTTP requests')
   const imap = manifest.protocols?.imap
+  const smtp = manifest.protocols?.smtp
   const sftp = manifest.protocols?.sftp
-  if (imap === undefined && sftp === undefined) {
-    issues.push('a protocol adapter needs protocols.imap or protocols.sftp')
+  if (imap === undefined && smtp === undefined && sftp === undefined) {
+    issues.push('a protocol adapter needs protocols.imap, protocols.smtp or protocols.sftp')
     return issues
   }
-  if (imap !== undefined && sftp !== undefined) {
-    issues.push('a protocol adapter uses one protocol: imap or sftp, not both')
+  if (sftp !== undefined && (imap !== undefined || smtp !== undefined)) {
+    issues.push('a protocol adapter uses mail (imap, smtp) or files (sftp), not both')
     return issues
   }
-  if (sftp !== undefined) return [...issues, ...sftpIssues(sftp, manifest.credentials)]
-  if (imap === undefined) return issues
-  const credential =
-    manifest.credentials !== undefined && Object.hasOwn(manifest.credentials, imap.credential)
-      ? manifest.credentials[imap.credential]
-      : undefined
-  if (credential === undefined) {
-    issues.push(`protocols.imap: credential ${imap.credential} is not declared in credentials`)
-  } else if (
-    !('protocol' in credential.use) ||
-    credential.use.protocol !== 'imap' ||
-    credential.use.endpoint !== imap.endpoint ||
-    credential.custody !== 'kept' ||
-    credential.kind !== 'password'
-  ) {
-    issues.push(
-      `protocols.imap: credential ${imap.credential} must be a kept password for imap at ${imap.endpoint}`,
-    )
+  if (sftp !== undefined) issues.push(...sftpIssues(sftp, manifest.credentials))
+  if (imap !== undefined) {
+    issues.push(...credentialIssues(manifest.credentials, 'imap', imap.credential, imap.endpoint))
+    const folders = imap.folders ?? []
+    if (new Set(folders.map((f) => (f.toUpperCase() === 'INBOX' ? 'INBOX' : f))).size !== folders.length)
+      issues.push('protocols.imap.folders lists a folder twice')
   }
-  const folders = imap.folders ?? []
-  if (new Set(folders.map((f) => (f.toUpperCase() === 'INBOX' ? 'INBOX' : f))).size !== folders.length)
-    issues.push('protocols.imap.folders lists a folder twice')
+  if (smtp !== undefined) {
+    issues.push(...credentialIssues(manifest.credentials, 'smtp', smtp.credential, smtp.endpoint))
+    const rules = (smtp.recipients ?? []).map((r) => r.toLowerCase())
+    if (new Set(rules).size !== rules.length) issues.push('protocols.smtp.recipients lists one twice')
+  }
   for (const [name, c] of Object.entries(manifest.credentials ?? {})) {
-    if (name !== imap.credential && 'protocol' in c.use && c.use.protocol === 'imap')
-      issues.push(`credential ${name}: an imap credential that protocols.imap doesn't use`)
+    if (!('protocol' in c.use)) continue
+    const used =
+      (c.use.protocol === 'imap' && name === imap?.credential) ||
+      (c.use.protocol === 'smtp' && name === smtp?.credential) ||
+      (c.use.protocol === 'sftp' && name === sftp?.credential)
+    if ((c.use.protocol === 'imap' || c.use.protocol === 'smtp' || c.use.protocol === 'sftp') && !used)
+      issues.push(
+        `credential ${name}: an ${c.use.protocol} credential that protocols.${c.use.protocol} doesn't use`,
+      )
   }
   return issues
 }
 
+/**
+ * Why sftp's credential isn't a kept ssh-key for exactly its endpoint, and its roots' own issues.
+ */
 function sftpIssues(
   sftp: SftpProtocol,
   credentials: Readonly<Record<string, CredentialDeclaration>> | undefined,
@@ -183,10 +216,6 @@ function sftpIssues(
   }
   if (new Set(sftp.roots.map((r) => r.path)).size !== sftp.roots.length)
     issues.push('protocols.sftp.roots lists a path twice')
-  for (const [name, c] of Object.entries(credentials ?? {})) {
-    if (name !== sftp.credential && 'protocol' in c.use)
-      issues.push(`credential ${name}: a protocol credential that protocols.sftp doesn't use`)
-  }
   return issues
 }
 
@@ -200,10 +229,34 @@ export function sftpWidestAccess(sftp: SftpProtocol): 'read' | 'write' | 'irreve
 
 /** The host a protocol adapter reaches, as its pacing key's host: an IPv6 address in brackets. */
 export function protocolHost(protocols: Protocols): string | null {
-  const endpoint = protocols.imap?.endpoint ?? protocols.sftp?.endpoint
+  const endpoint = protocols.imap?.endpoint ?? protocols.smtp?.endpoint ?? protocols.sftp?.endpoint
   const parsed = endpoint === undefined ? null : parseEndpoint(endpoint)
   if (parsed === null) return null
   return parsed.host.includes(':') ? `[${parsed.host}]` : parsed.host
+}
+
+/** Why a protocol's credential isn't the kept password for exactly that protocol and endpoint. */
+function credentialIssues(
+  credentials: Readonly<Record<string, CredentialDeclaration>> | undefined,
+  protocol: 'imap' | 'smtp',
+  name: string,
+  endpoint: string,
+): string[] {
+  const credential =
+    credentials !== undefined && Object.hasOwn(credentials, name) ? credentials[name] : undefined
+  if (credential === undefined)
+    return [`protocols.${protocol}: credential ${name} is not declared in credentials`]
+  if (
+    !('protocol' in credential.use) ||
+    credential.use.protocol !== protocol ||
+    credential.use.endpoint !== endpoint ||
+    credential.custody !== 'kept' ||
+    credential.kind !== 'password'
+  )
+    return [
+      `protocols.${protocol}: credential ${name} must be a kept password for ${protocol} at ${endpoint}`,
+    ]
+  return []
 }
 
 /**
