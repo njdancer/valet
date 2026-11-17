@@ -34,6 +34,7 @@ import {
   parseManifest,
   plainName,
   type Requester,
+  runtimeOf,
   type SecretField,
   type SecretValue,
   type SessionDriver,
@@ -63,8 +64,10 @@ import {
   ApprovalStore,
   AuditLog,
   DEFAULT_LOGIN_BACKOFF,
+  type HttpEgress,
   JsonFileStore,
   LoginAttemptMarker,
+  noBrowserDriver,
   pruneOlderThan,
   type RuntimeDiagnostic,
   SecretRedactionSet,
@@ -275,6 +278,11 @@ export interface ServiceDeps {
     forAdapter(adapterHash: string): ToolProcessFactory
     local(manifest: AdapterManifest): LocalAccess
   }
+  /**
+   * The egress broker for an adapter whose runtime isn't browser (docs/adapter-kinds.md), built
+   * from its manifest's endpoints. Without it, ctx.http is not granted.
+   */
+  readonly egress?: (manifest: AdapterManifest) => HttpEgress
   /** Builds an adapter's driver, with the reporters its refusals outside a run go to. */
   readonly createDriver: (manifest: AdapterManifest, reporters: DriverReporters) => Promise<SessionDriver>
   readonly credentials: Credentials
@@ -1852,6 +1860,8 @@ export class AppService {
 
   private async driverFor(adapter: BuiltinAdapter): Promise<SessionDriver> {
     const id = adapter.definition.manifest.id
+    // An adapter that opens no pages gets no browser at all: ctx.http is its only way out.
+    if (runtimeOf(adapter.definition.manifest) !== 'browser') return noBrowserDriver()
     return this.deps.createDriver(adapter.definition.manifest, {
       onBlocked: this.blocked.betweenRuns(id),
       onAuthBlocked: this.blocked.authPartition(id),
@@ -1870,6 +1880,9 @@ export class AppService {
       definition: adapter.definition,
       bundleHash: adapter.hash,
       driver,
+      ...(this.deps.egress === undefined || runtimeOf(manifest) === 'browser'
+        ? {}
+        : { http: this.deps.egress(manifest) }),
       ...(start === undefined || adapter.toolScript === null
         ? {}
         : {
