@@ -12,9 +12,13 @@
     "@valet/core": "workspace:*",
     "@valet/egress": "workspace:*",
     "@valet/node-runtime": "workspace:*",
-    "@valet/runtime": "workspace:*"
+    "@valet/runtime": "workspace:*",
+    "ssh2": "1.17.0"
   },
   "devDependencies": {
-    "@valet/fake-imap": "workspace:*"
+    "@types/ssh2": "^1.15.6",
+    "@valet/credentials": "workspace:*",
+    "@valet/fake-imap": "workspace:*",
+    "@valet/fake-sftp": "workspace:*"
   }
 }

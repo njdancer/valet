@@ -1,0 +1,16 @@
+{
+  "name": "@valet/fake-sftp",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "ssh2": "1.17.0"
+  },
+  "devDependencies": {
+    "@types/ssh2": "^1.15.6"
+  }
+}

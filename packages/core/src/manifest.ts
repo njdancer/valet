@@ -7,7 +7,7 @@ import { type CredentialDeclaration, credentialDeclarationSchema, credentialIssu
 import { MAIL_SECRET, MESSAGES_SECRET } from './credentials'
 import { type ERROR_CLASSES, NEEDS_USER_REASONS, type NeedsUserReason } from './errors'
 import { hostAllowed, isBareOrigin, isHostname, isHostPattern } from './origins'
-import { type Protocols, protocolIssues, protocolsSchema } from './protocols'
+import { type Protocols, protocolHost, protocolIssues, protocolsSchema } from './protocols'
 import { isScreenedPattern } from './regex-screen'
 import {
   BROWSER_METHODS,
@@ -772,7 +772,8 @@ function homeIsDerived(manifest: {
   if (
     manifest.egress.length === 0 &&
     (manifest.privateHosts ?? []).length === 0 &&
-    manifest.protocols?.imap === undefined
+    manifest.protocols?.imap === undefined &&
+    manifest.protocols?.sftp === undefined
   )
     return false
   return manifest.home === endpointHome(manifest)
@@ -784,8 +785,8 @@ function endpointHome(manifest: {
   readonly protocols?: Protocols | undefined
 }): string {
   // A protocol adapter's home is its server's name: only the key its pacing and breaker are kept under.
-  const imap = manifest.protocols?.imap
-  if (imap !== undefined) return `https://${imap.endpoint.slice(0, imap.endpoint.lastIndexOf(':'))}/`
+  const server = manifest.protocols === undefined ? null : protocolHost(manifest.protocols)
+  if (server !== null) return `https://${server}/`
   const host = manifest.egress[0]
   if (host !== undefined) return `https://${host}/`
   const first = manifest.privateHosts?.[0]

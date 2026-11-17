@@ -9,14 +9,12 @@
 //   host → Valet: ready, result (for login, op and signInMail, by id).
 // Valet checks what comes back as untrusted; the purpose and folder rules are enforced here too.
 
-import { Socket } from 'node:net'
 import { type TLSSocket, connect as tlsConnect } from 'node:tls'
 import { isOperation, type ImapPurpose as Purpose } from '@valet/core/imap-policy'
 import { ImapClient, ImapError } from '../imap/client'
 import { Operations } from '../imap/operations'
 import { findSignInMail, type SignInQuery } from '../imap/signin'
-
-const MAX_LINE = 4_100_000
+import { serveChannel } from './channel'
 
 interface Boot {
   readonly t: 'boot'
@@ -28,18 +26,9 @@ interface Boot {
   readonly ca?: string
 }
 
-const channel = new Socket({ fd: 3, readable: true, writable: true })
-channel.setEncoding('utf8')
-const post = (message: object) => {
-  try {
-    channel.write(`${JSON.stringify(message)}\n`)
-  } catch {}
-}
-
 let boot: Boot | null = null
 let client: ImapClient | null = null
 let operations: Operations | null = null
-let busy = Promise.resolve()
 
 const failure = (error: unknown) =>
   error instanceof ImapError
@@ -110,29 +99,9 @@ async function handle(message: Record<string, unknown>): Promise<void> {
   }
 }
 
-let buffer = ''
-channel.on('data', (chunk: string) => {
-  buffer += chunk
-  if (buffer.length > MAX_LINE) process.exit(1)
-  let index = buffer.indexOf('\n')
-  while (index !== -1) {
-    const line = buffer.slice(0, index)
-    buffer = buffer.slice(index + 1)
-    let message: Record<string, unknown>
-    try {
-      message = JSON.parse(line) as Record<string, unknown>
-    } catch {
-      process.exit(1)
-    }
-    if (boot === null) {
-      if (message['t'] !== 'boot') process.exit(1)
-      boot = message as unknown as Boot
-      post({ t: 'ready' })
-    } else {
-      busy = busy.then(() => handle(message))
-    }
-    index = buffer.indexOf('\n')
-  }
-})
-channel.on('end', () => process.exit(0))
-channel.on('error', () => process.exit(1))
+const { post } = serveChannel<Boot>(
+  (b) => {
+    boot = b
+  },
+  handle,
+)

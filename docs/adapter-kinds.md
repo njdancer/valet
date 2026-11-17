@@ -334,15 +334,15 @@ listings therefore never happens in the main process. Adapter code in QuickJS ca
 capabilities, and each one is checked against the tool's purpose before the protocol host
 touches the server.
 
-| Protocol | Library (to confirm in the thread) | Read                                                                                                                                                    | Write                                               | Irreversible                                                                                  |
-| -------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| IMAP     | Valet's own ([imap.md](imap.md))   | List folders. Open a folder read-only (`EXAMINE`), so a fetch never marks mail as read. Search. Fetch envelopes, structure, and bodies with `BODY.PEEK` | Set flags, copy, move, append, create folders       | Expunge, delete folders                                                                       |
-| SMTP     | `nodemailer`                       | None                                                                                                                                                    | None                                                | Send, through `confirm()`; `From` fixed to the account; optional recipient allow-list setting |
-| SFTP     | `ssh2`                             | List, stat and read under declared roots                                                                                                                | Write, make folders and rename under declared roots | Remove                                                                                        |
+| Protocol | Library (to confirm in the thread)                    | Read                                                                                                                                                    | Write                                               | Irreversible                                                                                  |
+| -------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| IMAP     | Valet's own ([imap.md](imap.md))                      | List folders. Open a folder read-only (`EXAMINE`), so a fetch never marks mail as read. Search. Fetch envelopes, structure, and bodies with `BODY.PEEK` | Set flags, copy, move, append, create folders       | Expunge, delete folders                                                                       |
+| SMTP     | `nodemailer`                                          | None                                                                                                                                                    | None                                                | Send, through `confirm()`; `From` fixed to the account; optional recipient allow-list setting |
+| SFTP     | `ssh2` for SSH, Valet's own SFTP ([sftp.md](sftp.md)) | List, stat and read under declared roots                                                                                                                | Write, make folders and rename under declared roots | Remove                                                                                        |
 
 - The manifest declares `protocols: { imap?: { endpoint, credential, folders? }, smtp?: {…}, sftp?:
-  { endpoint, credential, hostKeySha256, roots: [{ path, access }] } }`. An SFTP host key is
-  pinned, never trusted on first use.
+  { endpoint, credential, hostKeySha256, username?, roots: [{ path, access }] } }`. An SFTP host
+  key is pinned, never trusted on first use ([sftp.md](sftp.md)).
 - The capabilities return structured data, not raw protocol text. Mail bodies come back as text
   and HTML parts with size caps, and attachments as metadata unless a tool asks for one by its id.
 - Folder and root allow-lists are enforced by the protocol host, not by adapter code.
@@ -452,6 +452,42 @@ and the profile generator. D, E and G own their own `protocols.*` entries. Each 
 
 Nick was away while these were built and asked each thread to take its own recommendation and
 note it here. Each one can be reversed.
+
+**Workstream E (SFTP, [sftp.md](sftp.md)):**
+
+- **`ssh2` for the SSH transport only, with Valet's own SFTP client.** As with IMAP, owning the
+  SFTP side is what lets the wire refuse any packet, open flag or path the session's purpose and
+  roots don't allow. `ssh2`'s own SFTP code would have needed the same checks wrapped around it.
+- **A separate host bundle for SFTP.** It carries `ssh2` and its pure-JavaScript dependencies; the
+  IMAP host stays free of npm code. `ssh2`'s native and WebAssembly parts are left out, so
+  chacha20-poly1305 isn't offered (AES-GCM and AES-CTR are). Compression is never offered.
+- **Keys only, no passwords yet.** The credential is a kept `ssh-key` Valet makes. A password could
+  follow if a server needs one.
+- **The host key is pinned in the manifest, never trusted on first use.** The author finds it with
+  `ssh-keyscan` and `ssh-keygen -lf`, and the card shows it. A changed key fails the call as
+  `egress/host-key-mismatch`, a new error class.
+- **A private IP address may be the endpoint directly**, shown as a high-risk "on your network"
+  line, rather than declared again under `privateHosts`. A NAS is the main use.
+- **The item's username wins over the manifest's** `username`, which is the fallback.
+- **Replacing a file is irreversible**; creating never overwrites, appending needs an existing
+  file, and rename never overwrites. `remove` takes files and links only, `removeDir` empty
+  folders only, so nothing deletes a tree in one call.
+- **Roots are never changed**, renamed, removed, or carried away by renaming a folder that holds
+  one. The deepest root decides what a path allows, and `/` is a valid root.
+- **Links are followed for reads only when the target stays inside the roots**; nothing is ever
+  written through a link.
+- **No new permission areas on the card.** The server is a Network line (or Your network) and each
+  root a Requests line, risk by its access. New areas would need an iOS app change.
+- **The broker's tunnel turns off Nagle's algorithm** on the sockets it accepts (workstream A's
+  code). SSH sends small writes one at a time; without it each operation took about a second.
+- **No authoring support yet.** `valet_create_draft` makes `browser` and `http` drafts only, as for
+  IMAP, so the guide doesn't describe `ctx.sftp` until drafts can be `protocol` ones.
+- **The app wiring is a follow-up**, as for IMAP: until the signed Node binary ships, the app
+  registers no SFTP backend, so SFTP tools answer not-granted.
+- **Residual risks.** Another client of the same server can swap a folder for a link between
+  Valet's check and its use; SFTP has no way to open relative to a checked handle. A root that the
+  server resolves to `/` widens what the resolved-path check allows to everything that account can
+  reach. File names come back as the server sends them (bidirectional characters included).
 
 **Workstream D (IMAP and email sign-in, [imap.md](imap.md)):**
 

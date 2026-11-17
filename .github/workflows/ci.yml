@@ -183,6 +183,11 @@ jobs:
         run: |
           pnpm exec vitest run test/updater/feed-server.test.ts test/updater/make-feed.test.ts \
             test/local-command.test.ts
+      - name: the protocol hosts under Seatbelt (they run on Linux too, unsandboxed)
+        if: matrix.part == 'fast'
+        run: |
+          pnpm exec vitest run packages/protocols/test/host.e2e.test.ts \
+            packages/protocols/test/sftp-host.e2e.test.ts packages/protocols/test/sftp-openssh.test.ts
       - name: drift smoke test, dry run against the fake (the live run skips without VALET_LIVE_SMOKE)
         if: matrix.part == 'fast'
         run: |
