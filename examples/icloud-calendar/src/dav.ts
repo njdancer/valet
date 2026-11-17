@@ -2,7 +2,15 @@
 // answered by a 207 multistatus of <response>s, each an href and the properties found for it.
 // Pure parsing apart from `dav`, so cases test it through the tools.
 
-import { parseXml, type ToolContext, ValetError, type XmlElement, xmlChild, xmlChildren, xmlText } from '@valet/core'
+import {
+  parseXml,
+  type ToolContext,
+  ValetError,
+  type XmlElement,
+  xmlChild,
+  xmlChildren,
+  xmlText,
+} from '@valet/core'
 
 export const DAV = 'DAV:'
 
@@ -49,7 +57,10 @@ export function responses(multistatus: XmlElement): DavResponse[] {
       const status = xmlChild(p, 'status', DAV)
       return status !== null && / 200 /.test(xmlText(status))
     })
-    return { href: href === null ? '' : xmlText(href).trim(), prop: ok === undefined ? null : xmlChild(ok, 'prop', DAV) }
+    return {
+      href: href === null ? '' : xmlText(href).trim(),
+      prop: ok === undefined ? null : xmlChild(ok, 'prop', DAV),
+    }
   })
 }
 

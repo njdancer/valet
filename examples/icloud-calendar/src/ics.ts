@@ -14,7 +14,10 @@ export interface IcsEvent {
 
 /** Lines with RFC 5545 folding undone: a line that starts with a space or tab continues the last. */
 export function unfold(text: string): string[] {
-  return text.replace(/\r\n[ \t]/g, '').replace(/\n[ \t]/g, '').split(/\r?\n/)
+  return text
+    .replace(/\r\n[ \t]/g, '')
+    .replace(/\n[ \t]/g, '')
+    .split(/\r?\n/)
 }
 
 export function unescapeText(value: string): string {
@@ -40,7 +43,8 @@ export function fold(line: string): string {
 /** A DATE-TIME or DATE value as ISO 8601: "20261118T090000Z" → "2026-11-18T09:00:00Z". */
 export function isoTime(value: string): { iso: string; allDay: boolean } | null {
   const dt = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z?)$/.exec(value)
-  if (dt !== null) return { iso: `${dt[1]}-${dt[2]}-${dt[3]}T${dt[4]}:${dt[5]}:${dt[6]}${dt[7]}`, allDay: false }
+  if (dt !== null)
+    return { iso: `${dt[1]}-${dt[2]}-${dt[3]}T${dt[4]}:${dt[5]}:${dt[6]}${dt[7]}`, allDay: false }
   const d = /^(\d{4})(\d{2})(\d{2})$/.exec(value)
   if (d !== null) return { iso: `${d[1]}-${d[2]}-${d[3]}`, allDay: true }
   return null

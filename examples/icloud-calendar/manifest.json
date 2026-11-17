@@ -23,9 +23,24 @@
   "requests": [
     { "method": "PROPFIND", "host": "caldav.icloud.com", "path": "/", "purpose": "read" },
     { "method": "PROPFIND", "host": "caldav.icloud.com", "path": "/:account/principal", "purpose": "read" },
-    { "method": "PROPFIND", "host": "p01-caldav.icloud.com", "path": "/:account/calendars", "purpose": "read" },
-    { "method": "REPORT", "host": "p01-caldav.icloud.com", "path": "/:account/calendars/:calendar", "purpose": "read" },
-    { "method": "PUT", "host": "p01-caldav.icloud.com", "path": "/:account/calendars/:calendar/:event", "purpose": "write" }
+    {
+      "method": "PROPFIND",
+      "host": "p01-caldav.icloud.com",
+      "path": "/:account/calendars",
+      "purpose": "read"
+    },
+    {
+      "method": "REPORT",
+      "host": "p01-caldav.icloud.com",
+      "path": "/:account/calendars/:calendar",
+      "purpose": "read"
+    },
+    {
+      "method": "PUT",
+      "host": "p01-caldav.icloud.com",
+      "path": "/:account/calendars/:calendar/:event",
+      "purpose": "write"
+    }
   ],
   "tools": [
     {

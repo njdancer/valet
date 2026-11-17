@@ -23,8 +23,18 @@
   "requests": [
     { "method": "PROPFIND", "host": "contacts.icloud.com", "path": "/", "purpose": "read" },
     { "method": "PROPFIND", "host": "contacts.icloud.com", "path": "/:account/principal", "purpose": "read" },
-    { "method": "PROPFIND", "host": "p01-contacts.icloud.com", "path": "/:account/carddavhome", "purpose": "read" },
-    { "method": "REPORT", "host": "p01-contacts.icloud.com", "path": "/:account/carddavhome/:book", "purpose": "read" }
+    {
+      "method": "PROPFIND",
+      "host": "p01-contacts.icloud.com",
+      "path": "/:account/carddavhome",
+      "purpose": "read"
+    },
+    {
+      "method": "REPORT",
+      "host": "p01-contacts.icloud.com",
+      "path": "/:account/carddavhome/:book",
+      "purpose": "read"
+    }
   ],
   "tools": [
     {

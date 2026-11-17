@@ -25,9 +25,7 @@
           "name": "authorization",
           "format": "Bearer {value}"
         },
-        "hosts": [
-          "192.168.1.20"
-        ]
+        "hosts": ["192.168.1.20"]
       }
     }
   },

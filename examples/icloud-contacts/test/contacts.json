@@ -41,20 +41,13 @@
           "contacts": [
             {
               "name": "Sam Lee",
-              "emails": [
-                "sam@example.org"
-              ],
-              "phones": [
-                "+61 400 000 001"
-              ],
+              "emails": ["sam@example.org"],
+              "phones": ["+61 400 000 001"],
               "organisation": "Example Pty Ltd"
             },
             {
               "name": "Samira Khan",
-              "emails": [
-                "samira@example.net",
-                "sk@example.org"
-              ],
+              "emails": ["samira@example.net", "sk@example.org"],
               "phones": [],
               "organisation": null
             }
@@ -106,9 +99,7 @@
             {
               "name": "Jo Bloggs, Jr",
               "emails": [],
-              "phones": [
-                "+61 2 9000 0000"
-              ],
+              "phones": ["+61 2 9000 0000"],
               "organisation": "Bloggs; Sons"
             }
           ]

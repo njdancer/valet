@@ -43,7 +43,8 @@ async function next(socket: HttpSocket): Promise<Message> {
   if (message.kind === 'closed') throw new ValetError('tool-run', 'unavailable')
   try {
     const parsed: unknown = JSON.parse(message.data)
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object')
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))
+      throw new Error('not an object')
     return parsed as Message
   } catch {
     throw new ValetError('tool-run', 'unexpected-shape')
@@ -51,7 +52,11 @@ async function next(socket: HttpSocket): Promise<Message> {
 }
 
 /** Sends one request and returns its result, skipping events. */
-export async function request(socket: HttpSocket, id: number, body: Record<string, unknown>): Promise<unknown> {
+export async function request(
+  socket: HttpSocket,
+  id: number,
+  body: Record<string, unknown>,
+): Promise<unknown> {
   await socket.send(JSON.stringify({ id, ...body }))
   for (let i = 0; i < MAX_MESSAGES; i++) {
     const message = await next(socket)
@@ -82,16 +87,19 @@ export function toDevices(result: unknown): z.infer<typeof device>[] {
   for (const e of result.slice(0, 500)) {
     if (e === null || typeof e !== 'object') continue
     const { entity_id: id, state, attributes, last_changed: changed } = e as Record<string, unknown>
-    if (typeof id !== 'string' || !/^[a-z_]{1,32}\.[a-z0-9_]{1,64}$/.test(id) || typeof state !== 'string') continue
+    if (typeof id !== 'string' || !/^[a-z_]{1,32}\.[a-z0-9_]{1,64}$/.test(id) || typeof state !== 'string')
+      continue
     const kind = id.split('.')[0] as (typeof KINDS)[number]
     if (!KINDS.includes(kind)) continue
-    const attrs = attributes !== null && typeof attributes === 'object' ? (attributes as Record<string, unknown>) : {}
+    const attrs =
+      attributes !== null && typeof attributes === 'object' ? (attributes as Record<string, unknown>) : {}
     out.push({
       id,
       kind,
       name: typeof attrs['friendly_name'] === 'string' ? attrs['friendly_name'].slice(0, 100) : id,
       state: state.slice(0, 50),
-      unit: typeof attrs['unit_of_measurement'] === 'string' ? attrs['unit_of_measurement'].slice(0, 10) : null,
+      unit:
+        typeof attrs['unit_of_measurement'] === 'string' ? attrs['unit_of_measurement'].slice(0, 10) : null,
       changed: typeof changed === 'string' ? changed.slice(0, 40) : null,
     })
   }
@@ -134,7 +142,9 @@ export const tools = {
           target: { entity_id: input.light },
         })
         // The state as the hub now has it, from the same socket.
-        const now = toDevices(await request(socket, 2, { type: 'get_states' })).find((d) => d.id === input.light)
+        const now = toDevices(await request(socket, 2, { type: 'get_states' })).find(
+          (d) => d.id === input.light,
+        )
         if (now === undefined) throw new ValetError('tool-input', 'not-found')
         return { light: input.light, state: now.state }
       } finally {

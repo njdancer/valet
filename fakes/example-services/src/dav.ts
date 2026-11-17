@@ -67,6 +67,11 @@ export function icsOf(event: Calendar['events'][number]): string {
   ].join('\r\n')
 }
 
+/** RFC 5545 TEXT: backslash escapes for comma, semicolon, backslash and newline. */
+function unescapeText(value: string): string {
+  return value.replace(/\\([\\;,nN])/g, (_m, c: string) => (c === 'n' || c === 'N' ? '\n' : c))
+}
+
 function fold(line: string): string {
   if (line.length <= 20) return line
   return `${line.slice(0, 20)}\r\n ${line.slice(20)}`
@@ -183,10 +188,10 @@ export function caldav(
     const location = field('LOCATION')
     calendar.events.push({
       uid,
-      summary: summary.replaceAll('\\,', ','),
+      summary: unescapeText(summary),
       start,
       end,
-      ...(location === undefined ? {} : { location: location.replaceAll('\\,', ',') }),
+      ...(location === undefined ? {} : { location: unescapeText(location) }),
     })
     return send(res, 201, '', { etag: `"${uid}-1"` })
   }

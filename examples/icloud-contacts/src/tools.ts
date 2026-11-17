@@ -57,7 +57,8 @@ async function addressBook(ctx: ToolContext): Promise<string> {
       typeof type !== 'string' &&
       type.children.some((c) => typeof c !== 'string' && c.local === 'addressbook' && c.ns === CARDDAV)
     const path = splitHref(r.href, home.host)?.path ?? ''
-    if (isBook && /^\/[0-9]{1,20}\/carddavhome\/[A-Za-z0-9-]{1,64}\/$/.test(path)) return `https://${home.host}${path}`
+    if (isBook && /^\/[0-9]{1,20}\/carddavhome\/[A-Za-z0-9-]{1,64}\/$/.test(path))
+      return `https://${home.host}${path}`
   }
   throw new ValetError('tool-input', 'not-found')
 }

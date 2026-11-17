@@ -52,7 +52,8 @@ async function home(ctx: ToolContext): Promise<Home> {
   )
   const href = hrefIn(responses(found)[0]?.prop ?? null, 'calendar-home-set', CALDAV)
   const at = href === null ? null : splitHref(href, 'caldav.icloud.com')
-  if (at === null || !/^\/[0-9]{1,20}\/calendars\/$/.test(at.path)) throw new ValetError('tool-run', 'unexpected-shape')
+  if (at === null || !/^\/[0-9]{1,20}\/calendars\/$/.test(at.path))
+    throw new ValetError('tool-run', 'unexpected-shape')
   return { server: at.host, url: SERVERS.includes(at.host) ? `https://${at.host}${at.path}` : null }
 }
 
@@ -83,12 +84,20 @@ async function calendars(ctx: ToolContext, homeUrl: string): Promise<CalendarInf
   const homePath = homeUrl.replace(/^https:\/\/[^/]+/, '')
   const out: CalendarInfo[] = []
   for (const r of responses(listed)) {
-    const type = r.prop === null ? null : r.prop.children.find((c) => typeof c !== 'string' && c.local === 'resourcetype')
+    const type =
+      r.prop === null
+        ? null
+        : r.prop.children.find((c) => typeof c !== 'string' && c.local === 'resourcetype')
     const isCalendar =
-      type !== undefined && type !== null && typeof type !== 'string' && type.children.some((c) => typeof c !== 'string' && c.local === 'calendar' && c.ns === CALDAV)
+      type !== undefined &&
+      type !== null &&
+      typeof type !== 'string' &&
+      type.children.some((c) => typeof c !== 'string' && c.local === 'calendar' && c.ns === CALDAV)
     if (!isCalendar || r.prop === null) continue
     // A calendar may hold tasks only (Reminders): leave out any that says it holds no events.
-    const set = r.prop.children.find((c) => typeof c !== 'string' && c.local === 'supported-calendar-component-set')
+    const set = r.prop.children.find(
+      (c) => typeof c !== 'string' && c.local === 'supported-calendar-component-set',
+    )
     if (set !== undefined && typeof set !== 'string') {
       const names = set.children.flatMap((c) => (typeof c === 'string' ? [] : [c.attributes['name'] ?? '']))
       if (names.length > 0 && !names.includes('VEVENT')) continue
@@ -160,7 +169,8 @@ export const tools = {
       const to = Date.parse(input.to)
       if (!(to > from) || to - from > 62 * DAY_MS) throw new ValetError('tool-input', 'invalid')
       const homeUrl = await reachableHome(ctx)
-      const ids = input.calendar === undefined ? (await calendars(ctx, homeUrl)).map((c) => c.id) : [input.calendar]
+      const ids =
+        input.calendar === undefined ? (await calendars(ctx, homeUrl)).map((c) => c.id) : [input.calendar]
       const range = `start="${icsStamp(from)}" end="${icsStamp(to)}"`
       const events: z.infer<typeof event>[] = []
       for (const id of ids.slice(0, 8)) {
@@ -233,6 +243,8 @@ export const tools = {
 }
 
 function icsStamp(ms: number): string {
-  return new Date(ms).toISOString().replace(/\.\d+Z$/, 'Z').replace(/[-:]/g, '')
+  return new Date(ms)
+    .toISOString()
+    .replace(/\.\d+Z$/, 'Z')
+    .replace(/[-:]/g, '')
 }
-
