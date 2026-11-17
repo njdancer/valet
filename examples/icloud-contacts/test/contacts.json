@@ -1,0 +1,194 @@
+{
+  "cases": [
+    {
+      "name": "people whose name contains the words, grouped emails and all",
+      "tool": "find_contacts",
+      "input": {
+        "name": "sam"
+      },
+      "fetch": [
+        {
+          "method": "PROPFIND",
+          "url": "https://contacts.icloud.com/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/root.xml"
+        },
+        {
+          "method": "PROPFIND",
+          "url": "https://contacts.icloud.com/1234567890/principal/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/principal.xml"
+        },
+        {
+          "method": "PROPFIND",
+          "url": "https://p01-contacts.icloud.com/1234567890/carddavhome/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/home.xml"
+        },
+        {
+          "method": "REPORT",
+          "url": "https://p01-contacts.icloud.com/1234567890/carddavhome/card/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/sam.xml"
+        }
+      ],
+      "expect": {
+        "output": {
+          "contacts": [
+            {
+              "name": "Sam Lee",
+              "emails": [
+                "sam@example.org"
+              ],
+              "phones": [
+                "+61 400 000 001"
+              ],
+              "organisation": "Example Pty Ltd"
+            },
+            {
+              "name": "Samira Khan",
+              "emails": [
+                "samira@example.net",
+                "sk@example.org"
+              ],
+              "phones": [],
+              "organisation": null
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "folded lines, escaped text, and a card that isn't one",
+      "tool": "find_contacts",
+      "input": {
+        "name": "jo"
+      },
+      "fetch": [
+        {
+          "method": "PROPFIND",
+          "url": "https://contacts.icloud.com/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/root.xml"
+        },
+        {
+          "method": "PROPFIND",
+          "url": "https://contacts.icloud.com/1234567890/principal/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/principal.xml"
+        },
+        {
+          "method": "PROPFIND",
+          "url": "https://p01-contacts.icloud.com/1234567890/carddavhome/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/home.xml"
+        },
+        {
+          "method": "REPORT",
+          "url": "https://p01-contacts.icloud.com/1234567890/carddavhome/card/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": {
+            "inline": "<?xml version=\"1.0\"?><multistatus xmlns=\"DAV:\" xmlns:card=\"urn:ietf:params:xml:ns:carddav\"><response><href>/1234567890/carddavhome/card/x.vcf</href><propstat><prop><card:address-data>BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Jo Bloggs\\, Jr\r\nTEL;type=WORK:+61 2 9000\r\n  0000\r\nORG:Bloggs\\; Sons;Accounts\r\nEND:VCARD\r\n</card:address-data></prop><status>HTTP/1.1 200 OK</status></propstat></response><response><href>/1234567890/carddavhome/card/bad.vcf</href><propstat><prop><card:address-data>not a card</card:address-data></prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>"
+          }
+        }
+      ],
+      "expect": {
+        "output": {
+          "contacts": [
+            {
+              "name": "Jo Bloggs, Jr",
+              "emails": [],
+              "phones": [
+                "+61 2 9000 0000"
+              ],
+              "organisation": "Bloggs; Sons"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "nobody by that name",
+      "tool": "find_contacts",
+      "input": {
+        "name": "zz"
+      },
+      "fetch": [
+        {
+          "method": "PROPFIND",
+          "url": "https://contacts.icloud.com/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/root.xml"
+        },
+        {
+          "method": "PROPFIND",
+          "url": "https://contacts.icloud.com/1234567890/principal/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/principal.xml"
+        },
+        {
+          "method": "PROPFIND",
+          "url": "https://p01-contacts.icloud.com/1234567890/carddavhome/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/home.xml"
+        },
+        {
+          "method": "REPORT",
+          "url": "https://p01-contacts.icloud.com/1234567890/carddavhome/card/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": {
+            "inline": "<?xml version=\"1.0\"?><multistatus xmlns=\"DAV:\"/>"
+          }
+        }
+      ],
+      "expect": {
+        "output": {
+          "contacts": []
+        }
+      }
+    },
+    {
+      "name": "an account on a server this version doesn't name",
+      "tool": "find_contacts",
+      "input": {
+        "name": "sam"
+      },
+      "fetch": [
+        {
+          "method": "PROPFIND",
+          "url": "https://contacts.icloud.com/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": "fixtures/root.xml"
+        },
+        {
+          "method": "PROPFIND",
+          "url": "https://contacts.icloud.com/1234567890/principal/",
+          "status": 207,
+          "contentType": "application/xml; charset=utf-8",
+          "body": {
+            "inline": "<?xml version=\"1.0\"?><multistatus xmlns=\"DAV:\" xmlns:card=\"urn:ietf:params:xml:ns:carddav\"><response><href>/1234567890/principal/</href><propstat><prop><card:addressbook-home-set><href>https://p09-contacts.icloud.com:443/1234567890/carddavhome/</href></card:addressbook-home-set></prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>"
+          }
+        }
+      ],
+      "expect": {
+        "error": {
+          "stage": "tool-run",
+          "errorClass": "host-not-allowed"
+        }
+      }
+    }
+  ]
+}

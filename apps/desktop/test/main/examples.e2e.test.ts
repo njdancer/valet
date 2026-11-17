@@ -264,3 +264,9 @@ describe('iCloud Calendar (http, CalDAV, a kept password)', () => {
     expect(services.seen.length).toBe(before)
   }, 60_000)
 })
+
+describe('iCloud Contacts (http, CardDAV, a kept password)', () => {
+  it('passes its check and every case', async () => {
+    await expectPasses(await fromExample('icloud-contacts'))
+  }, 60_000)
+})
