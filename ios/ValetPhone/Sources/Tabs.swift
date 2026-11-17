@@ -197,6 +197,9 @@ struct ValetView: View {
           Text("Lock down stops every agent and declines everything waiting. Only your Mac can unlock it.")
         }
         CommandsSection(model: model)
+        if let account = model.account {
+          AccountSection(account: account)
+        }
         if let devices = model.status?.devices, !devices.isEmpty {
           Section(header: SectionHeader("Devices")) {
             ForEach(devices) { device in

@@ -422,6 +422,22 @@ so the account outlives any one Mac.
   person just added it with its code (`rosterJoin`, cleared once pinned or on leaving), and only
   if the list adds it with exactly its own three keys.
 
+**Built in 4c-3 so far (decided by recommendation, needs Nick's review).**
+
+- _The phone checks the list itself._ A Swift port of core's roster checks every change, with
+  cross-language vectors both ways (`packages/core/test/ios-interop.test.ts`).
+- _What the phone trusts first._ The first list the phone accepts must be the account its paired
+  Mac named, with that Mac and this iPhone (all three keys) on it. The phone then pins the list's
+  first change and the last head it saw, so a hub can't swap the list or roll it back. A list
+  that fails says "Your account's device list didn't check out" and the phone doesn't use it.
+- _Adding a waiting Mac._ Settings on the phone lists the account's devices and any Mac waiting
+  to join. Add asks to confirm, then Face ID signs the change ("Add <Mac's own name> to your
+  Valet account"). The Mac's keys come from its own signed record. If the list changed at the hub
+  first, the phone takes the new list and asks the person to try again rather than signing twice.
+- _Removing._ The phone can remove another device with Face ID, but not itself: Unpair stays the
+  way to stop using this iPhone.
+- _When it reads._ When the Valet tab shows, as the phone does for cards with no push.
+
 **What stays the same.** The hub still can't add a device: every change is signed by a device on
 the list, and every node checks the chain itself. Removing the Mac that started the list resets it
 (#125) only when no phone on the list could keep it going. A stolen phone remains out of scope

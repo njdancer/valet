@@ -42,6 +42,13 @@ public enum HubPhone {
   public struct Node: Equatable, Sendable {
     public let macId, slug, name: String
     public let online: Bool
+
+    public init(macId: String, slug: String, name: String, online: Bool) {
+      self.macId = macId
+      self.slug = slug
+      self.name = name
+      self.online = online
+    }
   }
 
   /// What POST /phone/account answers with (`hubPhoneAccountSchema`). Only the shape is checked
