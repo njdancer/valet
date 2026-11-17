@@ -244,7 +244,7 @@ describe('red team B4 and B5: the forms that slipped past the first cut', () => 
     expect(
       s(
         JSON.stringify('päss-wörd-ünïcode').replace(
-          /[^\x00-\x7f]/g,
+          /[\u0080-\uffff]/g,
           (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
         ),
       ),
