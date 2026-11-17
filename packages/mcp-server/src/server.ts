@@ -190,10 +190,11 @@ export function createMcpServer(
     return toolResult({ status: 'ok', output: checked.output }, structured)
   }
 
-  const register = ({ name, listed }: ExposedTool): RegisteredTool => {
-    // planTools only exposes tools whose input is an object schema.
-    const input = listed.input as z.ZodObject
-    const output = listed.output instanceof z.ZodObject ? listed.output : undefined
+  const register = ({ name, listed, schemas }: ExposedTool): RegisteredTool => {
+    // Strict copies made through JSON Schema (tool-names.ts, clientSchemas): an argument the tool
+    // doesn't declare is refused by name before the call reaches the runtime.
+    const input = schemas.input
+    const output = schemas.output
     return server.registerTool(
       name,
       {

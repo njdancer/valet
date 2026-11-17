@@ -230,12 +230,20 @@ describe('ToolHost.call: approval and lookup', () => {
       }),
     )
 
+    // Where and why, as codes and the schema's own bound.
     expect(await host.call({ ...call, input: { query: 'x'.repeat(11) } })).toEqual({
       status: 'failed',
       stage: 'tool-input',
       errorClass: 'invalid',
+      issue: { path: ['query'], reason: 'too-long', limit: 10 },
     })
     expect(await host.call({ ...call, input: 'milk' })).toMatchObject({ errorClass: 'invalid' })
+    expect(await host.call({ ...call, input: {} })).toMatchObject({
+      issue: { path: ['query'], reason: 'missing' },
+    })
+    expect(await host.call({ ...call, input: { query: 5 } })).toMatchObject({
+      issue: { path: ['query'], reason: 'wrong-type' },
+    })
     expect(run).not.toHaveBeenCalled()
     expect(driver.toolPageCalls).toBe(0)
   })

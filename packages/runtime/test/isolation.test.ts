@@ -101,6 +101,41 @@ describe('an isolated tool', () => {
     expect(JSON.stringify(w.audit.events)).not.toContain('secret-looking')
   })
 
+  it('carries where and why a tool refused its input, in the vocabulary only', async () => {
+    const w = await isolated(HONEST, honestTools)
+    expect(await w.run('throws_input_issue')).toEqual({
+      status: 'failed',
+      stage: 'tool-input',
+      errorClass: 'invalid',
+      issue: { path: ['items', 2, 'quantity'], reason: 'over-total', limit: 20 },
+    })
+    // Text forged into the issue after the constructor checked it is dropped on the host's side.
+    expect(await w.run('throws_forged_issue', { which: 1 })).toEqual({
+      status: 'failed',
+      stage: 'tool-input',
+      errorClass: 'invalid',
+    })
+    expect(await w.run('throws_forged_issue', { which: 2 })).toEqual({
+      status: 'failed',
+      stage: 'tool-input',
+      errorClass: 'invalid',
+      issue: { path: ['items'], reason: 'too-large' },
+    })
+    expect(JSON.stringify(w.audit.events)).not.toContain('the person')
+  })
+
+  it("maps the tool's own refusal of its input to codes, never its message", async () => {
+    const w = await isolated(HONEST, honestTools)
+    const result = await w.run('refined_duplicate', { items: [4, 7, 4] })
+    expect(result).toEqual({
+      status: 'failed',
+      stage: 'tool-input',
+      errorClass: 'invalid',
+      issue: { path: ['items', 2], reason: 'duplicate' },
+    })
+    expect(JSON.stringify(result)).not.toContain('IGNORE')
+  })
+
   it('validates the output in the host, as for an in-process tool', async () => {
     const w = await isolated(HONEST, honestTools)
     expect(await w.run('returns_nothing')).toEqual({ status: 'ok', output: undefined })

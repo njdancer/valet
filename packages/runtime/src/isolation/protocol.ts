@@ -10,6 +10,8 @@
 import {
   ERROR_CLASSES,
   type ErrorClass,
+  type InputIssue,
+  inputIssue,
   NEEDS_USER_REASONS,
   NeedsUserError,
   type NeedsUserReason,
@@ -50,7 +52,13 @@ const MAX_NODES = 200_000
 
 /** How an error crosses the channel: a stage and class, a needsUser reason, or nothing at all. */
 export type WireError =
-  | { readonly kind: 'valet'; readonly stage: Stage; readonly errorClass: ErrorClass }
+  | {
+      readonly kind: 'valet'
+      readonly stage: Stage
+      readonly errorClass: ErrorClass
+      /** A tool-input refusal's where and why; checked against the vocabulary when decoded. */
+      readonly issue?: InputIssue
+    }
   | { readonly kind: 'needsUser'; readonly reason: NeedsUserReason }
   | { readonly kind: 'other' }
 
@@ -136,7 +144,10 @@ export function withinSize(value: unknown): boolean {
 }
 
 export function encodeError(error: unknown): WireError {
-  if (error instanceof ValetError) return { kind: 'valet', stage: error.stage, errorClass: error.errorClass }
+  if (error instanceof ValetError) {
+    const wire = { kind: 'valet', stage: error.stage, errorClass: error.errorClass } as const
+    return error.issue === undefined ? wire : { ...wire, issue: error.issue }
+  }
   if (error instanceof NeedsUserError) return { kind: 'needsUser', reason: error.reason }
   return { kind: 'other' }
 }
@@ -147,9 +158,10 @@ export function encodeError(error: unknown): WireError {
  */
 export function decodeError(wire: unknown): Error {
   if (wire !== null && typeof wire === 'object') {
-    const w = wire as Partial<Record<'kind' | 'stage' | 'errorClass' | 'reason', unknown>>
+    const w = wire as Partial<Record<'kind' | 'stage' | 'errorClass' | 'reason' | 'issue', unknown>>
     if (w.kind === 'valet' && isStage(w.stage) && isErrorClass(w.errorClass)) {
-      return new ValetError(w.stage, w.errorClass)
+      // ValetError keeps an issue for tool-input only, and only the parts the vocabulary allows.
+      return new ValetError(w.stage, w.errorClass, inputIssue(w.issue))
     }
     if (w.kind === 'needsUser' && isReason(w.reason)) return new NeedsUserError(w.reason)
   }

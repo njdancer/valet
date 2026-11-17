@@ -2,7 +2,7 @@
 // imports the runtime, so the endpoint can be tested against a fake and the runtime can change
 // behind this seam.
 
-import type { ErrorClass, NeedsUserReason, Stage, ToolDeclaration } from '@valet/core'
+import type { ErrorClass, InputIssue, NeedsUserReason, Stage, ToolDeclaration } from '@valet/core'
 import type { z } from 'zod'
 import type { ClientIdentity } from './auth'
 
@@ -83,6 +83,11 @@ export type CallOutcome =
       readonly errorClass: ErrorClass
       /** A failure the person can fix in the app, such as a login Valet was never given. */
       readonly needsYou?: NeedsYouHint
+      /**
+       * Stage tool-input: where the input was wrong and why, as codes (core's input-issue.ts). The
+       * result is written from fixed sentences; the issue is checked against the vocabulary again.
+       */
+      readonly issue?: InputIssue
     }
   /**
    * The site refused or rate-limited us, or our own rate budget or circuit breaker held the call
@@ -101,6 +106,11 @@ export type CallOutcome =
       readonly retryAfterMs: number
       /** With errorClass busy: how many calls were still in front of this one. */
       readonly ahead?: number
+      /**
+       * With errorClass busy: what is in front is a login an earlier call started and was answered
+       * without (D50), so the call was answered at once rather than after waiting its turn.
+       */
+      readonly waitingFor?: 'login'
     }
   /** The person declined the confirmation in the app, or (`timedOut`) didn't answer it in time. */
   | { readonly status: 'declined'; readonly timedOut?: true }
