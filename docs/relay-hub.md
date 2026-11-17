@@ -447,6 +447,7 @@ so the account outlives any one Mac.
   Mac; a per-Mac switcher there is left for the Devices step.
 
 **Built in 4c-4.** Settings › Devices now leads with the account:
+
 - the same one-line status as Needs you, with a dot, and the relay's state under it;
 - Try again (when Touch ID was cancelled) sits with Open the hub and Leave the account;
 - "Checking your Valet account…" shows until the relay reports the hub;
