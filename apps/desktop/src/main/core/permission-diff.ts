@@ -13,15 +13,19 @@ import {
   DEFAULT_SANDBOX,
   describeDeclaration,
   describeException,
+  describePrivateHost,
+  describeRuntime,
   exceptionKey,
   exceptionRisk,
   messagesSourcesIn,
   type OtpSource,
+  runtimeOf,
   type SandboxDeclaration,
   type SandboxException,
   settingToolNames,
   toolHints,
   unlockedBy,
+  uploadBudget,
   useKind,
 } from '@valet/core'
 import type {
@@ -91,7 +95,14 @@ export function probeInfo(manifest: AdapterManifest): ProbeInfo {
 
 export function limitsInfo(manifest: AdapterManifest): LimitsInfo {
   const { requestsPerRun, minGapMs, cooldownSeconds, maxCooldownSeconds } = manifest.limits
-  return { requestsPerRun, minGapMs, cooldownSeconds, maxCooldownSeconds }
+  return {
+    requestsPerRun,
+    minGapMs,
+    cooldownSeconds,
+    maxCooldownSeconds,
+    uploadBytesPerRun: uploadBudget(manifest, 'read'),
+    writeUploadBytesPerRun: uploadBudget(manifest, 'write'),
+  }
 }
 
 function tools(manifest: AdapterManifest): ToolDiffEntry[] {
@@ -255,14 +266,20 @@ export function permissionDiff(before: AdapterManifest | null, after: AdapterMan
     navigation: pick((m) => m.navigation),
     frameOrigins: pick((m) => m.auth.frameOrigins),
     egress: pick((m) => m.egress),
+    privateHosts: pick((m) => (m.privateHosts ?? []).map(describePrivateHost)),
+    runtime: {
+      before: before === null ? null : describeRuntime(runtimeOf(before)),
+      after: describeRuntime(runtimeOf(after)),
+    },
     cookieDomains: pick((m) => m.session.cookieDomains),
     storage: pick(storageKeys),
     requests: pick((m) =>
-      m.requests.map(({ method, host, path, purpose }) => ({
+      m.requests.map(({ method, host, path, purpose, websocket }) => ({
         method,
         ...(host === undefined ? {} : { host }),
         path,
         purpose,
+        ...(websocket === undefined ? {} : { websocket }),
       })),
     ),
     tools: pick(tools),

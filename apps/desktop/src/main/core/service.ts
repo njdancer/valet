@@ -1197,6 +1197,7 @@ export class AppService {
       source: r.source,
       requestedAt: r.requestedAt,
       expiresAt: r.expiresAt,
+      ...(r.via === undefined ? {} : { via: r.via }),
     }))
   }
 

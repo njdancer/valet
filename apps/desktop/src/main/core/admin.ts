@@ -375,6 +375,16 @@ const EVENT_FIELDS: Readonly<Record<AuditEvent['type'], readonly string[]>> = {
   'credential-revoked': ['adapterId', 'credential'],
   'key-generated': ['adapterId', 'credential', 'fingerprint'],
   'local-access': ['adapterId', 'callId', 'capability', 'errorClass'],
+  'egress-connection': [
+    'adapterId',
+    'callId',
+    'endpoint',
+    'kind',
+    'bytesUp',
+    'bytesDown',
+    'errorClass',
+    'draftId',
+  ],
   'request-blocked': [
     'adapterId',
     'method',

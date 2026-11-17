@@ -41,7 +41,7 @@ public struct PermissionChange: Equatable, Sendable {
   public static let areas = [
     "navigation", "egress", "auth-frames", "secret", "secret-origins", "messages-sender", "requests", "tool",
     "side-effect", "session-cookies", "session-storage", "setting", "limits", "sandbox-mode", "sandbox-exception",
-    "auth-steps", "probe", "credential",
+    "auth-steps", "probe", "runtime", "private-network", "credential",
   ]
   public let area: String
   public let change: String

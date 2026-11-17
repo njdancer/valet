@@ -11,11 +11,58 @@ const before = parseManifest(SHOP)
 const after = parseManifest({
   ...SHOP,
   version: '2.0.0',
-  egress: [...SHOP.egress, 'tracker.example'],
+  egress: [...(SHOP.egress ?? []), 'tracker.example'],
   requests: [...(SHOP.requests ?? []), { method: 'POST', path: '/api/order', purpose: 'irreversible' }],
 })
 
 describe('permissionChanges', () => {
+  it('shows an http adapter’s kind, private hosts, websockets and upload budgets', () => {
+    const http = parseManifest({
+      schemaVersion: 1,
+      id: 'home-hub',
+      name: 'Home hub',
+      version: '1.0.0',
+      description: 'Reads a home hub.',
+      runtime: 'http',
+      privateHosts: [{ address: '192.168.1.20', port: 8123, scheme: 'http' }],
+      requests: [
+        { method: 'GET', host: '192.168.1.20:8123', path: '/api/states', purpose: 'read' },
+        { method: 'GET', host: '192.168.1.20:8123', path: '/api/live', purpose: 'read', websocket: true },
+      ],
+      tools: [{ name: 'states', title: 'States', description: 'Reads states.', sideEffect: 'read' }],
+    })
+    const lines = permissionChanges(null, http, false)
+    expect(lines).toContainEqual({
+      area: 'runtime',
+      change: 'added',
+      items: ['Calls web APIs through Valet, with no browser'],
+      risk: 'medium',
+    })
+    expect(lines).toContainEqual({
+      area: 'private-network',
+      change: 'added',
+      items: ['192.168.1.20:8123 on your network (unencrypted http)'],
+      risk: 'high',
+    })
+    expect(lines).toContainEqual({
+      area: 'requests',
+      change: 'added',
+      items: ['GET 192.168.1.20:8123/api/states (read)', 'GET 192.168.1.20:8123/api/live (read, websocket)'],
+      risk: 'low',
+    })
+    const looser = parseManifest({
+      ...http,
+      home: undefined,
+      limits: { ...http.limits, uploadBytesPerRun: 1_000_000 },
+    })
+    expect(permissionChanges(http, looser, false)).toContainEqual({
+      area: 'limits',
+      change: 'widened',
+      items: ['a read may send 65536 → 1000000 bytes'],
+      risk: 'medium',
+    })
+  })
+
   it('lists what widens with its risk, and an unsandboxed adapter as critical', () => {
     const lines = permissionChanges(before, after, true)
     expect(lines[0]).toMatchObject({ area: 'sandbox-mode', change: 'added', risk: 'critical' })
@@ -75,7 +122,7 @@ describe('permissionChanges', () => {
   it('shows where a secret may be typed, so moving it to another origin is seen', () => {
     const moved = parseManifest({
       ...SHOP,
-      navigation: [...SHOP.navigation, 'https://evil.example'],
+      navigation: [...(SHOP.navigation ?? []), 'https://evil.example'],
       secrets: {
         login: {
           description: 'Shop account',

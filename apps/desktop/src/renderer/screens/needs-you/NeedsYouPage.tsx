@@ -30,6 +30,7 @@ import {
 import { CheckCircle2, RotateCw } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { AgentRequestItem } from '../../../shared/api'
+import { accountLine } from '../../lib/account-status'
 import { useAction, useApi, useAppStop, useLoad, useNow } from '../../lib/api-context'
 import { callRef, formatClock, formatTime, plural } from '../../lib/format'
 import { type NeedsYouView, needsYouOrder, needsYouView, runNeedsYouAction } from '../../lib/needs-you'
@@ -370,6 +371,8 @@ function StatusCard() {
   const endpoint = useLoad((a) => a.endpoint.status(), [], ['endpoint-changed'])
   const chain = useLoad((a) => a.audit.chainStatus(), [], ['audit-appended', 'audit-verified'])
   const stats = useLoad((a) => a.runs.statsToday(), [], ['runs-changed'])
+  const phones = useLoad((a) => a.phones.status(), [], ['phones-changed'])
+  const account = phones.status === 'ready' ? accountLine(phones.data) : null
   const verify = useAction()
   return (
     <Card>
@@ -417,6 +420,18 @@ function StatusCard() {
               : 'Endpoint off · apps on this Mac can’t reach Valet'}
           </HealthLine>
         ) : null}
+        {account !== null ? (
+          <HealthLine
+            tone={account.tone}
+            action={
+              <Button size="sm" variant="secondary" asChild>
+                <a href={href.settings('devices')}>Devices</a>
+              </Button>
+            }
+          >
+            {account.text}
+          </HealthLine>
+        ) : null}
         {chain.status === 'ready' ? (
           <HealthLine
             tone={
@@ -442,13 +457,13 @@ function StatusCard() {
         ) : null}
         {stats.status === 'ready' ? (
           <Text tone="muted" size="sm">
-            Today: <TextLink href={href.calls()}>{stats.data.toolCalls} calls</TextLink> ·{' '}
+            Today: <TextLink href={href.calls()}>{plural(stats.data.toolCalls, 'call')}</TextLink> ·{' '}
             <TextLink href={href.audit({ category: 'logins' })}>
-              {stats.data.loginsFailed} logins failed
+              {plural(stats.data.loginsFailed, 'login')} failed
             </TextLink>{' '}
             ·{' '}
             <TextLink href={href.audit({ category: 'blocked' })}>
-              {stats.data.blockedRequests} requests blocked
+              {plural(stats.data.blockedRequests, 'request')} blocked
             </TextLink>
             {' · '}as of {formatClock(now)}
           </Text>

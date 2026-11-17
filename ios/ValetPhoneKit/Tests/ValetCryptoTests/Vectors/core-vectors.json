@@ -222,6 +222,8 @@
     "sandbox-exception",
     "auth-steps",
     "probe",
+    "runtime",
+    "private-network",
     "credential"
   ]
 }

@@ -120,7 +120,9 @@ describe('manifestSchema', () => {
     }
     const off = copy()
     off.requests.push({ method: 'GET', host: 'api.example.net', path: '/v0', purpose: 'read' })
-    expect(issues(off)).toContain('GET api.example.net/v0: host api.example.net is not on an egress host')
+    expect(issues(off)).toContain(
+      'GET api.example.net/v0: host api.example.net is not on an egress host or a declared private host',
+    )
   })
 
   it('returns an issue, not a TypeError, for a secret named after an Object.prototype property', () => {

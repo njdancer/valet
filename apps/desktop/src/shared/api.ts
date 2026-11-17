@@ -309,6 +309,9 @@ export interface LimitsInfo {
   readonly minGapMs: number
   readonly cooldownSeconds: number
   readonly maxCooldownSeconds: number
+  /** What a read, and a write, may send in one run: the broker's budgets (docs/adapter-kinds.md). */
+  readonly uploadBytesPerRun?: number
+  readonly writeUploadBytesPerRun?: number
 }
 
 export interface PermissionDiff {
@@ -332,6 +335,10 @@ export interface PermissionDiff {
   readonly probe: { readonly before: ProbeInfo; readonly after: ProbeInfo } | null
   /** What the new version can reach on this Mac (docs/sandbox.md). */
   readonly sandbox: SandboxDiff
+  /** Hosts on the person's network, as the card says each one (docs/adapter-kinds.md). */
+  readonly privateHosts?: ListDiff<string>
+  /** The adapter's kind before (null for a first install) and after, as the card says it. */
+  readonly runtime?: { readonly before: string | null; readonly after: string }
 }
 
 export interface SandboxDiff {
@@ -853,6 +860,8 @@ export interface RemoteConsentItem {
   readonly source: string | null
   readonly requestedAt: IsoTime
   readonly expiresAt: IsoTime
+  /** 'hub': an agent signing in through the Valet account (RemoteConsentRequest.via). */
+  readonly via?: 'hub'
 }
 
 /** An approved site with a required setting not chosen yet: "Choose your Woolworths store". */

@@ -5,6 +5,7 @@ import type { ErrorClass, NeedsUserReason, Stage } from './errors'
 import type { LocalAccess } from './local-access'
 import type { AdapterManifest } from './manifest'
 import type { ToolPage } from './page'
+import { REQUEST_METHODS } from './request-surface'
 
 export type EnsureResult =
   | { readonly status: 'ok' }
@@ -30,7 +31,7 @@ export const confirmActionSchema = z
       .array(
         z
           .object({
-            method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
+            method: z.enum(REQUEST_METHODS),
             path: z.string().min(1).max(300),
           })
           .strict(),

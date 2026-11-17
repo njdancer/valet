@@ -352,8 +352,10 @@ decoys at the Mac instead of words. All of these are built in the phone.
   control flags are asserted in a unit test, since software keys don't have them.
 - **Fakes stay out of release:** `ValetFakes` and `SoftwareKeyStore` compile only with
   `VALET_FAKES`, and CI checks the release binary has no `FakeMac` symbol.
-- **CI:** an `ios` job in `ci.yml` on `macos-latest`, run only when `ios/`, `packages/core/` or the
-  workflow changed (the job reports success otherwise, so the required `ci` check still gates).
+- **CI:** an `ios` job in `ci.yml` on `macos-latest`. A change to `packages/core/` runs only the
+  Swift package tests and the interop vectors; a change under `ios/` (or to the workflow) also runs
+  the journeys on the simulator and the shipping-build check. The screenshots for
+  review (`ScreensForReviewTests`) run nightly and with the `ios-screens` label, not on every push.
 
 ## Design review
 
@@ -410,7 +412,7 @@ fixed, each with a regression test where one fits:
 
 ## Persona QA (screens)
 
-The `ios-screens` label on the PR runs `testScreensForReview` and pushes every screen to a branch
+The `ios-screens` label on the PR runs `ScreensForReviewTests` and pushes every screen to a branch
 `ios-screens/<run>` (the cloud container can't download Actions artifacts). Reviewed 2026-11-12
 as Nick, glancing at a lock-screen alert, opening the app and deciding in seconds:
 

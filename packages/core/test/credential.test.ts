@@ -351,16 +351,28 @@ describe('the manifest’s credentials field', () => {
     expect(canonicalJson(parsed)).not.toContain('credentials')
   })
 
-  it('is refused on a browser adapter (the only kind until A’s runtime field lands)', () => {
+  it('is refused on a browser adapter', () => {
     const result = manifestSchema.safeParse({ ...base, credentials: { api: bearer } })
     expect(result.success).toBe(false)
-    expect(runtimeOf(base)).toBe('browser')
+    expect(runtimeOf(base as { runtime?: never })).toBe('browser')
   })
 
-  it('reads the runtime A adds, and nothing else', () => {
-    expect(runtimeOf({ runtime: 'raw' })).toBe('raw')
-    expect(runtimeOf({ runtime: 'http' })).toBe('http')
-    expect(runtimeOf({ runtime: 'RAW' })).toBe('browser')
-    expect(runtimeOf({ runtime: { toString: () => 'raw' } })).toBe('browser')
+  it('is accepted on an http adapter, and part of its hash', () => {
+    const { home: _home, navigation: _navigation, ...rest } = base
+    const http = { ...rest, egress: ['api.example.com'], runtime: 'http', credentials: { api: bearer } }
+    const result = manifestSchema.safeParse(http)
+    if (!result.success) throw new Error(JSON.stringify(result.error.issues))
+    expect(canonicalJson(result.data)).toContain('credentials')
+  })
+
+  it('refuses an entrusted credential on an http adapter', () => {
+    const result = manifestSchema.safeParse({
+      ...base,
+      home: undefined,
+      navigation: undefined,
+      runtime: 'http',
+      credentials: { api: { ...bearer, custody: 'entrusted', use: { entrusted: ['imap.example.com:993'] } } },
+    })
+    expect(result.success).toBe(false)
   })
 })

@@ -10,6 +10,7 @@
 
 import { z } from 'zod'
 import { MESSAGES_SECRET } from './credentials'
+import type { RuntimeKind } from './manifest'
 import { isHostname } from './origins'
 
 /** What a credential is. Each kind has the item fields it may read (CREDENTIAL_FIELDS). */
@@ -23,12 +24,6 @@ export type Custody = (typeof CUSTODIES)[number]
 /** The protocol clients Valet ships (workstreams D, E and G). */
 export const CREDENTIAL_PROTOCOLS = ['imap', 'smtp', 'sftp'] as const
 export type CredentialProtocol = (typeof CREDENTIAL_PROTOCOLS)[number]
-
-/**
- * The adapter kinds (A owns the manifest's `runtime` field; this list mirrors it). A manifest that
- * leaves `runtime` out is a browser adapter.
- */
-export type RuntimeKind = 'browser' | 'http' | 'protocol' | 'raw'
 
 /**
  * Fields of a credential item a provider can read. `username`, `password` and `otp` are what a

@@ -12,6 +12,7 @@ import {
   isDisplayText,
   type PermissionChange,
   type Risk,
+  runtimePermissionChanges,
   STOP_STEPS,
   sandboxPermissionChanges,
 } from '@valet/core'
@@ -120,6 +121,9 @@ export function permissionChanges(
   if (unsandboxed && !sandbox.some((c) => c.area === 'sandbox-mode' && c.risk === 'critical'))
     push('sandbox-mode', 'added', ['Runs without the sandbox: it can do anything you can'], 'critical')
   for (const change of sandbox) push(change.area, change.change, change.items, change.risk)
+  // The kind and the private hosts (docs/adapter-kinds.md#approval-cards-and-the-permission-diff).
+  for (const change of runtimePermissionChanges(before, after))
+    push(change.area, change.change, change.items, change.risk)
   list('navigation', diff.navigation, (o) => o, 'medium')
   list('egress', diff.egress, (o) => o, 'medium')
   list('auth-frames', diff.frameOrigins, (o) => o, 'high')
@@ -128,7 +132,7 @@ export function permissionChanges(
   list(
     'requests',
     diff.requests,
-    (r) => [describeDeclaration(r), `(${r.purpose})`],
+    (r) => [describeDeclaration(r), r.websocket === true ? `(${r.purpose}, websocket)` : `(${r.purpose})`],
     (r) => (r.purpose === 'irreversible' ? 'high' : r.purpose === 'write' ? 'medium' : 'low'),
   )
   list(
@@ -186,6 +190,10 @@ export function permissionChanges(
       looser.push(`cooldown ${was.cooldownSeconds} s → ${now.cooldownSeconds} s`)
     if (now.maxCooldownSeconds < was.maxCooldownSeconds)
       looser.push(`longest cooldown ${was.maxCooldownSeconds} s → ${now.maxCooldownSeconds} s`)
+    const [readWas, readNow] = [was.uploadBytesPerRun ?? 0, now.uploadBytesPerRun ?? 0]
+    if (readNow > readWas) looser.push(`a read may send ${readWas} → ${readNow} bytes`)
+    const [writeWas, writeNow] = [was.writeUploadBytesPerRun ?? 0, now.writeUploadBytesPerRun ?? 0]
+    if (writeNow > writeWas) looser.push(`a write may send ${writeWas} → ${writeNow} bytes`)
     push('limits', 'widened', looser, 'medium')
   }
   return lines

@@ -33,6 +33,10 @@ export const PERMISSION_AREAS = [
   'auth-steps',
   /** The session probe that decides "signed in": a `widened` line naming the old and new probe. */
   'probe',
+  /** The adapter's kind (docs/adapter-kinds.md): a line when it is not a browser, or changes. */
+  'runtime',
+  /** Hosts on the person's own network an adapter reaches, by address and port. */
+  'private-network',
   /**
    * A credential Valet uses for the adapter outside a browser login (secrets v2): one line per
    * credential, in describeCredentialUse's words, saying who holds it and where it may go. Always
