@@ -8,13 +8,13 @@
 import { decodeCharset, decodeTransfer, truncate, visibleOnly, cleanBody } from './decode'
 import { decodeMailbox } from './command'
 import { ImapClient, ImapError } from './client'
-import { type Operation, type Purpose } from './policy'
+import { type FolderRule, folderAllowed, type Operation, type ImapPurpose as Purpose } from '@valet/core/imap-policy'
+
+export type { FolderRule }
 import { bodyParts, type Envelope, type Part, parseEnvelope, parseStructure } from './structure'
 import { Atom, list, number, text, type Value } from './wire'
 import type { Arg } from './command'
 
-/** The folders a manifest allows, or null for every folder. INBOX matches in any case. */
-export type FolderRule = readonly string[] | null
 
 export interface OperationOptions {
   readonly folders: FolderRule
@@ -80,11 +80,7 @@ function folderName(value: unknown): string {
   return value
 }
 
-function allowed(folder: string, rule: FolderRule): boolean {
-  if (rule === null) return true
-  const isInbox = folder.toUpperCase() === 'INBOX'
-  return rule.some((f) => f === folder || (isInbox && f.toUpperCase() === 'INBOX'))
-}
+const allowed = folderAllowed
 
 /** The folder, if the manifest allows it. Refused as `not-allowed` otherwise, before anything is sent. */
 export function checkFolder(value: unknown, rule: FolderRule): string {
@@ -117,7 +113,8 @@ function flagList(value: unknown): string[] {
 }
 
 function options(value: unknown): Record<string, unknown> {
-  if (value === undefined) return {}
+  // JSON turns a left-out argument in the middle of a list into null.
+  if (value === undefined || value === null) return {}
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw invalid()
   return value as Record<string, unknown>
 }
@@ -543,7 +540,7 @@ function needsUtf8(arg: Arg): boolean {
  * value; `or` takes two criteria and `not` one, nested at most three deep.
  */
 export function searchTerms(value: unknown, depth = 0, count = { n: 0 }): Arg[] {
-  if (value === undefined && depth === 0) return []
+  if ((value === undefined || value === null) && depth === 0) return []
   if (depth > LIMITS.criteriaDepth) throw invalid()
   const criteria = options(value)
   const out: Arg[] = []

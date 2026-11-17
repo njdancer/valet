@@ -103,6 +103,13 @@ export const BOOTSTRAP = `(function (send) {
         })
       }),
     }),
+    // The protocol host, for a protocol adapter with IMAP (docs/imap.md). Each operation is one call.
+    imap: Object.freeze(Object.fromEntries(['listFolders', 'status', 'search', 'fetch', 'message', 'attachment',
+      'setFlags', 'copy', 'move', 'append', 'createFolder', 'expunge', 'deleteFolder']
+      .map((name) => [name, (...args) => {
+        while (args.length > 0 && args[args.length - 1] === undefined) args.pop()
+        return call('imap.op', name, args)
+      }]))),
   })
   return function deliver(text) {
     const m = JSON.parse(text)

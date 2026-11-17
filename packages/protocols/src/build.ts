@@ -6,6 +6,8 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+const IMAP_POLICY = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'core', 'src', 'imap-policy.ts')
+
 export const PROTOCOL_HOST_ENTRY = join(dirname(fileURLToPath(import.meta.url)), 'host', 'protocol-host.ts')
 
 /** The protocol host as one script. */
@@ -24,10 +26,13 @@ export async function buildProtocolHost(): Promise<string> {
       {
         name: 'valet-protocol-host',
         setup(b) {
-          // Only Valet's own files and Node's modules: nothing from node_modules.
-          b.onResolve({ filter: /^[^./]/ }, (args) =>
-            args.path.startsWith('node:') ? { path: args.path, external: true } : { errors: [{ text: `the protocol host may not import ${args.path}` }] },
-          )
+          // Only Valet's own files, core's dependency-free IMAP policy and Node's modules: nothing
+          // else from node_modules, so the host is exactly the code in this repository.
+          b.onResolve({ filter: /^[^./]/ }, (args) => {
+            if (args.path.startsWith('node:')) return { path: args.path, external: true }
+            if (args.path === '@valet/core/imap-policy') return { path: IMAP_POLICY }
+            return { errors: [{ text: `the protocol host may not import ${args.path}` }] }
+          })
         },
       },
     ],

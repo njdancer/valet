@@ -8,7 +8,7 @@ import { type SecretValue, ValetError } from '@valet/core'
 import { type NodeChannel, type OpenTunnels, sandboxedNode } from '@valet/node-runtime'
 import { isPlainJson } from '@valet/runtime/protocol'
 import type { ImapFailure } from './imap/client'
-import type { Operation, Purpose } from './imap/policy'
+import type { ImapPurpose as Purpose, Operation } from '@valet/core/imap-policy'
 import type { SignInQuery, SignInResult } from './imap/signin'
 
 export interface ProtocolHostOptions {

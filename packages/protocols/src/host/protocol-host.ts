@@ -13,7 +13,7 @@ import { Socket } from 'node:net'
 import { connect as tlsConnect, type TLSSocket } from 'node:tls'
 import { ImapClient, ImapError } from '../imap/client'
 import { Operations } from '../imap/operations'
-import { isOperation, type Purpose } from '../imap/policy'
+import { isOperation, type ImapPurpose as Purpose } from '@valet/core/imap-policy'
 import { findSignInMail, type SignInQuery } from '../imap/signin'
 
 const MAX_LINE = 4_100_000

@@ -15,6 +15,7 @@ import {
   READ_ONLY_WEBDAV,
   REQUEST_METHODS,
 } from './request-surface'
+import { type Protocols, protocolIssues, protocolsSchema } from './protocols'
 import { sandboxDeclarationSchema } from './sandbox'
 
 const name = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, 'lower snake_case, at most 64 characters')
@@ -224,7 +225,7 @@ const requestMethod = z.enum(REQUEST_METHODS)
 export const RUNTIME_KINDS = ['browser', 'http', 'protocol', 'raw'] as const
 export type RuntimeKind = (typeof RUNTIME_KINDS)[number]
 /** The kinds a manifest may name today. A workstream that builds a kind adds it here. */
-export const AVAILABLE_RUNTIMES: readonly RuntimeKind[] = ['browser', 'http']
+export const AVAILABLE_RUNTIMES: readonly RuntimeKind[] = ['browser', 'http', 'protocol']
 
 /** The manifest's kind: `browser` when it doesn't say, so every older manifest means what it did. */
 export function runtimeOf(manifest: { readonly runtime?: RuntimeKind | undefined }): RuntimeKind {
@@ -545,6 +546,12 @@ export const manifestSchema = z
       .record(name, credentialDeclarationSchema)
       .refine((credentials) => Object.keys(credentials).length <= 8, 'at most 8 credentials')
       .optional(),
+    /**
+     * `protocol` adapters only: the protocol clients Valet runs for the adapter, each signed in with
+     * one of its kept credentials (docs/imap.md). Optional with no default, so other manifests hash
+     * exactly as before.
+     */
+    protocols: protocolsSchema.optional(),
   })
   .strict()
   .superRefine((manifest, ctx) => {
@@ -696,15 +703,25 @@ function homeIsDerived(manifest: {
   readonly home?: string | undefined
   readonly egress: readonly string[]
   readonly privateHosts?: readonly PrivateHost[] | undefined
+  readonly protocols?: Protocols | undefined
 }): boolean {
-  if (manifest.egress.length === 0 && (manifest.privateHosts ?? []).length === 0) return false
+  if (
+    manifest.egress.length === 0 &&
+    (manifest.privateHosts ?? []).length === 0 &&
+    manifest.protocols?.imap === undefined
+  )
+    return false
   return manifest.home === endpointHome(manifest)
 }
 
 function endpointHome(manifest: {
   readonly egress: readonly string[]
   readonly privateHosts?: readonly PrivateHost[] | undefined
+  readonly protocols?: Protocols | undefined
 }): string {
+  // A protocol adapter's home is its server's name: only the key its pacing and breaker are kept under.
+  const imap = manifest.protocols?.imap
+  if (imap !== undefined) return `https://${imap.endpoint.slice(0, imap.endpoint.lastIndexOf(':'))}/`
   const host = manifest.egress[0]
   if (host !== undefined) return `https://${host}/`
   const first = manifest.privateHosts?.[0]
@@ -738,12 +755,21 @@ function runtimeIssues(manifest: {
     readonly uploadBytesPerRun?: number | undefined
     readonly writeUploadBytesPerRun?: number | undefined
   }
+  readonly protocols?: Protocols | undefined
+  readonly credentials?: Readonly<Record<string, CredentialDeclaration>> | undefined
 }): string[] {
   const kind = runtimeOf(manifest)
   if (!AVAILABLE_RUNTIMES.includes(kind)) return [`runtime ${kind} is not available yet`]
   const issues: string[] = []
   const nonBrowser = (field: string) => `${field} is only for adapters whose runtime is not browser`
   if (manifest.endpoints !== undefined) issues.push('endpoints is only for raw adapters')
+  if (kind === 'protocol') {
+    // Parsing sets home to the server's name, so a parsed manifest parses again unchanged.
+    if (manifest.home !== undefined && !homeIsDerived(manifest))
+      issues.push('a protocol adapter has no home: it opens no pages')
+    return [...issues, ...protocolIssues(manifest)]
+  }
+  if (manifest.protocols !== undefined) issues.push('protocols is only for protocol adapters')
   if (kind === 'browser') {
     if (manifest.home === undefined) issues.push('a browser adapter needs home')
     else if (!manifest.home.startsWith('https:')) issues.push('home must be https')

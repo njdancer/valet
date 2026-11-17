@@ -4,7 +4,7 @@
 
 import type { Duplex } from 'node:stream'
 import { type Command, CommandRefused, checkCommand, encodeCommand, type SessionState } from './command'
-import type { Purpose } from './policy'
+import type { ImapPurpose as Purpose } from '@valet/core/imap-policy'
 import { Atom, DEFAULT_WIRE_LIMITS, Framer, parseResponse, type Response, type Value, type WireLimits, WireError } from './wire'
 
 /** Why an IMAP exchange failed, in words the host reports as error classes. */

@@ -2,7 +2,7 @@ import { connect } from 'node:tls'
 import { DEFAULT_USER, type FakeImap, type FakeImapOptions, startFakeImap } from '@valet/fake-imap'
 import { type ClientOptions, ImapClient } from '../src/imap/client'
 import { Operations, type FolderRule } from '../src/imap/operations'
-import type { Purpose } from '../src/imap/policy'
+import type { ImapPurpose as Purpose } from '@valet/core/imap-policy'
 
 export const MESSAGE = [
   'From: "Shop" <orders@shop.test>',
@@ -73,3 +73,59 @@ export async function signedIn(server: FakeImap, purpose: Purpose, folders: Fold
   await c.login(Buffer.from(DEFAULT_USER.username), Buffer.from(DEFAULT_USER.password))
   return { client: c, ops: new Operations(c, { folders, purpose }) }
 }
+
+// --- The protocol host, end to end ----------------------------------------------------------------
+
+import { mkdtemp } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { SecretValue } from '@valet/core'
+import { type ConnectionRecord, type RunContext, RunMeter } from '@valet/egress'
+import { writeProtocolHost } from '../src/build'
+import type { ProtocolHostOptions } from '../src/host-session'
+
+export const mac = process.platform === 'darwin'
+
+let hostScript: Promise<string> | null = null
+
+/** The bundled host, built once per test file into a temporary folder. */
+export function builtHost(): Promise<string> {
+  hostScript ??= mkdtemp(join(tmpdir(), 'valet-protocol-host-')).then((dir) =>
+    writeProtocolHost(join(dir, 'protocol-host.cjs')),
+  )
+  return hostScript
+}
+
+/** Host options for tests: this Node, Seatbelt on macOS only, and the fake's certificate trusted. */
+export async function hostOptions(server: FakeImap, extra: Partial<ProtocolHostOptions> = {}): Promise<ProtocolHostOptions> {
+  const home = await mkdtemp(join(tmpdir(), 'valet-home-'))
+  return {
+    nodeBinary: process.execPath,
+    hostScript: await builtHost(),
+    home,
+    withoutSeatbelt: !mac,
+    testCa: server.cert ?? undefined,
+    operationTimeoutMs: 10_000,
+    ...extra,
+  } as ProtocolHostOptions
+}
+
+/** Broker options that send the endpoint to the fake server. */
+export function brokerTo(server: FakeImap) {
+  return {
+    lookup: (_name: string, cb: (e: Error | null, a: { address: string; family: number }[]) => void) =>
+      cb(null, [{ address: '127.0.0.1', family: 4 }]),
+    testing: { allowAddresses: ['127.0.0.1'], route: () => ({ address: '127.0.0.1', port: server.port }) },
+  }
+}
+
+export function run(budget = 64 * 1024): RunContext & { records: ConnectionRecord[]; controller: AbortController } {
+  const controller = new AbortController()
+  const records: ConnectionRecord[] = []
+  return { meter: new RunMeter(budget), signal: controller.signal, record: (r) => records.push(r), records, controller }
+}
+
+export const signIn = (user = DEFAULT_USER) => async () => ({
+  username: SecretValue.fromString(user.username),
+  secret: SecretValue.fromString(user.password),
+})

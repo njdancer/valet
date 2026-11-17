@@ -10,9 +10,11 @@
 // clients marked), RENAME, SUBSCRIBE, STARTTLS, AUTHENTICATE, COMPRESS, IDLE, ACL and quota
 // commands, and anything else not listed here.
 
-export type Purpose = 'read' | 'write' | 'irreversible'
+/** A tool's declared side effect: the same three words as a request's purpose. */
+export type ImapPurpose = 'read' | 'write' | 'irreversible'
+type Purpose = ImapPurpose
 
-export const PURPOSE_RANK: Readonly<Record<Purpose, number>> = { read: 0, write: 1, irreversible: 2 }
+export const IMAP_PURPOSE_RANK: Readonly<Record<Purpose, number>> = { read: 0, write: 1, irreversible: 2 }
 
 export const VERB_PURPOSE: Readonly<Record<string, Purpose>> = {
   CAPABILITY: 'read',
@@ -90,3 +92,19 @@ function mentionsDeleted(value: unknown): boolean {
       Array.isArray(list) && list.some((f) => typeof f === 'string' && f.toLowerCase() === '\\deleted'),
   )
 }
+
+/** The folders a manifest allows, or null for every folder. */
+export type FolderRule = readonly string[] | null
+
+/**
+ * Whether `folder` is one the manifest allows. Exact names only (a folder's subfolders are not
+ * covered); INBOX matches in any case, as IMAP says it does.
+ */
+export function folderAllowed(folder: string, rule: FolderRule): boolean {
+  if (rule === null) return true
+  const isInbox = folder.toUpperCase() === 'INBOX'
+  return rule.some((f) => f === folder || (isInbox && f.toUpperCase() === 'INBOX'))
+}
+
+/** iCloud Mail's IMAP server (docs/imap.md#icloud). It needs an app-specific password. */
+export const ICLOUD_IMAP_ENDPOINT = 'imap.mail.me.com:993'
