@@ -33,6 +33,7 @@ import {
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { createAdapter } from '../src/adapter'
+import { NOTICES } from '../src/cart'
 import { type ManifestOptions, MESSAGES_SENDER } from '../src/manifest'
 import { HarnessDriver, type ProbeAllowance } from './e2e/browser'
 import { Network } from './e2e/network'
@@ -319,6 +320,14 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
         products: { stockcode: number }[]
       }
       expect(search.products.length).toBeGreaterThan(0)
+      // The site's spelling suggestion comes through, and searching with it finds the product.
+      const misspelt = (await w.runtime.call('search_products', { query: 'bannanas' })) as {
+        total: number
+        suggestedQuery: string | null
+      }
+      expect(misspelt).toMatchObject({ total: 0, suggestedQuery: 'bananas' })
+      const respelt = (await w.runtime.call('search_products', { query: 'bananas' })) as { total: number }
+      expect(respelt.total).toBeGreaterThan(0)
       const product = await w.runtime.call('get_product', { stockcode: 88436 })
       expect(product).toMatchObject({ stockcode: 88436, name: expect.stringContaining('Milk') })
       expect(w.runtime.logins).toEqual([])
@@ -346,7 +355,30 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
         quantity: 5,
         confirmed: true,
       })
-      expect(await w.runtime.call('remove_from_cart', { stockcode: 900601 })).toMatchObject({ removed: true })
+      expect(await w.runtime.call('remove_from_cart', { stockcode: 900601 })).toMatchObject({
+        wasInCart: true,
+        removed: true,
+      })
+      expect(w.site.trolleyFor(SMS.username)).toEqual([{ stockcode: 88436, quantity: 5 }])
+      // Removing what was never there says so, rather than claiming a removal.
+      expect(await w.runtime.call('remove_from_cart', { stockcode: 900601 })).toMatchObject({
+        wasInCart: false,
+        removed: false,
+        notices: [NOTICES.notInCart],
+      })
+      // A stockcode the site doesn't know is the input's fault, not the site being down.
+      expect(await failure(w.runtime.call('add_to_cart', { stockcode: 123456789 }))).toMatchObject({
+        stage: 'tool-input',
+        errorClass: 'invalid',
+        issue: { path: ['stockcode'], reason: 'not-accepted' },
+      })
+      // An out-of-stock product goes in, set aside, and the answer says so.
+      expect(await w.runtime.call('add_to_cart', { stockcode: 900303 })).toMatchObject({
+        quantity: 1,
+        confirmed: true,
+        notices: [NOTICES.setAside('unavailable')],
+      })
+      await w.runtime.call('remove_from_cart', { stockcode: 900303 })
       expect(w.site.trolleyFor(SMS.username)).toEqual([{ stockcode: 88436, quantity: 5 }])
 
       const cart = (await w.runtime.call('get_cart', {})) as {

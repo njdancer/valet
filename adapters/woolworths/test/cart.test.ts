@@ -1,4 +1,4 @@
-import { NeedsUserError, ValetError } from '@valet/core'
+import { issueFromZod, NeedsUserError, ValetError } from '@valet/core'
 import { runInToolContext } from '@valet/runtime/in-context'
 import { buildToolScript } from '@valet/runtime/tool-script'
 import { describe, expect, it } from 'vitest'
@@ -467,8 +467,52 @@ describe('add_to_cart', () => {
     const error = await addToCart
       .run(ctx, addToCart.input.parse({ stockcode: 88436, quantity: 6 }))
       .catch((e: unknown) => e)
-    expect(error).toEqual(new ValetError('tool-input', 'invalid'))
+    // Says why, so the agent can add fewer: the line would pass the cap with what is already there.
+    expect(error).toBeInstanceOf(ValetError)
+    expect(error).toMatchObject({
+      stage: 'tool-input',
+      errorClass: 'invalid',
+      issue: { path: ['quantity'], reason: 'over-total', limit: 20 },
+    })
     expect(ctx.events).toEqual(['ensure', 'GET /apis/ui/Trolley'])
+  })
+
+  it('tells a stockcode the site refuses from a site that is down', async () => {
+    const ctx = new FakeToolContext()
+      .on('GET', TROLLEY, json(loadFixture('trolley-empty.json')))
+      .on('POST', UPDATE, json({ Message: 'The request is invalid.' }, 400))
+    const error = await addToCart
+      .run(ctx, addToCart.input.parse({ stockcode: 123456789 }))
+      .catch((e: unknown) => e)
+    expect(error).toMatchObject({
+      stage: 'tool-input',
+      errorClass: 'invalid',
+      issue: { path: ['stockcode'], reason: 'not-accepted' },
+    })
+    // Not the site's text, and the write was tried once.
+    expect(JSON.stringify(error)).not.toContain('The request is invalid')
+    expect(ctx.events.filter((e) => e.startsWith('POST'))).toHaveLength(1)
+    // Any other refusal is still the site being unavailable.
+    const down = new FakeToolContext()
+      .on('GET', TROLLEY, json(loadFixture('trolley-empty.json')))
+      .on('POST', UPDATE, json({ Message: 'Busy' }, 503))
+    await expect(addToCart.run(down, addToCart.input.parse({ stockcode: 64746 }))).rejects.toEqual(
+      new ValetError('tool-run', 'unavailable'),
+    )
+  })
+
+  it('says so when the product lands in the cart set aside, as out of stock', async () => {
+    const reply = loadFixture('trolley-two-items.json')
+    const [line] = reply.AvailableItems.splice(1, 1)
+    line.IsAvailable = false
+    line.QuantityInTrolley = 1
+    reply.UnavailableItems = [line]
+    const ctx = new FakeToolContext()
+      .on('GET', TROLLEY, json(loadFixture('trolley-empty.json')))
+      .on('POST', UPDATE, json(reply))
+    const result = await addToCart.run(ctx, addToCart.input.parse({ stockcode: line.Stockcode }))
+    expect(result).toMatchObject({ quantity: 1, confirmed: true, notices: [NOTICES.setAside('unavailable')] })
+    expect(NOTICES.setAside('unavailable')).toContain('not in the subtotal')
   })
 
   it('makes no write when cancelled after reading the cart', async () => {
@@ -630,13 +674,19 @@ describe('set_cart_quantity', () => {
 })
 
 describe('remove_from_cart', () => {
-  it('sets the quantity to zero with one write, and confirms it from the reply', async () => {
-    const ctx = new FakeToolContext().on('POST', UPDATE, json(loadFixture('trolley-empty.json')))
+  /** A context whose trolley read finds `before`. */
+  function withTrolley(before = loadFixture('trolley-two-items.json')) {
+    return new FakeToolContext().on('GET', TROLLEY, json(before))
+  }
+
+  it('reads the cart, sets the quantity to zero with one write, and confirms it from the reply', async () => {
+    const ctx = withTrolley().on('POST', UPDATE, json(loadFixture('trolley-empty.json')))
     const result = await removeFromCart.run(ctx, removeFromCart.input.parse({ stockcode: 88436 }))
-    expect(ctx.events).toEqual(['ensure', 'POST /api/v3/ui/trolley/update'])
-    expect(ctx.fetches[0]?.json).toEqual({ items: [{ stockcode: 88436, quantity: 0 }] })
+    expect(ctx.events).toEqual(['ensure', 'GET /apis/ui/Trolley', 'POST /api/v3/ui/trolley/update'])
+    expect(ctx.fetches.at(-1)?.json).toEqual({ items: [{ stockcode: 88436, quantity: 0 }] })
     expect(result).toMatchObject({
       stockcode: 88436,
+      wasInCart: true,
       removed: true,
       quantity: 0,
       confirmed: true,
@@ -646,14 +696,38 @@ describe('remove_from_cart', () => {
     expect(removeFromCart.output.parse(result)).toEqual(result)
   })
 
+  it('says a product that was never in the cart was not removed', async () => {
+    const ctx = withTrolley(loadFixture('trolley-empty.json')).on(
+      'POST',
+      UPDATE,
+      json(loadFixture('trolley-empty.json')),
+    )
+    const result = await removeFromCart.run(ctx, removeFromCart.input.parse({ stockcode: 999999 }))
+    expect(result).toMatchObject({
+      wasInCart: false,
+      removed: false,
+      quantity: 0,
+      confirmed: true,
+      notices: [NOTICES.notInCart],
+    })
+  })
+
+  it('reports wasInCart: null when the cart has a line it cannot read', async () => {
+    const before = loadFixture('trolley-two-items.json')
+    before.BundleItems = [{ Stockcode: 1 }]
+    const ctx = withTrolley(before).on('POST', UPDATE, json(loadFixture('trolley-empty.json')))
+    const result = await removeFromCart.run(ctx, removeFromCart.input.parse({ stockcode: 999999 }))
+    expect(result).toMatchObject({ wasInCart: null, removed: null, quantity: 0, confirmed: true })
+  })
+
   it('reports removed: false when the reply still has the line', async () => {
-    const ctx = new FakeToolContext().on('POST', UPDATE, json(loadFixture('trolley-two-items.json')))
+    const ctx = withTrolley().on('POST', UPDATE, json(loadFixture('trolley-two-items.json')))
     const result = await removeFromCart.run(ctx, removeFromCart.input.parse({ stockcode: 88436 }))
     expect(result).toMatchObject({ removed: false, quantity: 2, notices: [NOTICES.differs(2, 0)] })
   })
 
   it('reports removed: null when the reply does not say', async () => {
-    const ctx = new FakeToolContext().on('POST', UPDATE, json({ Success: true }))
+    const ctx = withTrolley().on('POST', UPDATE, json({ Success: true }))
     const result = await removeFromCart.run(ctx, removeFromCart.input.parse({ stockcode: 88436 }))
     expect(result).toMatchObject({ removed: null, confirmed: false, cart: null })
   })
@@ -778,6 +852,37 @@ describe('update_cart', () => {
     expect(result).toMatchObject({ cart: null, notices: [NOTICES.unconfirmed] })
   })
 
+  /** The first issue the tool's own schema finds, as the runtime maps it. */
+  function refusal(input: unknown) {
+    const parsed = updateCart.input.safeParse(input)
+    if (parsed.success) throw new Error('accepted')
+    return issueFromZod(parsed.error.issues[0], input)
+  }
+
+  it('says which line repeats a product, and which set has no quantity', () => {
+    expect(
+      refusal({ items: [{ stockcode: 1 }, { stockcode: 2 }, { stockcode: 1, mode: 'set', quantity: 3 }] }),
+    ).toEqual({
+      path: ['items', 2, 'stockcode'],
+      reason: 'duplicate',
+    })
+    // A set with no quantity used to set 1.
+    expect(refusal({ items: [{ stockcode: 88436, mode: 'set' }] })).toEqual({
+      path: ['items', 0, 'quantity'],
+      reason: 'missing',
+    })
+    expect(refusal({ items: [{ stockcode: 88436, quantity: 0 }] })).toEqual({
+      path: ['items', 0, 'quantity'],
+      reason: 'too-small',
+      limit: 1,
+    })
+    // An add with no quantity is still one.
+    expect(updateCart.input.parse({ items: [{ stockcode: 88436 }] }).items[0]).toEqual({
+      stockcode: 88436,
+      mode: 'add',
+    })
+  })
+
   it('refuses a product twice, an empty or over-long list, and an add of nothing', () => {
     const line = (stockcode: number) => ({ stockcode })
     expect(() => updateCart.input.parse({ items: [line(1), line(1)] })).toThrow()
@@ -795,7 +900,11 @@ describe('update_cart', () => {
     const ctx = new FakeToolContext().on('GET', TROLLEY, json(full))
     await expect(
       updateCart.run(ctx, updateCart.input.parse({ items: [{ stockcode: 88436, quantity: 2 }] })),
-    ).rejects.toMatchObject({ stage: 'tool-input', errorClass: 'invalid' })
+    ).rejects.toMatchObject({
+      stage: 'tool-input',
+      errorClass: 'invalid',
+      issue: { path: ['items', 0, 'quantity'], reason: 'over-total', limit: 20 },
+    })
     const unreadable = loadFixture('trolley-two-items.json')
     unreadable.BundleItems = [{ Stockcode: 1 }]
     const other = new FakeToolContext().on('GET', TROLLEY, json(unreadable))
@@ -803,6 +912,19 @@ describe('update_cart', () => {
       updateCart.run(other, updateCart.input.parse({ items: [{ stockcode: 88436 }] })),
     ).rejects.toMatchObject({ errorClass: 'site-changed' })
     expect(ctx.events.concat(other.events).filter((e) => e.startsWith('POST'))).toEqual([])
+  })
+
+  it('names the line when the site refuses the only stockcode, and the list when there are several', async () => {
+    const refused = json({ Message: 'The request is invalid.' }, 400)
+    const one = new FakeToolContext().on('POST', UPDATE, refused)
+    await expect(
+      updateCart.run(one, updateCart.input.parse({ items: [{ stockcode: 4, quantity: 1, mode: 'set' }] })),
+    ).rejects.toMatchObject({ issue: { path: ['items', 0, 'stockcode'], reason: 'not-accepted' } })
+    const two = new FakeToolContext().on('POST', UPDATE, refused)
+    const both = { items: [4, 5].map((stockcode) => ({ stockcode, quantity: 1, mode: 'set' })) }
+    await expect(updateCart.run(two, updateCart.input.parse(both))).rejects.toMatchObject({
+      issue: { path: ['items'], reason: 'not-accepted' },
+    })
   })
 })
 

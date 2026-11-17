@@ -8,7 +8,7 @@
 // (README, core change requests). What the adapter can do is report the quantity the site stored,
 // not the one it asked for, and say when they differ.
 
-import { httpsOriginOf, type ToolContext, tool, urlOn, ValetError } from '@valet/core'
+import { httpsOriginOf, type InputPathSegment, type ToolContext, tool, urlOn, ValetError } from '@valet/core'
 import { z } from 'zod'
 import { withLogin } from './login'
 import { productName, stockcodeSchema } from './products'
@@ -63,31 +63,43 @@ export const NOTICES = {
     "The site's reply does not show this product in a form this adapter can read. Check the cart on the Woolworths site.",
   differs: (stored: number, requested: number) =>
     `The site stored ${stored}, not the ${requested} asked for. It may limit how many of this product an order can have, or the cart changed at the same time.`,
+  /** `reason` is one of UNAVAILABLE_REASONS, never the site's text. */
+  setAside: (reason: UnavailableReason) =>
+    `The site put this product in the cart but set it aside (reason: ${reason}), so it is not in the subtotal and will not be in the order. It may be out of stock at this store: choose another product, or remove this one.`,
+  notInCart: 'This product was not in the cart, so there was nothing to remove.',
 } as const
 
 const cartItemSchema = z.object({
   stockcode: z.number().int(),
   name: z.string(),
   quantity: z.number(),
-  price: z.number().nullable(),
-  lineTotal: z.number().nullable(),
+  price: z.number().nullable().describe('Dollars for one unit. Null when the site gives none.'),
+  lineTotal: z.number().nullable().describe('price times quantity, in dollars.'),
   available: z.boolean(),
 })
 
-const unavailableItemSchema = cartItemSchema.extend({ reason: z.enum(UNAVAILABLE_REASONS) })
+const unavailableItemSchema = cartItemSchema.extend({
+  reason: z.enum(UNAVAILABLE_REASONS).describe('Why the site set the line aside.'),
+})
 
 export const cartSchema = z.object({
-  items: z.array(cartItemSchema),
+  items: z.array(cartItemSchema).describe('The lines that will be in the order.'),
   /** Items set aside from the buyable ones, with the site's reason; they may not be in the subtotal. */
-  unavailable: z.array(unavailableItemSchema),
-  subtotal: z.number(),
-  savings: z.number(),
+  unavailable: z
+    .array(unavailableItemSchema)
+    .describe(
+      'Lines the site set aside (out of stock, over a limit, restricted), with its reason. They stay in the cart but are not in the subtotal and will not be in the order.',
+    ),
+  subtotal: z.number().describe('Dollars, for the lines in items only.'),
+  savings: z.number().describe('Dollars saved on specials, for the lines in items only.'),
   /** Distinct products in the cart, as the site counts them. */
-  itemCount: z.number().int(),
+  itemCount: z.number().int().describe('Distinct products in the cart, set-aside lines included.'),
   /** Units across all products, as the site counts them. */
-  totalQuantity: z.number().int(),
+  totalQuantity: z.number().int().describe('Units across all products, set-aside lines included.'),
   /** The site's own notes about the cart, e.g. a minimum spend, then the adapter's. */
-  notices: z.array(z.string()),
+  notices: z
+    .array(z.string())
+    .describe("The site's own notes about the cart, such as a minimum spend, then this adapter's."),
 })
 export type Cart = z.infer<typeof cartSchema>
 
@@ -192,12 +204,23 @@ interface LineOutcome {
 async function setQuantities(
   ctx: ToolContext,
   lines: readonly { readonly stockcode: number; readonly quantity: number }[],
+  stockcodePath: (index: number) => readonly InputPathSegment[],
 ): Promise<{ readonly lines: LineOutcome[]; readonly cart: Cart | null; readonly notices: string[] }> {
+  // The site answers an update it won't take with a 400 and "The request is invalid." The request is
+  // the adapter's own, fixed but for the stockcodes and the quantities (checked already), so it is
+  // most likely a stockcode the site doesn't know (the fake does exactly this; the live site's answer
+  // is unverified). Told so, the agent looks the product up again rather than waiting on a site it
+  // thinks is down. With several lines the site doesn't say which.
+  const badRequest = new ValetError('tool-input', 'invalid', {
+    path: lines.length === 1 ? stockcodePath(0) : ['items'],
+    reason: 'not-accepted',
+  })
   const body = await postJson(
     ctx,
     PATHS.trolleyUpdate,
     { items: lines.map(({ stockcode, quantity }) => ({ stockcode, quantity })) },
     z.unknown(),
+    { badRequest },
   )
   const trolley = trolleyWire.safeParse(body)
   if (reportsRejection(body, trolley.success)) throw new ValetError('tool-run', 'invalid')
@@ -210,18 +233,18 @@ async function setQuantities(
     // A line the reply doesn't show was removed, unless the reply has lines the adapter can't read.
     const stored = read.quantities.get(stockcode) ?? (read.complete ? 0 : null)
     if (stored === null) return { quantity: null, confirmed: false, notices: [NOTICES.lineUnreadable] }
-    return {
-      quantity: stored,
-      confirmed: true,
-      notices: stored === requested ? [] : [NOTICES.differs(stored, requested)],
-    }
+    const notices = stored === requested ? [] : [NOTICES.differs(stored, requested)]
+    // Stored, but set aside: out of stock, say. The write worked; the order won't have it.
+    const aside = stored > 0 ? read.cart.unavailable.find((item) => item.stockcode === stockcode) : undefined
+    if (aside !== undefined) notices.push(NOTICES.setAside(aside.reason))
+    return { quantity: stored, confirmed: true, notices }
   })
   return { lines: outcomes, cart: read.cart, notices: [] }
 }
 
 /** Sets one line's absolute quantity, and reports what the site stored. */
 async function setQuantity(ctx: ToolContext, stockcode: number, requested: number): Promise<WriteOutcome> {
-  const { lines, cart } = await setQuantities(ctx, [{ stockcode, quantity: requested }])
+  const { lines, cart } = await setQuantities(ctx, [{ stockcode, quantity: requested }], () => ['stockcode'])
   const [line] = lines as [LineOutcome]
   return { quantity: line.quantity, confirmed: line.confirmed, cart, notices: line.notices }
 }
@@ -243,13 +266,22 @@ async function trolleyBeforeWrite(ctx: ToolContext): Promise<TrolleyRead> {
 const writeOutput = {
   stockcode: z.number().int(),
   /** The line's quantity in the cart the site sent back. Null when the reply didn't show it. */
-  quantity: z.number().nullable(),
+  quantity: z
+    .number()
+    .nullable()
+    .describe("The line's quantity in the cart the site sent back. Null when the reply didn't show it."),
   /** True when `quantity` is the site's own. False means the change may or may not have happened. */
-  confirmed: z.boolean(),
+  confirmed: z
+    .boolean()
+    .describe(
+      "True when quantity is what the site's reply shows. False: the change may or may not have happened, so call get_cart before trying again.",
+    ),
   /** The cart the site sent back, or null. */
-  cart: cartSchema.nullable(),
+  cart: cartSchema.nullable().describe('The whole cart as the site sent it back, or null.'),
   /** The adapter's notes on the write, e.g. that the site stored less than was asked for. */
-  notices: z.array(z.string()),
+  notices: z
+    .array(z.string())
+    .describe('Notes on the write, e.g. that the site stored less than asked, or set the product aside.'),
 }
 
 /**
@@ -266,7 +298,10 @@ export const getCart = tool({
   input: z.object({}),
   output: cartSchema.extend({
     /** The site's trolley page, for the person to check out in their own browser (D-checkout). */
-    cartUrl: z.string().nullable(),
+    cartUrl: z
+      .string()
+      .nullable()
+      .describe('The trolley page, where the person checks out in their own browser.'),
   }),
   async run(ctx) {
     // Always the site's own answer: this is the tool an agent checks the cart with.
@@ -281,13 +316,21 @@ export const getCart = tool({
 export const addToCart = tool({
   input: z.object({
     stockcode: stockcodeSchema,
-    quantity: z.number().int().min(1).max(MAX_LINE_QUANTITY).default(1),
+    quantity: z
+      .number()
+      .int()
+      .min(1)
+      .max(MAX_LINE_QUANTITY)
+      .default(1)
+      .describe(
+        `How many to add on top of any already in the cart (default 1). A line holds at most ${MAX_LINE_QUANTITY} of one product.`,
+      ),
   }),
   output: z.object({
     ...writeOutput,
-    previousQuantity: z.number(),
+    previousQuantity: z.number().describe('The quantity in the cart before the call.'),
     /** previousQuantity plus the quantity added: what the write asked the site to store. */
-    requestedQuantity: z.number(),
+    requestedQuantity: z.number().describe('previousQuantity plus the quantity added.'),
   }),
   async run(ctx, input) {
     return withLogin(ctx, async () => {
@@ -298,7 +341,7 @@ export const addToCart = tool({
       if (!read.complete) throw new ValetError('tool-run', 'site-changed')
       const previousQuantity = read.quantities.get(input.stockcode) ?? 0
       const requestedQuantity = previousQuantity + input.quantity
-      if (requestedQuantity > MAX_LINE_QUANTITY) throw new ValetError('tool-input', 'invalid')
+      if (requestedQuantity > MAX_LINE_QUANTITY) throw overTotal(['quantity'])
       const outcome = await setQuantity(ctx, input.stockcode, requestedQuantity)
       return { stockcode: input.stockcode, previousQuantity, requestedQuantity, ...outcome }
     })
@@ -308,7 +351,12 @@ export const addToCart = tool({
 export const setCartQuantity = tool({
   input: z.object({
     stockcode: stockcodeSchema,
-    quantity: z.number().int().min(0).max(MAX_LINE_QUANTITY),
+    quantity: z
+      .number()
+      .int()
+      .min(0)
+      .max(MAX_LINE_QUANTITY)
+      .describe(`The line's new quantity, at most ${MAX_LINE_QUANTITY}. 0 removes the product.`),
   }),
   output: z.object({ ...writeOutput, requestedQuantity: z.number() }),
   async run(ctx, input) {
@@ -321,15 +369,38 @@ export const removeFromCart = tool({
   input: z.object({ stockcode: stockcodeSchema }),
   output: z.object({
     ...writeOutput,
-    /** Whether the cart the site sent back is without the product. Null when unconfirmed. */
-    removed: z.boolean().nullable(),
+    /** Whether the product was in the cart before the call. Null when the cart read couldn't say. */
+    wasInCart: z
+      .boolean()
+      .nullable()
+      .describe('Whether the product was in the cart before the call. Null when that could not be read.'),
+    /** Whether this call took the product out: it was there, and the site's reply is without it. */
+    removed: z
+      .boolean()
+      .nullable()
+      .describe(
+        'True when the product was in the cart and the reply is without it. False when it was not in the cart, or is still there. Null when unconfirmed.',
+      ),
   }),
   async run(ctx, input) {
-    const outcome = await withLogin(ctx, () => setQuantity(ctx, input.stockcode, 0))
-    const removed = outcome.quantity === null ? null : outcome.quantity === 0
-    return { stockcode: input.stockcode, removed, ...outcome }
+    return withLogin(ctx, async () => {
+      // Read first, so the answer can say whether there was anything to remove. The write is made
+      // anyway: the read may be the runtime's cached trolley, and setting 0 is right either way.
+      const read = await trolleyBeforeWrite(ctx)
+      const wasInCart = read.quantities.has(input.stockcode) ? true : read.complete ? false : null
+      const outcome = await setQuantity(ctx, input.stockcode, 0)
+      const removed =
+        outcome.quantity === null || wasInCart === null ? null : wasInCart && outcome.quantity === 0
+      const notices = wasInCart === false ? [...outcome.notices, NOTICES.notInCart] : outcome.notices
+      return { stockcode: input.stockcode, wasInCart, removed, ...outcome, notices }
+    })
   },
 })
+
+/** A line the cart already holds some of, that the call would take past the per-line ceiling. */
+function overTotal(path: readonly InputPathSegment[]): ValetError {
+  return new ValetError('tool-input', 'invalid', { path, reason: 'over-total', limit: MAX_LINE_QUANTITY })
+}
 
 /** The most lines one update_cart call may change. */
 export const MAX_BATCH_LINES = 30
@@ -338,10 +409,37 @@ const batchLineSchema = z
   .object({
     stockcode: stockcodeSchema,
     /** With mode "add", how many to add (at least 1); with "set", the line's new quantity (0 removes it). */
-    quantity: z.number().int().min(0).max(MAX_LINE_QUANTITY).default(1),
-    mode: z.enum(['add', 'set']).default('add'),
+    quantity: z
+      .number()
+      .int()
+      .min(0)
+      .max(MAX_LINE_QUANTITY)
+      .optional()
+      .describe(
+        `With mode "add", how many to add (default 1). With mode "set", required: the line's new quantity, 0 removes it. A line holds at most ${MAX_LINE_QUANTITY} of one product.`,
+      ),
+    mode: z
+      .enum(['add', 'set'])
+      .default('add')
+      .describe('"add" adds to the quantity already in the cart; "set" replaces it.'),
   })
-  .refine((line) => line.mode === 'set' || line.quantity >= 1, 'an add needs a quantity of at least 1')
+  .superRefine((line, check) => {
+    // A set with no quantity would otherwise set 1, never what was meant.
+    if (line.mode === 'set' && line.quantity === undefined)
+      check.addIssue({
+        code: 'custom',
+        path: ['quantity'],
+        message: 'required',
+        params: { reason: 'missing' },
+      })
+    if (line.mode === 'add' && line.quantity === 0)
+      check.addIssue({
+        code: 'custom',
+        path: ['quantity'],
+        message: 'at least 1',
+        params: { reason: 'too-small', limit: 1 },
+      })
+  })
 
 /**
  * Many lines in one call (D-pacing): the agent sends a whole shopping list at once instead of one
@@ -354,10 +452,21 @@ export const updateCart = tool({
       .array(batchLineSchema)
       .min(1)
       .max(MAX_BATCH_LINES)
-      .refine(
-        (items) => new Set(items.map((i) => i.stockcode)).size === items.length,
-        'each product may appear once',
-      ),
+      .superRefine((items, check) => {
+        const seen = new Set<number>()
+        items.forEach((line, index) => {
+          if (seen.has(line.stockcode)) {
+            check.addIssue({
+              code: 'custom',
+              path: [index, 'stockcode'],
+              message: 'each product may appear once',
+              params: { reason: 'duplicate' },
+            })
+          }
+          seen.add(line.stockcode)
+        })
+      })
+      .describe(`The lines to change, each product once, at most ${MAX_BATCH_LINES}.`),
   }),
   output: z.object({
     items: z.array(
@@ -387,16 +496,17 @@ export const updateCart = tool({
       }
       const planned = input.items.map((line) => {
         const previousQuantity = line.mode === 'add' ? (quantities.get(line.stockcode) ?? 0) : null
-        const requestedQuantity =
-          line.mode === 'add' ? (previousQuantity ?? 0) + line.quantity : line.quantity
+        // The schema refuses a set without a quantity; an add's defaults to 1.
+        const quantity = line.quantity ?? 1
+        const requestedQuantity = line.mode === 'add' ? (previousQuantity ?? 0) + quantity : quantity
         return { stockcode: line.stockcode, mode: line.mode, previousQuantity, requestedQuantity }
       })
-      if (planned.some((line) => line.requestedQuantity > MAX_LINE_QUANTITY)) {
-        throw new ValetError('tool-input', 'invalid')
-      }
+      const over = planned.findIndex((line) => line.requestedQuantity > MAX_LINE_QUANTITY)
+      if (over !== -1) throw overTotal(['items', over, 'quantity'])
       const outcome = await setQuantities(
         ctx,
         planned.map((line) => ({ stockcode: line.stockcode, quantity: line.requestedQuantity })),
+        (index) => ['items', index, 'stockcode'],
       )
       return {
         items: planned.map((line, index) => ({ ...line, ...(outcome.lines[index] as LineOutcome) })),

@@ -10,6 +10,8 @@
 import {
   ERROR_CLASSES,
   type ErrorClass,
+  type InputIssue,
+  inputIssue,
   NEEDS_USER_REASONS,
   NeedsUserError,
   type NeedsUserReason,
@@ -55,6 +57,8 @@ export type WireError =
       readonly stage: Stage
       readonly errorClass: ErrorClass
       readonly detail?: string
+      /** A tool-input refusal's where and why; checked against the vocabulary when decoded. */
+      readonly issue?: InputIssue
     }
   | { readonly kind: 'needsUser'; readonly reason: NeedsUserReason }
   /** `detail`, only for a run that asked for it: what the tool threw, in its own words, clipped. */
@@ -156,7 +160,10 @@ export function withinSize(value: unknown): boolean {
 }
 
 export function encodeError(error: unknown): WireError {
-  if (error instanceof ValetError) return { kind: 'valet', stage: error.stage, errorClass: error.errorClass }
+  if (error instanceof ValetError) {
+    const wire = { kind: 'valet', stage: error.stage, errorClass: error.errorClass } as const
+    return error.issue === undefined ? wire : { ...wire, issue: error.issue }
+  }
   if (error instanceof NeedsUserError) return { kind: 'needsUser', reason: error.reason }
   return { kind: 'other' }
 }
@@ -169,9 +176,10 @@ export function decodeError(wire: unknown, withDetail = false): Error {
   let error: Error = new Error('tool code failed')
   let detail: unknown
   if (wire !== null && typeof wire === 'object') {
-    const w = wire as Partial<Record<'kind' | 'stage' | 'errorClass' | 'reason' | 'detail', unknown>>
+    const w = wire as Partial<Record<'kind' | 'stage' | 'errorClass' | 'reason' | 'detail' | 'issue', unknown>>
     if (w.kind === 'valet' && isStage(w.stage) && isErrorClass(w.errorClass)) {
-      error = new ValetError(w.stage, w.errorClass)
+      // ValetError keeps an issue for tool-input only, and only the parts the vocabulary allows.
+      error = new ValetError(w.stage, w.errorClass, inputIssue(w.issue))
     } else if (w.kind === 'needsUser' && isReason(w.reason)) {
       return new NeedsUserError(w.reason)
     }

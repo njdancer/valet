@@ -44,7 +44,7 @@ export const BOOTSTRAP = `(function (send) {
     throwIfAborted() { if (signal.aborted) throw new ValetError('tool-run', 'aborted') },
   }
   const fromWire = (error) => {
-    if (error && error.kind === 'valet') return new ValetError(error.stage, error.errorClass)
+    if (error && error.kind === 'valet') return new ValetError(error.stage, error.errorClass, error.issue)
     if (error && error.kind === 'needsUser') return new NeedsUserError(error.reason)
     return new Error('capability failed')
   }
@@ -75,7 +75,7 @@ export const BOOTSTRAP = `(function (send) {
   }
   const toWire = (error, withDetail) => {
     let wire
-    if (error instanceof ValetError) wire = { kind: 'valet', stage: error.stage, errorClass: error.errorClass }
+    if (error instanceof ValetError) wire = error.issue === undefined ? { kind: 'valet', stage: error.stage, errorClass: error.errorClass } : { kind: 'valet', stage: error.stage, errorClass: error.errorClass, issue: error.issue }
     else if (error instanceof NeedsUserError) return { kind: 'needsUser', reason: error.reason }
     else wire = { kind: 'other' }
     if (withDetail) {
@@ -160,7 +160,23 @@ export const BOOTSTRAP = `(function (send) {
       if (!impl || !impl.input || typeof impl.input.safeParseAsync !== 'function') { post({ t: 'checked', ok: false }); return }
       Promise.resolve()
         .then(() => impl.input.safeParseAsync(m.input))
-        .then((r) => post({ t: 'checked', ok: !!(r && r.success === true) }), () => post({ t: 'checked', ok: false }))
+        .then((r) => {
+          if (r && r.success === true) return post({ t: 'checked', ok: true })
+          // The first issue's codes, path and bounds only, never its message: the host maps them to
+          // its own vocabulary and trusts nothing else in them.
+          const first = r && r.error && Array.isArray(r.error.issues) ? r.error.issues[0] : undefined
+          const issue = {}
+          if (first && typeof first === 'object') {
+            for (const key of ['code', 'path', 'keys', 'minimum', 'maximum', 'inclusive', 'origin']) {
+              const value = first[key]
+              if (typeof value === 'bigint') issue[key] = Number(value)
+              else if (value !== undefined && typeof value !== 'function' && typeof value !== 'symbol') issue[key] = value
+            }
+            if (Array.isArray(issue.path)) issue.path = issue.path.filter((p) => typeof p === 'string' || typeof p === 'number')
+            if (first.params && typeof first.params === 'object') issue.params = { reason: first.params.reason, limit: first.params.limit }
+          }
+          if (!post({ t: 'checked', ok: false, issue })) post({ t: 'checked', ok: false })
+        }, () => post({ t: 'checked', ok: false }))
     } else if (m.t === 'describe') {
       // Each tool's schemas as JSON Schema, 'missing' where the tool gives none, or null where one
       // can't be represented; the host bounds and checks what comes back before it uses any of it.

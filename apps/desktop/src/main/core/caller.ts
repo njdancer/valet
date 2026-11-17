@@ -171,7 +171,10 @@ export function outcomeOf(result: ToolCallResult): CallOutcome {
     case 'needsUser':
       return { status: 'needsUser', reason: result.reason }
     case 'failed':
-      return { status: 'failed', stage: result.stage, errorClass: result.errorClass }
+      // An input refusal's where and why, as codes; the endpoint writes the sentence.
+      return result.issue === undefined
+        ? { status: 'failed', stage: result.stage, errorClass: result.errorClass }
+        : { status: 'failed', stage: result.stage, errorClass: result.errorClass, issue: result.issue }
     case 'blocked':
       // Valet's own hourly cap for the site: a wait like a block, with our budget as the cause.
       if (result.cause === 'hourly-cap') {
@@ -197,6 +200,7 @@ export function outcomeOf(result: ToolCallResult): CallOutcome {
         errorClass: 'busy',
         retryAfterMs: result.retryAfterMs,
         ahead: result.ahead,
+        ...(result.waitingFor === 'login' ? { waitingFor: 'login' as const } : {}),
       }
     case 'logging-in':
       // A wait the client can sit out, with the login as the cause.

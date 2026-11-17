@@ -230,6 +230,23 @@ describe('RuntimeToolCaller', () => {
       errorClass: 'login-in-progress',
       retryAfterMs: 30_000,
     })
+    // A call that found such a login holding the site, answered at once.
+    expect(outcomeOf({ status: 'busy', retryAfterMs: 20_000, ahead: 1, waitingFor: 'login' })).toEqual({
+      status: 'blocked',
+      stage: 'tool-run',
+      errorClass: 'busy',
+      retryAfterMs: 20_000,
+      ahead: 1,
+      waitingFor: 'login',
+    })
+    // An input refusal keeps its where and why.
+    const issue = { path: ['items', 0, 'quantity'], reason: 'over-total', limit: 20 } as const
+    expect(outcomeOf({ status: 'failed', stage: 'tool-input', errorClass: 'invalid', issue })).toEqual({
+      status: 'failed',
+      stage: 'tool-input',
+      errorClass: 'invalid',
+      issue,
+    })
     expect(outcomeOf({ status: 'declined' })).toEqual({ status: 'declined' })
   })
 })

@@ -9,7 +9,7 @@
 // MAX_IN_FLIGHT may wait at once. Anything else ends the run as `tool-run/invalid` and kills the
 // process. A process that exits before saying it is done ends the run as `tool-run/internal`.
 
-import { type ToolContext, ValetError } from '@valet/core'
+import { type InputIssue, issueFromZod, type ToolContext, ValetError } from '@valet/core'
 import { dispatchLocal } from './local-dispatch'
 import {
   type Capability,
@@ -213,10 +213,14 @@ export function describeIsolated(
   })
 }
 
+/** What a tool's own input schema said: accepted, or refused with where and why when it said. */
+export type InputCheck = { readonly ok: true } | { readonly ok: false; readonly issue?: InputIssue }
+
 /**
  * Asks a fresh process whether `tool`'s own input schema accepts `input` (worker.ts, `check`).
- * Resolves true or false; false too if the process says anything else, exits or takes longer than
- * `timeoutMs`. The script gets no capabilities.
+ * Resolves accepted or refused; refused too if the process says anything else, exits or takes
+ * longer than `timeoutMs`. A refusal's first zod issue, as the process reports it, is mapped here
+ * to codes (issueFromZod), so nothing it says travels on as text. The script gets no capabilities.
  */
 export function checkInputIsolated(
   start: ToolProcessFactory,
@@ -224,31 +228,33 @@ export function checkInputIsolated(
   tool: string,
   input: unknown,
   timeoutMs: number = DESCRIBE_TIMEOUT_MS,
-): Promise<boolean> {
+): Promise<InputCheck> {
   return new Promise((resolve) => {
     let channel: ToolChannel
     try {
       channel = start()
     } catch {
-      resolve(false)
+      resolve({ ok: false })
       return
     }
     let settled = false
-    const finish = (ok: boolean): void => {
+    const finish = (check: InputCheck): void => {
       if (settled) return
       settled = true
       clearTimeout(timer)
       channel.kill()
-      resolve(ok)
+      resolve(check)
     }
-    const timer = setTimeout(() => finish(false), timeoutMs)
-    channel.onExit(() => finish(false))
+    const timer = setTimeout(() => finish({ ok: false }), timeoutMs)
+    channel.onExit(() => finish({ ok: false }))
     channel.onMessage((message) => {
       if (settled) return
-      if (!isPlainJson(message) || !withinSize(message)) return finish(false)
-      const m = message as Partial<Record<'t' | 'ok', unknown>>
+      if (!isPlainJson(message) || !withinSize(message)) return finish({ ok: false })
+      const m = message as Partial<Record<'t' | 'ok' | 'issue', unknown>>
       if (m.t === 'ready') return
-      finish(m.t === 'checked' && m.ok === true)
+      if (m.t === 'checked' && m.ok === true) return finish({ ok: true })
+      if (m.t !== 'checked' || m.issue === undefined) return finish({ ok: false })
+      finish({ ok: false, issue: issueFromZod(m.issue, input) })
     })
     channel.send({ t: 'init', script })
     channel.send({ t: 'check', tool, input })

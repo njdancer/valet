@@ -5,7 +5,12 @@
 import { defineAdapter, tool } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { DEFAULT_LOGIN_ANSWER_MS, DEFAULT_LOGIN_TIMEOUT_MS, LOGIN_RETRY_MS } from '../src/tool-host'
+import {
+  DEFAULT_LOGIN_ANSWER_MS,
+  DEFAULT_LOGIN_TIMEOUT_MS,
+  LOGIN_RETRY_MS,
+  MIN_LOGIN_BUSY_RETRY_MS,
+} from '../src/tool-host'
 import type { AuthOutcome, AuthRunRequest } from '../src/types'
 import { flush } from './fakes'
 import { call, fixture, loggedIn, loggedOut, manifest, SESSION_URL } from './fixtures'
@@ -84,15 +89,67 @@ describe('a call that has to log in first', () => {
     await clock.advance(DEFAULT_LOGIN_ANSWER_MS)
     expect(await first).toEqual(EARLY)
 
-    const second = host.call({ ...call, callId: 'call-2' })
-    await flush()
-    // Still waiting its turn behind the login.
+    // A call while the login runs is told so at once, and sends nothing.
+    expect(await host.call({ ...call, callId: 'call-2' })).toMatchObject({
+      status: 'busy',
+      waitingFor: 'login',
+    })
     expect(trolleys()).toBe(0)
     finishLogin({ status: 'ok' })
+    // The hand-off to the tool partition, then the login is over.
+    await flush()
 
-    expect(await second).toEqual({ status: 'ok', output: 'done' })
+    expect(await host.call({ ...call, callId: 'call-3' })).toEqual({ status: 'ok', output: 'done' })
     expect(driver.handoffs).toHaveLength(1)
     expect(authRunner).toHaveBeenCalledTimes(1)
+  })
+
+  it('answers a call that finds the login holding the adapter at once, not after the queue wait', async () => {
+    const { host, clock, audit } = setup()
+    const first = host.call(call)
+    await flush()
+    await clock.advance(DEFAULT_LOGIN_ANSWER_MS)
+    expect(await first).toEqual(EARLY)
+
+    // No clock advanced: the answer doesn't wait out DEFAULT_QUEUE_WAIT_MS.
+    expect(await host.call({ ...call, callId: 'call-2' })).toEqual({
+      status: 'busy',
+      retryAfterMs: LOGIN_RETRY_MS,
+      ahead: 1,
+      waitingFor: 'login',
+    })
+    expect(audit.events.at(-1)).toMatchObject({
+      type: 'tool-finished',
+      callId: 'call-2',
+      outcome: 'failed',
+      stage: 'tool-run',
+      errorClass: 'busy',
+    })
+    // The longer the login has run, the sooner to try again, but never sooner than the floor.
+    await clock.advance(12_000)
+    expect(await host.call({ ...call, callId: 'call-3' })).toMatchObject({
+      retryAfterMs: LOGIN_RETRY_MS - 12_000,
+    })
+    await clock.advance(60_000)
+    expect(await host.call({ ...call, callId: 'call-4' })).toMatchObject({
+      retryAfterMs: MIN_LOGIN_BUSY_RETRY_MS,
+      waitingFor: 'login',
+    })
+  })
+
+  it('wakes a call already waiting its turn when the call ahead of it leaves its login running', async () => {
+    const { host, clock, finishLogin, trolleys } = setup()
+    const first = host.call(call)
+    await flush()
+    const second = host.call({ ...call, callId: 'call-2' })
+    await flush()
+    await clock.advance(DEFAULT_LOGIN_ANSWER_MS)
+    expect(await first).toEqual(EARLY)
+    expect(await second).toMatchObject({ status: 'busy', ahead: 1, waitingFor: 'login' })
+    expect(trolleys()).toBe(0)
+    finishLogin({ status: 'ok' })
+    await flush()
+    expect(await host.call({ ...call, callId: 'call-3' })).toEqual({ status: 'ok', output: 'done' })
   })
 
   it('still finishes a quick login inside the call', async () => {
