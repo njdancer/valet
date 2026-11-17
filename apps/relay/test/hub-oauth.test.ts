@@ -4,7 +4,14 @@
 import { createHash } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
-import { CONSENT_COOKIE, type Db, HubOAuth, OAUTH_CAPS, OAUTH_TIMINGS } from '../src/hub/oauth'
+import {
+  CONSENT_COOKIE,
+  type Db,
+  HubOAuth,
+  OAUTH_CAPS,
+  OAUTH_TIMINGS,
+  UNUSED_CLIENT_MS,
+} from '../src/hub/oauth'
 
 const ORIGIN = 'https://valet.example'
 const REDIRECT = 'https://claude.ai/api/mcp/auth_callback'
@@ -29,9 +36,10 @@ function setup() {
     () => now,
   )
   oauth.migrate()
+  let source = '203.0.113.9'
   const call = (path: string, init: RequestInit = {}) => {
     const url = new URL(path, ORIGIN)
-    return oauth.fetch(new Request(url, init), url, '203.0.113.9')
+    return oauth.fetch(new Request(url, init), url, source)
   }
   const register = async (body: unknown) =>
     call('/register', {
@@ -57,7 +65,18 @@ function setup() {
       headers: { 'content-type': type },
       body: new URLSearchParams(form).toString(),
     })
-  return { oauth, call, register, client, authorize, token, tick: (ms: number) => (now += ms) }
+  return {
+    oauth,
+    call,
+    register,
+    client,
+    authorize,
+    token,
+    tick: (ms: number) => (now += ms),
+    from: (address: string) => {
+      source = address
+    },
+  }
 }
 
 /**
@@ -101,7 +120,11 @@ describe('the hub’s OAuth server', () => {
       client_name: string
     }
     expect(named.client_name).toBe('claude.ai')
-    for (let i = 2; i < OAUTH_CAPS.clients; i++) await t.register({ redirect_uris: [REDIRECT] })
+    for (let i = 2; i < OAUTH_CAPS.clients; i++) {
+      t.from(`198.51.100.${Math.floor(i / 10)}`)
+      expect((await t.register({ redirect_uris: [REDIRECT] })).status).toBe(201)
+    }
+    t.from('198.51.100.200')
     expect((await t.register({ redirect_uris: [REDIRECT] })).status).toBe(400)
   })
 
@@ -120,8 +143,71 @@ describe('the hub’s OAuth server', () => {
     expect(await error({ code_challenge_method: 'plain' })).toBe('invalid_request')
     expect(await error({ resource: 'https://other.example/mcp' })).toBe('invalid_target')
     expect(await error({ state: 'x'.repeat(513) })).toBe('invalid_request')
-    for (let i = 0; i < OAUTH_CAPS.openConsents; i++) await t.authorize({ client_id: id })
-    expect((await t.authorize({ client_id: id })).status).toBe(429)
+    for (let i = 0; i < OAUTH_CAPS.openConsents; i++) {
+      t.from(`198.51.100.${i}`)
+      const other = await t.client()
+      expect((await t.authorize({ client_id: other })).status).toBe(200)
+    }
+    t.from('198.51.100.250')
+    expect((await t.authorize({ client_id: await t.client() })).status).toBe(429)
+  })
+
+  // Red team, 2026-11-17: /register and /authorize are open to anyone, and clients were never
+  // forgotten, so one address could fill the hub's 100 clients for good, or hold all 20 sign-ins
+  // open (and fill the person's list of waiting sign-ins with names of its choosing).
+  it('forgets unused registrations, and limits what one address registers', async () => {
+    const t = setup()
+    for (let i = 0; i < OAUTH_CAPS.registrationsPerSourcePerHour; i++)
+      expect((await t.register({ redirect_uris: [REDIRECT] })).status).toBe(201)
+    expect((await t.register({ redirect_uris: [REDIRECT] })).status).toBe(429)
+    // Another address is not held back by the first.
+    t.from('198.51.100.7')
+    expect((await t.register({ redirect_uris: [REDIRECT] })).status).toBe(201)
+    // Fill the cap from many addresses, then wait: registrations nobody used go, ones in use stay.
+    const used = await t.client()
+    const consent = await open(t, used)
+    t.oauth.approve(consent.id, 'g'.repeat(64))
+    const done = await t.call(`/authorize/done?id=${consent.id}`, { headers: { cookie: consent.cookie } })
+    const code = new URL(done.headers.get('location') ?? '').searchParams.get('code') ?? ''
+    expect(
+      (
+        await t.token({
+          grant_type: 'authorization_code',
+          client_id: used,
+          code,
+          redirect_uri: REDIRECT,
+          code_verifier: VERIFIER,
+        })
+      ).status,
+    ).toBe(200)
+    for (let i = 0; i < OAUTH_CAPS.clients; i++) {
+      t.from(`192.0.2.${Math.floor(i / 10)}`)
+      await t.register({ redirect_uris: [REDIRECT] })
+    }
+    t.from('192.0.2.200')
+    expect((await t.register({ redirect_uris: [REDIRECT] })).status).toBe(400)
+    t.tick(UNUSED_CLIENT_MS + 1)
+    expect((await t.register({ redirect_uris: [REDIRECT] })).status).toBe(201)
+    // The client with tokens is still registered: it can refresh.
+    expect((await t.authorize({ client_id: used })).status).toBe(200)
+  })
+
+  it('lets one address, and one client, hold only a few sign-ins open', async () => {
+    const t = setup()
+    const clients = await Promise.all([t.client(), t.client(), t.client()])
+    for (let i = 0; i < OAUTH_CAPS.openConsentsPerClient; i++)
+      expect((await t.authorize({ client_id: clients[0] as string })).status).toBe(200)
+    expect((await t.authorize({ client_id: clients[0] as string })).status).toBe(429)
+    for (let i = OAUTH_CAPS.openConsentsPerClient; i < OAUTH_CAPS.openConsentsPerSource; i++)
+      expect((await t.authorize({ client_id: clients[1] as string })).status).toBe(200)
+    expect((await t.authorize({ client_id: clients[2] as string })).status).toBe(429)
+    // Someone else, elsewhere, can still sign in.
+    t.from('198.51.100.7')
+    expect((await t.authorize({ client_id: await t.client() })).status).toBe(200)
+    // And once the waiting ones expire, so can the first address.
+    t.from('203.0.113.9')
+    t.tick(OAUTH_TIMINGS.consentMs + 1)
+    expect((await t.authorize({ client_id: clients[2] as string })).status).toBe(200)
   })
 
   it('hands the code only to the browser that opened the consent, once it is approved', async () => {
