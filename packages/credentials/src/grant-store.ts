@@ -14,10 +14,6 @@
 // into), and that a messages grant's itemRef is the same sender the manifest's OTP source names
 // (sameOtpSender). The store can't do either: it never sees a manifest.
 
-import { randomUUID } from 'node:crypto'
-import { constants } from 'node:fs'
-import * as nodeFs from 'node:fs/promises'
-import { dirname } from 'node:path'
 import {
   type Grant,
   type GrantStore,
@@ -28,9 +24,9 @@ import {
 } from '@valet/core'
 import { parseItemRef } from './item-ref'
 import { parseOtpSender, sameOtpSender } from './otp-sender'
+import { type GrantFs, hasExactKeys, isPlainObject, SecureJsonFile } from './secure-json-file'
 
-/** The file operations the store uses, injected so tests can fail them. */
-export type GrantFs = Pick<typeof nodeFs, 'lstat' | 'mkdir' | 'open' | 'rename' | 'unlink'>
+export type { GrantFs } from './secure-json-file'
 
 export interface FileGrantStoreOptions {
   readonly path: string
@@ -53,18 +49,12 @@ const SHA256_HEX = /^[0-9a-f]{64}$/
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/
 // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting control characters is the point
 const CONTROL = /[\u0000-\u001f\u007f]/
-// Never follow a planted symlink, and never block on a planted FIFO.
-const READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
 
 export class FileGrantStore implements GrantStore {
-  readonly #path: string
-  readonly #fs: GrantFs
-  // Serialises read-modify-write so concurrent puts in this process never lose one another.
-  #queue: Promise<unknown> = Promise.resolve()
+  readonly #file: SecureJsonFile
 
   constructor(options: FileGrantStoreOptions) {
-    this.#path = options.path
-    this.#fs = options.fs ?? nodeFs
+    this.#file = new SecureJsonFile(options.path, options.fs)
   }
 
   async find(adapterId: string, adapterHash: string, secret: string): Promise<Grant | null> {
@@ -101,14 +91,14 @@ export class FileGrantStore implements GrantStore {
   put(grant: Grant): Promise<void> {
     if (!isValidGrant(grant)) return Promise.reject(new ValetError('grant', 'invalid'))
     const stored = copyGrant(grant)
-    return this.#exclusive(async () => {
+    return this.#file.exclusive(async () => {
       const others = (await this.#read()).filter((g) => !sameSlot(g, stored))
       await this.#write([...others, stored])
     })
   }
 
   revoke(adapterId: string, secret: string): Promise<void> {
-    return this.#exclusive(async () => {
+    return this.#file.exclusive(async () => {
       const grants = await this.#read()
       const kept = grants.filter((g) => !(g.adapterId === adapterId && g.secret === secret))
       if (kept.length !== grants.length) await this.#write(kept)
@@ -117,7 +107,7 @@ export class FileGrantStore implements GrantStore {
 
   /** Revokes the messages grants for one sender, whatever the hash; revoke() revokes every sender. */
   revokeMessages(adapterId: string, sender: string): Promise<void> {
-    return this.#exclusive(async () => {
+    return this.#file.exclusive(async () => {
       const grants = await this.#read()
       const kept = grants.filter(
         (g) =>
@@ -127,100 +117,13 @@ export class FileGrantStore implements GrantStore {
     })
   }
 
-  #exclusive(work: () => Promise<void>): Promise<void> {
-    const run = this.#queue.then(work, work)
-    this.#queue = run.catch(() => {})
-    return run
-  }
-
   async #read(): Promise<Grant[]> {
-    let raw: string
-    try {
-      if (!(await this.#checkDirectory())) return []
-      // A grant decides where a password may be typed, so refuse a file someone else could have
-      // written or redirected. The checks and the read go through one handle, so the file can't be
-      // swapped between them.
-      const handle = await this.#fs.open(this.#path, READ_FLAGS)
-      try {
-        const info = await handle.stat()
-        if (!info.isFile() || !safeOwnership(info)) throw new ValetError('config', 'insecure-file')
-        raw = await handle.readFile('utf8')
-      } finally {
-        await handle.close()
-      }
-    } catch (error) {
-      if (error instanceof ValetError) throw error
-      if (errorCode(error) === 'ENOENT') return []
-      // What O_NOFOLLOW reports for a symlink.
-      if (errorCode(error) === 'ELOOP') throw new ValetError('config', 'insecure-file')
-      throw new ValetError('config', 'unavailable')
-    }
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(raw)
-    } catch {
-      throw new ValetError('config', 'invalid')
-    }
-    return parseGrantFile(parsed)
+    const parsed = await this.#file.read()
+    return parsed === undefined ? [] : parseGrantFile(parsed)
   }
 
   async #write(grants: readonly Grant[]): Promise<void> {
-    const directory = dirname(this.#path)
-    const temp = `${this.#path}.${randomUUID()}.tmp`
-    const body = `${JSON.stringify({ version: 1, grants }, null, 2)}\n`
-    try {
-      await this.#fs.mkdir(directory, { recursive: true, mode: 0o700 })
-    } catch {
-      throw new ValetError('config', 'unavailable')
-    }
-    // mkdir's mode only applies to a directory it creates; an existing one is checked as on read.
-    await this.#checkDirectory()
-    try {
-      const handle = await this.#fs.open(temp, 'wx', 0o600)
-      try {
-        // The umask can only remove bits; chmod makes the mode exact either way.
-        await handle.chmod(0o600)
-        await handle.writeFile(body, 'utf8')
-        await handle.sync()
-      } finally {
-        await handle.close()
-      }
-      await this.#fs.rename(temp, this.#path)
-    } catch {
-      await this.#fs.unlink(temp).catch(() => {})
-      throw new ValetError('config', 'unavailable')
-    }
-    await this.#syncDirectory(directory)
-  }
-
-  /**
-   * Refuses a directory that another user could write to: whoever can write there can replace the
-   * grant file with their own. Returns false when the directory doesn't exist yet.
-   */
-  async #checkDirectory(): Promise<boolean> {
-    let info: Awaited<ReturnType<GrantFs['lstat']>>
-    try {
-      info = await this.#fs.lstat(dirname(this.#path))
-    } catch (error) {
-      if (errorCode(error) === 'ENOENT') return false
-      throw new ValetError('config', 'unavailable')
-    }
-    if (!info.isDirectory() || !safeOwnership(info)) throw new ValetError('config', 'insecure-file')
-    return true
-  }
-
-  /** Makes the rename durable. Best effort: not every platform can fsync a directory. */
-  async #syncDirectory(directory: string): Promise<void> {
-    try {
-      const handle = await this.#fs.open(directory, 'r')
-      try {
-        await handle.sync()
-      } finally {
-        await handle.close()
-      }
-    } catch {
-      // The data is already in place; only crash durability of the rename is at stake.
-    }
+    await this.#file.write({ version: 1, grants })
   }
 }
 
@@ -295,22 +198,4 @@ function sameSlot(a: Grant, b: Grant): boolean {
   // Both are messages grants here (the reserved secret is only valid with that provider), and both
   // passed isValidGrant, so both itemRefs parse as senders.
   return a.secret !== MESSAGES_SECRET || sameOtpSender(a.itemRef, b.itemRef)
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  const actual = Object.keys(value)
-  return actual.length === keys.length && keys.every((key) => Object.hasOwn(value, key))
-}
-
-/** Owned by this user, and writable by no one else. */
-function safeOwnership(info: { mode: number; uid: number }): boolean {
-  return (info.mode & 0o022) === 0 && (process.getuid === undefined || info.uid === process.getuid())
-}
-
-function errorCode(error: unknown): unknown {
-  return typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined
 }

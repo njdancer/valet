@@ -61,6 +61,12 @@ describe('secretReference', () => {
     expect(secretReference(ref, 'username', 'otp')).toBe('op://valet/Woolworths/username')
     expect(secretReference(ref, 'password', 'otp')).toBe('op://valet/Woolworths/password')
     expect(secretReference(ref, 'otp', 'otp')).toBe('op://valet/Woolworths/one-time password?attribute=otp')
+    // A credential's token is an API Credential item's "credential" field; an SSH key is an SSH
+    // Key item's private half, asked for in OpenSSH format.
+    expect(secretReference(ref, 'token', 'otp')).toBe('op://valet/Woolworths/credential')
+    expect(secretReference(ref, 'ssh-key', 'otp')).toBe(
+      'op://valet/Woolworths/private key?ssh-format=openssh',
+    )
   })
 
   it('uses the attribute name the caller asks for', () => {

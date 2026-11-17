@@ -1,9 +1,11 @@
 // Output redaction. Before a tool result leaves the process, any string that contains a session
 // value (a cookie, or a handed-off storage value) or a secret resolved during the call is replaced
-// whole. Matching is exact substring matching: no normalisation, so an encoded copy of a secret is
-// not caught.
+// whole. Session values match as they are. A secret also matches in its common encodings
+// (secret-forms.ts: base64, hex, URL encoding, reversed and more), so a copy an adapter or a server
+// encoded is caught too; an arbitrary transform is not.
 
 import { SecretValue, ValetError } from '@valet/core'
+import { encodedForms, type SecretForm } from './secret-forms'
 
 export const REDACTED = '[redacted]'
 
@@ -19,6 +21,8 @@ export const MIN_SESSION_VALUE_LENGTH = 8
  */
 export class SecretRedactionSet {
   private readonly secrets: SecretValue[] = []
+  /** Each registered secret's encoded forms, matched beside it. */
+  private readonly forms: SecretForm[] = []
   private ended = false
   /** Set when a secret arrived that could not be kept; every string then counts as sensitive. */
   private incomplete = false
@@ -32,7 +36,16 @@ export class SecretRedactionSet {
       this.incomplete = true
       return
     }
+    let forms: SecretForm[]
+    try {
+      forms = encodedForms(secret)
+    } catch {
+      // Unreachable for a live SecretValue; if it happens, fail closed as for one we couldn't hold.
+      this.incomplete = true
+      return
+    }
     this.secrets.push(secret.clone())
+    this.forms.push(...forms)
   }
 
   /** Something was filled that wasn't registered: every string now counts as sensitive. */
@@ -43,13 +56,17 @@ export class SecretRedactionSet {
   /** True when `text` contains a registered secret. */
   occursIn(text: string): boolean {
     if (this.incomplete) return true
-    return this.secrets.some((secret) => secret.occursIn(text))
+    return (
+      this.secrets.some((secret) => secret.occursIn(text)) ||
+      this.forms.some((form) => form.value.occursIn(text, { ignoreCase: form.ignoreCase }))
+    )
   }
 
-  /** Zeroes every clone. Later registrations are ignored. */
+  /** Zeroes every clone and form. Later registrations are ignored. */
   dispose(): void {
     this.ended = true
     for (const secret of this.secrets.splice(0)) secret.dispose()
+    for (const form of this.forms.splice(0)) form.value.dispose()
   }
 
   get size(): number {

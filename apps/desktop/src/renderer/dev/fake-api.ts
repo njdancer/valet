@@ -483,6 +483,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
             },
           ],
         },
+        credentials: { added: [], removed: [], unchanged: [] },
         secretFills: {
           added: [],
           removed: [],
@@ -907,6 +908,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
                   },
                 ],
           ),
+          credentials: { added: [], removed: [], unchanged: [] },
           secretFills: all([
             { selector: 'input[name=username]', secret: 'login', field: 'username' as const },
             { selector: 'input#password', secret: 'login', field: 'password' as const },
@@ -1980,6 +1982,9 @@ const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent['type']
     'grant-made',
     'grant-revoked',
     'grant-copied',
+    'credential-granted',
+    'credential-revoked',
+    'key-generated',
     'update-downloaded',
     'update-installed',
     'remote-state',

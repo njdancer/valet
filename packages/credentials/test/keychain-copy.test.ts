@@ -60,6 +60,21 @@ describe('KeychainCopyProvider', () => {
     expect(await copies.source(ITEM, 'username')).toBeNull()
   })
 
+  it('copies a credential’s token and SSH key fields too, each under its own account', async () => {
+    const { keychain, copies } = provider()
+    await copies.store(ITEM, Buffer.from('tok_123456789'), { ...SOURCE, field: 'token' })
+    await copies.store(ITEM, Buffer.from('-----BEGIN OPENSSH PRIVATE KEY-----'), {
+      ...SOURCE,
+      field: 'ssh-key',
+    })
+    expect(keychain.get(COPY_SERVICE, `${ITEM}#token`)?.secret.toString()).toBe('tok_123456789')
+    expect((await copies.resolve(ITEM, 'ssh-key')).reveal((p) => p)).toContain('OPENSSH')
+    expect(await copies.source(ITEM, 'token')).toEqual({ ...SOURCE, field: 'token' })
+    await copies.forget(ITEM)
+    expect(keychain.get(COPY_SERVICE, `${ITEM}#token`)).toBeUndefined()
+    expect(keychain.get(COPY_SERVICE, `${ITEM}#ssh-key`)).toBeUndefined()
+  })
+
   it('has no copy of a one-time password', async () => {
     const { copies, keychain } = provider()
     expect((await failureOf(copies.resolve(ITEM, 'otp'))).failure).toBe('field-missing')

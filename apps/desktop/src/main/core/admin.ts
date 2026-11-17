@@ -138,11 +138,14 @@ export function adminReader(source: AdminSource): AdminReader {
           blockedRequests: today.blockedRequests,
         },
         remoteAccess: { enabled: remote.enabled, listening: remote.listening },
-        loginProviders: providers.map((p) => ({
-          kind: p.kind,
-          available: p.available,
-          unavailableReason: p.unavailableReason,
-        })),
+        // A Valet-made SSH key is a credential's, never a login provider.
+        loginProviders: providers
+          .flatMap((p) => (p.kind === 'valet-key' ? [] : [{ ...p, kind: p.kind }]))
+          .map((p) => ({
+            kind: p.kind,
+            available: p.available,
+            unavailableReason: p.unavailableReason,
+          })),
       }
     },
 
@@ -359,7 +362,18 @@ const EVENT_FIELDS: Readonly<Record<AuditEvent['type'], readonly string[]>> = {
   'tool-finished': ['adapterId', 'callId', 'outcome', 'needsUser', 'stage', 'errorClass', 'durationMs'],
   'login-started': ['adapterId', 'callId'],
   'login-finished': ['adapterId', 'outcome', 'needsUser', 'stage', 'errorClass'],
-  'secret-used': ['adapterId', 'adapterHash', 'secret', 'field', 'origin', 'callId'],
+  'secret-used': ['adapterId', 'adapterHash', 'secret', 'field', 'origin', 'callId', 'custody'],
+  'credential-granted': [
+    'adapterId',
+    'adapterHash',
+    'credential',
+    'custody',
+    'provider',
+    'targets',
+    'carriedFrom',
+  ],
+  'credential-revoked': ['adapterId', 'credential'],
+  'key-generated': ['adapterId', 'credential', 'fingerprint'],
   'local-access': ['adapterId', 'callId', 'capability', 'errorClass'],
   'request-blocked': [
     'adapterId',

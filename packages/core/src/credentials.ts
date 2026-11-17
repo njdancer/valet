@@ -1,7 +1,7 @@
 // Credential providers and grants. A manifest requests a secret; a grant, made by the person, binds
 // that request to a credential item for one exact adapter content hash.
 
-import type { SecretField } from './manifest'
+import type { CredentialKind, Custody, ItemField } from './credential'
 import type { SecretValue } from './secret'
 
 /**
@@ -14,6 +14,8 @@ export type ProviderKind =
   | 'onepassword-service-account'
   | 'onepassword-cli'
   | 'messages'
+  /** An SSH key Valet generated for one credential; its private half never leaves the Keychain. */
+  | 'valet-key'
   | 'fake'
 
 /** The secret name a manifest's Messages OTP source is granted under. Reserved in manifests. */
@@ -47,7 +49,7 @@ export class CredentialError extends Error {
 export interface CredentialProvider {
   readonly kind: ProviderKind
   /** Fetches one field just in time. Throws CredentialError. The caller disposes the value. */
-  resolve(itemRef: string, field: SecretField): Promise<SecretValue>
+  resolve(itemRef: string, field: ItemField): Promise<SecretValue>
 }
 
 export interface GrantStore {
@@ -55,6 +57,32 @@ export interface GrantStore {
   list(): Promise<readonly Grant[]>
   put(grant: Grant): Promise<void>
   revoke(adapterId: string, secret: string): Promise<void>
+}
+
+/**
+ * A credential grant (B's contract): binds a manifest's credential to an item for one exact
+ * adapter hash, as a secret grant does, and to targets (endpoints or hosts) the person allowed: a
+ * non-empty subset of the declaration's. Its kind and custody are the declaration's when granted;
+ * a version that changes either needs a new grant.
+ */
+export interface CredentialGrant {
+  readonly adapterId: string
+  readonly adapterHash: string
+  readonly credential: string
+  readonly kind: CredentialKind
+  readonly custody: Custody
+  readonly provider: ProviderKind
+  /** Provider-specific item reference. Never shown to adapter code. */
+  readonly itemRef: string
+  readonly targets: readonly string[]
+  readonly grantedAt: string
+}
+
+export interface CredentialGrantStore {
+  find(adapterId: string, adapterHash: string, credential: string): Promise<CredentialGrant | null>
+  list(): Promise<readonly CredentialGrant[]>
+  put(grant: CredentialGrant): Promise<void>
+  revoke(adapterId: string, credential: string): Promise<void>
 }
 
 /** Where the 1Password service-account token comes from (the Keychain, in the app). */

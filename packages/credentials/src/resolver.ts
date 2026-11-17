@@ -3,11 +3,12 @@
 
 import {
   CredentialError,
+  type CredentialGrant,
   type CredentialProvider,
   type Grant,
+  type ItemField,
   type ProviderKind,
   type ResolveFailure,
-  type SecretField,
   SecretValue,
   ValetError,
 } from '@valet/core'
@@ -30,7 +31,10 @@ export class CredentialResolver {
   }
 
   /** Fetches one field of a granted secret. The caller disposes the value. */
-  async resolve(grant: Grant, field: SecretField): Promise<SecretValue> {
+  async resolve(
+    grant: Pick<Grant | CredentialGrant, 'provider' | 'itemRef'>,
+    field: ItemField,
+  ): Promise<SecretValue> {
     const provider = this.#providers.get(grant.provider)
     if (provider === undefined) throw new ValetError('credential', 'unavailable')
     let value: unknown

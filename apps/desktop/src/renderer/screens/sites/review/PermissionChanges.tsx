@@ -394,6 +394,33 @@ export function PermissionChanges({ review }: { readonly review: PendingReview }
         ) : null}
       </Section>
 
+      {isEmpty(diff.credentials) ? null : (
+        <Section title="Passwords, tokens and keys Valet uses for it">
+          {diff.credentials.unchanged.map((c) => (
+            <Unchanged key={c.name}>
+              <SecretBadge name={c.name} /> <Muted>{c.text}</Muted>
+            </Unchanged>
+          ))}
+          {diff.credentials.added.map((c) => (
+            <Added
+              key={c.name}
+              tone="secret"
+              tag={c.custody === 'entrusted' ? 'given to the adapter' : 'kept by Valet'}
+              why={`${c.text} The adapter describes it as “${capText(c.description)}”.`}
+            >
+              <SecretBadge name={c.name} /> <Code>{c.targets.join(', ')}</Code>
+            </Added>
+          ))}
+          {diff.credentials.removed
+            .filter((c) => !diff.credentials.added.some((a) => a.name === c.name))
+            .map((c) => (
+              <Removed key={c.name}>
+                <SecretBadge name={c.name} />
+              </Removed>
+            ))}
+        </Section>
+      )}
+
       <Section title="Tools">
         {diff.tools.unchanged.some((t) => t.internal !== true) ? (
           <Unchanged>

@@ -146,6 +146,8 @@ export function permissionChanges(
   )
   list('secret-origins', diff.secretFills, (f) => `${f.secret} ${f.field} into ${f.selector}`, 'high')
   list('messages-sender', diff.messagesSources, (m) => m.sender, 'high')
+  // Who holds a credential and where it may go: Valet's own sentence, never the author's words.
+  list('credential', diff.credentials, (c) => c.text, 'high')
   list('setting', diff.settings, (s) => s.name, 'medium')
   // Login steps: an added step at medium; a removed stop step (where the login hands over to the
   // person, fails, or checks it is signed in) means it now runs further on its own, so high.

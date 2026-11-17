@@ -2,6 +2,12 @@
 // what a person reviews and approves, and what the runtime enforces. See docs/security-model.md.
 
 import { z } from 'zod'
+import {
+  type CredentialDeclaration,
+  credentialDeclarationSchema,
+  credentialIssues,
+  type RuntimeKind,
+} from './credential'
 import { MESSAGES_SECRET } from './credentials'
 import { type ERROR_CLASSES, NEEDS_USER_REASONS, type NeedsUserReason } from './errors'
 import { hostAllowed, isBareOrigin, isHostname, isHostPattern } from './origins'
@@ -418,6 +424,15 @@ export const manifestSchema = z
      * sandbox ships (workstream I); until then the permission diff and approval card show it.
      */
     sandbox: sandboxDeclarationSchema.optional(),
+    /**
+     * Credentials Valet uses on the adapter's behalf outside a browser login (B's contract,
+     * docs/adapter-kinds.md#f2-secrets-version-2): kept by Valet, or entrusted to a `raw` adapter.
+     * Optional with no default, so manifests without it hash exactly as before.
+     */
+    credentials: z
+      .record(name, credentialDeclarationSchema)
+      .refine((credentials) => Object.keys(credentials).length <= 8, 'at most 8 credentials')
+      .optional(),
   })
   .strict()
   .superRefine((manifest, ctx) => {
@@ -521,6 +536,13 @@ export const manifestSchema = z
       } else if (!request.fields.includes(ref.field)) {
         ctx.addIssue({ code: 'custom', message: `secret ${ref.secret} does not request field ${ref.field}` })
       }
+    }
+    for (const message of credentialIssues(
+      manifest.credentials,
+      runtimeOf(manifest),
+      Object.keys(manifest.secrets),
+    )) {
+      ctx.addIssue({ code: 'custom', path: ['credentials'], message })
     }
     if (manifest.limits.cooldownSeconds > manifest.limits.maxCooldownSeconds) {
       ctx.addIssue({ code: 'custom', message: 'cooldownSeconds exceeds maxCooldownSeconds' })
@@ -628,6 +650,22 @@ export function messagesSourcesIn(
   }
   visit(steps)
   return sources
+}
+
+/**
+ * The adapter's kind. Workstream A owns the manifest's `runtime` field; until a manifest has one,
+ * it is a browser adapter.
+ */
+export function runtimeOf(manifest: object): RuntimeKind {
+  const runtime = (manifest as { readonly runtime?: unknown }).runtime
+  return runtime === 'http' || runtime === 'protocol' || runtime === 'raw' ? runtime : 'browser'
+}
+
+/** A manifest's credentials, or none. */
+export function credentialsOf(manifest: {
+  readonly credentials?: Readonly<Record<string, CredentialDeclaration>> | undefined
+}): Readonly<Record<string, CredentialDeclaration>> {
+  return manifest.credentials ?? {}
 }
 
 export function parseManifest(input: unknown): AdapterManifest {

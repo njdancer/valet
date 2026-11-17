@@ -33,6 +33,13 @@ export const PERMISSION_AREAS = [
   'auth-steps',
   /** The session probe that decides "signed in": a `widened` line naming the old and new probe. */
   'probe',
+  /**
+   * A credential Valet uses for the adapter outside a browser login (secrets v2): one line per
+   * credential, in describeCredentialUse's words, saying who holds it and where it may go. Always
+   * at least `high`, entrusted included, and never `critical`: a `raw` adapter is approved on the
+   * phone or the Mac like everything else (Nick, 2026-11-17).
+   */
+  'credential',
 ] as const
 
 /** Login steps whose removal is at least high risk: each one stops the flow for the person. */

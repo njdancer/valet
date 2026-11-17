@@ -10,6 +10,7 @@ import {
   isDisplayText,
   MESSAGES_SECRET,
   type ProviderKind,
+  ValetError,
 } from '@valet/core'
 
 /**
@@ -18,6 +19,8 @@ import {
  */
 export function subjectProvider(provider: ProviderKind): ApprovalSubject<'secret-grant'>['provider'] {
   if (provider === 'fake') return 'keychain-copy'
+  // A Valet-made SSH key is only ever a credential's, never a browser login's secret.
+  if (provider === 'valet-key') throw new ValetError('grant', 'invalid')
   // The 1Password CLI reads the person's vault through the 1Password app, as the desktop one does.
   if (provider === 'onepassword-cli') return 'onepassword-desktop'
   return provider

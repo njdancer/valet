@@ -261,6 +261,11 @@ export const PROVIDER_WORDING: Readonly<
     title: 'Messages',
     detail: 'Reads one-time codes that arrive by SMS from one sender you approve. Needs Full Disk Access.',
   },
+  'valet-key': {
+    title: 'SSH key made by Valet',
+    detail:
+      'Valet made this key on your Mac and keeps its private half in your Keychain. You add the public half to the server.',
+  },
   fake: {
     title: 'Test provider',
     detail: 'Fixed test values for development. Never used for a real site.',

@@ -62,11 +62,17 @@ export class SecretValue {
     return SecretValue.fromBuffer(Buffer.from(buffer))
   }
 
-  /** True when `text` contains this secret. For redaction; never throws once disposed. */
-  occursIn(text: string): boolean {
+  /**
+   * True when `text` contains this secret. With `ignoreCase`, both are lower-cased first (for forms
+   * such as hex, whose case carries nothing). For redaction; never throws once disposed.
+   */
+  occursIn(text: string, options: { readonly ignoreCase?: boolean } = {}): boolean {
     const buffer = bytes.get(this)
     if (buffer === undefined || buffer.length === 0) return false
-    return text.includes(buffer.toString('utf8'))
+    const needle = buffer.toString('utf8')
+    return options.ignoreCase === true
+      ? text.toLowerCase().includes(needle.toLowerCase())
+      : text.includes(needle)
   }
 
   dispose(): void {
