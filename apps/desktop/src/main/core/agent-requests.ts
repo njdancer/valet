@@ -6,7 +6,7 @@
 // Every line is built from the request's subject. Text an adapter or agent wrote (a setting's
 // label, the agent's note) is quoted or kept apart, never the headline's verb.
 
-import type { SerializedRequest } from '@valet/core'
+import { plainName, type SerializedRequest } from '@valet/core'
 import type { AgentRequestItem } from '../../shared/api'
 import { requestRef } from './approvals/prompts'
 
@@ -20,8 +20,14 @@ const CARD_KINDS: ReadonlySet<string> = new Set<CardKind>([
 ])
 
 /** The Needs you item for a waiting request, or null for one another item shows (or the person's own). */
-export function agentRequestItem(serialized: SerializedRequest): AgentRequestItem | null {
+export function agentRequestItem(
+  serialized: SerializedRequest,
+  /** The installed site's name for an adapter id ("Woolworths"), or null when none is installed. */
+  siteName: (adapterId: string) => string | null = () => null,
+): AgentRequestItem | null {
   const request = serialized.request
+  // The name the person approved the site under, not its id: "A Woolworths setting", not "woolworths".
+  const nameOf = (adapterId: string): string => plainName(siteName(adapterId) ?? adapterId)
   if (request.requester.kind !== 'agent' || !CARD_KINDS.has(request.kind)) return null
   const base = {
     kind: 'agent-request' as const,
@@ -42,7 +48,11 @@ export function agentRequestItem(serialized: SerializedRequest): AgentRequestIte
         adapterId: s.adapterId,
         title: `Change a setting: “${s.label}”`,
         details: [
-          s.scope === 'valet' ? 'A Valet setting.' : `A setting of the ${s.adapterId ?? 'site'} adapter.`,
+          s.scope === 'valet'
+            ? 'A Valet setting.'
+            : s.adapterId === undefined || s.adapterId === null
+              ? 'A setting of a site.'
+              : `A ${nameOf(s.adapterId)} setting.`,
           choices === null ? `From “${s.from}” to “${s.to}”.` : `Now “${s.from}”. You pick the new value.`,
         ],
         choices: choices === null ? null : choices.map((c) => ({ value: c.value, label: c.label })),
@@ -54,7 +64,7 @@ export function agentRequestItem(serialized: SerializedRequest): AgentRequestIte
         ...base,
         requestKind: 'authoring-session',
         adapterId: s.adapterId,
-        title: `Lend the agent your signed-in ${s.adapterId} session`,
+        title: `Lend the agent your signed-in ${nameOf(s.adapterId)} session`,
         details: [
           `For up to ${s.minutes} minutes, on ${s.origins.join(', ')}.`,
           `To build or repair draft ${s.draftId}. It drives Valet’s browser; it never sees your password or cookies.`,
@@ -99,7 +109,7 @@ export function agentRequestItem(serialized: SerializedRequest): AgentRequestIte
         ...base,
         requestKind: 'secret-grant',
         adapterId: s.adapterId,
-        title: `Let ${s.adapterId} use your login`,
+        title: `Let ${nameOf(s.adapterId)} use your login`,
         details: [
           `The 1Password item “${s.itemTitle}” (${s.fields.join(', ')}), typed only into ${s.origins.join(', ')}.`,
         ],

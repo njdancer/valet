@@ -2191,6 +2191,8 @@ describe('an adapter setting (D69)', () => {
       adapterId: 'shop',
     })
     if (item?.kind !== 'agent-request') throw new Error('no item')
+    // The site by the name the person knows it by, not its adapter id (persona QA).
+    expect(item.details[0]).toBe('A Shop setting.')
     expect(item.choices?.map((c) => c.value)).toContain('12')
     expect(item.ref).toMatch(/^[0-9A-F]{4}$/)
     expect(await s.api.attention.approveRequest(asked.requestId, '12')).toBe(true)

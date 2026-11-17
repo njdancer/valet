@@ -218,20 +218,40 @@ export function askedToRetry(run: {
   return run.outcome === 'failed' && run.errorClass != null && RETRY_CLASSES.has(run.errorClass)
 }
 
+/**
+ * A call the person's own stop refused before it started (stage config, as the tool result words
+ * it): Pause Valet, Lock down, or the site paused. Nothing failed, so it isn't "failed".
+ */
+export function stoppedBy(run: {
+  readonly outcome: RunOutcome | 'running'
+  readonly stage?: string | null
+  readonly errorClass?: string | null
+}): 'paused' | 'locked down' | 'site paused' | null {
+  if (run.outcome !== 'failed' || run.stage !== 'config') return null
+  if (run.errorClass === 'unavailable') return 'paused'
+  if (run.errorClass === 'locked-down') return 'locked down'
+  if (run.errorClass === 'site-paused') return 'site paused'
+  return null
+}
+
 /** A run's tone, with a retry answer in the neutral info tone rather than red. */
 export function runTone(run: {
   readonly outcome: RunOutcome | 'running'
+  readonly stage?: string | null
   readonly errorClass?: string | null
 }): (typeof OUTCOME_TONE)[RunOutcome] {
+  const stopped = stoppedBy(run)
+  if (stopped !== null) return stopped === 'locked down' ? 'bad' : 'warn'
   return askedToRetry(run) ? 'info' : OUTCOME_TONE[run.outcome]
 }
 
-/** A run's outcome in words, with a retry answer as "call again". */
+/** A run's outcome in words, with a retry answer as "call again", a refusal by a stop as that stop. */
 export function runWording(run: {
   readonly outcome: RunOutcome | 'running'
+  readonly stage?: string | null
   readonly errorClass?: string | null
 }): string {
-  return askedToRetry(run) ? 'call again' : OUTCOME_WORDING[run.outcome]
+  return stoppedBy(run) ?? (askedToRetry(run) ? 'call again' : OUTCOME_WORDING[run.outcome])
 }
 
 export const PROVIDER_WORDING: Readonly<

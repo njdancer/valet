@@ -1197,7 +1197,7 @@ export class AppService {
     return [
       ...removals,
       ...(this.approvalBroker?.list() ?? []).flatMap((r) => {
-        const item = agentRequestItem(r)
+        const item = agentRequestItem(r, (id) => this.adapter(id)?.definition.manifest.name ?? null)
         return item === null ? [] : [item]
       }),
     ]
