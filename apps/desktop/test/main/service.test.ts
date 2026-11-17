@@ -86,7 +86,13 @@ import { builtinAdapter } from '../../src/main/core/registry'
 import type { RemoteAccess } from '../../src/main/core/remote'
 import { AppService, fillSelector, type ServiceDeps } from '../../src/main/core/service'
 import { disabledUpdates, type UpdatesHooks, type UpdatesPort } from '../../src/main/core/updates'
-import type { AppEvent, ConfirmationItem, HashRoute, RepairItem } from '../../src/shared/api'
+import type {
+  AgentRequestItem,
+  AppEvent,
+  ConfirmationItem,
+  HashRoute,
+  RepairItem,
+} from '../../src/shared/api'
 import {
   FakeAuthPage,
   FakeDriver,
@@ -4151,6 +4157,123 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
         await s.api.approvals.approve('notes', v3)
         expect(await fetch('c3')).toMatchObject({ status: 'failed', errorClass: 'not-granted' })
         expect((await s.api.credentials.list()).some((g) => g.adapterHash === v3)).toBe(false)
+      } finally {
+        await api.close()
+      }
+    })
+
+    it('lets an agent ask for a credential, never name the item, and sees the person grant it', async () => {
+      const api = await startFakeApi()
+      try {
+        const { credentials } = tokenCredentials()
+        const s = await withPackages(
+          notesPackage('1.0.0', ['api.example.test']),
+          undefined,
+          'answers',
+          undefined,
+          undefined,
+          brokerFor(api),
+          credentials,
+        )
+        const admin = s.endpoint.admin as AdminReader
+        const viewer: ClientIdentity = {
+          origin: 'local',
+          clientId: (await s.api.clients.add('Claude Code')).id,
+        }
+        const other: ClientIdentity = {
+          origin: 'local',
+          clientId: (await s.api.clients.add('Claude Desktop')).id,
+        }
+        const ask = async (args: WriteArgs, who = viewer) =>
+          (
+            (
+              await runWriteTool(
+                WRITE_TOOLS.find(
+                  (t) => t.name === 'valet_request_credential',
+                ) as (typeof WRITE_TOOLS)[number],
+                admin,
+                args,
+                who,
+              )
+            ).content as { text: string }[]
+          )
+            .map((c) => c.text)
+            .join('\n')
+        const asks = async () =>
+          (await s.api.attention.list()).filter(
+            (i): i is AgentRequestItem => i.kind === 'agent-request' && i.requestKind === 'credential',
+          )
+
+        await s.api.adapters.installFromFolder()
+        const hash = (await s.api.approvals.pending()).find((r) => r.adapterId === 'notes')?.to.hash ?? ''
+        // Not approved yet: nothing to grant, and no ask is filed.
+        expect(await ask({ adapterId: 'notes', credential: 'api' })).not.toMatch(/^Asked/)
+        expect(await asks()).toEqual([])
+        await s.api.approvals.approve('notes', hash)
+
+        // A credential the site doesn't declare, a site that doesn't exist, a prototype name: not found.
+        for (const args of [
+          { adapterId: 'notes', credential: 'other' },
+          { adapterId: 'nope', credential: 'api' },
+          { adapterId: 'notes', credential: 'constructor' },
+        ])
+          expect(await ask(args)).not.toMatch(/Asked/)
+        expect(await asks()).toEqual([])
+
+        // valet_get_adapter lists it, not granted, in Valet's own words.
+        const before = (await admin.adapter('notes')).adapter?.credentials
+        expect(before).toEqual([
+          {
+            name: 'api',
+            kind: 'token',
+            custody: 'kept',
+            use: expect.stringContaining('api.example.test'),
+            targets: ['api.example.test'],
+            given: null,
+          },
+        ])
+
+        expect(await ask({ adapterId: 'notes', credential: 'api', note: 'To read your notes' })).toMatch(
+          /^Asked: the person will see “Grant api to Notes”/,
+        )
+        expect(await ask({ adapterId: 'notes', credential: 'api' })).toMatch(/^Already asked/)
+        expect(await ask({ adapterId: 'notes', credential: 'api' }, other)).toMatch(/^Asked/)
+        const filed = await asks()
+        expect(filed).toHaveLength(2)
+        expect(filed[0]).toMatchObject({
+          title: 'Grant api to Notes',
+          adapterId: 'notes',
+          agentName: 'Claude Code',
+          agentNote: 'To read your notes',
+          choices: null,
+        })
+        // Approve isn't how it's answered: the person picks the item on the site's card.
+        await expect(s.api.attention.approveRequest(filed[0]?.id ?? '', null)).rejects.toThrow()
+        expect(await s.api.credentials.list()).toEqual([])
+        // Declining one leaves the other agent's.
+        expect(await s.api.attention.declineRequest(filed[1]?.id ?? '')).toBe(true)
+        expect(await asks()).toHaveLength(1)
+
+        // The person grants it on the card: the ask is answered, and the agent sees it given.
+        await s.api.credentials.make({
+          adapterId: 'notes',
+          adapterHash: hash,
+          credential: 'api',
+          provider: 'onepassword-service-account',
+          itemId: 'notes-token',
+        })
+        expect(await asks()).toEqual([])
+        const after = (await admin.adapter('notes')).adapter?.credentials?.[0]
+        expect(after?.given).toMatchObject({ targets: ['api.example.test'], usable: true })
+        // Never the item: not its title, id or provider.
+        const shown = JSON.stringify(await admin.adapter('notes'))
+        expect(shown).not.toContain('Notes API token')
+        expect(shown).not.toContain('notes-token')
+        expect(shown).not.toContain('onepassword')
+        expect(await ask({ adapterId: 'notes', credential: 'api' })).toBe(
+          'Nothing to ask: api is already granted to Notes.',
+        )
+        expect(await asks()).toEqual([])
       } finally {
         await api.close()
       }

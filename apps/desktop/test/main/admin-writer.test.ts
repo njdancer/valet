@@ -156,6 +156,7 @@ function setup(overrides: Partial<WriterSource> = {}) {
     },
     broker: () => broker,
     requestRemoval: async () => 'not-found',
+    requestCredential: async () => 'not-found',
     wiredKinds: () => new Set<ApprovalKind>(['setting', 'tool-enable']),
     phonePaired: () => false,
     settings: () => values as unknown as AgentSettingValues,

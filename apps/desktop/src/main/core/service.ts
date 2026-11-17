@@ -20,6 +20,7 @@ import {
   bundleHash,
   CredentialError,
   DEFAULT_SANDBOX,
+  describeCredentialUse,
   describeDeclaration,
   type Grant,
   type GrantStore,
@@ -503,6 +504,15 @@ export class AppService {
   private feedbackDesk: FeedbackDeskImpl | null = null
   /** Agents' asks to remove a site, by id, until the person answers or Valet restarts. */
   private readonly removalAsks = new Map<string, AgentRequestItem & { readonly asker: string }>()
+  /**
+   * Agents' asks to grant a credential (valet_request_credential). The person answers on the site's
+   * Credentials card, where they pick the item; an ask ends when that credential is granted for the
+   * version it was asked for, the version changes, it is declined, or it expires.
+   */
+  private readonly credentialAsks = new Map<
+    string,
+    AgentRequestItem & { readonly asker: string; readonly credential: string; readonly adapterHash: string }
+  >()
   private readonly versions: VersionStore
   private readonly setup: SetupStore
   private updates: UpdatesPort | null = null
@@ -1282,13 +1292,39 @@ export class AppService {
       if (Date.parse(ask.expiresAt) <= now || this.adapter(ask.adapterId ?? '') === null)
         this.removalAsks.delete(id)
     const removals = [...this.removalAsks.values()].map(({ asker: _asker, ...item }) => item)
+    this.pruneCredentialAsks()
+    const credentials = [...this.credentialAsks.values()].map(
+      ({ asker: _asker, credential: _credential, adapterHash: _hash, ...item }) => item,
+    )
     return [
       ...removals,
+      ...credentials,
       ...(this.approvalBroker?.list() ?? []).flatMap((r) => {
         const item = agentRequestItem(r, (id) => this.adapter(id)?.definition.manifest.name ?? null)
         return item === null ? [] : [item]
       }),
     ]
+  }
+
+  /** Drops credential asks that ended: expired, or another version (or none) installed. */
+  private pruneCredentialAsks(): void {
+    const now = this.deps.now()
+    for (const [id, ask] of this.credentialAsks) {
+      const adapter = this.adapter(ask.adapterId ?? '')
+      if (Date.parse(ask.expiresAt) <= now || adapter === null || adapter.hash !== ask.adapterHash)
+        this.credentialAsks.delete(id)
+    }
+  }
+
+  /** Drops the asks a grant just answered: every agent's, for that credential and version. */
+  private answerCredentialAsks(adapterId: string, adapterHash: string, credential: string): boolean {
+    let dropped = false
+    for (const [id, ask] of this.credentialAsks)
+      if (ask.adapterId === adapterId && ask.adapterHash === adapterHash && ask.credential === credential) {
+        this.credentialAsks.delete(id)
+        dropped = true
+      }
+    return dropped
   }
 
   private consentItems(): RemoteConsentItem[] {
@@ -3972,6 +4008,49 @@ export class AppService {
         this.emit('attention-changed')
         return { kind: 'removal-asked', siteName }
       },
+      requestCredential: async (asker, clientName, adapterId, credential, note) => {
+        const adapter = this.adapter(adapterId)
+        if (adapter === null) return 'not-found'
+        const manifest = adapter.definition.manifest
+        const declaration = Object.hasOwn(manifest.credentials ?? {}, credential)
+          ? manifest.credentials?.[credential]
+          : undefined
+        if (declaration === undefined) return 'not-found'
+        // Granted only after the person approved this version, as on the card.
+        if (!(await this.installGate.isApproved(adapterId, adapter.hash).catch(() => false)))
+          return 'not-approved'
+        const siteName = manifest.name
+        if ((await this.credentialKeeper.sourceFor(adapterId, adapter.hash).findGrant(credential)) !== null)
+          return { kind: 'credential-granted', siteName }
+        this.pruneCredentialAsks()
+        for (const ask of this.credentialAsks.values())
+          if (ask.adapterId === adapterId && ask.credential === credential && ask.asker === asker)
+            return { kind: 'credential-already', siteName }
+        const id = `cr${randomBytes(15).toString('base64url')}`
+        const at = this.deps.now()
+        this.credentialAsks.set(id, {
+          kind: 'agent-request',
+          id,
+          requestKind: 'credential',
+          ref: id.slice(2, 6).toUpperCase(),
+          title: `Grant ${credential} to ${siteName}`,
+          details: [
+            describeCredentialUse(credential, declaration),
+            'You pick where it comes from on the site’s page, and approve with Touch ID. The agent never sees it.',
+          ],
+          adapterId,
+          agentName: clientName,
+          agentNote: note,
+          choices: null,
+          requestedAt: new Date(at).toISOString(),
+          expiresAt: new Date(at + 24 * 60 * 60_000).toISOString(),
+          asker,
+          credential,
+          adapterHash: adapter.hash,
+        })
+        this.emit('attention-changed')
+        return { kind: 'credential-asked', siteName }
+      },
       turnOffTool: async (clientId, qualified) => {
         const done = await this.clients.turnOffTool(clientId, qualified)
         if (done === 'done') {
@@ -4360,6 +4439,8 @@ export class AppService {
         make: async (request) => {
           const info = await this.oneAtATime(request.adapterId, () => this.credentialKeeper.make(request))
           this.emit('grants-changed')
+          if (this.answerCredentialAsks(info.adapterId, info.adapterHash, info.credential))
+            this.emit('attention-changed')
           return info
         },
         revoke: async (adapterId, credential) => {
@@ -4562,6 +4643,8 @@ export class AppService {
           if (!this.missed.dismiss(id)) throw new ValetError('config', 'not-found')
         },
         approveRequest: async (id, choice) => {
+          // A credential is granted on the site's Credentials card, where the person picks the item.
+          if (this.credentialAsks.has(id)) throw new ValetError('config', 'invalid')
           const removal = this.removalAsks.get(id)
           if (removal !== undefined) {
             this.removalAsks.delete(id)
@@ -4576,7 +4659,7 @@ export class AppService {
           return result.ok
         },
         declineRequest: async (id) => {
-          if (this.removalAsks.delete(id)) {
+          if (this.removalAsks.delete(id) || this.credentialAsks.delete(id)) {
             this.emit('attention-changed')
             return true
           }

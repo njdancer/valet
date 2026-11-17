@@ -37,6 +37,7 @@ import {
   type AgentRequestItem,
   type AttentionItem,
   type ChainStatus,
+  type CredentialGrantInfo,
   MISSED_KEEP_MS,
   type PreviewPart,
   type RunSummary,
@@ -50,7 +51,16 @@ import { attentionTitle } from './notifications'
 export interface AdminSource {
   readonly api: Pick<
     MainApi,
-    'adapters' | 'runs' | 'audit' | 'attention' | 'health' | 'updates' | 'app' | 'remote' | 'grants'
+    | 'adapters'
+    | 'runs'
+    | 'audit'
+    | 'attention'
+    | 'health'
+    | 'updates'
+    | 'app'
+    | 'remote'
+    | 'grants'
+    | 'credentials'
   >
   /** Every installed site in full, from one pass over the app's state. */
   readonly adapterDetails: () => Promise<readonly AdapterDetail[]>
@@ -160,7 +170,8 @@ export function adminReader(source: AdminSource): AdminReader {
     async adapter(adapterId): Promise<AdminAdapterDetail> {
       const detail = await api.adapters.get(adapterId)
       if (detail === null) return { adapter: null }
-      return { adapter: adapterDetail(detail, source.remoteTools()) }
+      const grants = detail.credentials.length === 0 ? [] : await api.credentials.list()
+      return { adapter: adapterDetail(detail, source.remoteTools(), grants) }
     },
 
     async health(): Promise<AdminHealth> {
@@ -524,6 +535,7 @@ function adapterEntry(
 function adapterDetail(
   detail: AdapterDetail,
   remote: ReadonlySet<string>,
+  grants: readonly CredentialGrantInfo[],
 ): NonNullable<AdminAdapterDetail['adapter']> {
   return {
     ...adapterEntry(detail, detail.tools, remote),
@@ -561,6 +573,23 @@ function adapterDetail(
             },
     })),
     oneTimeCodes: detail.messagesSources.map((source) => ({ sender: source.sender, given: source.granted })),
+    // As for logins, never the item: not its title, provider or a key's public half.
+    credentials: detail.credentials.map((request) => {
+      const grant = grants.find(
+        (g) => g.adapterId === detail.id && g.adapterHash === detail.hash && g.credential === request.name,
+      )
+      return {
+        name: request.name,
+        kind: request.kind,
+        custody: request.custody,
+        use: request.sentence,
+        targets: [...request.targets],
+        given:
+          grant === undefined
+            ? null
+            : { targets: [...grant.targets], givenAt: grant.grantedAt, usable: grant.signed },
+      }
+    }),
   }
 }
 

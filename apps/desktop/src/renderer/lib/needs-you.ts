@@ -226,7 +226,10 @@ export function needsYouView(
       return {
         ...base,
         title: item.title,
-        description: `${item.agentName} asks. Approve with Touch ID here, or on your iPhone.`,
+        description:
+          item.requestKind === 'credential'
+            ? `${item.agentName} asks. You choose where it comes from on this Mac.`
+            : `${item.agentName} asks. Approve with Touch ID here, or on your iPhone.`,
         adapterId: item.adapterId,
         adapterName: item.adapterId,
         callId: null,

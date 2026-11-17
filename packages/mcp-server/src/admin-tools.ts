@@ -194,6 +194,29 @@ export const adapterDetailSchema = z.object({
         }),
       ),
       oneTimeCodes: z.array(z.object({ sender: z.string(), given: z.boolean() })),
+      /**
+       * Credentials the site's code uses outside a browser login (secrets v2), and whether the
+       * person granted each for the installed version. Never the item or its value.
+       */
+      credentials: z.array(
+        z.object({
+          name: z.string(),
+          kind: z.enum(['password', 'token', 'ssh-key']),
+          /** kept: Valet uses it for the code; entrusted: handed to the code. */
+          custody: z.enum(['kept', 'entrusted']),
+          /** Valet's own sentence for where it goes. */
+          use: z.string(),
+          targets: z.array(z.string()),
+          given: z
+            .object({
+              targets: z.array(z.string()),
+              givenAt: iso,
+              /** False once the approval behind it no longer counts; calls are refused. */
+              usable: z.boolean(),
+            })
+            .nullable(),
+        }),
+      ),
     })
     .nullable(),
 })
