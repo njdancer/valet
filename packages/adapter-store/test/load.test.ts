@@ -2,7 +2,14 @@ import { tmpdir } from 'node:os'
 import { createAdapter as wikipedia } from '@valet/adapter-wikipedia'
 import { createAdapter as woolworths } from '@valet/adapter-woolworths'
 import { createAdapter as yahooFinance } from '@valet/adapter-yahoo-finance'
-import { type AdapterDefinition, bundleHash, canonicalJson, PackageError, packageOf } from '@valet/core'
+import {
+  type AdapterDefinition,
+  bundleHash,
+  canonicalJson,
+  PackageError,
+  packageOf,
+  strictInputJsonSchema,
+} from '@valet/core'
 import { inMemoryToolProcess } from '@valet/runtime/in-context'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
@@ -35,9 +42,9 @@ describe('loadPackage with the built-in adapters', () => {
       const real = own[name]
       if (real === undefined) throw new Error(name)
       expect(tool.input).toBeInstanceOf(z.ZodObject)
-      // `additionalProperties: {}` and no additionalProperties mean the same: anything goes.
+      // The derived input is the adapter's own made strict: no key it doesn't declare, at any depth.
       expect(open(z.toJSONSchema(tool.input, { io: 'input', target: 'draft-7' }))).toEqual(
-        open(z.toJSONSchema(real.input, { io: 'input', target: 'draft-7' })),
+        open(strictInputJsonSchema(z.toJSONSchema(real.input, { io: 'input', target: 'draft-7' }))),
       )
       expect(open(z.toJSONSchema(tool.output, { io: 'output', target: 'draft-7' }))).toEqual(
         open(z.toJSONSchema(real.output, { io: 'output', target: 'draft-7' })),
@@ -50,9 +57,30 @@ describe('loadPackage with the built-in adapters', () => {
     const search = loaded.definition.tools['search_products']
     expect(search?.input.safeParse({ query: 'milk' }).success).toBe(true)
     expect(search?.input.safeParse({ query: 'milk', pageSize: 10_000 }).success).toBe(false)
-    expect(search?.input.safeParse({ query: 'milk', extra: 1 }).success).toBe(
-      OWN['woolworths']?.().tools['search_products']?.input.safeParse({ query: 'milk', extra: 1 }).success,
+    // Where the adapter's own zod would drop an undeclared key without a word, the derived schema
+    // refuses it by name, nested objects too.
+    const extra = search?.input.safeParse({ query: 'milk', extra: 1 })
+    expect(extra?.success).toBe(false)
+    expect(extra?.error?.issues[0]).toMatchObject({ code: 'unrecognized_keys', keys: ['extra'] })
+    const update = loaded.definition.tools['update_cart']
+    expect(update?.input.safeParse({ items: [{ stockcode: 1, quantity: 1 }] }).success).toBe(true)
+    const nested = update?.input.safeParse({ items: [{ stockcode: 1, count: 0, mode: 'set' }] })
+    expect(nested?.error?.issues[0]).toMatchObject({
+      code: 'unrecognized_keys',
+      keys: ['count'],
+      path: ['items', 0],
+    })
+  })
+
+  it('lists integers with only the bounds the adapter gave them', async () => {
+    const loaded = await loadPackage(builtinPackage('woolworths'), await runtime())
+    const json = JSON.stringify(
+      z.toJSONSchema(loaded.definition.tools['get_cart']?.output ?? z.never(), { io: 'output' }),
     )
+    const input = z.toJSONSchema(loaded.definition.tools['update_cart']?.input ?? z.never(), { io: 'input' })
+    expect(JSON.stringify(input)).not.toContain(String(Number.MAX_SAFE_INTEGER))
+    // The output keeps zod's own form here; the MCP server lists it without them (tool-names.ts).
+    expect(json).toContain('integer')
   })
 
   it('never runs a package tool in this process', async () => {
@@ -123,6 +151,41 @@ describe('loadPackage refusals', () => {
     files['src/tools-real.ts'] = sources['src/tools.ts'] ?? ''
     const error = await loadPackage(files, await runtime()).catch((e) => e)
     expect(error).toMatchObject({ stage: 'schema' })
+  })
+
+  it('says a tool has no input or output schema, and how to give one', async () => {
+    const name = manifest.tools[0]?.name ?? ''
+    for (const [missing, words] of [
+      ['input', `${name} has no input schema: give tool({ input: z.object({...}) }) (z.object({}) for none)`],
+      ['output', `${name} has no output schema: give tool({ output: z.object({...}) })`],
+    ] as const) {
+      const files = packageOf(manifest, { ...sources })
+      files['src/tools.ts'] = [
+        "import { tools as real } from './tools-real'",
+        `const { ${missing}: _gone, ...rest } = real['${name}']`,
+        `export const tools = { ...real, ${name}: rest }`,
+      ].join('\n')
+      files['src/tools-real.ts'] = sources['src/tools.ts'] ?? ''
+      const error = await loadPackage(files, await runtime()).catch((e) => e)
+      expect(error).toBeInstanceOf(LoadError)
+      expect((error as LoadError).detail).toContain(words)
+      expect((error as LoadError).detail).not.toContain('not representable')
+    }
+  })
+
+  it('says which schema JSON Schema can’t express', async () => {
+    const name = manifest.tools[0]?.name ?? ''
+    const files = packageOf(manifest, { ...sources })
+    files['src/tools.ts'] = [
+      "import { z } from 'zod'",
+      "import { tools as real } from './tools-real'",
+      `export const tools = { ...real, ${name}: { ...real['${name}'], output: z.date() } }`,
+    ].join('\n')
+    files['src/tools-real.ts'] = sources['src/tools.ts'] ?? ''
+    const error = await loadPackage(files, await runtime()).catch((e) => e)
+    expect((error as LoadError).detail).toMatch(
+      new RegExp(`^${name}: its output schema can’t be written as JSON Schema`),
+    )
   })
 
   it('compiles the same files to the same script', async () => {

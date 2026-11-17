@@ -48,13 +48,22 @@ export async function getHeldJson<Schema extends z.ZodType>(
   return call(ctx, path, { method: 'GET' }, schema, true)
 }
 
+export interface PostOptions {
+  /**
+   * What to throw when the site answers 400, the site's "The request is invalid." Without it a 400
+   * is unavailable, like any other answer the adapter can't use.
+   */
+  readonly badRequest?: ValetError
+}
+
 export async function postJson<Schema extends z.ZodType>(
   ctx: ToolContext,
   path: string,
   json: unknown,
   schema: Schema,
+  options: PostOptions = {},
 ): Promise<z.infer<Schema>> {
-  return (await call(ctx, path, { method: 'POST', json }, schema)).data
+  return (await call(ctx, path, { method: 'POST', json }, schema, false, options.badRequest)).data
 }
 
 interface Answer<T> {
@@ -67,6 +76,8 @@ async function call<Schema extends z.ZodType>(
   path: string,
   init: FetchInit,
   schema: Schema,
+  unreadableCacheIsNull?: false,
+  badRequest?: ValetError,
 ): Promise<Answer<z.infer<Schema>>>
 async function call<Schema extends z.ZodType>(
   ctx: ToolContext,
@@ -81,6 +92,7 @@ async function call<Schema extends z.ZodType>(
   init: FetchInit,
   schema: Schema,
   unreadableCacheIsNull = false,
+  badRequest?: ValetError,
 ): Promise<Answer<z.infer<Schema>> | null> {
   // Checked before every call so that a cancelled add_to_cart never reaches its write.
   if (ctx.signal.aborted) throw new ValetError('tool-run', 'aborted')
@@ -92,6 +104,7 @@ async function call<Schema extends z.ZodType>(
     if (error instanceof ValetError) throw error
     throw new ValetError('tool-run', 'unavailable')
   }
+  if (response.status === 400 && badRequest !== undefined) throw badRequest
   throwForStatus(response.status)
   throwForContentType(response)
   const parsed = schema.safeParse(response.body)

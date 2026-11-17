@@ -50,6 +50,8 @@ public struct PersistedPhone: Codable, Equatable, Sendable {
   public var outbox: [Int: String]
   /// Open request texts, so cards survive a restart. Re-parsed on load.
   public var requests: [String]
+  /// The account the phone accepted at the hub, once it has (step 4c).
+  public var account: AccountPin? = nil
 
   public var paired: Bool { recordPayload != nil }
 }

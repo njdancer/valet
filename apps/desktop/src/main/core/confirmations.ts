@@ -6,8 +6,11 @@
 // - Approve is accepted only from the confirmation window opened for this very request, and all it
 //   does is raise the OS's Touch ID prompt; the approval counts once the Mac's approval key signed
 //   it, which needs the person's finger. A paired phone may approve it the same way.
-// - Decline is accepted from any app window, and needs nothing: it only tightens.
-// - Unanswered, it declines itself at expiry, and its request is withdrawn.
+// - Decline is accepted from any app window, and needs nothing: it only tightens. It is the
+//   person's decline of the signed request too, so it counts against the agent that made the call.
+// - Unanswered, it declines itself at expiry, and its request is withdrawn. A call that ends first
+//   (the agent cancelled, went away or was revoked; the app quit) withdraws it as cancelled, never
+//   as the person's decline.
 
 import { type AdapterManifest, unlockedBy } from '@valet/core'
 import type { ConfirmationAnswer, ConfirmationPrompt, ConfirmationRequest } from '@valet/runtime'
@@ -33,9 +36,20 @@ export interface ConfirmationSigning {
   open(item: ConfirmationItem): Promise<{ readonly requestId: string; readonly ref: string } | null>
   /** Shows the Touch ID prompt for it. 'approved' once the decision is signed and applied. */
   approve(requestId: string): Promise<'approved' | 'cancelled' | 'refused'>
-  /** Withdraws it: the confirmation was declined, timed out or cancelled. */
-  withdraw(requestId: string): void
+  /** The person declined it on the panel: a decline of the signed request, from this Mac. */
+  decline(requestId: string): void
+  /** Withdraws it: nobody answered in time, or the call ended first (`why` says which). */
+  withdraw(requestId: string, why: ConfirmationEnd): void
 }
+
+/** Why a confirmation ended without the person's answer. */
+export type ConfirmationEnd =
+  /** Its time ran out, or the app is quitting. */
+  | 'unanswered'
+  /** The call was cancelled: the agent cancelled it or went away. */
+  | 'call-cancelled'
+  /** The person revoked the agent that made the call. */
+  | 'client-revoked'
 
 export interface ConfirmationBrokerOptions {
   readonly signing: ConfirmationSigning
@@ -58,12 +72,14 @@ export interface ConfirmationBrokerOptions {
 
 interface Pending {
   item: ConfirmationItem
-  readonly resolve: (answer: ConfirmationAnswer) => void
+  readonly resolve: (answer: ConfirmationAnswer, why?: ConfirmationEnd | 'person') => void
   /** The broker's request, once made. Approve is refused until then. */
   requestId: string | null
   /** How it ended, once it did: what the panel is told after a Touch ID prompt. */
   answer: ConfirmationAnswer | null
   readonly timer: unknown
+  /** Ends it as cancelled, for the reason given: the call it belongs to is over. */
+  readonly cancel: (why: Exclude<ConfirmationEnd, 'unanswered'>) => void
 }
 
 /** How close to its expiry an abort counts as the request running out. */
@@ -120,13 +136,22 @@ export class ConfirmationBroker implements ConfirmationPrompt {
       ref: null,
     }
     return new Promise<ConfirmationAnswer>((resolve) => {
-      const settle = (answer: ConfirmationAnswer) => {
+      /** How the signed request is to be closed, once the confirmation is settled. */
+      let ended: { readonly answer: ConfirmationAnswer; readonly why: ConfirmationEnd | 'person' } | null =
+        null
+      const close = (requestId: string) => {
+        if (ended === null || ended.answer === 'approved') return
+        if (ended.why === 'person') this.options.signing.decline(requestId)
+        else this.options.signing.withdraw(requestId, ended.why)
+      }
+      const settle = (answer: ConfirmationAnswer, why: ConfirmationEnd | 'person' = 'unanswered') => {
         const entry = this.pending.get(id)
         if (entry === undefined) return
         this.pending.delete(id)
         entry.answer = answer
+        ended = { answer, why }
         this.options.timers.clearTimeout(entry.timer)
-        if (entry.requestId !== null && answer !== 'approved') this.options.signing.withdraw(entry.requestId)
+        if (entry.requestId !== null) close(entry.requestId)
         signal.removeEventListener('abort', onAbort)
         this.options.close(id)
         // The runtime's own deadline aborts the prompt at the same moment ours fires; a cancelled
@@ -141,9 +166,25 @@ export class ConfirmationBroker implements ConfirmationPrompt {
         this.options.onChange()
         resolve(answer)
       }
-      const onAbort = () => settle('timed-out')
+      // The runtime aborts the prompt at its own deadline, the same moment as ours, or earlier when
+      // the call ends (it records that as cancelled): the request is withdrawn as unanswered or as
+      // cancelled to match.
+      const onAbort = () =>
+        settle(
+          'timed-out',
+          this.options.now() >= Date.parse(item.expiresAt) - MISSED_SLACK_MS
+            ? 'unanswered'
+            : 'call-cancelled',
+        )
       const timer = this.options.timers.setTimeout(() => settle('timed-out'), this.options.timeoutMs)
-      this.pending.set(id, { item, resolve: settle, requestId: null, answer: null, timer })
+      this.pending.set(id, {
+        item,
+        resolve: settle,
+        requestId: null,
+        answer: null,
+        timer,
+        cancel: (why) => settle('cancelled', why),
+      })
       signal.addEventListener('abort', onAbort, { once: true })
       this.options.onChange()
       this.options.show(id)
@@ -151,7 +192,8 @@ export class ConfirmationBroker implements ConfirmationPrompt {
         (opened) => {
           const entry = this.pending.get(id)
           if (opened === null) return settle('declined')
-          if (entry === undefined) return this.options.signing.withdraw(opened.requestId)
+          // Settled while the request was being made: close it the same way.
+          if (entry === undefined) return close(opened.requestId)
           entry.requestId = opened.requestId
           entry.item = { ...entry.item, ref: opened.ref }
           this.options.onChange()
@@ -199,7 +241,7 @@ export class ConfirmationBroker implements ConfirmationPrompt {
       throw new ConfirmationRefused()
     }
     if (!approved) {
-      entry.resolve('declined')
+      entry.resolve('declined', 'person')
       return true
     }
     // With two pending, panel A must not approve B, which the person never saw.
@@ -213,8 +255,29 @@ export class ConfirmationBroker implements ConfirmationPrompt {
     return true
   }
 
-  /** Declines everything still waiting, e.g. on quit. */
+  /**
+   * Declines everything still waiting, e.g. on quit or lock down. Nobody answered them, so their
+   * requests are withdrawn rather than declined: no agent is counted as declined for it.
+   */
   declineAll(): void {
     for (const entry of [...this.pending.values()]) entry.resolve('declined')
+  }
+
+  /**
+   * Ends, as cancelled, every confirmation waiting for one of the calls `match` picks: the person
+   * revoked the agent that made them. Its request is withdrawn for that reason, the panel closes,
+   * and the call ends at once rather than when its session does. Returns how many there were.
+   */
+  cancelWhere(
+    match: (item: ConfirmationItem) => boolean,
+    why: Exclude<ConfirmationEnd, 'unanswered'>,
+  ): number {
+    let count = 0
+    for (const entry of [...this.pending.values()]) {
+      if (!match(entry.item)) continue
+      entry.cancel(why)
+      count++
+    }
+    return count
   }
 }

@@ -110,6 +110,8 @@ export interface DataPaths {
   readonly appState: string
   /** Needs you items nobody answered, kept 24 hours (attention.ts). */
   readonly missed: string
+  /** Which Mac id the approval-keys-changed notice was dismissed for (keys-changed.ts). */
+  readonly keysNotice: string
   /** The approval broker's anchored ledger: pending requests, evidence, devices (approvals/ledger.ts). */
   readonly trusted: string
   /** A dev build's software approval keys, when it signs without the Secure Enclave helper. */
@@ -149,6 +151,7 @@ export function dataPaths(dir: string): DataPaths {
     diagnosticsLog: join(dir, 'logs', 'valet.log'),
     appState: join(dir, 'app-state.json'),
     missed: join(dir, 'missed.json'),
+    keysNotice: join(dir, 'keys-notice.json'),
     trusted: join(dir, 'trusted.json'),
     devApprovalKeys: join(dir, 'dev-approval-keys.json'),
     devAnchor: join(dir, 'dev-anchor.json'),

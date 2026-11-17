@@ -49,6 +49,9 @@ import {
   defineAdapter,
   type EnsureResult,
   type ErrorClass,
+  type InputIssue,
+  inputIssue,
+  issueFromZod,
   type LocalAccess,
   manifestSchema,
   NeedsUserError,
@@ -82,7 +85,7 @@ import { type Clock, type Sleep, systemClock, systemSleep } from './clock'
 import { CredentialGate, type CredentialGateOptions } from './credential-gate'
 import { GuardedHttp, type HttpCredentials, type HttpEgress, NO_HTTP_ACCESS } from './guarded-http'
 import { GuardedToolPage } from './guarded-page'
-import { checkInputIsolated, runIsolated, type ToolProcessFactory } from './isolation/host'
+import { checkInputIsolated, type InputCheck, runIsolated, type ToolProcessFactory } from './isolation/host'
 import type { LoginMarkerStore } from './login-marker'
 import { KeyedMutex } from './mutex'
 import { probeDeclaration } from './probe'
@@ -138,6 +141,8 @@ export const DEFAULT_LOGIN_ANSWER_MS = 5_000
 export const DEFAULT_LOGIN_TIMEOUT_MS = 5 * 60_000
 /** When a caller answered early is told to call again. A guess: logins are paced, and vary. */
 export const LOGIN_RETRY_MS = 30_000
+/** The shortest "try again" a call that found a login holding the adapter is given. */
+export const MIN_LOGIN_BUSY_RETRY_MS = 10_000
 /** Distinct request-blocked events recorded per call. A page whose analytics are all blocked is chatty. */
 export const MAX_BLOCKED_EVENTS_PER_CALL = 50
 const MAX_CLIENT = 100
@@ -281,9 +286,12 @@ interface DueSetting {
   readonly implementation: ToolImplementation
 }
 
-/** A wait for the adapter's lock that ended without it. `ahead`: the calls still in front. */
+/**
+ * A wait for the adapter's lock that ended without it. `ahead`: the calls still in front. `login`:
+ * a login answered early started holding the lock while this waited.
+ */
 interface GaveUp {
-  readonly kind: 'timed-out' | 'aborted'
+  readonly kind: 'timed-out' | 'aborted' | 'login'
   readonly ahead: number
 }
 
@@ -300,6 +308,14 @@ export class ToolHost {
   private readonly queues = new Map<string, symbol[]>()
   /** Per adapter, the input checks running in tool processes now (MAX_INPUT_CHECKS). */
   private readonly checking = new Map<string, number>()
+  /**
+   * Per adapter, when a login whose call was answered early (D50) began holding the lock alone. A
+   * call that finds one is answered at once, busy with the login as the cause, rather than waiting
+   * out the queue behind it and being told the same thing then.
+   */
+  private readonly loginsHeld = new Map<string, number>()
+  /** Per adapter, calls waiting their turn, each woken when a login starts holding the lock alone. */
+  private readonly loginWatchers = new Map<string, Set<() => void>>()
   private readonly protection: SiteProtection
   private readonly clock: Clock
   private readonly sleep: Sleep
@@ -488,7 +504,9 @@ export class ToolHost {
     // A block persisted by an earlier run of the app must be in force before anything is sent.
     await this.protection.ready()
     const lock = await this.acquireLock(adapterId, waitMs, external)
-    if (typeof lock !== 'function') throw new ValetError('login', lock.kind)
+    // Not woken by a login (that is only asked for by calls), so a give-up is a time-out or an abort.
+    if (typeof lock !== 'function')
+      throw new ValetError('login', lock.kind === 'aborted' ? 'aborted' : 'timed-out')
     const release = lock
     const controller = new AbortController()
     const stop = (): void => controller.abort()
@@ -691,13 +709,13 @@ export class ToolHost {
       const checking = this.checking.get(manifest.id) ?? 0
       if (checking >= MAX_INPUT_CHECKS) return busy(entry.site, 0)
       this.checking.set(manifest.id, checking + 1)
-      let accepted: boolean
+      let checked: InputCheck
       try {
-        accepted = await checkInputIsolated(isolation.start, isolation.script, declaration.name, input.output)
+        checked = await checkInputIsolated(isolation.start, isolation.script, declaration.name, input.output)
       } finally {
         this.checking.set(manifest.id, (this.checking.get(manifest.id) ?? 1) - 1)
       }
-      if (!accepted) return failed('tool-input', 'invalid')
+      if (!checked.ok) return failed('tool-input', 'invalid', checked.issue)
     }
 
     // One lock per adapter, for reads and writes alike: the driver holds one run policy at a time,
@@ -705,12 +723,18 @@ export class ToolHost {
     // A call that can't get its turn in time is told so at once: with one of the site's gaps for
     // each call in front, the wait would run out first. Waiting it out anyway would only keep the
     // client for the whole wait before the same answer.
+    // A login an earlier call left running holds the lock for as long as the login takes, which
+    // the queue's estimate knows nothing of: say so at once.
+    const loginSince = this.loginsHeld.get(manifest.id)
+    if (loginSince !== undefined) return loginBusy(this.clock.now() - loginSince)
     const inFront = this.queues.get(manifest.id)?.length ?? 0
     if (inFront * entry.site.budget.gapMs >= this.queueWaitMs) return busy(entry.site, inFront)
     const queuedAt = this.clock.now()
-    const lock = await this.acquireLock(manifest.id, this.queueWaitMs, external)
+    const lock = await this.acquireLock(manifest.id, this.queueWaitMs, external, true)
     if (typeof lock !== 'function') {
-      return lock.kind === 'aborted' ? failed('tool-run', 'aborted') : busy(entry.site, lock.ahead)
+      if (lock.kind === 'aborted') return failed('tool-run', 'aborted')
+      if (lock.kind === 'login') return loginBusy(0)
+      return busy(entry.site, lock.ahead)
     }
     // D-pacing: a turn that took a while goes in the trace, so a slow call says why it was slow.
     const waitedMs = this.clock.now() - queuedAt
@@ -755,7 +779,7 @@ export class ToolHost {
           transport,
         )
         // Even a yes doesn't run a tool whose caller has gone.
-        if (external?.aborted) return failed('tool-run', 'aborted')
+        if (external?.aborted || answer === 'cancelled') return failed('tool-run', 'aborted')
         if (answer === 'timed-out') return { status: 'declined', timedOut: true }
         if (answer !== 'approved') return { status: 'declined' }
       }
@@ -858,6 +882,7 @@ export class ToolHost {
       // Capabilities die with the call, so promises tool code left running can't act afterwards.
       controller.abort()
       const finish = (): void => {
+        if (state.detached) this.loginsHeld.delete(entry.definition.manifest.id)
         if (running) {
           try {
             entry.driver.endRun()
@@ -1037,7 +1062,14 @@ export class ToolHost {
           controller.signal,
           transport,
         )
-        return (await state.track(asking)) === 'approved'
+        const answer = await state.track(asking)
+        // Cancelled while it waited (the agent that made the call was revoked): the run ends
+        // aborted, as if its caller had gone, rather than going on as if the person said no.
+        if (answer === 'cancelled') {
+          controller.abort()
+          throw new ValetError('tool-run', 'aborted')
+        }
+        return answer === 'approved'
       },
       signal: controller.signal,
       http: this.httpFor(entry, declaration, state),
@@ -1074,6 +1106,8 @@ export class ToolHost {
     if (outcome === 'logging-in') {
       // Before the abort, which would otherwise stop the login with the call.
       state.detached = true
+      // Unless it ended in the moments since: then only its settling holds the lock.
+      if (state.loggingIn) this.loginHolds(manifest.id)
       controller.abort()
       return { status: 'logging-in', retryAfterMs: LOGIN_RETRY_MS }
     }
@@ -1109,7 +1143,13 @@ export class ToolHost {
   ): Promise<{ readonly status: 'ok'; readonly output: unknown } | ToolCallResult> {
     const parsed = await this.race(() => schema.safeParseAsync(value), this.validationTimeoutMs)
     if (parsed.kind === 'timed-out') return failed(stage, 'timed-out')
-    if (parsed.kind !== 'returned' || !parsed.value.success) return failed(stage, 'invalid')
+    if (parsed.kind !== 'returned') return failed(stage, 'invalid')
+    if (!parsed.value.success) {
+      // Where and why, as codes: the first issue only, and never its message, which a schema's own
+      // refinement may have written.
+      if (stage !== 'tool-input') return failed(stage, 'invalid')
+      return failed(stage, 'invalid', issueFromZod(parsed.value.error.issues[0], value))
+    }
     return { status: 'ok', output: parsed.value.data }
   }
 
@@ -1136,6 +1176,8 @@ export class ToolHost {
           })
           .finally(() => {
             state.loggingIn = false
+            // The login is over: what holds the lock now is only its settling, which the queue waits out.
+            if (state.detached) this.loginsHeld.delete(entry.definition.manifest.id)
           }),
       )
       // A login, or anything but ok, is a different session from the one the cache was read in.
@@ -1255,8 +1297,11 @@ export class ToolHost {
     deadline.abort()
     let answer: ConfirmationAnswer =
       asked.kind === 'returned' ? asked.value : asked.kind === 'timed-out' ? 'timed-out' : 'declined'
-    // Anything but an explicit yes is a no.
-    if (answer !== 'approved' && answer !== 'timed-out') answer = 'declined'
+    // Anything but an explicit yes is a no. One the call's own end cut short is recorded as
+    // cancelled, so the log never says the person declined what nobody answered.
+    if (answer !== 'approved' && (asked.kind === 'aborted' || callSignal?.aborted === true))
+      answer = 'cancelled'
+    else if (answer !== 'approved' && answer !== 'timed-out' && answer !== 'cancelled') answer = 'declined'
     // An approval we can't record doesn't count: this throws, and the call fails.
     await this.options.audit.append({
       type: 'confirmation',
@@ -1316,6 +1361,7 @@ export class ToolHost {
     adapterId: string,
     waitMs: number,
     signal: AbortSignal | undefined,
+    wakeOnLogin = false,
   ): Promise<(() => void) | GaveUp> {
     const ticket = Symbol(adapterId)
     let queue = this.queues.get(adapterId)
@@ -1331,7 +1377,24 @@ export class ToolHost {
       if (tickets.length === 0 && this.queues.get(adapterId) === tickets) this.queues.delete(adapterId)
     }
     const pending = this.locks.acquire(adapterId)
-    const outcome = await this.race(() => pending, waitMs, signal)
+    // Woken, when asked, by a login starting to hold the lock alone (loginHolds).
+    const login = new AbortController()
+    const wake = (): void => login.abort()
+    let watchers: Set<() => void> | undefined
+    if (wakeOnLogin) {
+      watchers = this.loginWatchers.get(adapterId) ?? new Set()
+      this.loginWatchers.set(adapterId, watchers)
+      watchers.add(wake)
+    }
+    const waiting = signal === undefined ? login.signal : AbortSignal.any([signal, login.signal])
+    let outcome: Raced<() => void>
+    try {
+      outcome = await this.race(() => pending, waitMs, waiting)
+    } finally {
+      watchers?.delete(wake)
+      if (watchers?.size === 0 && this.loginWatchers.get(adapterId) === watchers)
+        this.loginWatchers.delete(adapterId)
+    }
     if (outcome.kind === 'returned') {
       const release = outcome.value
       return () => {
@@ -1343,7 +1406,15 @@ export class ToolHost {
     const ahead = tickets.indexOf(ticket)
     leave()
     void pending.then((release) => release())
+    if (outcome.kind === 'aborted' && login.signal.aborted && signal?.aborted !== true)
+      return { kind: 'login', ahead }
     return { kind: outcome.kind === 'aborted' ? 'aborted' : 'timed-out', ahead }
+  }
+
+  /** A login answered early now holds `adapterId`'s lock alone: calls waiting are told so at once. */
+  private loginHolds(adapterId: string): void {
+    this.loginsHeld.set(adapterId, this.clock.now())
+    for (const wake of [...(this.loginWatchers.get(adapterId) ?? [])]) wake()
   }
 
   /** Cookie values and handed-off storage values, old and new, so output can't carry them. */
@@ -1589,6 +1660,7 @@ export class ToolHost {
 /** How each refusal the driver reports is reported as an error, and in the audit log. */
 const BLOCKED_REASON = {
   'host-not-allowed': ['egress', 'host-not-allowed'],
+  'port-not-allowed': ['egress', 'host-not-allowed'],
   undeclared: ['request-surface', 'undeclared-request'],
   'denied-path': ['request-surface', 'denied-path'],
   'ambiguous-path': ['request-surface', 'ambiguous-path'],
@@ -1676,11 +1748,16 @@ function normaliseClient(client: unknown): string {
   return printable.length === 0 ? '(unknown)' : printable.slice(0, MAX_CLIENT)
 }
 
+/** `issue` is kept for stage tool-input only, and only once core has checked it again. */
 function failed(
   stage: Stage,
   errorClass: ErrorClass,
+  issue?: InputIssue,
 ): Extract<ToolCallResult, { readonly status: 'failed' }> {
-  return { status: 'failed', stage, errorClass }
+  const checked = stage === 'tool-input' ? inputIssue(issue) : undefined
+  return checked === undefined
+    ? { status: 'failed', stage, errorClass }
+    : { status: 'failed', stage, errorClass, issue: checked }
 }
 
 function blocked(site: SiteGuards): ToolCallResult {
@@ -1694,6 +1771,20 @@ export const MAX_INPUT_CHECKS = 4
  * A call that gave up waiting its turn. The time to try again is a guess, since nothing says how
  * long the calls in front will take: one of the site's gaps for each, within fixed bounds.
  */
+
+/**
+ * A call that found a login (D50) holding the lock, `heldForMs` after it began to. Logins are paced
+ * and vary, so the time to try again is a guess: what is left of LOGIN_RETRY_MS, within bounds.
+ */
+function loginBusy(heldForMs: number): ToolCallResult {
+  const left = LOGIN_RETRY_MS - Math.max(0, heldForMs)
+  return {
+    status: 'busy',
+    retryAfterMs: Math.min(LOGIN_RETRY_MS, Math.max(MIN_LOGIN_BUSY_RETRY_MS, left)),
+    ahead: 1,
+    waitingFor: 'login',
+  }
+}
 
 function busy(site: SiteGuards, ahead: number): ToolCallResult {
   const calls = Math.max(1, ahead)
@@ -1711,6 +1802,9 @@ function fromReportable(reportable: { stage: Stage; errorClass: ErrorClass }): T
 
 function fromError(error: unknown, site: SiteGuards): ToolCallResult {
   if (isSiteRefusal(error)) return blocked(site)
+  // Tool code that refused its input may say where and why, in the vocabulary only (core checks it).
+  if (error instanceof ValetError && error.issue !== undefined)
+    return failed(error.stage, error.errorClass, error.issue)
   return fromReportable(toReportable(error, 'tool-run'))
 }
 

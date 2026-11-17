@@ -162,7 +162,7 @@ test('grant login from the person’s 1Password item, approved in its prompt, wi
 test('connect Claude Code and Claude Desktop, each with its own config to copy', async () => {
   await expect(h1('Connect Claude')).toBeVisible()
   await control.getByRole('button', { name: 'Add Claude Code' }).click()
-  const codeSnippet = control.locator('pre', { hasText: 'claude mcp add valet' })
+  const codeSnippet = control.locator('pre', { hasText: 'claude mcp add --scope user valet' })
   await expect(codeSnippet).toBeVisible()
   await control.getByRole('button', { name: 'Copy' }).first().click()
   await expect.poll(clipboard).toBe(await codeSnippet.textContent())
@@ -204,6 +204,14 @@ test('Claude Code’s token lists the six namespaced tools with manifest-derived
     }),
   )
   const { tools } = await client.listTools()
+  // Connected as soon as it opened a session: setup's Connect step stops saying "Not connected yet"
+  // without the app having to call a site tool first.
+  await expect
+    .poll(
+      async () =>
+        (await control.evaluate(() => window.valet?.clients.list()))?.find((c) => c.id === code.id)?.lastSeen,
+    )
+    .not.toBeNull()
   const byName = Object.fromEntries(siteTools(tools).map((t) => [t.name, t.annotations]))
   expect(Object.keys(byName).sort()).toEqual([
     'woolworths_add_to_cart',

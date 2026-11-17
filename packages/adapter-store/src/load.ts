@@ -120,11 +120,25 @@ export async function loadPackage(input: PackageFiles, runtime: PackageRuntime):
       const { input: inputSchema, output } = toolSchemas(described[name])
       tools[name] = { input: inputSchema, output, run: outOfProcess }
     } catch (error) {
-      const problem = error instanceof SchemaError ? `${error.problem}: ${error.detail}` : 'invalid'
-      throw new LoadError('schema', `${name}: ${problem}`)
+      throw new LoadError('schema', schemaProblem(name, error))
     }
   }
   return { ...checked, script, definition: defineAdapter({ manifest: checked.manifest, tools }) }
+}
+
+/** What's wrong with one tool's schemas, in words an author can act on. */
+export function schemaProblem(name: string, error: unknown): string {
+  if (!(error instanceof SchemaError)) return `${name}: invalid`
+  if (error.problem === 'missing') {
+    return error.detail === 'input'
+      ? `${name} has no input schema: give tool({ input: z.object({...}) }) (z.object({}) for none)`
+      : `${name} has no output schema: give tool({ output: z.object({...}) }), bounding each string and array with .max()`
+  }
+  if (error.problem === 'convert' && / not representable$/.test(error.detail)) {
+    const which = error.detail.startsWith('output') ? 'output' : 'input'
+    return `${name}: its ${which} schema can’t be written as JSON Schema (z.date(), z.function(), a transform or a custom type can’t); use plain zod types such as z.object, z.string and z.number`
+  }
+  return `${name}: ${error.problem}: ${error.detail}`
 }
 
 /** A package's tools only ever run in the tool process; reaching this is a wiring bug. */

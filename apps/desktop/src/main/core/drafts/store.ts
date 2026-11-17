@@ -329,6 +329,10 @@ export class DraftStore {
   }
 }
 
+/** Where a package's files may go (core's package rules), for a refused path. */
+const PLACES =
+  'Only manifest.json and README.md (and, for a raw adapter, valet-lock.json) sit at the top; src/ holds .ts (the entry is src/tools.ts), test/ .ts and .json, and fixtures/ .json, .html and .txt.'
+
 function checkPath(path: string): void {
   try {
     checkPackagePath(path)
@@ -336,8 +340,10 @@ function checkPath(path: string): void {
     if (error instanceof PackageError)
       throw new DraftError(
         error.rule === 'placement'
-          ? `Not written: ${error.detail} isn’t a place a package may hold that file. src/ holds .ts, test/ .ts and .json, fixtures/ .json, .html and .txt; manifest.json, README.md and (for a raw adapter) valet-lock.json sit at the top.`
-          : `Not written: ${error.detail} isn’t a package path. Use lowercase letters, digits, dots, dashes and underscores, separated by /.`,
+          ? `Not written: ${error.detail} isn’t a place a package may hold that file. ${PLACES}`
+          : !path.includes('/') && path.length > 0
+            ? `Not written: ${error.detail} can’t sit at the top of the package. ${PLACES}`
+            : `Not written: ${error.detail} isn’t a package path. ${PLACES} Each part of a path is lowercase letters, digits, dots, dashes and underscores, starting with a letter or digit, separated by /.`,
       )
     throw error
   }

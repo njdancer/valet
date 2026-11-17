@@ -3,7 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js'
 import { ValetError } from '@valet/core'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import type { AdminReader } from '../src/admin-tools'
 import { type RunningHttpServer, startHttpServer } from '../src/http'
@@ -453,6 +453,32 @@ describe('a token per client', () => {
     expect((await rawPost(running.port, {})).status).toBe(401)
     expect((await rawPost(running.port, { 'mcp-session-id': code }, CALL)).status).toBe(401)
     expect(running.sessions().sessions.map((s) => s.identity.clientId)).toEqual(['desktop'])
+  })
+
+  it('answers a revoked client’s call in flight before its session closes, instead of leaving it waiting', async () => {
+    const caller = new FakeCaller([searchProducts])
+    // A call waiting on the person (a confirmation): it ends only when its signal does, a while later.
+    caller.answer = (call) =>
+      new Promise((resolve) =>
+        call.signal?.addEventListener('abort', () =>
+          setTimeout(() => resolve({ status: 'failed', stage: 'tool-run', errorClass: 'aborted' }), 30_000),
+        ),
+      )
+    const { tokens, running } = await twoClients(caller)
+    const client = await connectClient(running.url)
+    const pending = client.callTool({ name: 'woolworths_search_products', arguments: { query: 'milk' } })
+    await vi.waitFor(() => expect(caller.calls).toHaveLength(1))
+
+    const started = Date.now()
+    tokens.delete('code')
+    await running.endSessions((identity) => identity.clientId === 'code')
+    const result = await pending
+
+    expect(Date.now() - started).toBeLessThan(2_000)
+    expect(result.isError).toBe(true)
+    expect(JSON.stringify(result.content)).toContain('tool-run: aborted')
+    expect(caller.calls[0]?.signal?.aborted).toBe(true)
+    expect(running.sessions().total).toBe(0)
   })
 })
 

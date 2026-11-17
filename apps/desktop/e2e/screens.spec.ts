@@ -85,11 +85,11 @@ test('first run: the adapter waits for review', async () => {
   await expect(control.getByText(/Not approved yet/).first()).toBeVisible()
   await shot(control, 'adapters')
   await control.getByRole('link', { name: 'Review Woolworths' }).first().click()
-  await expect(control.getByRole('button', { name: 'Approve 0.4.0' })).toBeVisible()
+  await expect(control.getByRole('button', { name: 'Approve 0.5.0' })).toBeVisible()
   await shot(control, 'approve-adapter')
   const ack = control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' })
   if (await ack.isVisible()) await ack.check()
-  await control.getByRole('button', { name: 'Approve 0.4.0' }).click()
+  await control.getByRole('button', { name: 'Approve 0.5.0' }).click()
   await expect
     .poll(
       async () =>
@@ -157,7 +157,7 @@ test('a changed bundle under review, and its irreversible tool’s confirmation'
   await expect(control.getByText('This update asks for more')).toBeVisible()
   await shot(control, 'approve-update')
   await control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' }).check()
-  await control.getByRole('button', { name: 'Approve 0.4.0' }).click()
+  await control.getByRole('button', { name: 'Approve 0.5.0' }).click()
   const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
   const origins = detail?.secretRequests[0]?.origins ?? []
   await control.evaluate(

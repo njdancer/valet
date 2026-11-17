@@ -323,6 +323,23 @@ describe('the confirmation window', () => {
     expect(await screen.findByText(/of 2 waiting/)).toBeTruthy()
   })
 
+  it('counts only confirmations in its queue, not site reviews (persona QA)', async () => {
+    const fake = createFakeApi({ now: NOW })
+    const review = (id: string): AttentionItem => ({
+      kind: 'review',
+      id: `rv_${id}`,
+      adapterId: id,
+      adapterName: id,
+      version: '1.0.0',
+      addsPermissions: false,
+      firstInstall: true,
+    })
+    renderWindow('cf_checkout', withAttention(fake, [CHECKOUT, review('coles'), review('aldi')]))
+    expect((await screen.findAllByText(/Place order/)).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/of 3 waiting/)).toBeNull()
+    expect(screen.queryByText(/ of \d+ waiting/)).toBeNull()
+  })
+
   it('says so when the confirmation is gone', async () => {
     renderAt('#/confirm/cf_nope', createFakeApi({ now: NOW }))
     expect(await screen.findByText('This confirmation was answered or has timed out.')).toBeTruthy()

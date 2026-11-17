@@ -16,7 +16,16 @@ import {
   runTrace,
   statsToday,
 } from '../../src/main/core/audit-view'
-import { type AppRefusal, outcomeOf, PAUSED_REFUSAL, RuntimeToolCaller } from '../../src/main/core/caller'
+import {
+  type AppRefusal,
+  type DroppedRefusals,
+  outcomeOf,
+  PAUSED_REFUSAL,
+  REFUSAL_WINDOW_MS,
+  REFUSALS_PER_WINDOW,
+  RefusalBudget,
+  RuntimeToolCaller,
+} from '../../src/main/core/caller'
 import { INVOKE_METHODS, invokeChannel } from '../../src/main/core/channels'
 import { previewParts, RunMemory } from '../../src/main/core/run-memory'
 import { buildApi, eventFrom, type IpcLike } from '../../src/preload/api'
@@ -221,7 +230,71 @@ describe('RuntimeToolCaller', () => {
       errorClass: 'login-in-progress',
       retryAfterMs: 30_000,
     })
+    // A call that found such a login holding the site, answered at once.
+    expect(outcomeOf({ status: 'busy', retryAfterMs: 20_000, ahead: 1, waitingFor: 'login' })).toEqual({
+      status: 'blocked',
+      stage: 'tool-run',
+      errorClass: 'busy',
+      retryAfterMs: 20_000,
+      ahead: 1,
+      waitingFor: 'login',
+    })
+    // An input refusal keeps its where and why.
+    const issue = { path: ['items', 0, 'quantity'], reason: 'over-total', limit: 20 } as const
+    expect(outcomeOf({ status: 'failed', stage: 'tool-input', errorClass: 'invalid', issue })).toEqual({
+      status: 'failed',
+      stage: 'tool-input',
+      errorClass: 'invalid',
+      issue,
+    })
     expect(outcomeOf({ status: 'declined' })).toEqual({ status: 'declined' })
+  })
+})
+
+describe('RefusalBudget', () => {
+  it('lets each client’s refusals through one by one up to the limit, then counts the rest once', async () => {
+    let now = 0
+    const timers: Array<{ run: () => void; ms: number }> = []
+    const flushed: DroppedRefusals[] = []
+    const budget = new RefusalBudget(
+      { setTimeout: (run, ms) => timers.push({ run, ms }) },
+      async (dropped) => {
+        flushed.push(dropped)
+      },
+      () => now,
+    )
+    const taken = Array.from({ length: REFUSALS_PER_WINDOW + 5 }, () => budget.take('Agent', 'local:c_a'))
+    expect(taken.filter(Boolean)).toHaveLength(REFUSALS_PER_WINDOW)
+    // Another client, and one with no credential, have their own.
+    expect(budget.take('Agent', 'local:c_b')).toBe(true)
+    expect(budget.take('Agent', undefined)).toBe(true)
+    expect(timers).toHaveLength(1)
+    expect(timers[0]?.ms).toBe(REFUSAL_WINDOW_MS)
+    timers[0]?.run()
+    await Promise.resolve()
+    expect(flushed).toEqual([{ client: 'Agent', clientId: 'local:c_a', count: 5 }])
+    // A window later, it is recorded one by one again.
+    now += REFUSAL_WINDOW_MS
+    expect(budget.take('Agent', 'local:c_a')).toBe(true)
+  })
+
+  it('passes a refusal the endpoint reports on to the app', async () => {
+    const reported: unknown[] = []
+    const caller = new RuntimeToolCaller(
+      { listTools: async () => [], call: async () => ({ status: 'ok', output: {} }) },
+      {
+        paused: () => false,
+        started: () => {},
+        finished: () => {},
+        refused: async () => {},
+        protocolRefused: async (refusal) => {
+          reported.push(refusal)
+        },
+      },
+    )
+    const refusal = { reason: 'unknown-tool', name: 'x', client: 'c', callId: 'k' } as const
+    await caller.refusedByProtocol(refusal)
+    expect(reported).toEqual([refusal])
   })
 })
 

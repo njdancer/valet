@@ -44,6 +44,9 @@ function setup(
     opened: [] as string[],
     prompts: [] as string[],
     withdrawn: [] as string[],
+    /** Each withdrawal with its reason, `<requestId>:<why>`. */
+    reasons: [] as string[],
+    declined: [] as string[],
     prompt: options.prompt ?? 'approved',
   }
   // The approval broker's stand-in: a request per confirmation; an approved prompt applies it.
@@ -62,7 +65,11 @@ function setup(
         }
         return signing.prompt
       },
-      withdraw: (requestId) => void signing.withdrawn.push(requestId),
+      decline: (requestId) => void signing.declined.push(requestId),
+      withdraw: (requestId, why) => {
+        signing.withdrawn.push(requestId)
+        signing.reasons.push(`${requestId}:${why}`)
+      },
     },
     adapter: (id) =>
       id === 'shop' ? { manifest, hash: HASH, approvedAt: '2026-11-07T00:00:00.000Z' } : null,
@@ -232,14 +239,53 @@ describe('ConfirmationBroker', () => {
     await expect(b).resolves.toBe('approved')
   })
 
-  it('takes a decline of another confirmation from a panel, as from any window, and withdraws it', async () => {
+  it('takes a decline of another confirmation from a panel, as from any window, and declines its request', async () => {
     const { broker, signing } = setup(['cf_a', 'cf_b'])
     void broker.ask(toolRequest, new AbortController().signal)
     const b = broker.ask(toolRequest, new AbortController().signal)
     await settle()
     await broker.answer('cf_b', false, { role: 'confirmation', shows: 'cf_a' })
     await expect(b).resolves.toBe('declined')
-    expect(signing.withdrawn).toEqual(['rq_cf_b'])
+    // The person's decline of the signed request, never a withdrawal by the app.
+    expect(signing.declined).toEqual(['rq_cf_b'])
+    expect(signing.withdrawn).toEqual([])
+  })
+
+  it('declines the request made after the person already declined', async () => {
+    const { broker, signing } = setup()
+    const answer = broker.ask(toolRequest, new AbortController().signal)
+    await broker.answer('cf_1', false, { role: 'tray', shows: null })
+    await expect(answer).resolves.toBe('declined')
+    await settle()
+    expect(signing.declined).toEqual(['rq_cf_1'])
+    expect(signing.withdrawn).toEqual([])
+  })
+
+  it('withdraws, as cancelled, the request of a call that ended before anyone answered', async () => {
+    const { broker, signing, closed } = setup()
+    const controller = new AbortController()
+    const answer = broker.ask(toolRequest, controller.signal)
+    await settle()
+    controller.abort()
+    await expect(answer).resolves.toBe('timed-out')
+    expect(signing.reasons).toEqual(['rq_cf_1:call-cancelled'])
+    expect(signing.declined).toEqual([])
+    expect(closed).toEqual(['cf_1'])
+  })
+
+  it('cancels the confirmations of a revoked agent’s calls at once, and no others', async () => {
+    const { broker, signing, closed } = setup(['cf_a', 'cf_b'])
+    const a = broker.ask(toolRequest, new AbortController().signal)
+    const b = broker.ask({ ...toolRequest, callId: 'call2' }, new AbortController().signal)
+    await settle()
+    expect(broker.cancelWhere((item) => item.callId === 'call1', 'client-revoked')).toBe(1)
+    await expect(a).resolves.toBe('cancelled')
+    expect(signing.reasons).toEqual(['rq_cf_a:client-revoked'])
+    expect(signing.declined).toEqual([])
+    expect(closed).toEqual(['cf_a'])
+    expect(broker.has('cf_b')).toBe(true)
+    await broker.answer('cf_b', false, { role: 'tray', shows: null })
+    await expect(b).resolves.toBe('declined')
   })
 
   it('accepts a decline from any window, at once', async () => {
@@ -302,7 +348,7 @@ describe('ConfirmationBroker', () => {
       ConfirmationRefused,
     )
     await expect(answer).resolves.toBe('timed-out')
-    expect(signing.withdrawn).toEqual(['rq_cf_1'])
+    expect(signing.reasons).toEqual(['rq_cf_1:unanswered'])
     const second = broker.ask(toolRequest, new AbortController().signal)
     timers.fire()
     await expect(second).resolves.toBe('timed-out')
@@ -325,11 +371,14 @@ describe('ConfirmationBroker', () => {
     await expect(broker.ask(toolRequest, aborted.signal)).resolves.toBe('declined')
   })
 
-  it('declines everything on quit', async () => {
-    const { broker } = setup()
+  it('declines everything on quit, withdrawing the requests rather than declining them for the person', async () => {
+    const { broker, signing } = setup()
     const answer = broker.ask(toolRequest, new AbortController().signal)
+    await settle()
     broker.declineAll()
     await expect(answer).resolves.toBe('declined')
+    expect(signing.reasons).toEqual(['rq_cf_1:unanswered'])
+    expect(signing.declined).toEqual([])
   })
 })
 

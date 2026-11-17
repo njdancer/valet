@@ -58,6 +58,7 @@ import {
   type NeedsYouHint,
   normaliseCode,
   normaliseRemoteHost,
+  type ProtocolRefusal,
   type SessionReportingEndpoint,
   type ToolCall,
   type ToolCaller,
@@ -95,6 +96,7 @@ import type {
   DraftPage,
   EndpointStatus,
   HashRoute,
+  KeysChangedItem,
   PendingReview,
   RemoteConsentItem,
   RemoteConsentRequest,
@@ -110,7 +112,7 @@ import type {
 import { AdapterSettingsStore } from './adapter-settings'
 import { adminReader } from './admin'
 import { AdminWriterImpl, type AgentSettingValues, type WriterSource } from './admin-writer'
-import { agentRequestItem } from './agent-requests'
+import { agentRequestItem, draftReviewRequest } from './agent-requests'
 import { AppStateStore } from './app-state'
 import {
   AnchoredFile,
@@ -152,9 +154,9 @@ import {
   statsToday,
 } from './audit-view'
 import { BlockedAudit, LoginSecrets } from './blocked'
-import { type AppRefusal, RuntimeToolCaller } from './caller'
+import { type AppRefusal, RefusalBudget, RuntimeToolCaller } from './caller'
 import { addToDesktopConfig } from './claude-desktop'
-import { ClientRegistry, shownTransport } from './clients'
+import { ClientRegistry, capabilityNames, shownTransport } from './clients'
 import { ConfirmationBroker, type ConfirmationSigning, type Timers } from './confirmations'
 import {
   AUTH_FLOW_TIMEOUT_MS,
@@ -185,6 +187,13 @@ import { FeedbackDeskImpl } from './feedback'
 import { ensurePrivateDir, JsonDocument } from './files'
 import { carriesOver, checkGrantRequest, grantInfo } from './grants'
 import type { AppWindow, MainApi } from './ipc'
+import {
+  KEYS_CHANGED_ID,
+  KeysNotice,
+  keysChangedItem,
+  type OldKeysSigned,
+  signedByOldKeys,
+} from './keys-changed'
 import { createAuthRunner, Handoffs, isBlockedPage, SessionTracker } from './login'
 import { type AppNotification, attentionTitle, Notifier } from './notifications'
 import { type FolderInstall, InstallError, installReason, PackageManager, rollbackEligible } from './packages'
@@ -516,6 +525,8 @@ export class AppService {
   private readonly memory = new RunMemory()
   private readonly sessions: SessionTracker
   private readonly broker: ConfirmationBroker
+  /** How many of each client's protocol refusals are recorded one by one. */
+  private readonly refusalBudget: RefusalBudget
   /**
    * Signed approvals (docs/approval-broker.md), from start() on. Null before, or if the Mac's keys
    * couldn't be read: then nothing that needs an approval can be approved.
@@ -563,6 +574,14 @@ export class AppService {
   private readonly appState: AppStateStore
   /** Needs you items nobody answered in time, kept 24 hours. */
   private readonly missed: MissedItems
+  /** Whether the person dismissed the approval-keys-changed notice (keys-changed.ts). */
+  private readonly keysNotice: KeysNotice
+  /** signedByOldKeys's answer for the ledger's evidence as last read. */
+  private oldKeys: {
+    readonly evidence: unknown
+    readonly macId: string
+    readonly signed: OldKeysSigned | null
+  } | null = null
   private missedTimer: unknown = null
   private consentTimer: unknown = null
   /** Per adapter: its most recent call, when that failed in a way only an adapter update fixes. */
@@ -634,6 +653,7 @@ export class AppService {
         this.emit('attention-changed')
       },
     })
+    this.keysNotice = new KeysNotice(paths.keysNotice)
     this.audit = new ObservedAudit(new AuditLog(paths.audit, clock), (record) => this.observe(record))
     this.approvals = new ApprovalStore(paths.approvals, this.audit)
     this.grants = new FileGrantStore({ path: paths.grants })
@@ -678,6 +698,18 @@ export class AppService {
     this.sessions = new SessionTracker(date, () => this.emit('adapters-changed'))
     const newId = deps.newId ?? (() => randomBytes(12).toString('hex'))
     this.newId = newId
+    this.refusalBudget = new RefusalBudget(
+      deps.timers,
+      async ({ client, clientId, count }) => {
+        await this.audit.append({
+          type: 'refusals-dropped',
+          client,
+          ...(clientId === undefined ? {} : { clientId }),
+          count,
+        })
+      },
+      deps.now,
+    )
     this.broker = new ConfirmationBroker({
       adapter: (adapterId) => {
         const adapter = this.adapter(adapterId)
@@ -794,6 +826,7 @@ export class AppService {
     await this.appState.load()
     await this.openApprovals()
     await this.missed.load()
+    await this.keysNotice.load()
     this.scheduleMissedExpiry()
     await this.loadRepairs()
     // Before per-client tokens, every client shared one token in this file. Nothing reads it now,
@@ -883,6 +916,7 @@ export class AppService {
         this.memory.finished(call.callId, result.status === 'ok' ? result.output : undefined)
       },
       refused: (call, refusal) => this.auditRefusal(call, refusal),
+      protocolRefused: (refusal) => this.auditProtocolRefusal(refusal),
     })
     await this.caller.refresh()
     await this.reapplyInstalls()
@@ -1157,7 +1191,8 @@ export class AppService {
    * config) say nothing about the site. True when the items changed.
    */
   private noteFinished(event: Extract<AuditEvent, { type: 'tool-finished' }>, at: string): boolean {
-    if (event.outcome === 'failed' && event.stage === 'config') return false
+    // A refusal before the site was reached (bad input, setup) says nothing about the adapter's health.
+    if (event.outcome === 'failed' && (event.stage === 'config' || event.stage === 'tool-input')) return false
     const before = this.repairs.get(event.adapterId)
     if (event.outcome === 'failed' && event.errorClass !== undefined && NEEDS_REPAIR.has(event.errorClass)) {
       this.repairs.set(event.adapterId, { callId: event.callId, errorClass: event.errorClass, at })
@@ -1214,7 +1249,7 @@ export class AppService {
     return [
       ...removals,
       ...(this.approvalBroker?.list() ?? []).flatMap((r) => {
-        const item = agentRequestItem(r)
+        const item = agentRequestItem(r, (id) => this.adapter(id)?.definition.manifest.name ?? null)
         return item === null ? [] : [item]
       }),
     ]
@@ -1472,6 +1507,10 @@ export class AppService {
           this.tidyDraftsSoon()
         },
       })
+      // New keys (lost, or made again) void what the old ones signed. Nothing of it counts; the
+      // diagnostics log and Needs you (keysChangedItems) say why.
+      if (signedByOldKeys(ledger.data.evidence, devices.macId) !== null)
+        this.deps.diagnostics?.({ type: 'approval-keys-changed' })
       await this.openPhones(this.approvalBroker, devices, ledger)
     } catch {
       this.approvalBroker = null
@@ -1872,10 +1911,25 @@ export class AppService {
         if (answered.ok) return 'approved'
         return answered.reason === 'cancelled' ? 'cancelled' : 'refused'
       },
-      withdraw: (requestId) => {
-        void this.approvalBroker?.withdraw(requestId, app).catch(() => false)
+      // The person's Decline on the panel is their decline of the signed request: audited as
+      // declined from this Mac, and counted against the agent the call was for.
+      decline: (requestId) => {
+        void this.approvalBroker?.decline(requestId, { via: 'mac' }).catch(() => false)
+      },
+      withdraw: (requestId, why) => {
+        void this.approvalBroker
+          ?.withdraw(requestId, app, why === 'unanswered' ? 'asker' : why)
+          .catch(() => false)
       },
     }
+  }
+
+  /**
+   * Ends, as revoked, the confirmations waiting for one agent's calls (`local:<id>` or
+   * `remote:<id>`): their requests are withdrawn as client-revoked, and each call ends at once.
+   */
+  private cancelConfirmationsOf(label: string): void {
+    this.broker.cancelWhere((item) => this.callers.get(item.callId) === label, 'client-revoked')
   }
 
   private async setSitePaused(adapterId: string, paused: boolean): Promise<void> {
@@ -3226,6 +3280,39 @@ export class AppService {
     return this.draftRequests(adapterId).find((r) => r.subject.adapterHash === hash) ?? null
   }
 
+  /** The draft's request as the review shows it, or null when no agent's request names this hash. */
+  private draftReviewInfo(adapterId: string, hash: string) {
+    const request = this.draftRequestFor(adapterId, hash)
+    const serialized = request === null ? undefined : this.approvalBroker?.get(request.id)
+    const info = serialized === null || serialized === undefined ? null : draftReviewRequest(serialized)
+    return info === null || request === null ? null : { request: info, requestedAt: request.createdAt }
+  }
+
+  /** Every review waiting: each installed bundle not yet decided, then each agent's staged update. */
+  private async pendingReviews(states: readonly AdapterState[]): Promise<PendingReview[]> {
+    return [
+      ...states.flatMap((s) => {
+        const id = s.adapter.definition.manifest.id
+        const review = pendingReview(s, this.startedAt, this.draftReviewInfo(id, s.adapter.hash) ?? {})
+        return review === null ? [] : [review]
+      }),
+      ...(await this.stagedReviews(states)),
+    ]
+  }
+
+  /**
+   * The versions the person turned down that came with Valet or from a folder, for them to
+   * reconsider: approving one later is still their decision, signed like any approval. An agent's
+   * declined draft isn't here: its request is over, and the agent submits it again.
+   */
+  private turnedDownReviews(states: readonly AdapterState[]): PendingReview[] {
+    return states.flatMap((s) => {
+      if (!s.rejected || s.adapter.source === 'draft') return []
+      const review = pendingReview(s, this.startedAt, { turnedDown: true })
+      return review === null ? [] : [review]
+    })
+  }
+
   private async isStored(adapterId: string, hash: string): Promise<boolean> {
     const state = await this.packages?.versions(adapterId)
     return state?.versions.some((v) => v.hash === hash) ?? false
@@ -3332,6 +3419,7 @@ export class AppService {
       const review = pendingReview(
         { ...state, adapter: staged, approved: false, rejected: false, previous: snapshot },
         request.createdAt,
+        { ...(this.draftReviewInfo(adapterId, adapterHash) ?? {}), staged: true },
       )
       if (review !== null) out.push(review)
     }
@@ -3417,8 +3505,59 @@ export class AppService {
 
   private async states(): Promise<AdapterState[]> {
     const records = await this.reader.records()
-    const grants = await this.signedGrants.list().catch(() => [] as readonly Grant[])
-    return Promise.all(this.installed.map((a) => this.state(a, records, grants)))
+    const stored = await this.grants.list().catch(() => [] as readonly Grant[])
+    const grants = stored.filter((g) => this.grantSigned(g))
+    // Given before and not signed now (the Mac's keys changed, or the file was edited): never
+    // handed out, and shown as to give again rather than as ready.
+    const lapsed = stored.filter((g) => !grants.includes(g))
+    const old = this.oldKeysSigned()
+    const all = await Promise.all(this.installed.map((a) => this.state(a, records, grants)))
+    return all.map((state) => {
+      const id = state.adapter.definition.manifest.id
+      return {
+        ...state,
+        lapsed: lapsed.filter((g) => g.adapterId === id && g.adapterHash === state.adapter.hash),
+        approvedBefore: !state.approved && (old?.installs.has(id) ?? false),
+      }
+    })
+  }
+
+  /** What this Mac's earlier approval keys signed and no longer counts, or null (keys-changed.ts). */
+  private oldKeysSigned(): OldKeysSigned | null {
+    const ledger = this.ledger
+    const macId = this.deviceStore?.macId
+    if (ledger === null || macId === undefined) return null
+    const evidence = ledger.data.evidence
+    if (this.oldKeys?.evidence !== evidence || this.oldKeys.macId !== macId)
+      this.oldKeys = { evidence, macId, signed: signedByOldKeys(evidence, macId) }
+    return this.oldKeys.signed
+  }
+
+  /** The approval-keys-changed notice, while a site still has something to do again and it isn't dismissed. */
+  private keysChangedItems(states: readonly AdapterState[]): KeysChangedItem[] {
+    const old = this.oldKeysSigned()
+    const macId = this.deviceStore?.macId
+    if (old === null || macId === undefined || this.keysNotice.dismissed(macId)) return []
+    const item = keysChangedItem(
+      old,
+      states.map((state) => {
+        const manifest = state.adapter.definition.manifest
+        const declared = new Set(Object.keys(manifest.secrets))
+        if (messagesSourcesIn(manifest.auth.steps).length > 0) declared.add(MESSAGES_SECRET)
+        return {
+          adapterId: manifest.id,
+          adapterName: manifest.name,
+          approved: state.approved,
+          declared,
+          granted: new Set(
+            state.grants
+              .filter((g) => g.adapterId === manifest.id && g.adapterHash === state.adapter.hash)
+              .map((g) => g.secret),
+          ),
+        }
+      }),
+    )
+    return item === null ? [] : [item]
   }
 
   /**
@@ -3447,6 +3586,39 @@ export class AppService {
       stage: refusal.stage,
       errorClass: refusal.errorClass,
       durationMs: 0,
+    })
+  }
+
+  /**
+   * A call the MCP SDK refused before the app saw it (server.ts): a site tool's arguments that its
+   * schema refused are recorded as a refused call of that tool (so it shows among the calls), and a
+   * name the session doesn't offer as call-refused, with the name only if it is a well-formed tool
+   * name. Never the arguments. Past each client's budget, only counted (refusals-dropped).
+   */
+  private async auditProtocolRefusal(refusal: ProtocolRefusal): Promise<void> {
+    const client = printableClient(refusal.client)
+    const clientId = refusal.identity === undefined ? undefined : identityLabel(refusal.identity)
+    if (!this.refusalBudget.take(client, clientId)) return
+    if (refusal.tool !== undefined && this.adapter(refusal.tool.adapterId) !== null) {
+      await this.auditRefusal(
+        {
+          adapterId: refusal.tool.adapterId,
+          tool: refusal.tool.tool,
+          input: undefined,
+          client: refusal.client,
+          callId: refusal.callId,
+          ...(refusal.identity === undefined ? {} : { identity: refusal.identity }),
+        },
+        { status: 'failed', stage: 'tool-input', errorClass: 'invalid' },
+      )
+      return
+    }
+    await this.audit.append({
+      type: 'call-refused',
+      client,
+      ...(clientId === undefined ? {} : { clientId }),
+      tool: refusal.name,
+      reason: refusal.reason,
     })
   }
 
@@ -3575,7 +3747,20 @@ export class AppService {
     this.endpoint = await this.deps.startEndpoint(
       this.caller,
       this.clients.active(),
-      () => this.emit('endpoint-changed'),
+      (sessions) => {
+        // A client that opened a session has connected, whether or not it has called a site tool
+        // yet: setup's "Connect" step and the Connections page wait on lastSeen.
+        let seen = false
+        for (const session of sessions.sessions) {
+          if (session.identity.origin !== 'local') continue
+          const existing = this.clients.get(session.identity.clientId)
+          const name = session.client === 'unknown' ? (existing?.reportedName ?? 'unknown') : session.client
+          if (this.clients.seen(session.identity.clientId, name, shownTransport(session.transport)))
+            seen = true
+        }
+        if (seen) this.emit('clients-changed')
+        this.emit('endpoint-changed')
+      },
       this.adminReader(),
       this.authoring,
     )
@@ -3805,6 +3990,7 @@ export class AppService {
         const clientId = viewer.clientId
         if (!this.clients.isActive(clientId)) return false
         await this.clients.revoke(clientId)
+        this.cancelConfirmationsOf(`local:${clientId}`)
         await this.approvalBroker?.withdrawClient(`local:${clientId}`).catch(() => 0)
         await rm(this.clients.configPath(clientId), { force: true }).catch(() => undefined)
         // The token is refused from the next request on; the session itself ends just after, so
@@ -4020,16 +4206,8 @@ export class AppService {
         endSession: async (draftId) => this.endAuthoringSession(draftId),
       },
       approvals: {
-        pending: async () => {
-          const states = await this.states()
-          return [
-            ...states.flatMap((s) => {
-              const review = pendingReview(s, this.startedAt)
-              return review === null ? [] : [review]
-            }),
-            ...(await this.stagedReviews(states)),
-          ]
-        },
+        pending: async () => this.pendingReviews(await this.states()),
+        turnedDown: async () => this.turnedDownReviews(await this.states()),
         approve: async (adapterId, hash) => {
           const adapter = this.requireAdapter(adapterId)
           // An agent's draft: the person approves the agent's own request, so the agent learns
@@ -4054,11 +4232,16 @@ export class AppService {
               : 'local-folder'
           await this.signInstall(adapter, source)
         },
-        reject: async (adapterId, hash) => {
+        reject: async (adapterId, hash, note) => {
           const adapter = this.requireAdapter(adapterId)
-          // An agent's draft is declined, so the agent hears it; a staged one never ran.
+          // An agent's draft is declined, so the agent hears it, with the person's note if they gave
+          // one; a staged one never ran.
           const draft = this.draftRequestFor(adapterId, hash)
-          if (draft !== null) await this.approvalBroker?.decline(draft.id, { via: 'mac' }).catch(() => false)
+          const said = note?.trim() ?? ''
+          if (draft !== null)
+            await this.approvalBroker
+              ?.decline(draft.id, { via: 'mac' }, said === '' ? {} : { note: said })
+              .catch(() => false)
           if (draft !== null && adapter.hash !== hash) return
           if (adapter.hash !== hash) throw new ValetError('manifest', 'invalid')
           // Only tightens: the evidence goes first, so a failed store write still leaves it off.
@@ -4090,7 +4273,16 @@ export class AppService {
             ).length,
           }))
         },
-        vaultItems: (provider) => deps.credentials.vaultItems(provider),
+        vaultItems: async (provider) => {
+          try {
+            return { status: 'ok', items: await deps.credentials.vaultItems(provider) }
+          } catch (error) {
+            // Only the kind of failure crosses to the window, and the account name the person typed.
+            const account = (await this.settings.get()).onePasswordAccount
+            const declined = error instanceof CredentialError && error.failure === 'locked'
+            return { status: declined ? 'declined' : 'unavailable', account }
+          }
+        },
         make: async (request) => {
           const adapter = this.requireAdapter(request.adapterId)
           const checked = await checkGrantRequest(request, {
@@ -4185,8 +4377,11 @@ export class AppService {
         status: async (): Promise<EndpointStatus> => ({
           listening: this.endpoint !== null,
           url: this.endpoint?.url ?? null,
-          // Sessions open now, bridged or HTTP, as the endpoint counts them.
-          connectedClients: this.endpoint?.sessions().total ?? 0,
+          // Apps with a session open now, bridged or HTTP: one app reconnecting, or leaving a
+          // session behind when it went away without ending it, is still one app.
+          connectedClients: new Set(
+            (this.endpoint?.sessions().sessions ?? []).map((session) => identityLabel(session.identity)),
+          ).size,
         }),
         setListening: async (listening) => {
           if (listening) {
@@ -4209,6 +4404,11 @@ export class AppService {
           const client = await this.clients.add(name)
           // A stopped endpoint issues the client its token when it next starts.
           await this.endpoint?.addClient({ id: client.id, configPath: this.clients.configPath(client.id) })
+          // The client exists either way: a log that can't be written (its own Needs you item says
+          // so) doesn't make adding it look failed.
+          await this.audit
+            .append({ type: 'client-added', clientId: `local:${client.id}` })
+            .catch(() => undefined)
           this.emit('clients-changed')
           return (await this.clientInfos()).find((c) => c.id === client.id) as ClientInfo
         },
@@ -4222,15 +4422,30 @@ export class AppService {
             await rm(this.clients.configPath(clientId), { force: true })
           }
           await this.clients.reset(clientId)
+          await this.audit
+            .append({ type: 'client-reset', clientId: `local:${clientId}` })
+            .catch(() => undefined)
           this.emit('clients-changed')
           this.emit('endpoint-changed')
         },
         revoke: async (clientId) => {
           if (!this.clients.isActive(clientId)) throw new ValetError('config', 'not-found')
+          const label = `local:${clientId}`
           // The registry first: if the app quits part-way, the next start issues it no token.
           await this.clients.revoke(clientId)
-          await this.endpoint?.removeClient(clientId)
-          await rm(this.clients.configPath(clientId), { force: true })
+          // Its token is refused from here on. A call of its waiting on a confirmation ends now, as
+          // cancelled by the revoke (not as the person's decline), and its answer still reaches it
+          // before its sessions close; so do its other calls (removeClient). All of it happens before
+          // the audit record, so a log that can't be written never leaves a revoked app working.
+          this.endpoint?.refuseClient(clientId)
+          this.cancelConfirmationsOf(label)
+          await this.approvalBroker?.withdrawClient(label).catch(() => 0)
+          try {
+            await this.endpoint?.removeClient(clientId)
+            await rm(this.clients.configPath(clientId), { force: true })
+          } finally {
+            await this.audit.append({ type: 'client-revoked', clientId: label }).catch(() => undefined)
+          }
           this.emit('clients-changed')
           this.emit('endpoint-changed')
         },
@@ -4254,14 +4469,42 @@ export class AppService {
           return { ...capabilities, toolsOff: [...this.clients.toolsOff(clientId)].sort() }
         },
         setAccess: async (clientId, patch) => {
-          if (!(await this.clients.setCapabilities(clientId, patch)))
+          const before = this.clients.capabilities(clientId)
+          if (before === null || !(await this.clients.setCapabilities(clientId, patch)))
             throw new ValetError('config', 'not-found')
+          const after = this.clients.capabilities(clientId) ?? before
+          // Turning Ask for changes on widens what the app may do: every change is recorded, and
+          // one that can't be recorded is undone before the app could use it.
+          if (capabilityNames(before).join() !== capabilityNames(after).join()) {
+            try {
+              await this.audit.append({
+                type: 'client-access-changed',
+                clientId: `local:${clientId}`,
+                before: capabilityNames(before),
+                after: capabilityNames(after),
+              })
+            } catch (error) {
+              await this.clients.setCapabilities(clientId, before)
+              throw error
+            }
+          }
           this.refreshEndpoint()
           this.emit('clients-changed')
         },
         turnToolOn: async (clientId, qualified) => {
           if (!(await this.clients.turnOnTool(clientId, qualified)))
             throw new ValetError('config', 'not-found')
+          // Recorded before the app can use it; undone if it can't be.
+          try {
+            await this.audit.append({
+              type: 'client-tool-on',
+              clientId: `local:${clientId}`,
+              tool: qualified,
+            })
+          } catch (error) {
+            await this.clients.turnOffTool(clientId, qualified)
+            throw error
+          }
           this.refreshEndpoint()
           this.emit('clients-changed')
         },
@@ -4269,13 +4512,7 @@ export class AppService {
       attention: {
         list: async (): Promise<AttentionItem[]> => {
           const states = await this.states()
-          const reviews = [
-            ...states.flatMap((s) => {
-              const review = pendingReview(s, this.startedAt)
-              return review === null ? [] : [review]
-            }),
-            ...(await this.stagedReviews(states)),
-          ].map(reviewItem)
+          const reviews = (await this.pendingReviews(states)).map(reviewItem)
           return sortAttention([
             ...this.handoffs.list(),
             ...this.broker.list(),
@@ -4285,9 +4522,16 @@ export class AppService {
             ...states.flatMap(missingItems),
             ...this.repairItems(),
             ...this.missed.list(),
+            ...this.keysChangedItems(states),
           ])
         },
         dismiss: async (id) => {
+          const macId = this.deviceStore?.macId
+          if (id === KEYS_CHANGED_ID && macId !== undefined && this.oldKeysSigned() !== null) {
+            await this.keysNotice.dismiss(macId)
+            this.emit('attention-changed')
+            return
+          }
           if (!this.missed.dismiss(id)) throw new ValetError('config', 'not-found')
         },
         approveRequest: async (id, choice) => {
@@ -4492,6 +4736,9 @@ export class AppService {
             ...this.remoteCapabilities(c.id),
           })),
         revokeClient: async (id) => {
+          if (this.remote.clients.get(id) === null) throw new ValetError('config', 'not-found')
+          // As for a local app: a call waiting on a confirmation ends now, as revoked.
+          this.cancelConfirmationsOf(`remote:${id}`)
           if (!(await this.remote.revokeClient(id))) throw new ValetError('config', 'not-found')
           await this.dropRemoteCapabilities(id)
         },
@@ -4518,6 +4765,7 @@ export class AppService {
         },
         revokeAllClients: async () => {
           const ids = this.remote.remoteClients().map((c) => c.id)
+          for (const id of ids) this.cancelConfirmationsOf(`remote:${id}`)
           const count = await this.remote.revokeAllClients()
           for (const id of ids) await this.dropRemoteCapabilities(id)
           return count
@@ -4556,9 +4804,12 @@ export class AppService {
           demo: deps.demo,
         }),
         setPaused: async (paused) => {
+          const changed = this.paused !== paused
+          // In memory at once, as lock down: no call gets through while the record is written.
           this.paused = paused
           if (paused) this.authoring?.closeBrowsers()
           this.emit('app-changed')
+          if (changed) await this.audit.append({ type: 'app-paused', paused })
         },
         setLockedDown: (locked) => this.setLockedDown(locked),
         openControlPanel: async (route) => deps.ui.openControlPanel(route ?? null),

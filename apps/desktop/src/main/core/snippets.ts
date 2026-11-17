@@ -15,9 +15,18 @@ export function shellQuote(word: string): string {
 }
 
 export function clientSnippets(serverName: string, bridge: BridgeCommand): ClientSnippet[] {
-  const claudeCode = ['claude', 'mcp', 'add', serverName, '--', bridge.command, ...bridge.args].map(
-    shellQuote,
-  )
+  // User scope: without it Claude Code adds the server to the current folder's project only.
+  const claudeCode = [
+    'claude',
+    'mcp',
+    'add',
+    '--scope',
+    'user',
+    serverName,
+    '--',
+    bridge.command,
+    ...bridge.args,
+  ].map(shellQuote)
   const desktop = { mcpServers: { [serverName]: { command: bridge.command, args: [...bridge.args] } } }
   return [
     { client: 'claude-code', text: claudeCode.join(' ') },

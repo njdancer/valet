@@ -213,7 +213,9 @@ adapter and package hashes).
   folder name can't be chosen by the agent.
 - **Limits** (each agent has its own share under every shared limit, so one agent can't use up
   the person's): 10 drafts per agent and 30 in all; one check running per agent and one in all,
-  the rest queued; 20 checks per agent per hour. `valet_create_draft` and live trials are Notify,
+  the rest queued; 20 checks per agent per hour (a refusal says in how many seconds the oldest
+  frees up, and a check of a draft that hasn't changed since its last check answers with that
+  result again, `reused: true`, without counting). `valet_create_draft` and live trials are Notify,
   so both count towards A's 10 Notify-only changes an hour per agent (R57).
 - **The manifest's id must be the draft's adapter id**, fixed at creation. A draft may take an
   installed adapter's id only if it was created `from: 'installed'` (an update or repair), so a
@@ -368,10 +370,12 @@ site, which is why the card separates them.
      `editing` and says why. Making withdraw-and-ask one broker operation is asked of D.
 4. **Edits after submitting** change nothing that was submitted (R46 is read as: only a new submit
    makes a new request; told to A).
-5. **Return** the ref and a sentence for the agent to relay: "Waiting for the person in Valet:
-   "Install "Yahoo Finance" for yahoo.com" (approval 7B3F). They can approve it on their phone or
-   Mac." The draft shows the outcome in `valet_get_draft` once answered (D's `status`), with a
-   decline's note for the agent.
+5. **Return** the ref and a sentence for the agent to relay, in the titles the person sees:
+   "Waiting for the person in Valet: "Review Yahoo Finance before first use" in Needs you on their
+   Mac, marked approval 7B3F, or "Install an adapter for yahoo.com" on their phone." The Mac's
+   review and Needs you item show the ref, who asked, the agent's note and Valet's checks. The draft
+   shows the outcome in `valet_get_draft` once answered (D's `status`), with the person's optional
+   reason when they turn it down, for the agent.
 
 **On approval** (D's `adapter-install` handler, extended for `source: 'draft'`): precheck that the
 staged hash is still stored, the draft still exists and still names it, and both the active hash
@@ -456,7 +460,11 @@ Built in PR 2b: `drafts/trial.ts` runs the call, `DraftAuthoring.liveTrial` deci
   window with no local access, through the same `ElectronSessionDriver` a real call uses, opened
   with `trialLabel`: both partitions are in memory (`trial:<role>:<draftId>-<n>`), new for each
   trial, so nothing the agent's scratch browser or the installed adapter holds is there. The
-  driver's proxy dials through `publicOnlyDial`, so private addresses stay refused.
+  driver's proxy dials through `publicOnlyDial`, so private addresses stay refused. In demo mode
+  the demo shop's hosts are dialled on this machine, its port is opened beside 443 and its
+  certificate is trusted in the trial's partitions, so a draft can be tried against the fake shop
+  as the installed one runs. A connection the proxy refuses is listed as `host-not-allowed`, or
+  `port-not-allowed` when the host is allowed but the port isn't.
 - `session.ensure` answers `needs-user` `login-required` ("trials are signed out"), unless the
   manifest's probe is `none`. A draft whose domains include a site the person is signed in to with
   another adapter is refused, as for the scratch browser.
@@ -470,7 +478,8 @@ Built in PR 2b: `drafts/trial.ts` runs the call, `DraftAuthoring.liveTrial` deci
   hash and outcome, never the output.
 - The output, held to the tool's output schema by the sandbox, goes back under `fromSite`, cut at
   20,000 characters of JSON, with the requests the driver refused (scrubbed) so the agent can fix
-  egress or requests. The trial is recorded on the draft with the package hash; a submit of exactly
+  egress or requests. A failure at `navigate` names the URL that didn't load (scrubbed), `home` when
+  it was the page opened before tool code ran. The trial is recorded on the draft with the package hash; a submit of exactly
   those files puts "Live trial of get_quote, signed out: returned output that fits its schema" (or
   how it failed) on the card, and "Live trial: not run on this version" otherwise.
 

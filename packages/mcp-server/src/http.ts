@@ -96,6 +96,7 @@ export interface RunningHttpServer {
   /**
    * Closes every session whose client matches, so nothing opened with a credential that has been
    * withdrawn outlives it. Call it after the authenticate hook stops accepting that credential.
+   * A call still running in one is answered first, as aborted, and its run aborted.
    */
   endSessions(match: (identity: ClientIdentity) => boolean): Promise<void>
   /** The sessions open now, and how each one arrived. */
@@ -163,12 +164,19 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
     return sessions.keys().next().value as string
   }
 
-  const closeSession = (id: string): Promise<void> => {
+  /**
+   * With `answerCalls`, the session's running calls are answered (aborted) before it closes:
+   * closing the transport drops an unsent answer, and a client whose access was just withdrawn
+   * would sit on a stream that ended with nothing in it. Without it (the app quitting, a session
+   * evicted) the transport just closes, and the stdio bridge answers for the app.
+   */
+  const closeSession = async (id: string, answerCalls = false): Promise<void> => {
     const session = sessions.get(id)
     sessions.delete(id)
-    if (session === undefined) return Promise.resolve()
+    if (session === undefined) return
     changed()
-    return session.endpoint.server.close()
+    if (answerCalls) await session.endpoint.endCalls()
+    await session.endpoint.server.close()
   }
 
   const openSession = async (
@@ -292,11 +300,11 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
     },
     async endSessions(match) {
       const ids = [...sessions].filter(([, session]) => match(session.identity)).map(([id]) => id)
-      await Promise.all(ids.map(closeSession))
+      await Promise.all(ids.map((id) => closeSession(id, true)))
     },
     sessions: live,
     async close() {
-      await Promise.all([...sessions.keys()].map(closeSession))
+      await Promise.all([...sessions.keys()].map((id) => closeSession(id)))
       await new Promise<void>((resolve) => {
         server.close(() => resolve())
         server.closeAllConnections()

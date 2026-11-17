@@ -13,6 +13,7 @@
 // review of C, finding 1). Patterns are still enforced, exactly as written with their flags, by the
 // adapter's own zod in the tool process, which is killable and runs under the call's deadline.
 
+import { strictInputJsonSchema } from '@valet/core'
 import { z } from 'zod'
 
 export const SCHEMA_LIMITS = { bytes: 64 * 1024, depth: 32, nodes: 2_000 } as const
@@ -81,6 +82,8 @@ export type SchemaProblem =
   | 'value'
   | 'shape'
   | 'convert'
+  /** The tool gives no schema at all: `detail` says which, input or output. */
+  | 'missing'
 
 export class SchemaError extends Error {
   constructor(
@@ -152,11 +155,16 @@ export interface ToolSchemas {
 export function toolSchemas(described: unknown): ToolSchemas {
   if (described === null || typeof described !== 'object') throw new SchemaError('shape', 'missing')
   const { input, output } = described as { input?: unknown; output?: unknown }
-  if (input === null || input === undefined || output === null || output === undefined)
-    throw new SchemaError('convert', 'not representable')
+  // describe says 'missing' for a tool with no schema there; undefined is the same from an older one.
+  if (input === 'missing' || input === undefined) throw new SchemaError('missing', 'input')
+  if (output === 'missing' || output === undefined) throw new SchemaError('missing', 'output')
+  if (input === null) throw new SchemaError('convert', 'input not representable')
+  if (output === null) throw new SchemaError('convert', 'output not representable')
   checkSchema(input)
   checkSchema(output)
-  const inputSchema = convert(input)
+  // Strict at every depth: a key the tool doesn't declare is refused, not silently dropped (the
+  // tool's own zod would strip it in the tool process, so a misspelled "qty" ran as the default).
+  const inputSchema = convert(strictInputJsonSchema(input))
   if (!(inputSchema instanceof z.ZodObject)) throw new SchemaError('shape', 'input is not an object')
   return { input: inputSchema, output: convert(output) }
 }

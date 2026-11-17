@@ -29,7 +29,9 @@ describe('mcpToolName', () => {
 describe('planTools', () => {
   it('exposes a tool under its MCP name', () => {
     const plan = planTools([searchProducts])
-    expect(plan.exposed).toEqual([{ name: 'woolworths_search_products', listed: searchProducts }])
+    expect(plan.exposed.map(({ name, listed }) => ({ name, listed }))).toEqual([
+      { name: 'woolworths_search_products', listed: searchProducts },
+    ])
     expect(plan.skipped).toEqual([])
   })
 

@@ -93,7 +93,16 @@ export const statusSchema = z.object({
     verifiedAt: isoOrNull,
   }),
   needsYou: count,
-  sites: z.object({ installed: count, approved: count, paused: count }),
+  sites: z.object({
+    installed: count,
+    approved: count,
+    paused: count,
+    /**
+     * Approved before, but not now: this Mac's approval keys changed, so the old approvals no
+     * longer count. Their tools are hidden until the person approves each site again at the Mac.
+     */
+    toApproveAgain: count,
+  }),
   today: z.object({ toolCalls: count, logins: count, loginsFailed: count, blockedRequests: count }),
   remoteAccess: z.object({ enabled: z.boolean(), listening: z.boolean() }),
   /** Where logins come from (1Password, the Keychain, Messages) and whether each can be used now. */
@@ -216,6 +225,7 @@ export const needsYouSchema = z.object({
         'login-missing',
         'repair',
         'missed',
+        'keys-changed',
       ]),
       id: z.string(),
       /** The title the app, the menu bar and notifications use. */
@@ -431,7 +441,8 @@ export const ADMIN_TOOLS: readonly AdminTool[] = [
     description:
       'How Valet is doing: whether it is paused or locked down, its version and updates, the audit ' +
       'log’s last check, how many things wait for the person under Needs you, today’s calls and ' +
-      'logins, and how many sites are installed, approved and paused. Start here.',
+      'logins, and how many sites are installed, approved and paused. A site tool that is missing ' +
+      'may be waiting for the person to approve its site again (sites.toApproveAgain). Start here.',
     input: z.object({}),
     output: statusSchema,
     whileLockedDown: true,
@@ -780,6 +791,9 @@ export async function withAnswers(
   } catch {
     return result
   }
+  // An answer the result already says (valet_get_approval lists them) isn't said twice.
+  const said = result.content.flatMap((item) => (item.type === 'text' ? [item.text] : []))
+  lines = lines.filter((line) => !said.some((text) => text.includes(line)))
   if (lines.length === 0) return result
   const block = `Answers to your requests:\n${lines.join('\n')}`
   try {

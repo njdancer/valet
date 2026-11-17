@@ -44,14 +44,47 @@ export const BOOTSTRAP = `(function (send) {
     throwIfAborted() { if (signal.aborted) throw new ValetError('tool-run', 'aborted') },
   }
   const fromWire = (error) => {
-    if (error && error.kind === 'valet') return new ValetError(error.stage, error.errorClass)
+    if (error && error.kind === 'valet') return new ValetError(error.stage, error.errorClass, error.issue)
     if (error && error.kind === 'needsUser') return new NeedsUserError(error.reason)
     return new Error('capability failed')
   }
-  const toWire = (error) => {
-    if (error instanceof ValetError) return { kind: 'valet', stage: error.stage, errorClass: error.errorClass }
-    if (error instanceof NeedsUserError) return { kind: 'needsUser', reason: error.reason }
-    return { kind: 'other' }
+  // A failure's own words, kept only for a run that asks (an author's cases): see protocol.ts.
+  const details = new WeakMap()
+  const clipDetail = (text) => text.length > 300 ? text.slice(0, 299) + '…' : text
+  const messageOf = (error) => {
+    try {
+      if (error !== null && typeof error === 'object' && typeof error.message === 'string') {
+        const name = typeof error.name === 'string' && error.name !== '' ? error.name : 'Error'
+        return error.message === '' ? name : name + ': ' + error.message
+      }
+      return String(error)
+    } catch { return undefined }
+  }
+  const issuesOf = (zodError) => {
+    try {
+      const issues = Array.isArray(zodError && zodError.issues) ? zodError.issues.slice(0, 3) : []
+      return issues.map((issue) => {
+        let path = ''
+        for (const p of Array.isArray(issue.path) ? issue.path : []) {
+          path += typeof p === 'number' ? '[' + p + ']' : (path === '' ? '' : '.') + String(p)
+        }
+        if (path === '') path = '(top level)'
+        return path + ': ' + String(issue.message)
+      }).join('; ')
+    } catch { return undefined }
+  }
+  const toWire = (error, withDetail) => {
+    let wire
+    if (error instanceof ValetError) wire = error.issue === undefined ? { kind: 'valet', stage: error.stage, errorClass: error.errorClass } : { kind: 'valet', stage: error.stage, errorClass: error.errorClass, issue: error.issue }
+    else if (error instanceof NeedsUserError) return { kind: 'needsUser', reason: error.reason }
+    else wire = { kind: 'other' }
+    if (withDetail) {
+      const text = (error !== null && typeof error === 'object' && details.has(error))
+        ? details.get(error)
+        : wire.kind === 'other' ? messageOf(error) : undefined
+      if (typeof text === 'string' && text !== '') wire.detail = clipDetail(text)
+    }
+    return wire
   }
   const call = (capability, ...args) => {
     while (args.length > 0 && args[args.length - 1] === undefined) args.pop()
@@ -112,11 +145,17 @@ export const BOOTSTRAP = `(function (send) {
     if (m.t === 'run') {
       const impl = Object.prototype.hasOwnProperty.call(tools, m.tool) ? tools[m.tool] : undefined
       if (!impl || typeof impl.run !== 'function') { post({ t: 'done', ok: false, error: { kind: 'valet', stage: 'manifest', errorClass: 'not-found' } }); return }
+      const withDetail = m.detail === true
       const parse = (schema, value, stage) => {
         if (!schema || typeof schema.safeParseAsync !== 'function') return Promise.resolve(value)
         return schema.safeParseAsync(value).then((r) => {
           if (r && r.success === true) return r.data
-          throw new ValetError(stage, 'invalid')
+          const error = new ValetError(stage, 'invalid')
+          if (withDetail) {
+            const text = issuesOf(r && r.error)
+            if (typeof text === 'string' && text !== '') details.set(error, text)
+          }
+          throw error
         })
       }
       Promise.resolve()
@@ -125,7 +164,7 @@ export const BOOTSTRAP = `(function (send) {
         .then((raw) => parse(impl.output, raw, 'tool-output'))
         .then(
           (value) => value === undefined ? post({ t: 'done', ok: true }) : post({ t: 'done', ok: true, value }),
-          (error) => post({ t: 'done', ok: false, error: toWire(error) }),
+          (error) => post({ t: 'done', ok: false, error: toWire(error, withDetail) }),
         )
         .then((sent) => { if (!sent) post({ t: 'done', ok: false, error: { kind: 'valet', stage: 'tool-output', errorClass: 'invalid' } }) })
     } else if (m.t === 'check') {
@@ -135,12 +174,29 @@ export const BOOTSTRAP = `(function (send) {
       if (!impl || !impl.input || typeof impl.input.safeParseAsync !== 'function') { post({ t: 'checked', ok: false }); return }
       Promise.resolve()
         .then(() => impl.input.safeParseAsync(m.input))
-        .then((r) => post({ t: 'checked', ok: !!(r && r.success === true) }), () => post({ t: 'checked', ok: false }))
+        .then((r) => {
+          if (r && r.success === true) return post({ t: 'checked', ok: true })
+          // The first issue's codes, path and bounds only, never its message: the host maps them to
+          // its own vocabulary and trusts nothing else in them.
+          const first = r && r.error && Array.isArray(r.error.issues) ? r.error.issues[0] : undefined
+          const issue = {}
+          if (first && typeof first === 'object') {
+            for (const key of ['code', 'path', 'keys', 'minimum', 'maximum', 'inclusive', 'origin']) {
+              const value = first[key]
+              if (typeof value === 'bigint') issue[key] = Number(value)
+              else if (value !== undefined && typeof value !== 'function' && typeof value !== 'symbol') issue[key] = value
+            }
+            if (Array.isArray(issue.path)) issue.path = issue.path.filter((p) => typeof p === 'string' || typeof p === 'number')
+            if (first.params && typeof first.params === 'object') issue.params = { reason: first.params.reason, limit: first.params.limit }
+          }
+          if (!post({ t: 'checked', ok: false, issue })) post({ t: 'checked', ok: false })
+        }, () => post({ t: 'checked', ok: false }))
     } else if (m.t === 'describe') {
-      // Each tool's schemas as JSON Schema, or null where one can't be represented; the host
-      // bounds and checks what comes back before it uses any of it.
+      // Each tool's schemas as JSON Schema, 'missing' where the tool gives none, or null where one
+      // can't be represented; the host bounds and checks what comes back before it uses any of it.
       const described = {}
       const convert = (schema, io) => {
+        if (schema === undefined || schema === null) return 'missing'
         try { return toJSONSchema(schema, { io, target: 'draft-7' }) } catch { return null }
       }
       for (const name of Object.keys(tools || {})) {

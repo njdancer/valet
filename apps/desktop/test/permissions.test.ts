@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   additionBadges,
   addsPermissions,
+  diffHasLogin,
   limitsChanged,
   probeText,
+  reviewLogsIn,
   sameProbe,
   secretChanges,
   toolChanges,
@@ -306,6 +308,32 @@ describe('additionBadges', () => {
       '+1 write path',
       '+1 read path',
     ])
+  })
+})
+
+describe('a site with no login', () => {
+  const NO_LOGIN: PermissionDiff = {
+    ...NOTHING_NEW,
+    navigation: { added: ['https://en.dictionary.test'], removed: [], unchanged: [] },
+    cookieDomains: { added: [], removed: [], unchanged: [] },
+    authSteps: { added: [], removed: [], unchanged: [] },
+    limits: null,
+    probe: null,
+  }
+
+  it('calls its pages page origins, not login origins', () => {
+    expect(diffHasLogin(NO_LOGIN)).toBe(false)
+    expect(additionBadges(NO_LOGIN).map((b) => b.label)).toEqual(['+1 page origin'])
+    expect(additionBadges(NO_LOGIN, false).some((b) => /login/.test(b.label))).toBe(false)
+  })
+
+  it('keeps login wording for a site that logs in, and trusts the main process’s answer first', () => {
+    const login = { ...NO_LOGIN, authSteps: NOTHING_NEW.authSteps }
+    expect(diffHasLogin(login)).toBe(true)
+    expect(additionBadges(login).map((b) => b.label)).toEqual(['+1 login origin'])
+    expect(reviewLogsIn({ diff: NO_LOGIN, logsIn: true })).toBe(true)
+    expect(reviewLogsIn({ diff: login, logsIn: false })).toBe(false)
+    expect(reviewLogsIn({ diff: NO_LOGIN })).toBe(false)
   })
 })
 

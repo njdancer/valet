@@ -9,7 +9,7 @@
 import { X509Certificate } from 'node:crypto'
 import { writeFileSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
-import { connect } from 'node:net'
+import { connect, type Socket } from 'node:net'
 import { join } from 'node:path'
 import { MESSAGES_SENDER } from '@valet/adapter-woolworths'
 import { partitionName } from '@valet/browser-electron'
@@ -47,6 +47,15 @@ export interface DemoSite {
   readonly otpReader: ReturnType<typeof outboxOtpReader>
   /** The tool partition's proxy dial: only the demo's hosts, all on this machine. */
   readonly dial: (host: string, port: number) => ReturnType<typeof connect>
+  /**
+   * A draft's live trial (docs/authoring-tools.md#live-trials) in demo mode: the demo's hosts on
+   * this machine, anything else through `fallback`, and the demo certificate trusted in the trial's
+   * own partitions, so a draft can be tried against the fake shop as an installed adapter is.
+   */
+  readonly forTrial: (
+    partitions: readonly string[],
+    fallback: (host: string, port: number) => Socket,
+  ) => (host: string, port: number) => Socket
   /** Valet's 1Password wiring over the fake 1Password and a file-backed Keychain, and the outbox. */
   readonly credentials: Credentials
   /** The fake 1Password ("Keyhold"), and its windows' server. */
@@ -118,6 +127,13 @@ export async function startDemoSite(
       if (!(DEMO_HOSTS as readonly string[]).includes(host))
         throw new Error('demo mode stays on this machine')
       return connect({ host: '127.0.0.1', port })
+    },
+    forTrial: (partitions, fallback) => {
+      for (const partition of partitions) trustOn(partition, tls.fingerprint)
+      return (host, port) =>
+        (DEMO_HOSTS as readonly string[]).includes(host)
+          ? connect({ host: '127.0.0.1', port })
+          : fallback(host, port)
     },
   }
 }
@@ -196,6 +212,8 @@ export function showKeyholdPrompts(demo: DemoSite, { e2e }: { readonly e2e: bool
  * renderer can reach the main process's globals.
  */
 export interface DemoE2eHook {
+  /** The fake shop's www origin, port included, for drafts that name it. */
+  siteOrigin(): string
   blockAll(on: boolean): void
   trolley(): readonly { readonly stockcode: number; readonly quantity: number }[]
   pageBeacon(target: { readonly host: string; readonly port: number } | null): void
@@ -225,6 +243,7 @@ export interface DemoE2eHook {
 
 export function exposeToE2e(demo: DemoSite): void {
   const hook: DemoE2eHook = {
+    siteOrigin: () => demo.site.origin,
     blockAll: (on) => demo.site.blockAll(on === true),
     trolley: () => demo.site.trolleyFor(DEMO_ACCOUNT.username).map((l) => ({ ...l })),
     pageBeacon: (target) =>
@@ -258,19 +277,22 @@ export function exposeToE2e(demo: DemoSite): void {
 
 /** Trusts the demo certificate for the demo hosts on the adapter's partitions. Call before any load. */
 export function trustDemoCertificate(adapterId: string, fingerprint: string): void {
-  for (const role of ['auth', 'tool'] as const) {
-    session.fromPartition(partitionName(role, adapterId)).setCertificateVerifyProc((request, callback) => {
-      if (!(DEMO_HOSTS as readonly string[]).includes(request.hostname)) {
-        callback(-3) // Chromium's own verification
-        return
-      }
-      let matches = false
-      try {
-        matches = new X509Certificate(request.certificate.data).fingerprint256 === fingerprint
-      } catch {
-        matches = false
-      }
-      callback(matches ? 0 : -2)
-    })
-  }
+  for (const role of ['auth', 'tool'] as const) trustOn(partitionName(role, adapterId), fingerprint)
+}
+
+/** Trusts the demo certificate for the demo hosts in one partition; Chromium's own check elsewhere. */
+function trustOn(partition: string, fingerprint: string): void {
+  session.fromPartition(partition).setCertificateVerifyProc((request, callback) => {
+    if (!(DEMO_HOSTS as readonly string[]).includes(request.hostname)) {
+      callback(-3) // Chromium's own verification
+      return
+    }
+    let matches = false
+    try {
+      matches = new X509Certificate(request.certificate.data).fingerprint256 === fingerprint
+    } catch {
+      matches = false
+    }
+    callback(matches ? 0 : -2)
+  })
 }

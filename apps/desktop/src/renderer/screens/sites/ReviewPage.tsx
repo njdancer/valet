@@ -28,7 +28,9 @@ import {
   CardTitle,
   Checkbox,
   Code,
+  ConfirmDialog,
   EmptyState,
+  Field,
   HashChip,
   Kbd,
   Page,
@@ -38,18 +40,19 @@ import {
   Spacer,
   Stack,
   Text,
+  Textarea,
 } from '@valet/ui'
 import { PackageCheck } from 'lucide-react'
 import { type ReactNode, useEffect, useId, useState } from 'react'
-import type { HashRoute, PendingReview } from '../../../shared/api'
+import type { HashRoute, PendingReview, ReviewRequestInfo } from '../../../shared/api'
 import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
 import { formatTime, plural } from '../../lib/format'
-import { additionBadges, addsPermissions } from '../../lib/permissions'
+import { additionBadges, addsPermissions, reviewLogsIn } from '../../lib/permissions'
 import { href, navigate } from '../../lib/router'
 import { addedCount, FileList, ManifestDiff, removedCount } from './review/CodeChanges'
 import { FirstInstallSummary } from './review/FirstInstallSummary'
 import { PermissionChanges } from './review/PermissionChanges'
-import { SOURCE_WORDING } from './review/words'
+import { capText, sourceWording } from './review/words'
 
 /**
  * Where the review goes when it ends. From setup, both lead back into setup and the "choose a login
@@ -70,7 +73,14 @@ export function ReviewPage({
   readonly adapterId: string
   readonly exits?: ReviewExits
 }) {
-  const reviews = useLoad((api) => api.approvals.pending(), [], ['approvals-changed'])
+  const reviews = useLoad(
+    async (api) => {
+      const [pending, turnedDown] = await Promise.all([api.approvals.pending(), api.approvals.turnedDown()])
+      return { pending, turnedDown }
+    },
+    [],
+    ['approvals-changed'],
+  )
   const closeHref = exits?.closed ?? href.site(adapterId)
   // Held above the list: once approved, the review leaves the pending list, but the seal stays.
   const [sealed, setSealed] = useState<{ name: string; version: string; next: HashRoute } | null>(null)
@@ -120,7 +130,9 @@ export function ReviewPage({
       </Page>
     )
   }
-  const review = reviews.data.find((r) => r.adapterId === adapterId)
+  // Waiting first; else a version the person turned down, which they may reconsider.
+  const waiting = reviews.data.pending.find((r) => r.adapterId === adapterId)
+  const review = waiting ?? reviews.data.turnedDown.find((r) => r.adapterId === adapterId)
   if (review === undefined) {
     return (
       <Page>
@@ -146,6 +158,7 @@ export function ReviewPage({
     <Review
       key={review.to.hash}
       review={review}
+      turnedDown={waiting === undefined}
       exits={exits}
       closeHref={closeHref}
       onApproved={(next) => setSealed({ name: review.name, version: review.to.version, next })}
@@ -226,11 +239,14 @@ function ReviewHeader({
 
 function Review({
   review,
+  turnedDown,
   exits,
   closeHref,
   onApproved,
 }: {
   readonly review: PendingReview
+  /** The person turned this version down before; approving it now is reconsidering. */
+  readonly turnedDown: boolean
   readonly exits: ReviewExits | undefined
   readonly closeHref: HashRoute
   readonly onApproved: (next: HashRoute) => void
@@ -249,7 +265,11 @@ function Review({
   // After a first install the login comes next (wireframe site-review-first-install); after an
   // update it is offered, unticked.
   const [grantNext, setGrantNext] = useState(firstInstall)
-  const badges = additionBadges(review.diff).map((b) =>
+  const logsIn = reviewLogsIn(review)
+  const request = review.request ?? null
+  const [declining, setDeclining] = useState(false)
+  const [reason, setReason] = useState('')
+  const badges = additionBadges(review.diff, logsIn).map((b) =>
     firstInstall ? { ...b, label: b.label.replace(/^\+/, '') } : b,
   )
   const canApprove = !needsAck || acknowledged
@@ -269,7 +289,12 @@ function Review({
     )
   }
   const reject = async () => {
-    const ok = await action.run(() => api.approvals.reject(review.adapterId, review.to.hash))
+    const note = reason.trim()
+    const ok = await action.run(() =>
+      note === '' || request === null
+        ? api.approvals.reject(review.adapterId, review.to.hash)
+        : api.approvals.reject(review.adapterId, review.to.hash, note),
+    )
     if (ok) navigate(exits?.closed ?? href.site(review.adapterId))
   }
 
@@ -287,21 +312,34 @@ function Review({
         name={review.name}
         crumb={`Review ${version}`}
         title={
-          firstInstall
-            ? `Review ${review.name} before first use`
-            : `Review the ${review.name} update (${version})`
+          review.approvedBefore === true
+            ? `Approve ${review.name} again`
+            : firstInstall
+              ? `Review ${review.name} before first use`
+              : `Review the ${review.name} update (${version})`
         }
         status={
-          firstInstall ? (
-            <Badge tone="info">Not approved yet</Badge>
-          ) : (
-            <UpdateStatusBadge adapterId={review.adapterId} from={review.from?.version ?? null} />
-          )
+          <span className="inline-flex flex-wrap items-center gap-1.5">
+            {review.approvedBefore === true ? (
+              <Badge tone="warning">Approved before · keys changed</Badge>
+            ) : firstInstall ? (
+              <Badge tone="info">Not approved yet</Badge>
+            ) : review.staged === true && review.from !== null ? (
+              <Badge tone="info">Calls use {review.from.version} until you decide</Badge>
+            ) : (
+              <UpdateStatusBadge adapterId={review.adapterId} from={review.from?.version ?? null} />
+            )}
+            {request === null ? null : (
+              <Badge tone="neutral">
+                Approval <span className="font-mono">{request.ref}</span>
+              </Badge>
+            )}
+          </span>
         }
         description={
           <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
             <span>
-              {SOURCE_WORDING[review.source]} {formatTime(review.submittedAt, now)} · adapter
+              {sourceWording(review)} {formatTime(review.submittedAt, now)} · adapter
             </span>
             <Code>{review.adapterId}</Code>
             <span className="inline-flex flex-wrap items-center gap-1.5">
@@ -321,6 +359,17 @@ function Review({
         exits={exits}
       />
       <PageBody>
+        {turnedDown ? (
+          <Banner tone="warning" title={`You turned down ${review.name} ${review.to.version}`}>
+            Its tools stay off until you approve it. If you’ve changed your mind, review it again below.
+          </Banner>
+        ) : null}
+        {review.approvedBefore === true ? (
+          <Banner tone="warning" title="This Mac’s approval keys changed">
+            You approved {review.name} before, but that approval was signed with this Mac’s old keys, so it no
+            longer counts. Check it as you would a new site, then approve it again to turn its tools back on.
+          </Banner>
+        ) : null}
         {review.diff.sandbox.unsandboxed ? (
           <Banner tone="danger" title="Runs without the sandbox: it can reach anything you can on this Mac">
             That includes your other sites’ logins that Valet holds. Its author says why:{' '}
@@ -386,7 +435,9 @@ function Review({
               </CardTitle>
               <CardDescription>
                 {firstInstall
-                  ? 'Approving gives this exact version these permissions. Logins are chosen after.'
+                  ? logsIn
+                    ? 'Approving gives this exact version these permissions. Logins are chosen after.'
+                    : 'Approving gives this exact version these permissions. It needs no login.'
                   : needsAck
                     ? 'The additions are highlighted below. Logins don’t carry over to a new version.'
                     : 'This update adds no permissions.'}
@@ -405,6 +456,8 @@ function Review({
             </CardContent>
           ) : null}
         </Card>
+
+        {request === null ? null : <AgentRequestCard request={request} />}
 
         {firstInstall ? <FirstInstallSummary review={review} /> : null}
 
@@ -503,9 +556,37 @@ function Review({
       </PageBody>
 
       <ActionBar className="flex-wrap gap-y-2">
-        <Button onClick={reject} disabled={action.busy}>
-          {firstInstall ? 'Don’t install' : 'Reject'}
-        </Button>
+        {turnedDown ? (
+          <Button asChild>
+            <a href={closeHref}>Keep it turned down</a>
+          </Button>
+        ) : request === null ? (
+          <Button onClick={reject} disabled={action.busy}>
+            Turn down
+          </Button>
+        ) : (
+          <ConfirmDialog
+            open={declining}
+            onOpenChange={setDeclining}
+            trigger={<Button disabled={action.busy}>Turn down…</Button>}
+            title={`Turn down ${review.name} ${version}?`}
+            description={`${capText(request.client, 60)} is told you turned it down${
+              firstInstall ? '' : `, and ${review.from?.version ?? 'the version in use'} keeps working`
+            }.`}
+            confirmLabel="Turn down"
+            destructive
+            onConfirm={() => void reject()}
+          >
+            <Field label={`Tell ${capText(request.client, 60)} why`} optional>
+              <Textarea
+                value={reason}
+                maxLength={280}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="It only goes to the agent that asked."
+              />
+            </Field>
+          </ConfirmDialog>
+        )}
         <Button variant="ghost" asChild>
           <a href={closeHref}>Decide later</a>
         </Button>
@@ -544,5 +625,61 @@ function Review({
         </Button>
       </ActionBar>
     </Page>
+  )
+}
+
+/**
+ * What the agent said and what Valet checked, for an agent's draft. The note, the client's name and
+ * its test counts are the agent's own; only the check lines are Valet's.
+ */
+function AgentRequestCard({ request }: { readonly request: ReviewRequestInfo }) {
+  const client = capText(request.client, 60)
+  const tests = request.agentTests
+  return (
+    <Card data-testid="agent-request">
+      <CardHeader className="flex-col gap-1">
+        <CardTitle>
+          Asked by {request.remote ? `“${client}”, a cloud agent` : client} · approval{' '}
+          <span className="font-mono">{request.ref}</span>
+        </CardTitle>
+        <CardDescription>
+          The agent was told to quote this approval code. Its words and its own tests are its claims; the
+          checks are Valet’s.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Stack gap={3}>
+          <Stack gap={0.5}>
+            <Text size="sm" tone="muted">
+              {client} says
+            </Text>
+            {request.note === null || request.note.trim() === '' ? (
+              <Text tone="subtle">It left no note.</Text>
+            ) : (
+              <blockquote className="m-0 border-l-2 border-line pl-3 text-md text-fg whitespace-pre-wrap">
+                {capText(request.note)}
+              </blockquote>
+            )}
+          </Stack>
+          {request.checks.length > 0 ? (
+            <Stack gap={0.5}>
+              <Text size="sm" tone="muted">
+                Valet checked
+              </Text>
+              <ul aria-label="Valet’s checks" className="m-0 flex list-disc flex-col gap-0.5 pl-5 text-md">
+                {request.checks.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </Stack>
+          ) : null}
+          {tests === null ? null : (
+            <Text size="sm" tone="muted">
+              Its own tests, run by Valet: {tests.passed} passed, {tests.failed} failed.
+            </Text>
+          )}
+        </Stack>
+      </CardContent>
+    </Card>
   )
 }

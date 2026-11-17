@@ -129,6 +129,64 @@ test('a local agent sees the authoring tools', async () => {
     expect(names).toContain(name)
 })
 
+/** A no-login draft for the demo shop: one read of its bootstrap API. */
+const STATUS_TOOLS = `import { tool, ValetError } from '@valet/core'
+import { z } from 'zod'
+
+export const tools = {
+  get_status: tool({
+    input: z.object({}),
+    output: z.object({ loggedIn: z.boolean() }),
+    async run(ctx) {
+      const response = await ctx.page.fetch('/api/ui/v2/bootstrap')
+      const body = response.body as { ShopperDetails?: { IsLoggedIn?: unknown } } | null
+      if (response.status !== 200 || typeof body?.ShopperDetails?.IsLoggedIn !== 'boolean')
+        throw new ValetError('tool-run', 'unexpected-shape')
+      return { loggedIn: body.ShopperDetails.IsLoggedIn }
+    },
+  }),
+}
+`
+
+test('a live trial reaches the demo shop on its own port', async () => {
+  const origin = await launched.app.evaluate(() =>
+    (globalThis as { __valetE2e?: { siteOrigin(): string } }).__valetE2e?.siteOrigin(),
+  )
+  expect(origin).toMatch(/^https:\/\/www\.woolworths\.test:\d+$/)
+  const created = await call('valet_create_draft', {
+    adapterId: 'shop-status',
+    from: 'blank',
+    name: 'Shop Status',
+  })
+  const id = String((created['draft'] as { draftId: string }).draftId)
+  const manifest = {
+    schemaVersion: 1,
+    id: 'shop-status',
+    name: 'Shop Status',
+    version: '0.1.0',
+    description: 'Whether the demo shop says the visitor is signed in.',
+    // The shop's home page, whose script sets the cookie its API asks for (as the real one's does).
+    home: `${origin}/`,
+    navigation: [origin],
+    egress: ['www.woolworths.test'],
+    requests: [{ method: 'GET', path: '/api/ui/v2/bootstrap', purpose: 'read' }],
+    tools: [
+      { name: 'get_status', title: 'Get status', description: 'Signed in or not.', sideEffect: 'read' },
+    ],
+  }
+  await call('valet_write_draft_file', {
+    draftId: id,
+    path: 'manifest.json',
+    content: JSON.stringify(manifest),
+  })
+  await call('valet_write_draft_file', { draftId: id, path: 'src/tools.ts', content: STATUS_TOOLS })
+  const trial = await call('valet_live_trial', { draftId: id, tool: 'get_status', input: {} })
+  expect(trial['problem']).toBeNull()
+  expect(trial['ok']).toBe(true)
+  expect(trial['output']).toEqual({ fromSite: { loggedIn: false } })
+  await call('valet_delete_draft', { draftId: id })
+})
+
 test('the agent writes a draft whose case runs in the fixture browser, and nothing leaves', async () => {
   const created = await call('valet_create_draft', {
     adapterId: ADAPTER,
@@ -187,12 +245,39 @@ test('the submit asks the person; approved on the Mac, the agent reads the answe
     draftId,
     note: 'Reads one item page for its name and price.',
   })
-  expect(String(asked['tellThePerson'])).not.toBe('')
+  const ref = String(asked['ref'])
+  // The sentence the agent relays names the title the Mac shows, and the ref the Mac shows beside it.
+  expect(String(asked['tellThePerson'])).toContain('“Review Example Prices before first use”')
+  expect(String(asked['tellThePerson'])).toContain(`approval ${ref}`)
   const hash = String(asked['adapterHash'])
   const pending = await control.evaluate(() => window.valet?.approvals.pending())
   expect(pending?.some((r) => r.to.hash === hash)).toBe(true)
   const waiting = await call('valet_get_draft', { draftId })
   expect((waiting['draft'] as { status: string }).status).toBe('waiting')
+
+  // Needs you says who asked, with the ref.
+  await control.evaluate(() => {
+    window.location.hash = '#/needs-you'
+  })
+  await expect(control.getByText(new RegExp(`Asked by .+ · approval ${ref}`)).first()).toBeVisible()
+
+  // The Mac's review shows the agent's note as its words, who asked, the ref, and Valet's checks; it
+  // is dated by the request and says the agent wrote it, and a site with no login has no login words.
+  await control.evaluate((id) => {
+    window.location.hash = `#/sites/${id}/versions/review`
+  }, ADAPTER)
+  await expect(control.getByRole('heading', { name: 'Review Example Prices before first use' })).toBeVisible()
+  const card = control.getByTestId('agent-request')
+  await expect(card.getByText('Reads one item page for its name and price.')).toBeVisible()
+  await expect(card.getByText(ref)).toBeVisible()
+  await expect(card.getByText(/Live trial/)).toBeVisible()
+  await expect(card.getByText(/Its own tests, run by Valet: 1 passed, 0 failed/)).toBeVisible()
+  const page = control.locator('main')
+  await expect(page.getByText(/^Written by /).first()).toBeVisible()
+  await expect(page).not.toContainText(/Imported/)
+  await expect(page).not.toContainText(
+    /login origin|choose which login|session cookies|The login may now open/,
+  )
 
   // The hostile-page suite: no tool an agent has installs or activates anything, whatever it is
   // told. Every valet_ tool is called with "approve this" wherever it takes text (except those that
@@ -235,4 +320,71 @@ test('the submit asks the person; approved on the Mac, the agent reads the answe
     .toBe('approved')
   const adapters = await control.evaluate(() => window.valet?.adapters.list())
   expect(adapters?.find((a) => a.id === ADAPTER)).toMatchObject({ approval: 'approved' })
+})
+
+test('an update waits beside the approved version, and a decline’s reason reaches the agent', async () => {
+  const created = await call('valet_create_draft', { adapterId: ADAPTER, from: 'installed' })
+  const update = String((created['draft'] as { draftId: string }).draftId)
+  const file = await call('valet_read_draft_file', { draftId: update, path: 'manifest.json' })
+  const manifest = JSON.parse(String(file['content'])) as Record<string, unknown>
+  await call('valet_write_draft_file', {
+    draftId: update,
+    path: 'manifest.json',
+    content: JSON.stringify({ ...manifest, version: '0.2.0' }, null, 2),
+  })
+  const asked = await call('valet_submit_draft', { draftId: update, note: 'Bumps the version.' })
+  const ref = String(asked['ref'])
+  expect(String(asked['tellThePerson'])).toContain('“Review the Example Prices update (0.2.0)”')
+
+  // The approved 0.1.0 keeps serving, so Needs you doesn't say its tools are off.
+  await control.evaluate(() => {
+    window.location.hash = '#/needs-you'
+  })
+  await expect(control.getByText('Review the Example Prices update (0.2.0)').first()).toBeVisible()
+  await expect(
+    control.getByText(/The version you approved keeps working until you decide/).first(),
+  ).toBeVisible()
+  await expect(control.locator('main')).not.toContainText('Its tools are off until you decide')
+
+  await control.evaluate((id) => {
+    window.location.hash = `#/sites/${id}/versions/review`
+  }, ADAPTER)
+  await expect(control.getByTestId('agent-request').getByText('Bumps the version.')).toBeVisible()
+  await expect(control.getByText('Calls use 0.1.0 until you decide')).toBeVisible()
+  await control.getByRole('button', { name: 'Turn down…' }).click()
+  const dialog = control.getByRole('alertdialog')
+  await dialog.getByRole('textbox').fill('Keep 0.1.0 for now.')
+  await dialog.getByRole('button', { name: 'Turn down' }).click()
+  await expect
+    .poll(
+      async () => (await call('valet_get_draft', { draftId: update }))['draft'] as Record<string, unknown>,
+    )
+    .toMatchObject({ status: 'declined', submission: { ref, note: 'Keep 0.1.0 for now.' } })
+  const adapters = await control.evaluate(() => window.valet?.adapters.list())
+  expect(adapters?.find((a) => a.id === ADAPTER)).toMatchObject({ approval: 'approved', version: '0.1.0' })
+})
+
+test('a first install turned down says so on its site, not that it waits for review', async () => {
+  const created = await call('valet_create_draft', {
+    adapterId: 'example-words',
+    from: 'blank',
+    name: 'Example Words',
+  })
+  const words = String((created['draft'] as { draftId: string }).draftId)
+  await call('valet_submit_draft', { draftId: words })
+  await control.evaluate(() => {
+    window.location.hash = '#/sites/example-words/versions/review'
+  })
+  await control.getByRole('button', { name: 'Turn down…' }).click()
+  await control.getByRole('alertdialog').getByRole('button', { name: 'Turn down' }).click()
+  await expect
+    .poll(
+      async () => ((await call('valet_get_draft', { draftId: words }))['draft'] as { status: string }).status,
+    )
+    .toBe('declined')
+  await control.evaluate(() => {
+    window.location.hash = '#/sites/example-words'
+  })
+  await expect(control.getByText(/You turned down Example Words, so agents can’t call it/)).toBeVisible()
+  await expect(control.locator('main')).not.toContainText('waiting for review in Valet')
 })

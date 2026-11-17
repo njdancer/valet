@@ -14,6 +14,7 @@ import {
   dependencyLockSchema,
   EMPTY_LOCK,
   homeUnreachable,
+  needsYouTitle,
   type PackageFiles,
   type PermissionChange,
   parseManifest,
@@ -217,6 +218,14 @@ export class DraftAuthoring implements Authoring {
   private checking: Promise<unknown> = Promise.resolve()
   private readonly checkingClients = new Set<string>()
   private readonly submitting = new Set<string>()
+  /**
+   * Per draft, its last check and what it depended on: a check of the same package against the same
+   * state is answered from here, and not counted against the hourly checks.
+   */
+  private readonly lastChecks = new Map<
+    string,
+    { readonly key: string; readonly at: number; readonly outcome: CheckOutcome }
+  >()
   /** Per draft and path, the hash of the last write through these tools (edited outside Valet). */
   private readonly written = new Map<string, string>()
   /** Per draft, the times of its trials this hour. */
@@ -530,6 +539,7 @@ export class DraftAuthoring implements Authoring {
     this.deps.research?.close(draftId)
     await this.deps.store.delete(draftId)
     for (const key of [...this.written.keys()]) if (key.startsWith(`${draftId}:`)) this.written.delete(key)
+    this.lastChecks.delete(draftId)
     await this.deps.audit({
       type: 'draft-deleted',
       draftId,
@@ -580,23 +590,49 @@ export class DraftAuthoring implements Authoring {
   /** Steps 1 to 6 on one in-memory copy of the files, within the check budget. */
   private async runCheck(viewer: ClientIdentity, record: DraftRecord, tool?: string): Promise<CheckOutcome> {
     const client = clientKey(viewer)
+    const files = await this.wrap(() => this.deps.store.files(record.id))
+    // Nothing changed since the last check (the package, the tool asked for, what is installed and
+    // approved, the trials a repair's reproduction reads): the same answer, not counted again.
+    const key = await this.checkKey(record, files, tool)
+    const last = this.lastChecks.get(record.id)
+    if (last !== undefined && last.key === key && this.deps.now() - last.at < 3600_000)
+      return { ...last.outcome, report: { ...last.outcome.report, reused: true } }
     this.checkLimit(client)
     if (this.checkingClients.has(client))
       throw new AuthoringRefusal('One check at a time: your last one is still running.')
     this.checkingClients.add(client)
-    const turn = this.checking.then(() => this.checkNow(record, tool))
+    const turn = this.checking.then(() => this.checkNow(record, files, tool))
     this.checking = turn.catch(() => undefined)
     try {
-      return await turn
+      const outcome = await turn
+      this.lastChecks.set(record.id, { key, at: this.deps.now(), outcome })
+      return outcome
     } finally {
       this.checkingClients.delete(client)
     }
   }
 
-  private async checkNow(record: DraftRecord, tool?: string): Promise<CheckOutcome> {
+  /** What a check's answer depends on beyond the clock. */
+  private async checkKey(record: DraftRecord, files: PackageFiles, tool?: string): Promise<string> {
+    const installed = await this.deps.installed(record.adapterId)
+    const approved = await this.deps.approved(record.adapterId)
+    const ticket = record.repairId === null ? null : (this.deps.repairs?.get(record.repairId) ?? null)
+    return JSON.stringify([
+      bundleHash(files),
+      tool ?? null,
+      record.basedOn,
+      installed?.hash ?? null,
+      approved?.hash ?? null,
+      record.repairId,
+      ticket?.state ?? null,
+      record.trials.map((t) => [t.packageHash, t.at, t.reproduces]),
+      this.deps.sites().map((s) => s.id),
+    ])
+  }
+
+  private async checkNow(record: DraftRecord, files: PackageFiles, tool?: string): Promise<CheckOutcome> {
     const started = this.deps.now()
     const budget = this.deps.checkBudgetMs ?? CHECK_BUDGET_MS
-    const files = await this.wrap(() => this.deps.store.files(record.id))
     const packageHash = bundleHash(files)
     const steps: { step: string; ok: boolean }[] = []
     const findings: Finding[] = []
@@ -884,15 +920,12 @@ export class DraftAuthoring implements Authoring {
         packageHash: bundleHash(outcome.files),
         requestId: asked.requestId,
       })
-      const verb = installed === null ? 'Install' : 'Update'
       return {
         ref: asked.ref,
         requestId: asked.requestId,
         expiresAt: asked.expiresAt,
         adapterHash: loaded.adapterHash,
-        tellThePerson:
-          `Waiting for the person in Valet: “${verb} ${loaded.manifest.name} for ${domain}” (approval ${asked.ref}). ` +
-          'They can approve it on their phone or Mac.',
+        tellThePerson: submitSentence(loaded.manifest, domain, asked.ref, asked.previousHash === null),
       }
     } finally {
       this.submitting.delete(draftId)
@@ -1188,9 +1221,10 @@ export class DraftAuthoring implements Authoring {
         )
       session = { adapterId: record.adapterId, installed: installed.manifest }
     }
-    if (!take(this.trialTimes, draftId, TRIAL_LIMITS.perDraftPerHour, this.deps.now()))
+    const trialWait = take(this.trialTimes, draftId, TRIAL_LIMITS.perDraftPerHour, this.deps.now())
+    if (trialWait > 0)
       throw new AuthoringRefusal(
-        `Not tried: ${TRIAL_LIMITS.perDraftPerHour} trials an hour per draft is the most. Try again later.`,
+        `Not tried: ${TRIAL_LIMITS.perDraftPerHour} trials an hour per draft is the most. Try again in ${seconds(trialWait)} seconds.`,
       )
     const host = new URL(manifest.home).hostname
     const packageHash = bundleHash(files)
@@ -1349,15 +1383,21 @@ export class DraftAuthoring implements Authoring {
   }
 
   private checkLimit(client: string): void {
-    if (!take(this.checks, client, CHECKS_PER_CLIENT_PER_HOUR, this.deps.now()))
+    const wait = take(this.checks, client, CHECKS_PER_CLIENT_PER_HOUR, this.deps.now())
+    if (wait > 0)
       throw new AuthoringRefusal(
-        `Not checked: ${CHECKS_PER_CLIENT_PER_HOUR} checks an hour is the most. Try again later.`,
+        `Not checked: ${CHECKS_PER_CLIENT_PER_HOUR} checks an hour is the most, and you have used them. ` +
+          `Try again in ${seconds(wait)} seconds, when the oldest frees up. A check of a package that ` +
+          'hasn’t changed since the last one is answered again and doesn’t count.',
       )
   }
 
   private notifyLimit(client: string): void {
-    if (!take(this.notifies, client, NOTIFY_PER_CLIENT_PER_HOUR, this.deps.now()))
-      throw new AuthoringRefusal('Not done: too many changes this hour.')
+    const wait = take(this.notifies, client, NOTIFY_PER_CLIENT_PER_HOUR, this.deps.now())
+    if (wait > 0)
+      throw new AuthoringRefusal(
+        `Not done: too many changes this hour. Try again in ${seconds(wait)} seconds.`,
+      )
   }
 
   private async wrap<T>(run: () => Promise<T>): Promise<T> {
@@ -1401,16 +1441,24 @@ function view(snapshot: {
   }
 }
 
-/** Takes one from a client's hourly allowance; false if none is left. */
-function take(map: Map<string, number[]>, client: string, limit: number, now: number): boolean {
+/**
+ * Takes one from a client's hourly allowance: 0 if taken, else how many milliseconds until the
+ * oldest use in the hour frees a slot.
+ */
+function take(map: Map<string, number[]>, client: string, limit: number, now: number): number {
   const recent = (map.get(client) ?? []).filter((t) => now - t < 3600_000)
   if (recent.length >= limit) {
     map.set(client, recent)
-    return false
+    return Math.max(1, (recent[0] ?? now) + 3600_000 - now)
   }
   recent.push(now)
   map.set(client, recent)
-  return true
+  return 0
+}
+
+/** Whole seconds, at least one, for "Try again in N seconds". */
+function seconds(ms: number): number {
+  return Math.max(1, Math.ceil(ms / 1000))
 }
 
 /** Why a cloud agent gets no signed-in session or trial. */
@@ -1505,16 +1553,45 @@ export function trialProblem(result: TrialResult, signedIn = false): string | nu
         return 'The input doesn’t match the tool’s input schema.'
       if (o.stage === 'tool-output' && o.errorClass === 'invalid')
         return 'The output doesn’t match the tool’s output schema.'
+      if (o.url !== undefined)
+        return o.home === true
+          ? `Failed with ${o.stage}/${o.errorClass} loading home, ${o.url}, which every call opens before tool code runs.`
+          : `Failed with ${o.stage}/${o.errorClass} loading ${o.url}.`
       return `Failed with ${o.stage}/${o.errorClass}.`
   }
 }
 
 function sentenceOf(error: unknown): string {
   if (error instanceof Error && 'detail' in error && typeof error.detail === 'string')
-    return clip(error.detail, 300)
+    return clip(error.detail, 1200)
   return 'it could not be built.'
 }
 
 function clip(text: string, max = 120): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text
+}
+
+/**
+ * What the agent tells the person after a submit, in the titles the person will see: the Mac's
+ * Needs you item and review (which show the ref) and a paired phone's card.
+ */
+export function submitSentence(
+  manifest: Pick<AdapterManifest, 'id' | 'name' | 'version'>,
+  domain: string,
+  ref: string,
+  firstInstall: boolean,
+): string {
+  const mac = needsYouTitle({
+    kind: 'review',
+    adapterName: manifest.name,
+    version: manifest.version,
+    firstInstall,
+  })
+  const phone = firstInstall
+    ? `Install an adapter for ${domain}`
+    : `Update ${manifest.id} to ${manifest.version}`
+  return (
+    `Waiting for the person in Valet: “${mac}” in Needs you on their Mac, marked approval ${ref}, ` +
+    `or “${phone}” on their phone.`
+  )
 }

@@ -9,6 +9,9 @@ import {
   ERROR_CLASSES,
   type ErrorClass,
   GAVE_UP_RESULT,
+  type InputIssue,
+  inputIssue,
+  inputIssueSentence,
   LOCKED_DOWN_RESULT,
   missedTitle,
   NEEDS_USER_REASONS,
@@ -86,6 +89,10 @@ export function toolResult(
           true,
         )
       }
+      if (stage === 'tool-input' && errorClass === 'invalid' && outcome.issue !== undefined) {
+        const issue = inputIssue(outcome.issue)
+        if (issue !== undefined) return inputResult(issue, context)
+      }
       return failedResult(outcome.stage, outcome.errorClass, context)
     }
     case 'blocked': {
@@ -103,6 +110,15 @@ export function toolResult(
       if (!RETRYABLE.includes(outcome.errorClass))
         return failedResult(outcome.stage, outcome.errorClass, context)
       const { stage, errorClass } = safeCodes(outcome.stage, outcome.errorClass)
+      if (errorClass === 'busy' && outcome.waitingFor === 'login') {
+        // A login an earlier call started holds the site: nothing to wait in a queue for.
+        return textResult(
+          `Valet is still logging in to ${siteName(context)}, so this call was not started and nothing ` +
+            `was sent (stage ${stage}: busy). Call it again in ${retryAfterSeconds(outcome.retryAfterMs)} ` +
+            'seconds; if the login needs the person, that call will say so.',
+          true,
+        )
+      }
       if (errorClass === 'busy') {
         // Our own queue, not the site: the call gave up its turn and never started.
         return textResult(
@@ -179,6 +195,23 @@ export function failedResult(
       return textResult(sitePausedResult(context.adapterName ?? 'This site'), true)
   }
   return textResult(`The tool failed at stage ${safe.stage}: ${safe.errorClass}.${seeCall(context)}`, true)
+}
+
+/**
+ * A refusal of the call's input with where and why: a fixed sentence per reason, naming a path of
+ * plain identifiers and indexes and a numeric bound, nothing else (core's input-issue.ts).
+ */
+function inputResult(issue: InputIssue, context: ResultContext): CallToolResult {
+  return textResult(
+    `The tool refused this input (stage tool-input: invalid): ${inputIssueSentence(issue)}. ` +
+      `Correct it and call again.${seeCall(context)}`,
+    true,
+  )
+}
+
+/** The site's name as the person approved it with the adapter, or a plain stand-in. */
+function siteName(context: ResultContext): string {
+  return context.adapterName ?? 'the site'
 }
 
 /** " The person can see it in Valet, Activity, call 7F2A." when the call id is known. */

@@ -145,6 +145,8 @@ export const checkReportSchema = z.object({
   ),
   /** The permission lines the card would show, in Valet's words. */
   changes: z.array(z.object({ area: z.string(), risk: z.string(), text: z.string() })),
+  /** True when nothing changed since the last check: its answer again, not counted against the hour's checks. */
+  reused: z.boolean().optional(),
 })
 
 export const diffReportSchema = z.object({
@@ -662,7 +664,9 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
       'Runs Valet’s checks on your draft as it is now: the package rules and manifest, a build, names, a lint, ' +
       'the permission changes the person will see, and every case in test/*.json, each run in Valet’s sandbox. ' +
       'Every case must pass and every tool needs a passing case that checks a value of its output before you ' +
-      'can submit. Nothing is installed. Takes up to 45 seconds.',
+      'can submit. Nothing is installed. Takes up to 45 seconds. You have 20 checks an hour; checking a ' +
+      'package that hasn’t changed since the last check answers with that result again (reused: true) and ' +
+      'doesn’t count, so change something before checking again.',
     input: z.object({
       draftId: draftIdInput,
       tool: z

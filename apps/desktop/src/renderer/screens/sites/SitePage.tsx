@@ -218,12 +218,25 @@ function SiteBadge({ data }: { readonly data: SiteData }) {
   const { adapter, health, status } = data
   if (adapter.approval === 'rejected') return <Badge tone="danger">Turned down</Badge>
   if (adapter.approval === 'unapproved')
-    return <Badge tone="info">{isFirstReview(adapter) ? 'Not approved yet' : 'Update waiting'}</Badge>
+    return (
+      <Badge tone={adapter.approvedBefore === true ? 'warning' : 'info'}>
+        {adapter.approvedBefore === true
+          ? 'Approve again'
+          : isFirstReview(adapter)
+            ? 'Not approved yet'
+            : 'Update waiting'}
+      </Badge>
+    )
   if (isPaused(adapter)) return <Badge>Paused</Badge>
   if (status.fix === 'show-login') return <Badge tone="warning">Waiting for your login</Badge>
   if (status.fix === 'choose-setting')
     return <Badge tone="warning">Needs a {adapter.settingsNeeded[0]?.toLowerCase() ?? 'setting'}</Badge>
-  if (status.fix === 'login') return <Badge tone="warning">Needs a login</Badge>
+  if (status.fix === 'login')
+    return (
+      <Badge tone="warning">
+        {adapter.secrets.some((s) => !s.granted) ? 'Needs a login' : 'Needs SMS codes again'}
+      </Badge>
+    )
   if (health !== null && health.breaker === 'open')
     return (
       <Badge tone="warning">

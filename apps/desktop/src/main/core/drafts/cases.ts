@@ -29,6 +29,7 @@ import {
 import { type ExchangeResult, RunMeter, requestSize } from '@valet/egress'
 import {
   CallState,
+  failureDetail,
   GuardedHttp,
   GuardedToolPage,
   type HttpEgress,
@@ -345,12 +346,14 @@ export async function runCase(
   let outcome: { ok: true; value: unknown } | { ok: false; error: unknown } | 'timeout'
   try {
     outcome = await Promise.race([
+      // The failure's own words come back too: a case runs the agent's code on its own fixtures.
       runIsolated(
         raw ? (options.rawStart as ToolProcessFactory) : options.start,
         draft.script,
         ctx,
         c.tool,
         input.data,
+        { detail: true },
       ).then(
         (value) => ({ ok: true as const, value }),
         (error: unknown) => ({ ok: false as const, error }),
@@ -379,12 +382,18 @@ export async function runCase(
         expected.error.stage === 'tool-output' &&
         expected.error.errorClass === 'invalid'
         ? pass(file, c, used)
-        : fail(`The output doesn't match ${c.tool}'s output schema.`)
+        : fail(`The output doesn't match ${c.tool}'s output schema${issuesText(output.error.issues)}.`)
     }
     if (!('output' in expected))
       return fail(`Expected ${describeExpect(expected)}, but the tool returned output.`)
-    const mismatch = partialMismatch(expected.output, output.data, '$')
-    return mismatch === null ? pass(file, c, used) : fail(`Output differs at ${mismatch}.`)
+    const mismatch = outputMismatch(expected.output, output.data, '$')
+    return mismatch === null
+      ? pass(file, c, used)
+      : fail(
+          `Output differs at ${mismatch.at}: expected ${jsonText(mismatch.expected)}, got ${
+            mismatch.missing ? 'no such key' : jsonText(mismatch.actual)
+          }.`,
+        )
   }
   return compareError(outcome.error, expected, fail, file, c, used)
 }
@@ -398,19 +407,67 @@ function compareError(
   used: Set<string>,
 ): CaseResult {
   const got = describeError(error)
+  const why = failureWords(got, failureDetail(error), c.tool)
   if ('needsUser' in expected) {
     return got.kind === 'needs-user' && got.reason === expected.needsUser
       ? pass(file, c, used)
-      : fail(`Expected needs-user ${expected.needsUser}, got ${got.text}.`)
+      : fail(`Expected needs-user ${expected.needsUser}, got ${got.text}${why}`)
   }
   if ('error' in expected) {
     return got.kind === 'error' &&
       got.stage === expected.error.stage &&
       got.errorClass === expected.error.errorClass
       ? pass(file, c, used)
-      : fail(`Expected ${expected.error.stage}/${expected.error.errorClass}, got ${got.text}.`)
+      : fail(`Expected ${expected.error.stage}/${expected.error.errorClass}, got ${got.text}${why}`)
   }
-  return fail(`The tool failed: ${got.text}.`)
+  return fail(`The tool failed: ${got.text}${why}`)
+}
+
+/**
+ * What the agent's own code said about its failure, ending the sentence: a plain error's message
+ * (and how to fail on purpose instead), or where the output broke its schema.
+ */
+function failureWords(got: Described, detail: string | null, tool: string): string {
+  if (got.kind === 'other')
+    return detail === null
+      ? '. The tool threw something that isn’t a ValetError; throw new ValetError(stage, errorClass) to fail on purpose.'
+      : `: the tool threw ${clipDetail(detail)}. Throw new ValetError(stage, errorClass) to fail on purpose.`
+  if (detail !== null && got.kind === 'error' && got.stage === 'tool-output' && got.errorClass === 'invalid')
+    return `: the output doesn't match ${tool}'s output schema at ${clipDetail(detail)}.`
+  if (detail !== null && got.kind === 'error' && got.stage === 'tool-input' && got.errorClass === 'invalid')
+    return `: the input doesn't match ${tool}'s input schema at ${clipDetail(detail)}.`
+  return '.'
+}
+
+/** The first few places a value broke a schema, as " at <path>: <message>". */
+function issuesText(
+  issues: readonly { readonly path: readonly PropertyKey[]; readonly message: string }[],
+): string {
+  if (issues.length === 0) return ''
+  const shown = issues.slice(0, 3).map((issue) => `${pathText(issue.path)}: ${issue.message}`)
+  return ` at ${clipDetail(shown.join('; '))}`
+}
+
+function pathText(path: readonly PropertyKey[]): string {
+  let out = ''
+  for (const part of path)
+    out += typeof part === 'number' ? `[${part}]` : `${out === '' ? '' : '.'}${String(part)}`
+  return out === '' ? '(top level)' : out
+}
+
+/** A value as clipped JSON, for a mismatch. */
+function jsonText(value: unknown): string {
+  let text: string
+  try {
+    text = value === undefined ? 'undefined' : (JSON.stringify(value) ?? String(value))
+  } catch {
+    text = String(value)
+  }
+  return text.length > 200 ? `${text.slice(0, 199)}…` : text
+}
+
+function clipDetail(text: string): string {
+  return text.length > 300 ? `${text.slice(0, 299)}…` : text
 }
 
 function pass(file: string, c: DraftCase, used: Set<string>): CaseResult {
@@ -475,24 +532,39 @@ function sessionResult(session: DraftCase['session']): EnsureResult {
  * element and of the same length, everything else by equality. Null if it matches.
  */
 export function partialMismatch(expected: unknown, actual: unknown, at: string): string | null {
+  return outputMismatch(expected, actual, at)?.at ?? null
+}
+
+export interface Mismatch {
+  readonly at: string
+  readonly expected: unknown
+  /** What the tool produced there; `missing` when the key isn't there at all. */
+  readonly actual: unknown
+  readonly missing: boolean
+}
+
+/** partialMismatch, with what was expected and what the tool produced at that place. */
+export function outputMismatch(expected: unknown, actual: unknown, at: string): Mismatch | null {
+  const here = { at, expected, actual, missing: false }
   if (Array.isArray(expected)) {
-    if (!Array.isArray(actual) || actual.length !== expected.length) return at
+    if (!Array.isArray(actual) || actual.length !== expected.length) return here
     for (let i = 0; i < expected.length; i++) {
-      const m = partialMismatch(expected[i], actual[i], `${at}[${i}]`)
+      const m = outputMismatch(expected[i], actual[i], `${at}[${i}]`)
       if (m !== null) return m
     }
     return null
   }
   if (expected !== null && typeof expected === 'object') {
-    if (actual === null || typeof actual !== 'object' || Array.isArray(actual)) return at
+    if (actual === null || typeof actual !== 'object' || Array.isArray(actual)) return here
     for (const [key, value] of Object.entries(expected)) {
-      if (!Object.hasOwn(actual, key)) return `${at}.${key}`
-      const m = partialMismatch(value, (actual as Record<string, unknown>)[key], `${at}.${key}`)
+      if (!Object.hasOwn(actual, key))
+        return { at: `${at}.${key}`, expected: value, actual: undefined, missing: true }
+      const m = outputMismatch(value, (actual as Record<string, unknown>)[key], `${at}.${key}`)
       if (m !== null) return m
     }
     return null
   }
-  return Object.is(expected, actual) ? null : at
+  return Object.is(expected, actual) ? null : here
 }
 
 /** The site is always open and never waits: pacing is for real sites, and a case touches none. */

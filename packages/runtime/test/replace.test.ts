@@ -127,10 +127,12 @@ describe('the tool process checks input first', () => {
       tools: { refined: loose },
     })
     const w = fixture(definition, {}, { script, start: processes.start })
+    // A refinement that names no reason is the tool's own check, and says no more than that.
     expect(await w.host.call({ ...call, tool: 'refined', input: { n: -1 } })).toEqual({
       status: 'failed',
       stage: 'tool-input',
       errorClass: 'invalid',
+      issue: { path: [], reason: 'refused' },
     })
     expect(processes.channels).toHaveLength(1)
     expect(await w.host.call({ ...call, callId: 'call-2', tool: 'refined', input: { n: 2 } })).toMatchObject({

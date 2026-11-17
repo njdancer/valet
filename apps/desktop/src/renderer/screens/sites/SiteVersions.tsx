@@ -20,17 +20,12 @@ import {
   TR,
 } from '@valet/ui'
 import { useState } from 'react'
-import type { PackageOrigin, PendingReview, RollbackPreview } from '../../../shared/api'
+import type { PackageOrigin, RollbackPreview } from '../../../shared/api'
 import { useAction, useApi, useLoad } from '../../lib/api-context'
 import { formatClock, formatDay } from '../../lib/format'
 import { href } from '../../lib/router'
+import { sourceWording } from './review/words'
 import type { SiteData } from './SitePage'
-
-const SOURCE: Readonly<Record<PendingReview['source'], string>> = {
-  import: 'Imported from a file',
-  ide: 'Your IDE',
-  'authoring-agent': 'Authoring agent (IDE)',
-}
 
 export function SiteVersions({ data }: { readonly data: SiteData }) {
   const { adapter, review } = data
@@ -79,7 +74,7 @@ export function SiteVersions({ data }: { readonly data: SiteData }) {
               <TD className="text-fg-muted">
                 {review === null
                   ? '—'
-                  : `${SOURCE[review.source]}, ${formatDay(review.submittedAt)} ${formatClock(review.submittedAt)}`}
+                  : `${sourceWording(review)}, ${formatDay(review.submittedAt)} ${formatClock(review.submittedAt)}`}
               </TD>
               <TD className="text-fg-subtle">not yet</TD>
               <TD className="text-fg-subtle">

@@ -33,7 +33,7 @@ export function OnePasswordAccountSetting({
       >
         <Inline gap={2} wrap={false}>
           <Input
-            placeholder="my.1password.com"
+            placeholder="e.g. Smith Family"
             value={draft}
             className="flex-1"
             onChange={(e) => setDraft(e.target.value)}

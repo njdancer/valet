@@ -171,6 +171,13 @@ holds on both Mac and iPhone.
   id, every phone removed to pair again, and a restart that signs a new relay binding.
 - A device's id is the first 128 bits of the SHA-256 of its approval key (`keyId`). The Mac's id
   (`macId`) is its own device id.
+- **When the Mac's approval key changes** (lost and made again, or a data folder moved to another
+  Mac), its id changes, and everything the old key signed stops counting (`wrong-mac`): site
+  approvals, grants, settings turned on, remote access, paired phones. That stays. The Mac only
+  explains it: evidence naming another Mac id is read as signed by this Mac's old keys
+  (`keys-changed.ts`), the diagnostics log says `approval-keys-changed`, and one Needs you item lists
+  each site to approve and each login to grant again until they are done or it is dismissed. Grants
+  still in `grants.json` show as given before and no longer counting, never as given.
 - The Mac's own record is self-signed; every phone's record is signed by the Mac's approval key,
   so making one needs Touch ID at the Mac.
 - On the Mac, the keys live in the Swift helper (`swift-bridge`), which signs on request and shows

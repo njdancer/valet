@@ -94,8 +94,8 @@ describe('a raw adapter’s tool call in the Node runtime', () => {
     const r = runtime()
     const described = await describeIsolated(r.start, script)
     expect(Object.keys(described)).toContain('echo')
-    expect(await checkInputIsolated(r.start, script, 'echo', { a: 1 })).toBe(true)
-    expect(await checkInputIsolated(r.start, script, 'echo', 'not an object')).toBe(false)
+    expect(await checkInputIsolated(r.start, script, 'echo', { a: 1 })).toEqual({ ok: true })
+    expect((await checkInputIsolated(r.start, script, 'echo', 'not an object')).ok).toBe(false)
   })
 
   it('keeps nothing between calls', async () => {

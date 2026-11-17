@@ -10,6 +10,8 @@ import { CASE_FILE, type CaseRun, readCases } from './cases'
 /** Words a tool title may not use: they'd tell the person what to think of it. */
 const SAFETY_WORDS = /\b(safe|safely|harmless|read[- ]only|verified|approved|trusted|official|secure)\b/i
 export const MAX_TITLE = 40
+/** The starter template's placeholder description (template.ts), which the lint asks to replace. */
+export const STARTER_DESCRIPTION = 'Replace this with what the adapter does.'
 
 export interface Finding {
   readonly level: 'error' | 'caution'
@@ -95,6 +97,12 @@ const ABSOLUTE_URL = /['"`](https?:)?\/\/([a-z0-9.-]+)(\/[^'"`\s$?#]*)?/gi
 /** Deterministic, heuristic lint. Findings are cautions for the card, never passes or blocks. */
 export function lint(manifest: AdapterManifest, files: PackageFiles): Finding[] {
   const out: Finding[] = []
+  if (manifest.description.includes(STARTER_DESCRIPTION))
+    out.push({
+      level: 'caution',
+      check: 'lint',
+      text: 'manifest.json’s description is still the starter’s placeholder. Say what the adapter does: the person reads it on the approval card.',
+    })
   const home = new URL(manifest.home).hostname
   const domain = siteDomain(home)
   const sources = Object.entries(files).filter(([path]) => path.startsWith('src/'))
@@ -116,16 +124,29 @@ export function lint(manifest: AdapterManifest, files: PackageFiles): Finding[] 
         continue
       }
       // On an egress host: a fetch there also needs a declared request whose path can start so.
+      // A page.goto needs one only under an API root (the browser holds those to the surface).
       const prefix = match[3] ?? ''
-      const key = `${host}${prefix}`
+      const before = text.slice(Math.max(0, (match.index ?? 0) - 40), match.index ?? 0)
+      const goto = /page\.goto\s*\(\s*$/.test(before)
+      const key = `${goto ? 'goto ' : ''}${host}${prefix}`
       if (urlsSeen.has(key)) continue
       urlsSeen.add(key)
       if (host === home && prefix.replace(/\/+$/, '') === '') continue
-      if (!manifest.requests.some((r) => declarationOnHost(r, host) && pathCanStartWith(r.path, prefix)))
+      const onHost = manifest.requests.filter((r) => declarationOnHost(r, host))
+      if (onHost.some((r) => pathCanStartWith(r.path, prefix))) continue
+      const where = `https://${clipText(`${host}${prefix}`, 120)}`
+      const declare = `Declare its path in requests (with "host": "${host}" if only that host serves it).`
+      if (!goto)
         out.push({
           level: 'caution',
           check: 'lint',
-          text: `${path} names https://${clipText(key, 120)}, but no declared request reaches it: page.fetch there would be refused. Declare its path in requests (with "host": "${host}" if only that host serves it).`,
+          text: `${path} names ${where}, but no declared request reaches it: page.fetch there would be refused (page.goto to a page there is allowed undeclared). ${declare}`,
+        })
+      else if (underRoot(prefix, onHost))
+        out.push({
+          level: 'caution',
+          check: 'lint',
+          text: `${path} opens ${where} with page.goto, but that path is under the API root of a declared request and no declaration reaches it, so the browser would refuse the load. ${declare}`,
         })
     }
     if (/page\.(fetch|goto)\s*\(\s*`[^`]*\$\{[^}]*\binput\b/.test(text) && /https?:\/\/\$\{/.test(text))
@@ -212,6 +233,28 @@ export function pathCanStartWith(pattern: string, prefix: string): boolean {
       return false
   }
   return true
+}
+
+/**
+ * Whether a literal path falls under the API root of one of `declarations` (its segments up to and
+ * including the first literal one), where the browser holds even a page load to the declarations.
+ * The lint's rough copy of browser-electron's apiRoots and underApiRoot.
+ */
+function underRoot(prefix: string, declarations: AdapterManifest['requests']): boolean {
+  const got = prefix
+    .split('/')
+    .filter((x) => x.length > 0)
+    .map((x) => x.toLowerCase())
+  return declarations.some((d) => {
+    const segments = (d.path.split('?')[0] ?? '')
+      .split('/')
+      .filter((x) => x.length > 0)
+      .map((x) => x.toLowerCase())
+    const literal = segments.findIndex((x) => !x.startsWith(':') && x !== '*')
+    const root = literal === -1 ? segments : segments.slice(0, literal + 1)
+    if (root.length > got.length) return false
+    return root.every((want, i) => want.startsWith(':') || want === '*' || want === got[i])
+  })
 }
 
 function clipText(text: string, max: number): string {

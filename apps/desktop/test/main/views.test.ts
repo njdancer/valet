@@ -142,7 +142,69 @@ describe('reviews', () => {
       version: '1.0.0',
       addsPermissions: true,
       firstInstall: true,
+      keepsServing: false,
+      requestedBy: null,
     })
+    // A bundle that came with Valet says so, dated by when this run found it; it logs in.
+    expect(review).toMatchObject({ source: 'builtin', submittedAt: '2026-11-07T00:00:00.000Z', logsIn: true })
+  })
+
+  it('dates and attributes an agent’s draft by its request, with its note and ref', () => {
+    const draft = { ...adapter, source: 'draft' as const }
+    const request = {
+      ref: '5AB4',
+      client: 'Claude Code',
+      remote: false,
+      note: 'Looks words up in the dictionary.',
+      checks: ['Names: pass', 'Live trial: not run on this version'],
+      agentTests: { passed: 3, failed: 0 },
+      draftId: 'dr-abcdefghij',
+      expiresAt: '2026-11-08T00:00:00.000Z',
+    }
+    const review = pendingReview({ ...state, adapter: draft, approved: false }, '2026-11-07T09:00:00.000Z', {
+      request,
+      requestedAt: '2026-11-07T10:30:00.000Z',
+    })
+    expect(review).toMatchObject({ source: 'agent', submittedAt: '2026-11-07T10:30:00.000Z', request })
+    expect(reviewItem(review as NonNullable<typeof review>).requestedBy).toEqual({
+      client: 'Claude Code',
+      ref: '5AB4',
+    })
+    // A draft whose request Valet no longer holds is still the agent's, never "imported".
+    expect(pendingReview({ ...state, adapter: draft, approved: false }, 'now')?.source).toBe('agent')
+    expect(
+      pendingReview({ ...state, adapter: { ...adapter, source: 'folder' }, approved: false }, 'now')?.source,
+    ).toBe('import')
+  })
+
+  it('says a site with no login logs in nowhere', () => {
+    const { secrets: _secrets, auth: _auth, ...rest } = SHOP
+    const plain = builtinAdapter(
+      shopDefinition({
+        ...rest,
+        navigation: ['https://www.shop.test'],
+        session: { cookieDomains: [], probe: { kind: 'none' } },
+      }),
+      SHOP_FILES,
+    )
+    const review = pendingReview({ ...state, adapter: plain, approved: false, grants: [] }, 'now')
+    expect(review?.logsIn).toBe(false)
+    expect(review?.diff.secrets.added).toEqual([])
+  })
+
+  it('an update staged beside the approved version keeps it serving; any other turns its tools off', () => {
+    const previous = {
+      hash: 'b'.repeat(64),
+      version: '0.9.0',
+      approvedAt: '2026-11-06T00:00:00.000Z',
+      manifest: adapter.definition.manifest,
+      files: adapter.files,
+    }
+    const waiting = { ...state, approved: false, previous }
+    const staged = pendingReview(waiting, 'now', { staged: true })
+    expect(reviewItem(staged as NonNullable<typeof staged>).keepsServing).toBe(true)
+    const off = pendingReview(waiting, 'now')
+    expect(reviewItem(off as NonNullable<typeof off>).keepsServing).toBe(false)
   })
 
   it('reviews an update against the last approved bundle, and shows it as pending', () => {
