@@ -2,7 +2,11 @@ import XCTest
 
 /// The journeys (docs/ux/agent-run/journeys.md) on the simulator, against the fake Mac and relay in
 /// the ValetPhoneDev build. Face ID is the fake's: it succeeds unless `-valet-faceid-fails`.
-final class JourneyTests: XCTestCase {
+///
+/// The tests are split into several classes so CI can run them on parallel simulator clones: Xcode
+/// hands out whole classes to its test workers. This base class holds the helpers and no tests,
+/// since a subclass would run any test it inherited.
+class JourneyTestCase: XCTestCase {
   var app: XCUIApplication!
 
   override func setUp() {
@@ -38,6 +42,9 @@ final class JourneyTests: XCTestCase {
     Thread.sleep(forTimeInterval: 1.2)
   }
 
+}
+
+final class PairingJourneyTests: JourneyTestCase {
   // MARK: J1
 
   func testJ1PairsWhenTheCodesMatch() {
@@ -58,6 +65,9 @@ final class JourneyTests: XCTestCase {
     XCTAssertTrue(waitFor("pair.failed").label.contains("Nothing was paired"))
   }
 
+}
+
+final class InstallJourneyTests: JourneyTestCase {
   // MARK: J4
 
   func testJ4ApprovesAnInstall() {
@@ -90,6 +100,9 @@ final class JourneyTests: XCTestCase {
     XCTAssertTrue(waitFor("card.state").label.contains("Declined"))
   }
 
+}
+
+final class ConnectJourneyTests: JourneyTestCase {
   func testJ4ConnectNeedsTheCodeTheAgentShows() {
     launch("cards")
     openCard("4C55")
@@ -111,6 +124,9 @@ final class JourneyTests: XCTestCase {
     XCTAssertFalse(element("card.approve").exists)
   }
 
+}
+
+final class SafetyJourneyTests: JourneyTestCase {
   // MARK: J7
 
   func testJ7SeesTheAgentsWordsAsAClaimAndDeclines() {
@@ -145,6 +161,9 @@ final class JourneyTests: XCTestCase {
     XCTAssertTrue(waitFor("card.state").label.contains("Approved"))
   }
 
+}
+
+final class AccessibilityTests: JourneyTestCase {
   // MARK: Every screen, for accessibility
 
   func testAccessibilityAuditOnEveryTab() throws {
@@ -211,6 +230,11 @@ final class JourneyTests: XCTestCase {
     add(shot)
   }
 
+}
+
+/// Screenshots only, no assertions beyond the journeys'. CI takes them in the nightly full run and on
+/// a pull request labelled ios-screens (.github/workflows/ios-screens.yml), not on every push.
+final class ScreensForReviewTests: JourneyTestCase {
   // MARK: Screens for review (persona QA reads these from the CI artifact)
 
   func shot(_ name: String) {
