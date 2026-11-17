@@ -50,7 +50,7 @@ describe('runtime: http', () => {
 
   it('refuses the parts of a browser adapter it has no use for', () => {
     const withHome = copy()
-    withHome.home = 'https://caldav.example.com/'
+    withHome.home = 'https://news.example.org/'
     expect(issues(withHome)).toContain('an http adapter has no home: it opens no pages')
     const withNav = copy()
     withNav.navigation = ['https://caldav.example.com']
@@ -162,7 +162,7 @@ describe('private hosts', () => {
 
   it('parses, with home set to the first private host', () => {
     const manifest = parseManifest(withPrivate())
-    expect(manifest.home).toBe('https://192.168.1.20/')
+    expect(manifest.home).toBe('http://192.168.1.20:8123/')
     expect(manifest.privateHosts).toHaveLength(2)
   })
 
@@ -270,9 +270,60 @@ describe('runtime: browser', () => {
     )
   })
 
+  it('has an https home', () => {
+    const input = browser()
+    input.home = 'http://www.example.com/'
+    expect(issues(input)).toContain('home must be https')
+  })
+
   it.each(['protocol', 'raw'])('refuses %s until it is built', (runtime) => {
     const input = browser()
     input.runtime = runtime as 'raw'
     expect(issues(input)).toContain(`runtime ${runtime} is not available yet`)
+  })
+})
+
+describe('endpoints', () => {
+  it('belongs to raw adapters only', () => {
+    const input = copy()
+    input.endpoints = ['imap.example.com:993']
+    expect(issues(input)).toContain('endpoints is only for raw adapters')
+  })
+
+  it.each([
+    'IMAP.example.com:993',
+    'imap.example.com',
+    '10.0.0.5:22',
+    '*.example.com:443',
+    'imap.example.com:0',
+  ])('refuses %s', (endpoint) => {
+    const input = copy()
+    input.endpoints = [endpoint]
+    expect(issues(input)).toContain(
+      'an endpoint is host:port, in lower case, with a host name (private addresses go in privateHosts)',
+    )
+  })
+})
+
+describe('a parsed http manifest', () => {
+  it('parses again unchanged', () => {
+    const once = parseManifest(copy())
+    expect(parseManifest(structuredClone(once))).toEqual(once)
+  })
+
+  it('still refuses a home that is not its first endpoint', () => {
+    const once = structuredClone(parseManifest(copy())) as unknown as Record<string, unknown>
+    once['home'] = 'https://news.example.org/'
+    expect(issues(once)).toContain('an http adapter has no home: it opens no pages')
+  })
+
+  it('takes a private host’s scheme and port for home', () => {
+    const input = copy()
+    input.egress = []
+    input.privateHosts = [{ address: '192.168.1.20', port: 8123, scheme: 'http' }]
+    input.requests = [{ method: 'GET', host: '192.168.1.20:8123', path: '/api/states', purpose: 'read' }]
+    const once = parseManifest(input)
+    expect(once.home).toBe('http://192.168.1.20:8123/')
+    expect(parseManifest(structuredClone(once))).toEqual(once)
   })
 })

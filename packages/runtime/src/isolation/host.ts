@@ -9,7 +9,7 @@
 // MAX_IN_FLIGHT may wait at once. Anything else ends the run as `tool-run/invalid` and kills the
 // process. A process that exits before saying it is done ends the run as `tool-run/internal`.
 
-import { type ToolContext, ValetError } from '@valet/core'
+import { type HttpSocket, MAX_SOCKETS_PER_CALL, type ToolContext, ValetError } from '@valet/core'
 import { dispatchLocal } from './local-dispatch'
 import {
   type Capability,
@@ -63,6 +63,7 @@ export function runIsolated(
     }
     let settled = false
     const inFlight = new Set<number>()
+    const sockets = new SocketTable()
     const finish = (outcome: { ok: true; value: unknown } | { ok: false; error: unknown }): void => {
       if (settled) return
       settled = true
@@ -90,7 +91,7 @@ export function runIsolated(
 
     const answer = async (id: number, capability: Capability, args: readonly unknown[]): Promise<void> => {
       try {
-        const value = await dispatch(ctx, capability, args)
+        const value = await dispatch(ctx, capability, args, sockets)
         // What a capability returns is the runtime's, but the page's fetch can return anything the
         // site sent; it crosses as JSON or not at all.
         const reply = value === undefined ? null : value
@@ -130,8 +131,14 @@ export function runIsolated(
 }
 
 /** Calls the guarded capability. Its own checks (types, the request surface, C4) apply as in process. */
-function dispatch(ctx: ToolContext, capability: Capability, args: readonly unknown[]): Promise<unknown> {
+function dispatch(
+  ctx: ToolContext,
+  capability: Capability,
+  args: readonly unknown[],
+  sockets: SocketTable,
+): Promise<unknown> {
   if (capability.startsWith('local.')) return dispatchLocal(ctx.local, capability, args)
+  if (capability.startsWith('http.')) return dispatchHttp(ctx, capability, args, sockets)
   // Strings where the capability takes a selector, a URL or source text; the guards check the rest.
   const takesString = capability.startsWith('page.')
   if (takesString && typeof args[0] !== 'string') return Promise.reject(new ValetError('tool-run', 'invalid'))
@@ -158,6 +165,79 @@ function dispatch(ctx: ToolContext, capability: Capability, args: readonly unkno
       return ctx.confirm(a)
     default:
       return Promise.reject(new ValetError('tool-run', 'invalid'))
+  }
+}
+
+/**
+ * The sockets one isolated run opened, by the small ids tool code holds for them. An id is never
+ * reused within the run, and one the run didn't get from open is refused.
+ */
+class SocketTable {
+  private next = 1
+  private readonly open = new Map<number, HttpSocket>()
+  /** Opens under way: counted before their first await, so concurrent opens can't pass the cap. */
+  opening = 0
+
+  add(socket: HttpSocket): number {
+    const id = this.next++
+    this.open.set(id, socket)
+    return id
+  }
+
+  get(id: unknown): HttpSocket {
+    const socket = typeof id === 'number' ? this.open.get(id) : undefined
+    if (socket === undefined) throw new ValetError('tool-run', 'invalid')
+    return socket
+  }
+
+  delete(id: number): void {
+    this.open.delete(id)
+  }
+
+  get size(): number {
+    return this.open.size + this.opening
+  }
+}
+
+async function dispatchHttp(
+  ctx: ToolContext,
+  capability: Capability,
+  args: readonly unknown[],
+  sockets: SocketTable,
+): Promise<unknown> {
+  const http = ctx.http
+  if (http === undefined) throw new ValetError('tool-run', 'not-granted')
+  const [a, b, c] = args as [never, never, never]
+  switch (capability) {
+    case 'http.fetch':
+      if (typeof args[0] !== 'string') throw new ValetError('tool-run', 'invalid')
+      return http.fetch(a, b)
+    case 'http.ws.open': {
+      if (typeof args[0] !== 'string') throw new ValetError('tool-run', 'invalid')
+      // The guard counts what is open; this only keeps the table from growing past it.
+      if (sockets.size >= MAX_SOCKETS_PER_CALL) throw new ValetError('request-surface', 'request-ceiling')
+      sockets.opening++
+      let socket: HttpSocket
+      try {
+        socket = await http.websocket(a, b)
+      } finally {
+        sockets.opening--
+      }
+      return { id: sockets.add(socket) }
+    }
+    case 'http.ws.send':
+      return sockets.get(args[0]).send(b, c)
+    case 'http.ws.receive': {
+      const message = await sockets.get(args[0]).receive(b)
+      if (message?.kind === 'closed') sockets.delete(args[0] as number)
+      return message
+    }
+    case 'http.ws.close':
+      await sockets.get(args[0]).close()
+      sockets.delete(args[0] as number)
+      return null
+    default:
+      throw new ValetError('tool-run', 'invalid')
   }
 }
 

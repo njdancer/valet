@@ -16,6 +16,7 @@ import {
 import {
   type AuditRecord,
   type AuditSink,
+  AVAILABLE_RUNTIMES,
   type CheckedPackage,
   checkPackage,
   PackageError,
@@ -123,9 +124,9 @@ export class PackageManager {
     const sandbox = loaded.manifest.sandbox
     if (sandbox?.mode === 'sandboxed' && sandbox.exceptions.some((e) => e.kind === 'app'))
       throw new InstallError('Apple Events exceptions aren’t supported yet.')
-    // Until the app wires the egress broker in, only browser adapters can run here.
-    if (runtimeOf(loaded.manifest) !== 'browser')
-      throw new InstallError('This version of Valet can’t run adapters that aren’t browser adapters yet.')
+    // The manifest schema refuses the kinds not built yet; this is a second line for those.
+    if (!AVAILABLE_RUNTIMES.includes(runtimeOf(loaded.manifest)))
+      throw new InstallError('This version of Valet can’t run this kind of adapter yet.')
     return { loaded, source, adapter: toInstalled(loaded, source) }
   }
 

@@ -110,6 +110,9 @@ importers:
       '@valet/credentials':
         specifier: workspace:*
         version: link:../../packages/credentials
+      '@valet/egress':
+        specifier: workspace:*
+        version: link:../../packages/egress
       '@valet/mcp-server':
         specifier: workspace:*
         version: link:../../packages/mcp-server
@@ -165,6 +168,9 @@ importers:
       '@types/react-dom':
         specifier: ^19.3.0
         version: 19.3.0(@types/react@19.3.0)
+      '@valet/fake-http-api':
+        specifier: workspace:*
+        version: link:../../fakes/http-api
       '@valet/fake-onepassword':
         specifier: workspace:*
         version: link:../../fakes/onepassword
@@ -238,6 +244,19 @@ importers:
       wrangler:
         specifier: ^4.158.0
         version: 4.158.0(@cloudflare/workers-types@5.20261109.1)(@types/node@24.19.2)
+
+  fakes/http-api:
+    dependencies:
+      '@valet/fake-woolworths-site':
+        specifier: workspace:*
+        version: link:../woolworths-site
+      ws:
+        specifier: 8.21.0
+        version: 8.21.0
+    devDependencies:
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.2
 
   fakes/onepassword: {}
 
@@ -316,6 +335,25 @@ importers:
         specifier: workspace:*
         version: link:../../fakes/onepassword
 
+  packages/egress:
+    dependencies:
+      '@valet/core':
+        specifier: workspace:*
+        version: link:../core
+      ws:
+        specifier: 8.21.0
+        version: 8.21.0
+    devDependencies:
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.2
+      '@valet/fake-http-api':
+        specifier: workspace:*
+        version: link:../../fakes/http-api
+      '@valet/fake-woolworths-site':
+        specifier: workspace:*
+        version: link:../../fakes/woolworths-site
+
   packages/mcp-server:
     dependencies:
       '@modelcontextprotocol/sdk':
@@ -365,6 +403,9 @@ importers:
       '@valet/core':
         specifier: workspace:*
         version: link:../core
+      '@valet/egress':
+        specifier: workspace:*
+        version: link:../egress
       zod:
         specifier: ^4.6.7
         version: 4.6.7
@@ -372,6 +413,9 @@ importers:
       '@valet/adapter-woolworths':
         specifier: workspace:*
         version: link:../../adapters/woolworths
+      '@valet/fake-http-api':
+        specifier: workspace:*
+        version: link:../../fakes/http-api
       '@valet/fake-woolworths-site':
         specifier: workspace:*
         version: link:../../fakes/woolworths-site
@@ -2429,6 +2473,9 @@ packages:
 
   '@types/semver@7.8.0':
     resolution: {integrity: sha512-1mAINjtQCXXeLkJ9ehXkwOcBpqtLxiVtKhpUf83DdRNdQKV0iXZpaHYqRr7nj+wvxuJzoAmAwXI+sCNMv1CzLQ==}
+
+  '@types/ws@8.18.2':
+    resolution: {integrity: sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==}
 
   '@typescript/typescript-aix-ppc64@7.0.2':
     resolution: {integrity: sha512-MTKKkWB7p/0E9xi1d1tHtZ5PiLkGEMIq88pK2CubZjOsLtYTLqhgIgi6zepFa+9GHZ6h05NMCkQxGKiPXMxXtQ==}
@@ -6370,6 +6417,10 @@ snapshots:
       '@types/node': 24.19.2
 
   '@types/semver@7.8.0': {}
+
+  '@types/ws@8.18.2':
+    dependencies:
+      '@types/node': 24.19.2
 
   '@typescript/typescript-aix-ppc64@7.0.2':
     optional: true

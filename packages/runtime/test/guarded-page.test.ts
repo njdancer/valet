@@ -92,6 +92,19 @@ describe('request surface', () => {
     expect(page.toolFetches()).toEqual([])
   })
 
+  it.each(['X-Original-URL', 'x-rewrite-url', 'X-Forwarded-Host', 'Forwarded'])(
+    'blocks %s, which a server may route by over the request line',
+    async (name) => {
+      const { host, page } = fixture(
+        adapterRunning(async (ctx) =>
+          ctx.page.fetch('/api/trolley', { headers: { [name]: '/api/checkout' } }),
+        ),
+      )
+      expect(await host.call(call)).toMatchObject({ errorClass: 'undeclared-request' })
+      expect(page.toolFetches()).toEqual([])
+    },
+  )
+
   it('checks the headers it sends: a getter cannot show the check one thing and the driver another', async () => {
     let reads = 0
     const init = {
