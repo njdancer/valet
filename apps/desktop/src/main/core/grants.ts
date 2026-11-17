@@ -12,6 +12,11 @@
 
 import {
   type AdapterManifest,
+  type CredentialDeclaration,
+  type CredentialGrant,
+  canonicalJson,
+  credentialsOf,
+  credentialTargets,
   type Grant,
   isBareOrigin,
   MESSAGES_SECRET,
@@ -182,4 +187,39 @@ export function carriesOver(grant: Grant, before: AdapterManifest, after: Adapte
   if (!within(now.fields, was.fields) || !within(now.origins, was.origins)) return false
   if (grant.origins.length === 0 || !within(grant.origins, now.origins)) return false
   return !diff.secretFills.added.some((f) => f.secret === grant.secret)
+}
+
+/**
+ * Whether a credential grant made for `before` can be kept by the update to `after` without asking
+ * again (secrets v2, same rule as carriesOver): the credential is still declared, with the same
+ * kind, custody and use (protocol, or header name and format), its targets are the same or fewer,
+ * and every target the grant names is still among them. Anything else is a widening.
+ */
+export function credentialCarriesOver(
+  grant: CredentialGrant,
+  before: AdapterManifest,
+  after: AdapterManifest,
+): boolean {
+  if (grant.adapterId !== before.id || grant.adapterId !== after.id) return false
+  const was = credentialsOf(before)
+  const now = credentialsOf(after)
+  if (!Object.hasOwn(was, grant.credential) || !Object.hasOwn(now, grant.credential)) return false
+  const a = was[grant.credential]
+  const b = now[grant.credential]
+  if (a === undefined || b === undefined) return false
+  if (a.kind !== b.kind || a.custody !== b.custody || grant.kind !== b.kind || grant.custody !== b.custody)
+    return false
+  if (canonicalJson(withoutTargets(a)) !== canonicalJson(withoutTargets(b))) return false
+  const prev = credentialTargets(a)
+  const next = credentialTargets(b)
+  if (!next.every((t) => prev.includes(t))) return false
+  return grant.targets.length > 0 && grant.targets.every((t) => next.includes(t))
+}
+
+/** The declaration's use with its targets taken out: what must not change for a grant to carry. */
+function withoutTargets(credential: CredentialDeclaration): unknown {
+  const { use } = credential
+  if ('protocol' in use) return { protocol: use.protocol }
+  if ('header' in use) return { header: use.header }
+  return { entrusted: true }
 }

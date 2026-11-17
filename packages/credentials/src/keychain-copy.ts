@@ -8,10 +8,10 @@
 // grant's: the grant says which item was approved, and the copy is only where its value is kept.
 // One Keychain item per field: service COPY_SERVICE, account `<itemRef>#<field>`.
 //
-// The copy holds username and password. A TOTP secret isn't copied yet (Woolworths sends codes by
+// The copy holds username, password, token and SSH key (a credential's fields). A TOTP secret isn't copied yet (Woolworths sends codes by
 // SMS, D4), so `otp` is field-missing.
 
-import { CredentialError, type CredentialProvider, type SecretField, type SecretValue } from '@valet/core'
+import { CredentialError, type CredentialProvider, type ItemField, type SecretValue } from '@valet/core'
 import { parseItemRef } from './item-ref'
 import type { KeychainStore } from './keychain-helper'
 
@@ -19,7 +19,7 @@ import type { KeychainStore } from './keychain-helper'
 export const COPY_SERVICE = 'valet.copy'
 
 /** The fields a copy can hold. */
-export const COPYABLE_FIELDS: readonly SecretField[] = ['username', 'password']
+export const COPYABLE_FIELDS: readonly ItemField[] = ['username', 'password', 'token', 'ssh-key']
 
 /** Where a copy came from. Not secret: it is the Keychain item's comment. */
 export interface CopySource {
@@ -27,7 +27,7 @@ export interface CopySource {
   readonly account: string
   readonly vaultId: string
   readonly itemId: string
-  readonly field: SecretField
+  readonly field: ItemField
   /** The source item's updatedAt when it was copied, as an ISO instant. */
   readonly sourceUpdatedAt: string
   readonly copiedAt: string
@@ -39,7 +39,7 @@ const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/
 
 /** The Keychain account for one field of a copy, or null when `itemRef` is not op://<vault>/<item>. */
-export function copyAccount(itemRef: string, field: SecretField): string | null {
+export function copyAccount(itemRef: string, field: ItemField): string | null {
   return parseItemRef(itemRef) === null ? null : `${itemRef}#${field}`
 }
 
@@ -86,7 +86,7 @@ export function parseCopySource(comment: string): CopySource | null {
     account,
     vaultId,
     itemId,
-    field: field as SecretField,
+    field: field as ItemField,
     sourceUpdatedAt,
     copiedAt,
   }
@@ -116,7 +116,7 @@ export class KeychainCopyProvider implements CredentialProvider {
     this.service = options.service ?? COPY_SERVICE
   }
 
-  async resolve(itemRef: string, field: SecretField): Promise<SecretValue> {
+  async resolve(itemRef: string, field: ItemField): Promise<SecretValue> {
     const account = copyAccount(itemRef, field)
     if (account === null) throw new CredentialError('not-found')
     if (!COPYABLE_FIELDS.includes(field)) throw new CredentialError('field-missing')
@@ -124,7 +124,7 @@ export class KeychainCopyProvider implements CredentialProvider {
   }
 
   /** Where the copy of this field came from, or null when there is no copy (or its comment is bad). */
-  async source(itemRef: string, field: SecretField): Promise<CopySource | null> {
+  async source(itemRef: string, field: ItemField): Promise<CopySource | null> {
     const account = copyAccount(itemRef, field)
     if (account === null) return null
     const comment = await this.keychain.info(this.service, account)

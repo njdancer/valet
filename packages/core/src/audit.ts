@@ -116,10 +116,37 @@ export type AuditEvent =
       readonly type: 'secret-used'
       readonly adapterId: string
       readonly adapterHash: string
+      /** The secret's name, or for a credential (custody set) the credential's. */
       readonly secret: string
       readonly field: string
+      /**
+       * Where it went: the https origin it was typed into, or for a credential its target (the
+       * host a header went to, or the endpoint signed in to or entrusted for).
+       */
       readonly origin: string
       readonly callId: string | null
+      /** Set for a manifest credential (B's secrets v2): who held the value while it was used. */
+      readonly custody?: 'kept' | 'entrusted'
+    }
+  | {
+      /** A credential granted (B's secrets v2): the item stays out, the targets are listed. */
+      readonly type: 'credential-granted'
+      readonly adapterId: string
+      readonly adapterHash: string
+      readonly credential: string
+      readonly custody: 'kept' | 'entrusted'
+      readonly provider: string
+      readonly targets: readonly string[]
+      /** Kept from this version by an approved update that didn't widen it, not granted anew. */
+      readonly carriedFrom?: string
+    }
+  | { readonly type: 'credential-revoked'; readonly adapterId: string; readonly credential: string }
+  | {
+      /** Valet made an SSH key for a credential. The public half's fingerprint, never the key. */
+      readonly type: 'key-generated'
+      readonly adapterId: string
+      readonly credential: string
+      readonly fingerprint: string
     }
   | {
       readonly type: 'request-blocked'

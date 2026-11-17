@@ -204,6 +204,28 @@
       "valid": true
     }
   ],
+  "permissionAreas": [
+    "navigation",
+    "egress",
+    "auth-frames",
+    "secret",
+    "secret-origins",
+    "messages-sender",
+    "requests",
+    "tool",
+    "side-effect",
+    "session-cookies",
+    "session-storage",
+    "setting",
+    "limits",
+    "sandbox-mode",
+    "sandbox-exception",
+    "auth-steps",
+    "probe",
+    "runtime",
+    "private-network",
+    "credential"
+  ],
   "roster": {
     "account": "acct_0123456789abcdef",
     "chain": [

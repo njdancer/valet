@@ -24,6 +24,7 @@ import {
   keyId,
   nextRosterChange,
   openSealed,
+  PERMISSION_AREAS,
   pairingAad,
   pairingChallengePayload,
   pairingCode,
@@ -410,6 +411,7 @@ function writeVectors(path: string): void {
     },
     envelopeInfo: { from: macId, to: phoneId, info: envelopeInfo(macId, phoneId).toString('hex') },
     displayText: DISPLAY_CASES.map((value) => ({ value, valid: isDisplayText(value) })),
+    permissionAreas: [...PERMISSION_AREAS],
     roster: rosterVectors(),
   }
   writeFileSync(path, `${JSON.stringify(vectors, null, 2)}\n`)
@@ -438,6 +440,7 @@ interface Vectors {
   }
   envelopeInfo: { from: string; to: string; info: string }
   displayText: { value: string; valid: boolean }[]
+  permissionAreas: string[]
   roster: ReturnType<typeof rosterVectors>
 }
 
@@ -504,6 +507,10 @@ describe('iOS vectors', () => {
     expect(envelopeInfo(vectors.envelopeInfo.from, vectors.envelopeInfo.to).toString('hex')).toBe(
       vectors.envelopeInfo.info,
     )
+  })
+
+  it('lists every permission area core has, so the phone parses every install line', () => {
+    expect(vectors.permissionAreas).toEqual([...PERMISSION_AREAS])
   })
 
   it('has display text verdicts core agrees with', () => {

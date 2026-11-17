@@ -2,7 +2,7 @@
 // grant; the runtime picks it from the manifest's secret request, so a grant can't be pointed at a
 // different field, section or query attribute by smuggling one into the reference.
 
-import type { SecretField } from '@valet/core'
+import type { ItemField } from '@valet/core'
 
 // Vault and item names or IDs. No "/", "?", "#", quotes or control characters, and no
 // leading or trailing space, so the reference can't grow extra segments or query parameters.
@@ -29,7 +29,7 @@ export function parseItemRef(value: string): ItemRef | null {
 }
 
 /** The field part of a secret reference. `otpAttribute` differs between the CLI and the SDK. */
-export function secretReference(ref: ItemRef, field: SecretField, otpAttribute: 'otp' | 'totp'): string {
+export function secretReference(ref: ItemRef, field: ItemField, otpAttribute: 'otp' | 'totp'): string {
   const base = `op://${ref.vault}/${ref.item}`
   switch (field) {
     case 'username':
@@ -38,5 +38,11 @@ export function secretReference(ref: ItemRef, field: SecretField, otpAttribute: 
       return `${base}/password`
     case 'otp':
       return `${base}/one-time password?attribute=${otpAttribute}`
+    // An API Credential item's secret is its "credential" field.
+    case 'token':
+      return `${base}/credential`
+    // An SSH Key item's private half, in the OpenSSH format the SFTP client reads.
+    case 'ssh-key':
+      return `${base}/private key?ssh-format=openssh`
   }
 }

@@ -153,14 +153,14 @@ describe('BlockedAudit', () => {
     const auth = s.audit.authPartition('shop')
     auth(report('https://cookievalue12345.evil.test'))
     auth(report('https://evil.test/S3cretPassword'))
-    // A secret lower-cased into a hostname isn't caught (the runtime's limit too).
+    // A secret lower-cased into a hostname is caught too, since secrets v2 matches secrets in any case.
     auth(report('https://s3cretpassword.evil.test'))
     auth(report('https://evil.test/fine'))
     await s.audit.settled()
     expect(s.events.map((e) => (e.type === 'request-blocked' ? e.target : null))).toEqual([
       '[redacted]',
       '[redacted]',
-      'https://s3cretpassword.evil.test',
+      '[redacted]',
       'https://evil.test/fine',
     ])
   })

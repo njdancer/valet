@@ -45,6 +45,7 @@ import {
   type AuditSink,
   type BlockedRequest,
   confirmActionSchema,
+  credentialHeaderNames,
   defineAdapter,
   type EnsureResult,
   type ErrorClass,
@@ -79,6 +80,7 @@ import type { JsonStore } from './breaker-state'
 import { MAX_TARGET_LENGTH, NOTEWORTHY_WAIT_MS, PURPOSE_RANK, plainMethod } from './call-gate'
 import { CallState } from './call-state'
 import { type Clock, type Sleep, systemClock, systemSleep } from './clock'
+import { CredentialGate, type CredentialGateOptions } from './credential-gate'
 import { GuardedHttp, type HttpCredentials, type HttpEgress, NO_HTTP_ACCESS } from './guarded-http'
 import { GuardedToolPage } from './guarded-page'
 import { checkInputIsolated, type InputCheck, runIsolated, type ToolProcessFactory } from './isolation/host'
@@ -172,9 +174,20 @@ export interface RegisteredAdapter {
    * from its manifest's endpoints. Without it, every ctx.http call is not-granted.
    */
   readonly http?: HttpEgress
-  /** Kept credentials ctx.http may add as a header. Without it, naming one is not-granted. */
+  /**
+   * Kept credentials ctx.http may add as a header, from a fixed source (tests). An adapter given
+   * `credentialGrants` uses a CredentialGate instead. Without either, naming one is not-granted.
+   */
   readonly credentials?: HttpCredentials
+  /**
+   * The grants and provider behind the manifest's credentials (secrets v2). Each call gets its own
+   * CredentialGate over them, which checks the grant for this bundle hash, registers the value for
+   * the call's redaction and audits the use before ctx.http may send it.
+   */
+  readonly credentialGrants?: CredentialGrantSource
 }
+
+export type CredentialGrantSource = Pick<CredentialGateOptions, 'findGrant' | 'resolve'>
 
 export interface ToolIsolation {
   readonly script: string
@@ -353,6 +366,7 @@ export class ToolHost {
       ...(adapter.isolation === undefined ? {} : { isolation: adapter.isolation }),
       ...(adapter.http === undefined ? {} : { http: adapter.http }),
       ...(adapter.credentials === undefined ? {} : { credentials: adapter.credentials }),
+      ...(adapter.credentialGrants === undefined ? {} : { credentialGrants: adapter.credentialGrants }),
     })
   }
 
@@ -1394,7 +1408,8 @@ export class ToolHost {
       audit: (event) => this.record(event),
       clock: this.clock,
       broker: entry.http,
-      ...(entry.credentials === undefined ? {} : { credentials: entry.credentials }),
+      ...this.credentialsFor(entry, state),
+      credentialHeaders: [...credentialHeaderNames(manifest)],
       run: {
         meter: new RunMeter(uploadBudget(manifest, declaration.sideEffect)),
         signal: state.signal,
@@ -1446,6 +1461,29 @@ export class ToolHost {
       run: wrap('run', (a, o) => local.run(a, o)),
       appleScript: wrap('appleScript', (id, source) => local.appleScript(id, source)),
     }
+  }
+
+  /**
+   * The credentials one call's ctx.http may add: a CredentialGate over the adapter's grants, for
+   * this bundle hash and call. Its audit is the log itself, not record(): a use that can't be
+   * audited is refused rather than sent.
+   */
+  private credentialsFor(entry: Entry, state: CallState): { credentials?: HttpCredentials } {
+    const manifest = entry.definition.manifest
+    if (entry.credentialGrants !== undefined) {
+      const gate = new CredentialGate({
+        adapterId: manifest.id,
+        adapterHash: entry.bundleHash,
+        credentials: manifest.credentials,
+        findGrant: entry.credentialGrants.findGrant,
+        resolve: entry.credentialGrants.resolve,
+        audit: this.options.audit,
+        remember: (secret) => state.keepSent(secret),
+        callId: state.callId,
+      })
+      return { credentials: { headerFor: (credential, host) => gate.headerFor(credential, host) } }
+    }
+    return entry.credentials === undefined ? {} : { credentials: entry.credentials }
   }
 
   private async record(event: AuditEvent): Promise<void> {
