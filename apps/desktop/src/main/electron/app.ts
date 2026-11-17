@@ -17,10 +17,11 @@ import {
   startEgressProxy,
   trialPartitionName,
 } from '@valet/browser-electron'
-import { DEFAULT_SANDBOX } from '@valet/core'
+import { type AdapterManifest, DEFAULT_SANDBOX, rawEndpoints } from '@valet/core'
 import { KeychainHelper, KeychainTokenSource, messagesHelperSocketPath } from '@valet/credentials'
-import { EgressBroker } from '@valet/egress'
+import { EgressBroker, type OpenTunnels } from '@valet/egress'
 import { startEndpoint } from '@valet/mcp-server'
+import { diskTarballStore, loadDependencies, nodeRuntimeProcess } from '@valet/node-runtime'
 import { HostMailReader, imapBackend, type ProtocolHostOptions } from '@valet/protocols'
 import { createLocalAccess } from '@valet/sandbox'
 import { app, clipboard, dialog, protocol, session, shell } from 'electron'
@@ -63,7 +64,8 @@ import {
 import { devHelperPath } from '../core/native-helpers'
 import { addOwnPort, ownPorts, recordOwnPorts } from '../core/own-ports'
 import { macName, relayFromEnv } from '../core/phones'
-import { protocolHostPaths } from '../core/protocol-host'
+import { protocolHostScript } from '../core/protocol-host'
+import { nodeRuntimeBinary, rawPaths } from '../core/raw-runtime'
 import { AppService } from '../core/service'
 import { SHOWCASE_BUILD_MARKER } from '../core/showcase'
 import type { BridgeCommand } from '../core/snippets'
@@ -330,22 +332,57 @@ async function main(): Promise<void> {
       }),
     })
   const home = app.getPath('home')
-  // The protocol host behind protocol adapters' ctx.imap and sign-in mail (docs/imap.md): the Node
-  // runtime's signed binary, sandboxed, running Valet's own bundled client. Without the binary (a
-  // development checkout that never ran scripts/node-runtime.mjs), those calls end not-granted.
-  const hostPaths = protocolHostPaths({
+  // The Node runtime for raw adapters (docs/node-runtime.md): its own signed binary, never Electron.
+  // Without it, raw adapters don't load and their calls are unavailable.
+  const nodeBinary = nodeRuntimeBinary({
     packaged: app.isPackaged,
     execPath: process.execPath,
+    appPath: app.getAppPath(),
+    e2e: mode.e2e,
+    env: process.env,
+    exists: existsSync,
+  })
+  log(
+    nodeBinary === null ? 'raw adapters: no Node runtime in this build' : 'raw adapters: Node runtime found',
+  )
+  // A raw adapter's stderr stays on this Mac: it can hold anything the adapter printed, so it is
+  // never shown to an agent; only that there was some is logged.
+  const rawStderr = () => undefined
+  const tarballs = diskTarballStore(join(paths.dir, 'npm-tarballs'))
+  const rawProcess = (
+    manifest: Pick<AdapterManifest, 'sandbox' | 'endpoints' | 'privateHosts'>,
+    openTunnels: OpenTunnels,
+  ) =>
+    nodeRuntimeProcess({
+      nodeBinary: nodeBinary as string,
+      endpoints: rawEndpoints(manifest),
+      openTunnels,
+      home,
+      ...rawPaths(manifest, home),
+      // Valet's own data folder is never readable, whatever a path resolves to.
+      alsoForbidden: [paths.dir],
+      onStderr: rawStderr,
+    })
+  const noTunnels: OpenTunnels = async () => ({
+    ports: new Map<string, number>(),
+    close: () => undefined,
+    restrict: () => undefined,
+  })
+  // The protocol host behind protocol adapters' ctx.imap and sign-in mail (docs/imap.md): the Node
+  // runtime's signed binary (the raw adapters' own), sandboxed, running Valet's own bundled client.
+  // Without the binary or the script, those calls end not-granted.
+  const hostScript = protocolHostScript({
+    packaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
     mainDir: import.meta.dirname,
-    appPath: app.getAppPath(),
     exists: existsSync,
   })
   const protocolHost: ProtocolHostOptions | null =
-    hostPaths === null
+    nodeBinary === null || hostScript === null
       ? null
       : {
-          ...hostPaths,
+          nodeBinary,
+          hostScript,
           home,
           // Only its first line, and only in a development run: it may echo mail it choked on.
           onStderr: (text) => {
@@ -434,7 +471,19 @@ async function main(): Promise<void> {
       builtins,
       // Describing and checking anything new runs in a sandbox window of its own: no code that isn't
       // approved yet runs anywhere else (docs/sandbox.md#lifting-cs-guard).
-      runtime: { prelude: toolLibrary, start: sandboxes.oneShot() },
+      runtime: {
+        prelude: toolLibrary,
+        start: sandboxes.oneShot(),
+        // A raw adapter is described in the Node runtime, with no network at all.
+        ...(nodeBinary === null
+          ? {}
+          : {
+              raw: {
+                dependencies: (lock) => loadDependencies(lock, tarballs),
+                start: rawProcess({}, noTunnels),
+              },
+            }),
+      },
       build: buildRecord(app.getVersion(), toolLibrary),
       // Development builds only: a packaged app installs from drafts once the sandbox exists.
       ...(app.isPackaged
@@ -464,8 +513,17 @@ async function main(): Promise<void> {
     // The broker an http adapter reaches the network through: its manifest's exact endpoints, the
     // broker's own DNS, and never this Mac's own addresses (docs/adapter-kinds.md#f1-the-egress-broker).
     egress: (endpoints) =>
-      new EgressBroker({ egress: endpoints.egress, privateHosts: endpoints.privateHosts ?? [] }),
-    // The same host reads sign-in mail (docs/imap.md#email-sign-in), in the account a grant names.
+      new EgressBroker({
+        egress: endpoints.egress,
+        privateHosts: endpoints.privateHosts ?? [],
+        endpoints: endpoints.endpoints ?? [],
+      }),
+    // A raw adapter's calls: one Node process each, under its own profile, reaching only its tunnels.
+    // Each tunnel is a server in this process, so own-ports.ts records its port as Valet's own while
+    // it listens: no local-service exception or other adapter can reach it.
+    ...(nodeBinary === null ? {} : { raw: { start: rawProcess } }),
+    // Protocol adapters' ctx.imap, and sign-in mail (docs/imap.md#email-sign-in) in the account a
+    // grant names, both through the protocol host.
     ...(protocolHost === null
       ? {}
       : {

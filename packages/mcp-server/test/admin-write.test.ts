@@ -54,6 +54,7 @@ function writer(overrides: Partial<AdminWriter> = {}): AdminWriter & { calls: Ca
     requestTool: log<WriteOutcome>('requestTool', { kind: 'asked', request: WAITING, reused: false }),
     turnOffTool: log<WriteOutcome>('turnOffTool', { kind: 'done', what: 'x' }),
     requestRemoval: log('requestRemoval', { kind: 'removal-asked' as const, siteName: 'Library' }),
+    requestCredential: log('requestCredential', { kind: 'credential-asked' as const, siteName: 'NAS' }),
     disconnect: log<WriteOutcome>('disconnect', { kind: 'done', what: 'x' }),
     approvals: log('approvals', [WAITING]),
     withdraw: log('withdraw', 'withdrawn' as const),
@@ -147,6 +148,35 @@ describe('write tools', () => {
     const result = await runWriteTool(tool('valet_disconnect'), r, {}, LOCAL, WORDING)
     expect(result.isError).toBeUndefined()
     expect(w.calls.map((c) => c.name)).toEqual(['disconnect'])
+  })
+
+  it('pass an ask for a credential by name only, and say the person picks the item', async () => {
+    const w = writer()
+    const run = (args: Record<string, unknown>, writerFor = w) =>
+      runWriteTool(tool('valet_request_credential'), reader(writerFor), args, LOCAL, WORDING)
+    const asked = await run({ adapterId: 'nas', credential: 'nas_key', note: 'For backups' })
+    expect(w.calls).toEqual([{ name: 'requestCredential', args: [LOCAL, 'nas', 'nas_key', 'For backups'] }])
+    expect(text(asked)).toMatch(/^Asked: the person will see “Grant nas_key to NAS” in Valet’s Needs you/)
+    expect(text(asked)).toContain('Nothing is granted until they approve it')
+    // The input names a credential only, never an item, provider or value, and only as declared names go.
+    const input = tool('valet_request_credential').input
+    for (const bad of [
+      { adapterId: 'nas', credential: 'Nas-Key' },
+      { adapterId: 'nas', credential: 'a'.repeat(41) },
+      { adapterId: 'nas' },
+    ])
+      expect(input.safeParse(bad).success).toBe(false)
+    expect(Object.keys(input.shape).sort()).toEqual(['adapterId', 'credential', 'note'])
+    const granted = await run(
+      { adapterId: 'nas', credential: 'nas_key' },
+      writer({ requestCredential: async () => ({ kind: 'credential-granted', siteName: 'NAS' }) }),
+    )
+    expect(text(granted)).toBe('Nothing to ask: nas_key is already granted to NAS.')
+    const refused = await run(
+      { adapterId: 'nas', credential: 'nas_key' },
+      writer({ requestCredential: async () => ({ kind: 'refused', reason: 'not-found' }) }),
+    )
+    expect(refused.isError).toBe(true)
   })
 
   it('pass a cloud agent’s request for a tool on, with Ask for changes, and word it as a wait', async () => {

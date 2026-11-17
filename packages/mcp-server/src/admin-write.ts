@@ -161,6 +161,24 @@ export interface AdminWriter {
     adapterId: string,
     note: string | null,
   ): Promise<{ readonly kind: 'removal-asked' | 'removal-already'; readonly siteName: string } | WriteOutcome>
+  /**
+   * Asks the person to grant a credential an approved site declares (secrets v2). The agent never
+   * names the item: the person picks where it comes from on the site's Credentials card, and that
+   * grant is signed like any other. `already` if this agent's ask is waiting, `granted` if the
+   * credential is already granted for the installed version.
+   */
+  requestCredential(
+    viewer: ClientIdentity,
+    adapterId: string,
+    credential: string,
+    note: string | null,
+  ): Promise<
+    | {
+        readonly kind: 'credential-asked' | 'credential-already' | 'credential-granted'
+        readonly siteName: string
+      }
+    | WriteOutcome
+  >
   /** Removes this agent's own connection (Notify only). Its token stops working. */
   disconnect(viewer: ClientIdentity): Promise<WriteOutcome>
   /** One of this agent's requests by ref, or all of them still remembered (newest first). */
@@ -382,6 +400,17 @@ export const writeInputs = {
       .describe('The site’s adapter id, as valet_list_adapters gives it.'),
     note: noteInput,
   }),
+  requestCredential: z.object({
+    adapterId: z
+      .string()
+      .regex(ADAPTER_ID)
+      .describe('The site’s adapter id, as valet_list_adapters gives it.'),
+    credential: z
+      .string()
+      .regex(/^[a-z][a-z0-9_]{0,39}$/)
+      .describe('The credential’s name, as valet_get_adapter lists it under credentials.'),
+    note: noteInput,
+  }),
   disconnect: z.object({}),
   getApproval: z.object({
     approval: z
@@ -415,6 +444,7 @@ export interface WriteArgs {
   readonly query?: unknown
   readonly tool?: unknown
   readonly approval?: unknown
+  readonly credential?: unknown
   readonly limit?: unknown
 }
 
@@ -560,6 +590,41 @@ export const WRITE_TOOLS: readonly WriteTool[] = [
           text:
             `${result.kind === 'removal-asked' ? 'Asked' : 'Already asked'}: the person will see “Remove ${result.siteName}” ` +
             'in Valet’s Needs you. Nothing is removed until they say yes. Check valet_list_adapters to see if it is gone.',
+        }
+      return { kind: 'outcome', outcome: result as WriteOutcome }
+    },
+  },
+  {
+    name: 'valet_request_credential',
+    title: 'Ask the person to grant a credential',
+    description:
+      'Asks the person to grant a credential an approved site declares, such as an API token or an ' +
+      'SSH key (valet_get_adapter lists them under credentials). You never give or see the value, and ' +
+      'you don’t name the item: the person picks it in Valet and approves with Touch ID. Calls that ' +
+      'need it are refused until they do. Check valet_get_adapter to see if it is granted.',
+    input: writeInputs.requestCredential,
+    needs: 'ask',
+    annotations: CHANGE,
+    run: async (writer, args, viewer) => {
+      const result = await writer.requestCredential(
+        viewer,
+        str(args.adapterId),
+        str(args.credential),
+        note(args),
+      )
+      if (result.kind === 'credential-granted')
+        return {
+          kind: 'text',
+          text: `Nothing to ask: ${str(args.credential)} is already granted to ${result.siteName}.`,
+        }
+      if (result.kind === 'credential-asked' || result.kind === 'credential-already')
+        return {
+          kind: 'text',
+          text:
+            `${result.kind === 'credential-asked' ? 'Asked' : 'Already asked'}: the person will see ` +
+            `“Grant ${str(args.credential)} to ${result.siteName}” in Valet’s Needs you, and picks where it ` +
+            'comes from on the Mac. Nothing is granted until they approve it. Check valet_get_adapter to ' +
+            'see if it is granted.',
         }
       return { kind: 'outcome', outcome: result as WriteOutcome }
     },

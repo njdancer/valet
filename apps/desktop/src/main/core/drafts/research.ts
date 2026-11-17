@@ -233,6 +233,8 @@ export function draftDomains(manifest: AdapterManifest): string[] {
   add(manifest.home)
   for (const origin of manifest.navigation) add(origin)
   for (const host of manifest.egress) add(host)
+  // A raw adapter's endpoints are host names with a port.
+  for (const endpoint of manifest.endpoints ?? []) add(endpoint.slice(0, endpoint.lastIndexOf(':')))
   return [...hosts]
 }
 

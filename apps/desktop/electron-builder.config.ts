@@ -18,7 +18,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { signAsync } from '@electron/osx-sign'
 import type { Configuration } from 'electron-builder'
-import { NODE_RUNTIME_DEV, NODE_RUNTIME_NAME, PROTOCOL_HOST_PACKAGED } from './src/main/core/protocol-host'
+import { PROTOCOL_HOST_PACKAGED } from './src/main/core/protocol-host'
 import { SHOWCASE_BUILD_MARKER } from './src/main/core/showcase'
 import { SMOKE_BUILD_MARKER } from './src/main/core/smoke'
 import { validateFeedUrl } from './src/main/updater/feed-url'
@@ -108,8 +108,8 @@ export const NATIVE_EXECUTABLES = [
  * by scripts/node-runtime.mjs, with its own identifier and the JIT entitlement only. It ships beside
  * the app's executable but keeps that signature: electron-builder never re-signs it (signIgnore).
  */
-export const NODE_RUNTIME_EXECUTABLE = NODE_RUNTIME_NAME
-export const NODE_RUNTIME_BUILD = NODE_RUNTIME_DEV
+export const NODE_RUNTIME_EXECUTABLE = 'valet-node'
+export const NODE_RUNTIME_BUILD = '.node-runtime/valet-node'
 export const NODE_RUNTIME_ENTITLEMENTS_PATH = 'build/entitlements.node.plist'
 /** signIgnore's pattern for it: osx-sign tests each file's full path. */
 export const NODE_RUNTIME_SIGN_IGNORE = `/Contents/MacOS/${NODE_RUNTIME_EXECUTABLE}$`

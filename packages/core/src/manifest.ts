@@ -16,7 +16,7 @@ import {
   READ_ONLY_WEBDAV,
   REQUEST_METHODS,
 } from './request-surface'
-import { sandboxDeclarationSchema } from './sandbox'
+import { type SandboxDeclaration, sandboxDeclarationSchema } from './sandbox'
 
 const name = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, 'lower snake_case, at most 64 characters')
 const origin = z.string().refine(isBareOrigin, 'must be a bare https origin, e.g. https://www.example.com')
@@ -269,12 +269,13 @@ const requestMethod = z.enum(REQUEST_METHODS)
 /**
  * The kinds of adapter (docs/adapter-kinds.md): where its code runs and how it reaches the outside.
  * `browser` drives a real browser's tool partition; `http` calls APIs through Valet's own HTTPS and
- * WebSocket client, the egress broker; `protocol` and `raw` are designed and not built yet.
+ * WebSocket client, the egress broker; `raw` runs its own code and npm packages in the Node runtime,
+ * whose sockets reach only the broker's tunnels; `protocol` is designed and not built yet.
  */
 export const RUNTIME_KINDS = ['browser', 'http', 'protocol', 'raw'] as const
 export type RuntimeKind = (typeof RUNTIME_KINDS)[number]
 /** The kinds a manifest may name today. A workstream that builds a kind adds it here. */
-export const AVAILABLE_RUNTIMES: readonly RuntimeKind[] = ['browser', 'http', 'protocol']
+export const AVAILABLE_RUNTIMES: readonly RuntimeKind[] = ['browser', 'http', 'protocol', 'raw']
 
 /** The manifest's kind: `browser` when it doesn't say, so every older manifest means what it did. */
 export function runtimeOf(manifest: { readonly runtime?: RuntimeKind | undefined }): RuntimeKind {
@@ -767,11 +768,13 @@ function homeIsDerived(manifest: {
   readonly home?: string | undefined
   readonly egress: readonly string[]
   readonly privateHosts?: readonly PrivateHost[] | undefined
+  readonly endpoints?: readonly string[] | undefined
   readonly protocols?: Protocols | undefined
 }): boolean {
   if (
     manifest.egress.length === 0 &&
     (manifest.privateHosts ?? []).length === 0 &&
+    (manifest.endpoints ?? []).length === 0 &&
     manifest.protocols?.imap === undefined
   )
     return false
@@ -781,8 +784,15 @@ function homeIsDerived(manifest: {
 function endpointHome(manifest: {
   readonly egress: readonly string[]
   readonly privateHosts?: readonly PrivateHost[] | undefined
+  readonly endpoints?: readonly string[] | undefined
   readonly protocols?: Protocols | undefined
 }): string {
+  // A raw adapter's first endpoint: only the key its pacing and breaker are kept under.
+  const endpoint = manifest.endpoints?.[0]
+  if (endpoint !== undefined) {
+    const parsed = parseEndpoint(endpoint)
+    if (parsed !== null) return new URL(`https://${hostPort(parsed.host, parsed.port)}/`).href
+  }
   // A protocol adapter's home is its server's name: only the key its pacing and breaker are kept under.
   const imap = manifest.protocols?.imap
   if (imap !== undefined) return `https://${imap.endpoint.slice(0, imap.endpoint.lastIndexOf(':'))}/`
@@ -819,6 +829,9 @@ function runtimeIssues(manifest: {
     readonly uploadBytesPerRun?: number | undefined
     readonly writeUploadBytesPerRun?: number | undefined
   }
+  readonly session: { readonly probe: { readonly kind: string } }
+  readonly tools: readonly { readonly name: string; readonly sideEffect: string }[]
+  readonly sandbox?: SandboxDeclaration | undefined
   readonly protocols?: Protocols | undefined
   readonly credentials?: Readonly<Record<string, CredentialDeclaration>> | undefined
 }): string[] {
@@ -826,6 +839,7 @@ function runtimeIssues(manifest: {
   if (!AVAILABLE_RUNTIMES.includes(kind)) return [`runtime ${kind} is not available yet`]
   const issues: string[] = []
   const nonBrowser = (field: string) => `${field} is only for adapters whose runtime is not browser`
+  if (kind === 'raw') return rawIssues(manifest)
   if (manifest.endpoints !== undefined) issues.push('endpoints is only for raw adapters')
   if (kind === 'protocol') {
     // Parsing sets home to the server's name, so a parsed manifest parses again unchanged.
@@ -875,6 +889,89 @@ function runtimeIssues(manifest: {
       issues.push(`${label}: ${request.method} changes something, so it can't be a read`)
   }
   return issues
+}
+
+/**
+ * A `raw` adapter's rules (docs/adapter-kinds.md#raw). Its own code opens sockets, so the request
+ * surface can't see inside them: it declares exact endpoints instead of egress hosts and requests,
+ * has no browser parts and no login (an entrusted credential is how it signs in), and its only
+ * sandbox exceptions are file paths, which become its Seatbelt profile's read and write paths.
+ */
+function rawIssues(manifest: Parameters<typeof runtimeIssues>[0]): string[] {
+  const issues: string[] = []
+  if (manifest.home !== undefined && !homeIsDerived(manifest))
+    issues.push('a raw adapter has no home: it opens no pages')
+  if (manifest.navigation.length > 0) issues.push('a raw adapter has no navigation origins')
+  if (manifest.cartUrl !== undefined) issues.push('a raw adapter has no cartUrl')
+  if (manifest.egress.length > 0) issues.push('a raw adapter names endpoints ("host:port"), not egress hosts')
+  if (manifest.protocols !== undefined) issues.push('protocols is only for protocol adapters')
+  if (manifest.requests.length > 0)
+    issues.push('a raw adapter has no requests: Valet can’t see inside its connections')
+  if (manifest.session.probe.kind !== 'none') issues.push('a raw adapter has no login: its probe is none')
+  // confirm() names declared requests, and a raw adapter has none, so nothing could ask the person
+  // before an action that can't be undone. Until a raw confirmation exists, it has no such tools.
+  for (const tool of manifest.tools)
+    if (tool.sideEffect === 'irreversible')
+      issues.push(`tool ${tool.name}: a raw adapter's tools are read or write, not irreversible`)
+  const endpoints = manifest.endpoints ?? []
+  const privateHosts = manifest.privateHosts ?? []
+  if (endpoints.length === 0 && privateHosts.length === 0)
+    issues.push('a raw adapter needs an endpoint or a private host')
+  if (new Set(endpoints).size !== endpoints.length) issues.push('endpoints lists the same endpoint twice')
+  const keys = privateHosts.map(privateHostKey)
+  if (new Set(keys).size !== keys.length) issues.push('privateHosts lists the same address and port twice')
+  for (const host of privateHosts)
+    if (host.certSha256 !== undefined)
+      issues.push(
+        `privateHosts ${privateHostKey(host)}: a raw adapter's own TLS can't be pinned by Valet, so certSha256 is not for it`,
+      )
+  const sandbox = manifest.sandbox
+  if (sandbox !== undefined) {
+    if (sandbox.mode !== 'sandboxed') issues.push('a raw adapter always runs in its sandbox profile')
+    else
+      for (const exception of sandbox.exceptions)
+        if (exception.kind !== 'files')
+          issues.push(
+            `sandbox exception ${exception.kind}: a raw adapter's only exceptions are files (its network is its endpoints)`,
+          )
+  }
+  // Where an entrusted credential may go must be somewhere the adapter can reach at all.
+  const reachable = new Set([...endpoints, ...privateHosts.map((h) => rawEndpointKey(h.address, h.port))])
+  for (const [name, credential] of Object.entries(manifest.credentials ?? {})) {
+    if (!('entrusted' in credential.use)) continue
+    for (const endpoint of credential.use.entrusted.endpoints)
+      if (!reachable.has(endpoint))
+        issues.push(`credential ${name}: ${endpoint} is not one of the adapter's endpoints or private hosts`)
+  }
+  // Narrowing and redaction are per call: a folder that outlives the call would carry an entrusted
+  // value to a later call that never asked for it, unnarrowed and unredacted.
+  const entrusts = Object.values(manifest.credentials ?? {}).some((c) => 'entrusted' in c.use)
+  if (entrusts && sandbox?.mode === 'sandboxed')
+    for (const exception of sandbox.exceptions)
+      if (exception.kind === 'files' && exception.access === 'read-write')
+        issues.push(
+          "sandbox exception files: a raw adapter with an entrusted credential can't keep read-write files (they would carry the secret past the call)",
+        )
+  return issues
+}
+
+/**
+ * An endpoint as a raw adapter's runtime keys it: `host:port`, an IPv6 literal unbracketed (core's
+ * parseEndpoint, the Node runtime's shim and the broker's tunnels all write it this way).
+ */
+export function rawEndpointKey(host: string, port: number): string {
+  return `${host}:${port}`
+}
+
+/** Every endpoint a raw adapter's tunnels serve: its endpoints, then its private hosts. */
+export function rawEndpoints(manifest: {
+  readonly endpoints?: readonly string[] | undefined
+  readonly privateHosts?: readonly PrivateHost[] | undefined
+}): string[] {
+  return [
+    ...(manifest.endpoints ?? []),
+    ...(manifest.privateHosts ?? []).map((h) => rawEndpointKey(h.address, h.port)),
+  ]
 }
 
 /** The default upload budgets (docs/adapter-kinds.md#f1-the-egress-broker), in bytes. */

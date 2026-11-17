@@ -22,6 +22,7 @@ import {
   type CredentialGrant,
   credentialsOf,
   DEFAULT_SANDBOX,
+  describeCredentialUse,
   describeDeclaration,
   folderAllowed,
   type Grant,
@@ -55,6 +56,7 @@ import {
   ValetError,
 } from '@valet/core'
 import { FileCredentialGrantStore, FileGrantStore } from '@valet/credentials'
+import type { OpenTunnels, RunContext } from '@valet/egress'
 import {
   type AdminReader,
   type Authoring,
@@ -310,7 +312,19 @@ export interface ServiceDeps {
   readonly egress?: (endpoints: {
     readonly egress: readonly string[]
     readonly privateHosts?: readonly PrivateHost[] | undefined
-  }) => HttpEgress
+    readonly endpoints?: readonly string[] | undefined
+  }) => HttpEgress & {
+    /** A raw adapter's tunnels for one call (EgressBroker.tunnels). */
+    readonly tunnels?: (run: RunContext, options: { readonly admit: () => Promise<void> }) => OpenTunnels
+  }
+  /**
+   * The Node runtime for `raw` adapters (docs/node-runtime.md): one call's process for a raw
+   * adapter's version, its tunnels opened by `openTunnels`. Without it (off macOS, or no Node
+   * binary), a raw adapter's calls are unavailable.
+   */
+  readonly raw?: {
+    start(manifest: AdapterManifest, openTunnels: OpenTunnels): ToolProcessFactory
+  }
   /**
    * The protocol host behind a protocol adapter's ctx.imap (docs/imap.md), for its protocols.imap.
    * Without it, every ctx.imap call is not-granted.
@@ -493,6 +507,12 @@ const PRUNE_EVERY_MS = 60 * 60_000
 
 const titlesSchema = z.record(z.string().max(512), z.string().max(200))
 
+/** How long a declined credential ask holds the same agent's same ask back. */
+const CREDENTIAL_DECLINE_COOLDOWN_MS = 60 * 60_000
+/** Credential asks one agent, and all agents, may keep waiting at once. */
+const CREDENTIAL_ASKS_PER_AGENT = 3
+const CREDENTIAL_ASKS_TOTAL = 10
+
 export class AppService {
   readonly api: MainApi
   private readonly audit: ObservedAudit
@@ -524,6 +544,17 @@ export class AppService {
   private feedbackDesk: FeedbackDeskImpl | null = null
   /** Agents' asks to remove a site, by id, until the person answers or Valet restarts. */
   private readonly removalAsks = new Map<string, AgentRequestItem & { readonly asker: string }>()
+  /**
+   * Agents' asks to grant a credential (valet_request_credential). The person answers on the site's
+   * Credentials card, where they pick the item; an ask ends when that credential is granted for the
+   * version it was asked for, the version changes, it is declined, or it expires.
+   */
+  private readonly credentialAsks = new Map<
+    string,
+    AgentRequestItem & { readonly asker: string; readonly credential: string; readonly adapterHash: string }
+  >()
+  /** When the person declined a credential ask, by asker, adapter and credential: it waits an hour. */
+  private readonly credentialDeclines = new Map<string, number>()
   private readonly versions: VersionStore
   private readonly setup: SetupStore
   private updates: UpdatesPort | null = null
@@ -1308,13 +1339,55 @@ export class AppService {
       if (Date.parse(ask.expiresAt) <= now || this.adapter(ask.adapterId ?? '') === null)
         this.removalAsks.delete(id)
     const removals = [...this.removalAsks.values()].map(({ asker: _asker, ...item }) => item)
+    this.pruneCredentialAsks()
+    const credentials = [...this.credentialAsks.values()].map(
+      ({ asker: _asker, credential: _credential, adapterHash: _hash, ...item }) => item,
+    )
     return [
       ...removals,
+      ...credentials,
       ...(this.approvalBroker?.list() ?? []).flatMap((r) => {
         const item = agentRequestItem(r, (id) => this.adapter(id)?.definition.manifest.name ?? null)
         return item === null ? [] : [item]
       }),
     ]
+  }
+
+  /** Drops credential asks that ended: expired, or another version (or none) installed. */
+  private pruneCredentialAsks(): void {
+    const now = this.deps.now()
+    for (const [id, ask] of this.credentialAsks) {
+      const adapter = this.adapter(ask.adapterId ?? '')
+      if (Date.parse(ask.expiresAt) <= now || adapter === null || adapter.hash !== ask.adapterHash)
+        this.credentialAsks.delete(id)
+    }
+  }
+
+  /**
+   * Drops an agent's asks that aren't broker requests (removal and credential asks) when the agent
+   * goes: disconnected, revoked, or its Ask for changes taken away. Null drops every agent's
+   * (lockdown).
+   */
+  private dropAgentAsks(asker: string | null): void {
+    let dropped = false
+    for (const asks of [this.removalAsks, this.credentialAsks] as Map<string, { readonly asker: string }>[])
+      for (const [id, ask] of asks)
+        if (asker === null || ask.asker === asker) {
+          asks.delete(id)
+          dropped = true
+        }
+    if (dropped) this.emit('attention-changed')
+  }
+
+  /** Drops the asks a grant just answered: every agent's, for that credential and version. */
+  private answerCredentialAsks(adapterId: string, adapterHash: string, credential: string): boolean {
+    let dropped = false
+    for (const [id, ask] of this.credentialAsks)
+      if (ask.adapterId === adapterId && ask.adapterHash === adapterHash && ask.credential === credential) {
+        this.credentialAsks.delete(id)
+        dropped = true
+      }
+    return dropped
   }
 
   private consentItems(): RemoteConsentItem[] {
@@ -1517,6 +1590,7 @@ export class AppService {
     this.authoringSessions.clear()
     this.privateNetwork.clear()
     const ledger = this.approvalBroker?.lockdown().catch(() => undefined)
+    this.dropAgentAsks(null)
     let revoked = 0
     if (locked) {
       this.broker.declineAll()
@@ -2002,6 +2076,7 @@ export class AppService {
    */
   private cancelConfirmationsOf(label: string): void {
     this.broker.cancelWhere((item) => this.callers.get(item.callId) === label, 'client-revoked')
+    this.dropAgentAsks(label)
   }
 
   private async setSitePaused(adapterId: string, paused: boolean): Promise<void> {
@@ -2028,15 +2103,15 @@ export class AppService {
     const sandboxed = (manifest.sandbox ?? DEFAULT_SANDBOX).mode === 'sandboxed'
     const start =
       sandbox !== undefined && sandboxed ? sandbox.forAdapter(adapter.hash) : this.deps.toolProcess
+    const kind = runtimeOf(manifest)
+    if (kind === 'raw') return this.rawRegistration(adapter, driver)
     return {
       definition: adapter.definition,
       bundleHash: adapter.hash,
       driver,
       // Each call's CredentialGate finds this version's signed grants (secrets v2).
       credentialGrants: this.credentialKeeper.sourceFor(manifest.id, adapter.hash),
-      ...(this.deps.egress === undefined || runtimeOf(manifest) !== 'http'
-        ? {}
-        : { http: this.deps.egress(manifest) }),
+      ...(this.deps.egress === undefined || kind !== 'http' ? {} : { http: this.deps.egress(manifest) }),
       ...(this.deps.imap === undefined ||
       runtimeOf(manifest) !== 'protocol' ||
       manifest.protocols?.imap === undefined
@@ -2049,6 +2124,39 @@ export class AppService {
               script: adapter.toolScript,
               start,
               ...(sandbox === undefined ? {} : { local: sandbox.local(manifest) }),
+            },
+          }),
+    }
+  }
+
+  /**
+   * A raw adapter's registration (docs/adapter-kinds.md#raw): its Node bundle runs only in the Node
+   * runtime, its network only through the broker's tunnels for its endpoints. Without either, it
+   * registers with no runtime at all and its calls are unavailable; it never falls back to another.
+   */
+  private rawRegistration(adapter: BuiltinAdapter, driver: SessionDriver) {
+    const manifest = adapter.definition.manifest
+    const raw = this.deps.raw
+    const broker = this.deps.egress?.({
+      egress: [],
+      privateHosts: manifest.privateHosts ?? [],
+      endpoints: manifest.endpoints ?? [],
+    })
+    const tunnels = broker?.tunnels
+    return {
+      definition: adapter.definition,
+      bundleHash: adapter.hash,
+      driver,
+      // Entrusted credentials come through this version's signed grants (secrets v2).
+      credentialGrants: this.credentialKeeper.sourceFor(manifest.id, adapter.hash),
+      ...(raw === undefined || tunnels === undefined || adapter.toolScript === null
+        ? {}
+        : {
+            raw: {
+              script: adapter.toolScript,
+              start: (openTunnels: OpenTunnels) => raw.start(manifest, openTunnels),
+              tunnels: (run: RunContext, options: { readonly admit: () => Promise<void> }) =>
+                tunnels.call(broker, run, options),
             },
           }),
     }
@@ -2469,6 +2577,7 @@ export class AppService {
     await this.dropRemoteCapabilities(clientId)
     // Its requests about changes go with the capability.
     await this.approvalBroker.withdrawClient(`remote:${clientId}`).catch(() => 0)
+    this.dropAgentAsks(`remote:${clientId}`)
     await this.remote.reopenClient(clientId).catch(() => undefined)
     this.emit('remote-changed')
   }
@@ -2914,6 +3023,8 @@ export class AppService {
       prepare: async (files) => (await packages.prepare(files, 'draft')).loaded,
       // Each case in a fresh one-shot sandbox window, as describing a package runs (docs/sandbox.md).
       caseProcess: runtime.start,
+      // A raw draft's cases in the Node runtime, with no network (docs/adapter-kinds.md#raw).
+      ...(runtime.raw === undefined ? {} : { rawCaseProcess: runtime.raw.start }),
       installed: async (adapterId) => {
         const adapter = this.adapter(adapterId)
         if (adapter === null) return null
@@ -2987,6 +3098,25 @@ export class AppService {
                 : {
                     egress: (endpoints: { readonly egress: readonly string[] }) =>
                       (this.deps.egress as NonNullable<ServiceDeps['egress']>)({ egress: endpoints.egress }),
+                  }),
+              // A raw draft's trial: its public endpoints only, through the broker's tunnels.
+              ...(this.deps.raw === undefined || this.deps.egress === undefined
+                ? {}
+                : {
+                    raw: {
+                      start: (manifest: AdapterManifest, openTunnels: OpenTunnels) =>
+                        (this.deps.raw as NonNullable<ServiceDeps['raw']>).start(manifest, openTunnels),
+                      tunnels: (endpoints: readonly string[]) => {
+                        const broker = (this.deps.egress as NonNullable<ServiceDeps['egress']>)({
+                          egress: [],
+                          endpoints,
+                        })
+                        return (run: RunContext, options: { readonly admit: () => Promise<void> }) => {
+                          if (broker.tunnels === undefined) throw new ValetError('tool-run', 'unavailable')
+                          return broker.tunnels(run, options)
+                        }
+                      },
+                    },
                   }),
             },
           }),
@@ -3973,7 +4103,7 @@ export class AppService {
         if (adapter === null) return 'not-found'
         if (!this.canRemove(adapterId)) return 'built-in'
         const siteName = adapter.definition.manifest.name
-        const asker = `local:${clientId}`
+        const asker = clientId
         for (const ask of this.removalAsks.values())
           if (ask.adapterId === adapterId && ask.asker === asker) return { kind: 'removal-already', siteName }
         const id = `rm${randomBytes(15).toString('base64url')}`
@@ -3999,6 +4129,60 @@ export class AppService {
         this.emit('attention-changed')
         return { kind: 'removal-asked', siteName }
       },
+      requestCredential: async (asker, clientName, adapterId, credential, note) => {
+        const adapter = this.adapter(adapterId)
+        if (adapter === null) return 'not-found'
+        const manifest = adapter.definition.manifest
+        const declaration = Object.hasOwn(manifest.credentials ?? {}, credential)
+          ? manifest.credentials?.[credential]
+          : undefined
+        if (declaration === undefined) return 'not-found'
+        // Granted only after the person approved this version, as on the card.
+        if (!(await this.installGate.isApproved(adapterId, adapter.hash).catch(() => false)))
+          return 'not-approved'
+        const siteName = plainName(manifest.name)
+        if ((await this.credentialKeeper.sourceFor(adapterId, adapter.hash).findGrant(credential)) !== null)
+          return { kind: 'credential-granted', siteName }
+        this.pruneCredentialAsks()
+        const mine = [...this.credentialAsks.values()].filter((ask) => ask.asker === asker)
+        if (mine.some((ask) => ask.adapterId === adapterId && ask.credential === credential))
+          return { kind: 'credential-already', siteName }
+        const at = this.deps.now()
+        // As for the broker's requests: a decline holds this ask back for an hour, and an agent (and
+        // all agents) can keep only a few waiting, so asking can't flood the person.
+        const declined = this.credentialDeclines.get(`${asker} ${adapterId} ${credential}`)
+        if (declined !== undefined && at - declined < CREDENTIAL_DECLINE_COOLDOWN_MS)
+          return {
+            refused: 'cooling-down',
+            until: new Date(declined + CREDENTIAL_DECLINE_COOLDOWN_MS).toISOString(),
+          }
+        if (mine.length >= CREDENTIAL_ASKS_PER_AGENT) return { refused: 'too-many-waiting' }
+        if (this.credentialAsks.size >= CREDENTIAL_ASKS_TOTAL) return { refused: 'too-many-total' }
+        const id = `cr${randomBytes(15).toString('base64url')}`
+        this.credentialAsks.set(id, {
+          kind: 'agent-request',
+          id,
+          requestKind: 'credential',
+          ref: id.slice(2, 6).toUpperCase(),
+          title: `Grant ${credential} to ${siteName}`,
+          details: [
+            describeCredentialUse(credential, declaration),
+            `Any app or agent that can use ${siteName}’s tools can then use it.`,
+            'You pick where it comes from on the site’s page, and approve with Touch ID. The agent never sees it.',
+          ],
+          adapterId,
+          agentName: clientName,
+          agentNote: note,
+          choices: null,
+          requestedAt: new Date(at).toISOString(),
+          expiresAt: new Date(at + 24 * 60 * 60_000).toISOString(),
+          asker,
+          credential,
+          adapterHash: adapter.hash,
+        })
+        this.emit('attention-changed')
+        return { kind: 'credential-asked', siteName }
+      },
       turnOffTool: async (clientId, qualified) => {
         const done = await this.clients.turnOffTool(clientId, qualified)
         if (done === 'done') {
@@ -4016,6 +4200,7 @@ export class AppService {
           const id = viewer.clientId
           if (this.remote.clients.get(id) === null) return false
           await this.approvalBroker?.withdrawClient(`remote:${id}`).catch(() => 0)
+          this.dropAgentAsks(`remote:${id}`)
           await this.dropRemoteCapabilities(id)
           // Just after, so this call's own result still reaches the agent.
           const timer = setTimeout(() => void this.remote.revokeClient(id).catch(() => false), 1000)
@@ -4483,6 +4668,8 @@ export class AppService {
         make: async (request) => {
           const info = await this.oneAtATime(request.adapterId, () => this.credentialKeeper.make(request))
           this.emit('grants-changed')
+          if (this.answerCredentialAsks(info.adapterId, info.adapterHash, info.credential))
+            this.emit('attention-changed')
           return info
         },
         revoke: async (adapterId, credential) => {
@@ -4685,6 +4872,8 @@ export class AppService {
           if (!this.missed.dismiss(id)) throw new ValetError('config', 'not-found')
         },
         approveRequest: async (id, choice) => {
+          // A credential is granted on the site's Credentials card, where the person picks the item.
+          if (this.credentialAsks.has(id)) throw new ValetError('config', 'invalid')
           const removal = this.removalAsks.get(id)
           if (removal !== undefined) {
             this.removalAsks.delete(id)
@@ -4699,7 +4888,17 @@ export class AppService {
           return result.ok
         },
         declineRequest: async (id) => {
-          if (this.removalAsks.delete(id)) {
+          const credentialAsk = this.credentialAsks.get(id)
+          if (credentialAsk !== undefined) {
+            const now = this.deps.now()
+            for (const [key, at] of this.credentialDeclines)
+              if (now - at >= CREDENTIAL_DECLINE_COOLDOWN_MS) this.credentialDeclines.delete(key)
+            this.credentialDeclines.set(
+              `${credentialAsk.asker} ${credentialAsk.adapterId} ${credentialAsk.credential}`,
+              now,
+            )
+          }
+          if (this.removalAsks.delete(id) || this.credentialAsks.delete(id)) {
             this.emit('attention-changed')
             return true
           }

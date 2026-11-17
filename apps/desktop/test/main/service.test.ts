@@ -14,11 +14,11 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { buildRecord } from '@valet/adapter-store'
+import { buildRecord, type RawPackageRuntime } from '@valet/adapter-store'
 import {
   type AdapterDefinition,
   CredentialError,
@@ -36,7 +36,7 @@ import {
   ValetError,
 } from '@valet/core'
 import { MemoryKeychain, ValetKeys } from '@valet/credentials'
-import { EgressBroker } from '@valet/egress'
+import { EgressBroker, type OpenTunnels } from '@valet/egress'
 import { startFakeApi } from '@valet/fake-http-api'
 import { DEFAULT_USER, startFakeImap } from '@valet/fake-imap'
 import {
@@ -63,6 +63,7 @@ import {
   type WriteArgs,
   withAnswers,
 } from '@valet/mcp-server'
+import { loadDependencies, memoryTarballStore, nodeRuntimeProcess } from '@valet/node-runtime'
 import { HostMailReader, imapBackend, type ProtocolHostOptions } from '@valet/protocols'
 import { writeProtocolHost } from '@valet/protocols/build'
 import { LoginAttemptMarker, type ToolProcessFactory } from '@valet/runtime'
@@ -91,7 +92,13 @@ import { builtinAdapter } from '../../src/main/core/registry'
 import type { RemoteAccess } from '../../src/main/core/remote'
 import { AppService, fillSelector, type ServiceDeps } from '../../src/main/core/service'
 import { disabledUpdates, type UpdatesHooks, type UpdatesPort } from '../../src/main/core/updates'
-import type { AppEvent, ConfirmationItem, HashRoute, RepairItem } from '../../src/shared/api'
+import type {
+  AgentRequestItem,
+  AppEvent,
+  ConfirmationItem,
+  HashRoute,
+  RepairItem,
+} from '../../src/shared/api'
 import {
   FakeAuthPage,
   FakeDriver,
@@ -151,6 +158,7 @@ async function setup(
     egress?: ServiceDeps['egress']
     imap?: ServiceDeps['imap']
     mailReader?: ServiceDeps['mailReader']
+    raw?: ServiceDeps['raw']
   } = {},
 ) {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'sa-service-'))
@@ -234,6 +242,7 @@ async function setup(
     ...(options.egress === undefined ? {} : { egress: options.egress }),
     ...(options.imap === undefined ? {} : { imap: options.imap }),
     ...(options.mailReader === undefined ? {} : { mailReader: options.mailReader }),
+    ...(options.raw === undefined ? {} : { raw: options.raw }),
     createDriver: async (_manifest, reporters) => {
       driver.reporters = reporters
       return driver
@@ -3743,6 +3752,7 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     trialDriver?: ServiceDeps['trialDriver'],
     egress?: ServiceDeps['egress'],
     credentials?: Credentials,
+    raw?: { readonly runtime: RawPackageRuntime; readonly deps: ServiceDeps['raw'] },
   ) {
     const start = inMemoryToolProcess()
     const prelude = await buildToolLibrary()
@@ -3754,7 +3764,9 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
       packages: {
         builtins: [shopPackage('v1:')],
         runtime:
-          describe === 'answers' ? { prelude, start } : { prelude, start: hanging, describeTimeoutMs: 50 },
+          describe === 'answers'
+            ? { prelude, start, ...(raw === undefined ? {} : { raw: raw.runtime }) }
+            : { prelude, start: hanging, describeTimeoutMs: 50 },
         build: buildRecord('0.1.0', prelude),
         folders: { pick: async () => picked.next },
       },
@@ -3763,6 +3775,7 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
       ...(trialDriver === undefined ? {} : { trialDriver }),
       ...(egress === undefined ? {} : { egress }),
       ...(credentials === undefined ? {} : { credentials }),
+      ...(raw === undefined ? {} : { raw: raw.deps }),
     })
     const hashOf = (files: PackageFiles) => checkPackage(files).adapterHash
     return { ...s, picked, hashOf }
@@ -3906,6 +3919,122 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     } finally {
       await api.close()
     }
+  })
+
+  it('installs and runs a raw adapter in the Node runtime through its tunnels, approvable on the phone', async () => {
+    const api = await startFakeApi()
+    try {
+      const mac = process.platform === 'darwin'
+      const rawProcess = (endpoints: readonly string[], openTunnels: OpenTunnels) =>
+        nodeRuntimeProcess({
+          nodeBinary: process.execPath,
+          endpoints,
+          openTunnels,
+          home: homedir(),
+          withoutSeatbelt: !mac,
+        })
+      const egress: ServiceDeps['egress'] = (manifest) =>
+        new EgressBroker(
+          {
+            egress: manifest.egress,
+            privateHosts: manifest.privateHosts ?? [],
+            endpoints: manifest.endpoints ?? [],
+          },
+          {
+            lookup: (_name, cb) => cb(null, [{ address: '127.0.0.1', family: 4 }]),
+            testing: {
+              allowAddresses: ['127.0.0.1'],
+              route: () => ({ address: '127.0.0.1', port: api.port }),
+            },
+          },
+        )
+      const rawManifest: ManifestInput = {
+        schemaVersion: 1,
+        id: 'status',
+        name: 'Status',
+        version: '1.0.0',
+        description: 'Reads items over its own TLS connection.',
+        runtime: 'raw',
+        endpoints: ['api.example.test:443'],
+        tools: [{ name: 'count', title: 'Count', description: 'Counts items.', sideEffect: 'read' }],
+      }
+      const tools = [
+        "import { z } from 'zod'",
+        'declare const require: (id: string) => any',
+        'export const tools = {',
+        '  count: { input: z.object({ ca: z.string(), host: z.string() }), output: z.object({ count: z.number() }), run: (ctx, a) =>',
+        '    new Promise((resolve, reject) => {',
+        "      require('node:https').get({ host: a.host, path: '/v1/items', ca: a.ca, agent: false }, (res) => {",
+        "        let body = ''",
+        "        res.on('data', (d) => (body += d))",
+        "        res.on('end', () => resolve({ count: JSON.parse(body).items.length }))",
+        "      }).on('error', reject)",
+        '    }) },',
+        '}',
+      ].join('\n')
+      const files = packageOf(parseManifest(rawManifest), { 'src/tools.ts': tools })
+      const s = await withPackages(files, undefined, 'answers', undefined, undefined, egress, undefined, {
+        runtime: {
+          dependencies: (lock) => loadDependencies(lock, memoryTarballStore()),
+          start: rawProcess([], async () => ({
+            ports: new Map(),
+            close: () => undefined,
+            restrict: () => undefined,
+          })),
+        },
+        deps: { start: (manifest, openTunnels) => rawProcess(manifest.endpoints ?? [], openTunnels) },
+      })
+      let n = 0
+      const count = (host: string) =>
+        (s.endpoint.caller as ToolCaller).call({
+          adapterId: 'status',
+          tool: 'count',
+          input: { ca: api.cert, host },
+          client: 'Claude Code',
+          callId: `call_raw_${++n}`,
+          transport: 'http',
+        })
+      expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true, adapterId: 'status' })
+      const review = (await s.api.approvals.pending()).find((r) => r.adapterId === 'status')
+      expect(JSON.stringify(review)).toContain('api.example.test:443')
+      await s.api.approvals.approve('status', review?.to.hash ?? '')
+      expect(await count('api.example.test')).toMatchObject({ status: 'ok', output: { count: 2 } })
+      expect(api.seen.at(-1)).toMatchObject({ url: '/v1/items', servername: 'api.example.test' })
+      expect(readAudit(s.paths.audit)).toContainEqual(
+        expect.objectContaining({
+          type: 'egress-connection',
+          adapterId: 'status',
+          endpoint: 'api.example.test:443',
+          kind: 'tunnel',
+        }),
+      )
+      // A host it doesn't declare isn't reachable at all.
+      const before = api.seen.length
+      expect(await count('evil.example.test')).toMatchObject({ status: 'failed' })
+      expect(api.seen.length).toBe(before)
+    } finally {
+      await api.close()
+    }
+  }, 60_000)
+
+  it('doesn’t load a raw adapter in a build without the Node runtime', async () => {
+    const rawManifest: ManifestInput = {
+      schemaVersion: 1,
+      id: 'status',
+      name: 'Status',
+      version: '1.0.0',
+      description: 'Reads items over its own TLS connection.',
+      runtime: 'raw',
+      endpoints: ['api.example.test:443'],
+      tools: [{ name: 'count', title: 'Count', description: 'Counts items.', sideEffect: 'read' }],
+    }
+    const files = packageOf(parseManifest(rawManifest), {
+      'src/tools.ts':
+        "import { z } from 'zod'\nexport const tools = { count: { input: z.object({}), output: z.object({}), run: async () => ({}) } }",
+    })
+    const s = await withPackages(files)
+    // Without the Node runtime the package doesn't even load.
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: false })
   })
 
   describe('credentials (secrets v2)', () => {
@@ -4164,6 +4293,215 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
         await api.close()
       }
     })
+
+    it('lets an agent ask for a credential, never name the item, and sees the person grant it', async () => {
+      const api = await startFakeApi()
+      try {
+        const { credentials } = tokenCredentials()
+        const s = await withPackages(
+          notesPackage('1.0.0', ['api.example.test']),
+          undefined,
+          'answers',
+          undefined,
+          undefined,
+          brokerFor(api),
+          credentials,
+        )
+        const admin = s.endpoint.admin as AdminReader
+        const viewer: ClientIdentity = {
+          origin: 'local',
+          clientId: (await s.api.clients.add('Claude Code')).id,
+        }
+        const other: ClientIdentity = {
+          origin: 'local',
+          clientId: (await s.api.clients.add('Claude Desktop')).id,
+        }
+        const ask = async (args: WriteArgs, who = viewer) =>
+          (
+            (
+              await runWriteTool(
+                WRITE_TOOLS.find(
+                  (t) => t.name === 'valet_request_credential',
+                ) as (typeof WRITE_TOOLS)[number],
+                admin,
+                args,
+                who,
+              )
+            ).content as { text: string }[]
+          )
+            .map((c) => c.text)
+            .join('\n')
+        const asks = async () =>
+          (await s.api.attention.list()).filter(
+            (i): i is AgentRequestItem => i.kind === 'agent-request' && i.requestKind === 'credential',
+          )
+
+        await s.api.adapters.installFromFolder()
+        const hash = (await s.api.approvals.pending()).find((r) => r.adapterId === 'notes')?.to.hash ?? ''
+        const source = (s.service as unknown as { writerSource(): WriterSource }).writerSource()
+        const label = `local:${viewer.clientId}`
+        // Not approved yet: nothing to grant, and no ask is filed.
+        expect(await source.requestCredential(label, 'Claude Code', 'notes', 'api', null)).toBe(
+          'not-approved',
+        )
+        expect(await ask({ adapterId: 'notes', credential: 'api' })).not.toMatch(/^Asked/)
+        expect(await asks()).toEqual([])
+        await s.api.approvals.approve('notes', hash)
+
+        // A credential the site doesn't declare, a site that doesn't exist, a prototype name: not found.
+        for (const [adapterId, credential] of [
+          ['notes', 'other'],
+          ['nope', 'api'],
+          ['notes', 'constructor'],
+          ['notes', 'toString'],
+        ] as const)
+          expect(await source.requestCredential(label, 'Claude Code', adapterId, credential, null)).toBe(
+            'not-found',
+          )
+        expect(await asks()).toEqual([])
+
+        // valet_get_adapter lists it, not granted, in Valet's own words.
+        const before = (await admin.adapter('notes')).adapter?.credentials
+        expect(before).toEqual([
+          {
+            name: 'api',
+            kind: 'token',
+            custody: 'kept',
+            use: expect.stringContaining('api.example.test'),
+            targets: ['api.example.test'],
+            given: null,
+          },
+        ])
+
+        expect(await ask({ adapterId: 'notes', credential: 'api', note: 'To read your notes' })).toMatch(
+          /^Asked: the person will see “Grant api to Notes”/,
+        )
+        expect(await ask({ adapterId: 'notes', credential: 'api' })).toMatch(/^Already asked/)
+        expect(await ask({ adapterId: 'notes', credential: 'api' }, other)).toMatch(/^Asked/)
+        const filed = await asks()
+        expect(filed).toHaveLength(2)
+        expect(filed[0]?.details).toContain('Any app or agent that can use Notes’s tools can then use it.')
+        expect(filed[0]).toMatchObject({
+          title: 'Grant api to Notes',
+          adapterId: 'notes',
+          agentName: 'Claude Code',
+          agentNote: 'To read your notes',
+          choices: null,
+        })
+        // Approve isn't how it's answered: the person picks the item on the site's card.
+        await expect(s.api.attention.approveRequest(filed[0]?.id ?? '', null)).rejects.toThrow()
+        expect(await s.api.credentials.list()).toEqual([])
+        // Declining one leaves the other agent's, and holds that agent's same ask back for an hour.
+        expect(await s.api.attention.declineRequest(filed[1]?.id ?? '')).toBe(true)
+        expect(await asks()).toHaveLength(1)
+        expect(
+          await source.requestCredential(`local:${other.clientId}`, 'Claude Desktop', 'notes', 'api', null),
+        ).toEqual({
+          refused: 'cooling-down',
+          until: expect.any(String),
+        })
+        expect(await asks()).toHaveLength(1)
+
+        // The person grants it on the card: the ask is answered, and the agent sees it given.
+        await s.api.credentials.make({
+          adapterId: 'notes',
+          adapterHash: hash,
+          credential: 'api',
+          provider: 'onepassword-service-account',
+          itemId: 'notes-token',
+        })
+        expect(await asks()).toEqual([])
+        const after = (await admin.adapter('notes')).adapter?.credentials?.[0]
+        expect(after?.given).toMatchObject({ targets: ['api.example.test'], usable: true })
+        // Never the item: not its title, id or provider.
+        const shown = JSON.stringify(await admin.adapter('notes'))
+        expect(shown).not.toContain('Notes API token')
+        expect(shown).not.toContain('notes-token')
+        expect(shown).not.toContain('onepassword')
+        expect(await ask({ adapterId: 'notes', credential: 'api' })).toBe(
+          'Nothing to ask: api is already granted to Notes.',
+        )
+        expect(await asks()).toEqual([])
+      } finally {
+        await api.close()
+      }
+    })
+
+    it('ends an agent’s credential asks when it goes, on lockdown and on a new version, and caps them', async () => {
+      const api = await startFakeApi()
+      try {
+        const { credentials } = tokenCredentials()
+        const s = await withPackages(
+          notesPackage('1.0.0', ['api.example.test']),
+          undefined,
+          'answers',
+          undefined,
+          undefined,
+          brokerFor(api),
+          credentials,
+        )
+        await s.api.adapters.installFromFolder()
+        const hash = (await s.api.approvals.pending()).find((r) => r.adapterId === 'notes')?.to.hash ?? ''
+        await s.api.approvals.approve('notes', hash)
+        const source = (s.service as unknown as { writerSource(): WriterSource }).writerSource()
+        const asks = async () =>
+          (await s.api.attention.list()).filter(
+            (i): i is AgentRequestItem => i.kind === 'agent-request' && i.requestKind === 'credential',
+          )
+        const a = await s.api.clients.add('Claude Code')
+        const b = await s.api.clients.add('Claude Desktop')
+        expect(
+          await source.requestCredential(`local:${a.id}`, 'Claude Code', 'notes', 'api', null),
+        ).toMatchObject({
+          kind: 'credential-asked',
+        })
+        expect(
+          await source.requestCredential(`local:${b.id}`, 'Claude Desktop', 'notes', 'api', null),
+        ).toMatchObject({ kind: 'credential-asked' })
+        expect((await asks()).map((i) => i.agentName).sort()).toEqual(['Claude Code', 'Claude Desktop'])
+        // Revoking an app ends its ask, not the other's.
+        await s.api.clients.revoke(a.id)
+        expect((await asks()).map((i) => i.agentName)).toEqual(['Claude Desktop'])
+
+        // A new version ends asks made for the old one.
+        await s.service.stop()
+        const v2 = await withPackages(
+          notesPackage('1.1.0', ['api.example.test']),
+          s.dir,
+          'answers',
+          undefined,
+          undefined,
+          brokerFor(api),
+          credentials,
+        )
+        const source2 = (v2.service as unknown as { writerSource(): WriterSource }).writerSource()
+        const asks2 = async () =>
+          (await v2.api.attention.list()).filter(
+            (i) => i.kind === 'agent-request' && i.requestKind === 'credential',
+          )
+        expect(
+          await source2.requestCredential(`local:${b.id}`, 'Claude Desktop', 'notes', 'api', null),
+        ).toMatchObject({ kind: 'credential-asked' })
+        expect(await asks2()).toHaveLength(1)
+        expect(await v2.api.adapters.installFromFolder()).toMatchObject({ ok: true })
+        const next = (await v2.api.approvals.pending()).find((r) => r.adapterId === 'notes')?.to.hash ?? ''
+        await v2.api.approvals.approve('notes', next)
+        expect(await asks2()).toEqual([])
+
+        // At most 10 waiting in all: ten agents' asks are filed, and the eleventh is refused.
+        const filed = []
+        for (let i = 0; i < 11; i++)
+          filed.push(await source2.requestCredential(`remote:agent${i}`, `Agent ${i}`, 'notes', 'api', null))
+        expect(filed.slice(0, 10).every((r) => typeof r === 'object' && 'kind' in r)).toBe(true)
+        expect(filed[10]).toEqual({ refused: 'too-many-total' })
+        expect(await asks2()).toHaveLength(10)
+        // Lockdown ends them all.
+        await v2.api.app.setLockedDown(true)
+        expect(await asks2()).toEqual([])
+      } finally {
+        await api.close()
+      }
+    })
   })
 
   it('installs from a folder: the new version waits for approval, says it takes the session, and can be rolled back', async () => {
@@ -4269,15 +4607,15 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
 
     // An agent asks: it waits in Needs you until the person says yes there.
     const source = (s.service as unknown as { writerSource(): WriterSource }).writerSource()
-    expect(await source.requestRemoval('c_1', 'Claude Code', 'library', 'Done testing')).toEqual({
+    expect(await source.requestRemoval('local:c_1', 'Claude Code', 'library', 'Done testing')).toEqual({
       kind: 'removal-asked',
       siteName: 'Library',
     })
-    expect(await source.requestRemoval('c_1', 'Claude Code', 'library', null)).toMatchObject({
+    expect(await source.requestRemoval('local:c_1', 'Claude Code', 'library', null)).toMatchObject({
       kind: 'removal-already',
     })
-    expect(await source.requestRemoval('c_1', 'Claude Code', 'shop', null)).toBe('built-in')
-    expect(await source.requestRemoval('c_1', 'Claude Code', 'nope', null)).toBe('not-found')
+    expect(await source.requestRemoval('local:c_1', 'Claude Code', 'shop', null)).toBe('built-in')
+    expect(await source.requestRemoval('local:c_1', 'Claude Code', 'nope', null)).toBe('not-found')
     const ask = (await s.api.attention.list()).find(
       (i) => i.kind === 'agent-request' && i.requestKind === 'uninstall',
     )

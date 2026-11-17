@@ -123,10 +123,11 @@ export interface WriterSource {
   turnOffTool(clientId: string, qualified: string): Promise<'done' | 'already' | 'not-found'>
   /**
    * Files an agent's ask to remove a site (shown in Needs you; service.requestRemoval). The site's
-   * name, or why not: no such site, or a built-in one.
+   * name, or why not: no such site, or a built-in one. `asker` is the agent's label
+   * (`local:<id>` or `remote:<id>`), so its asks go when it does.
    */
   requestRemoval(
-    clientId: string,
+    asker: string,
     clientName: string,
     adapterId: string,
     note: string | null,
@@ -134,6 +135,29 @@ export interface WriterSource {
     | { readonly kind: 'removal-asked' | 'removal-already'; readonly siteName: string }
     | 'not-found'
     | 'built-in'
+  >
+  /**
+   * Files an agent's ask to grant a credential an approved site declares (shown in Needs you;
+   * service.requestCredential). The site's name, or why not: no such site or credential, or the
+   * site isn't approved yet.
+   */
+  requestCredential(
+    clientId: string,
+    clientName: string,
+    adapterId: string,
+    credential: string,
+    note: string | null,
+  ): Promise<
+    | {
+        readonly kind: 'credential-asked' | 'credential-already' | 'credential-granted'
+        readonly siteName: string
+      }
+    | 'not-found'
+    | 'not-approved'
+    | {
+        readonly refused: 'cooling-down' | 'too-many-waiting' | 'too-many-total'
+        readonly until?: string
+      }
   >
   /** Revokes the client (its token stops working) and withdraws its requests. */
   disconnect(viewer: ClientIdentity): Promise<boolean>
@@ -326,12 +350,53 @@ export class AdminWriterImpl implements AdminWriter {
       if (limited !== null) return limited
       let result: Awaited<ReturnType<WriterSource['requestRemoval']>>
       try {
-        result = await this.source.requestRemoval(viewer.clientId, gate.name, adapterId, note)
+        result = await this.source.requestRemoval(identityLabel(viewer), gate.name, adapterId, note)
       } catch {
         return refused('unavailable')
       }
       if (result === 'not-found') return refused('not-found')
       if (result === 'built-in') return refused('not-allowed')
+      return result
+    })
+  }
+
+  requestCredential(
+    viewer: ClientIdentity,
+    adapterId: string,
+    credential: string,
+    note: string | null,
+  ): Promise<
+    | {
+        readonly kind: 'credential-asked' | 'credential-already' | 'credential-granted'
+        readonly siteName: string
+      }
+    | WriteOutcome
+  > {
+    return this.exclusive(async () => {
+      const gate = this.gate(viewer)
+      if (gate.refused !== undefined) return gate.refused
+      const limited = this.takeSlot(viewer)
+      if (limited !== null) return limited
+      let result: Awaited<ReturnType<WriterSource['requestCredential']>>
+      try {
+        result = await this.source.requestCredential(
+          identityLabel(viewer),
+          gate.name,
+          adapterId,
+          credential,
+          note,
+        )
+      } catch {
+        return refused('unavailable')
+      }
+      if (result === 'not-found') return refused('not-found')
+      if (result === 'not-approved') return refused('not-allowed')
+      if ('refused' in result)
+        return {
+          kind: 'refused',
+          reason: result.refused,
+          ...(result.until === undefined ? {} : { until: result.until }),
+        }
       return result
     })
   }

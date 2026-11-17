@@ -7,55 +7,45 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { createBuilderConfig, NODE_RUNTIME_BUILD } from '../../electron-builder.config'
+import { createBuilderConfig } from '../../electron-builder.config'
 import { protocolHost } from '../../protocol-host-plugin'
 import {
-  NODE_RUNTIME_DEV,
   PROTOCOL_HOST_FILE,
   PROTOCOL_HOST_PACKAGED,
-  protocolHostPaths,
+  protocolHostScript,
 } from '../../src/main/core/protocol-host'
 
 const APP = '/Applications/Valet.app/Contents'
 const packaged = {
   packaged: true,
-  execPath: `${APP}/MacOS/Valet`,
   resourcesPath: `${APP}/Resources`,
   mainDir: `${APP}/Resources/app.asar/out/main`,
-  appPath: `${APP}/Resources/app.asar`,
 }
 const dev = {
   packaged: false,
-  execPath: '/repo/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron',
   resourcesPath: '/repo/node_modules/electron/dist/Electron.app/Contents/Resources',
   mainDir: '/repo/apps/desktop/out/main',
-  appPath: '/repo/apps/desktop',
 }
 
-describe('protocolHostPaths', () => {
-  it('finds the packaged binary beside the app and the script beside app.asar, never inside it', () => {
-    expect(protocolHostPaths({ ...packaged, exists: () => true })).toEqual({
-      nodeBinary: `${APP}/MacOS/valet-node`,
-      hostScript: `${APP}/Resources/app.asar.unpacked/out/main/protocol-host.cjs`,
-    })
+describe('protocolHostScript', () => {
+  it('finds the packaged script beside app.asar, never inside it', () => {
+    expect(protocolHostScript({ ...packaged, exists: () => true })).toBe(
+      `${APP}/Resources/app.asar.unpacked/out/main/protocol-host.cjs`,
+    )
   })
 
-  it('finds a development build’s own Node runtime and the built script', () => {
-    expect(protocolHostPaths({ ...dev, exists: () => true })).toEqual({
-      nodeBinary: '/repo/apps/desktop/.node-runtime/valet-node',
-      hostScript: '/repo/apps/desktop/out/main/protocol-host.cjs',
-    })
+  it('finds a development build’s script beside the main bundle', () => {
+    expect(protocolHostScript({ ...dev, exists: () => true })).toBe(
+      '/repo/apps/desktop/out/main/protocol-host.cjs',
+    )
   })
 
-  it('is null when either is missing, so protocol adapters stay unavailable', () => {
-    for (const places of [packaged, dev]) {
-      expect(protocolHostPaths({ ...places, exists: (p) => !p.endsWith('valet-node') })).toBeNull()
-      expect(protocolHostPaths({ ...places, exists: (p) => !p.endsWith(PROTOCOL_HOST_FILE) })).toBeNull()
-    }
+  it('is null when the script is missing, so protocol adapters stay unavailable', () => {
+    for (const places of [packaged, dev])
+      expect(protocolHostScript({ ...places, exists: () => false })).toBeNull()
   })
 
-  it('agrees with the package: the same Node build, and the script unpacked from app.asar', () => {
-    expect(NODE_RUNTIME_BUILD).toBe(NODE_RUNTIME_DEV)
+  it('agrees with the package: the script is unpacked from app.asar', () => {
     const config = createBuilderConfig({}, {
       bridgeBuilt: () => true,
       nodeRuntimeBuilt: () => true,

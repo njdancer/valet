@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest'
 import { ControlPanel } from '../src/renderer/control/App'
 import { createFakeApi, type FakeApi } from '../src/renderer/dev/fake-api'
 import { ApiProvider } from '../src/renderer/lib/api-context'
-import type { AdapterDetail, CredentialRequestInfo } from '../src/shared/api'
+import type { AdapterDetail, AgentRequestItem, CredentialRequestInfo } from '../src/shared/api'
 
 const NOW = Date.parse('2026-11-17T21:48:00+11:00')
 
@@ -106,5 +106,41 @@ describe('the Credentials card', () => {
     expect(within(dialog).getByText(/Valet deletes the key it made/)).toBeTruthy()
     await user.click(within(dialog).getByRole('button', { name: 'Revoke' }))
     await waitFor(() => expect(called(api, 'credentials.revoke')).toEqual([['woolworths', 'nas_key']]))
+  })
+})
+
+describe('an agent’s ask for a credential in Needs you', () => {
+  const ASK: AgentRequestItem = {
+    kind: 'agent-request',
+    id: 'crAbCdEfGhIjKlMnOpQrStUvWx',
+    requestKind: 'credential',
+    ref: 'ABCD',
+    title: 'Grant nas_key to Woolworths',
+    details: [
+      NAS_KEY.sentence,
+      'You pick where it comes from on the site’s page, and approve with Touch ID.',
+    ],
+    adapterId: 'woolworths',
+    agentName: 'Claude Code',
+    agentNote: 'For the backups',
+    choices: null,
+    requestedAt: new Date(NOW - 60_000).toISOString(),
+    expiresAt: new Date(NOW + 3_600_000).toISOString(),
+  }
+
+  it('sends the person to the site’s page to pick the item, and offers no Approve', async () => {
+    const base = withCredentials(createFakeApi({ now: NOW }), [NAS_KEY])
+    const api: FakeApi = {
+      ...base,
+      attention: { ...base.attention, list: async () => [...(await base.attention.list()), ASK] },
+    }
+    renderAt('#/needs-you', api)
+    const card = within(await screen.findByRole('listitem', { name: ASK.title }))
+    expect(card.getByText(NAS_KEY.sentence)).toBeTruthy()
+    expect(card.getByText('The agent says: “For the backups”')).toBeTruthy()
+    const link = card.getByRole('link', { name: 'Choose and grant…' })
+    expect(link.getAttribute('href')).toBe('#/sites/woolworths')
+    expect(card.queryByRole('button', { name: /Approve/ })).toBeNull()
+    expect(card.getByRole('button', { name: 'Decline' })).toBeTruthy()
   })
 })

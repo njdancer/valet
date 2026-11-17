@@ -204,3 +204,101 @@ export const tools = {
     'fixtures/item-abc-1.json': `${JSON.stringify({ id: 'abc-1', title: 'Example item', price: 4.5 }, null, 2)}\n`,
   }
 }
+
+/**
+ * A blank `raw` draft (docs/adapter-kinds.md#raw): Node code that opens its own TLS connection to
+ * one endpoint, with a case that tests its parsing without the network. Its npm packages are added
+ * with valet_add_dependency.
+ */
+export function blankRawDraft(adapterId: string, name: string): PackageFiles {
+  const manifest = {
+    schemaVersion: 1,
+    id: adapterId,
+    name,
+    version: '0.1.0',
+    description: `Tools for ${name}. Replace this with what the adapter does.`,
+    runtime: 'raw',
+    endpoints: ['api.example.com:443'],
+    secrets: {},
+    session: { cookieDomains: [], storage: [], probe: { kind: 'none' } },
+    auth: { steps: [], frameOrigins: [] },
+    requests: [],
+    tools: [
+      {
+        name: 'get_status',
+        title: 'Get status',
+        description: 'The service’s status line.',
+        sideEffect: 'read',
+      },
+    ],
+    settings: {},
+    limits: {
+      requestsPerRun: 5,
+      minGapMs: 1000,
+      requestsPerHour: 300,
+      requestsPerMinute: 30,
+      gapJitterPercent: 20,
+      cooldownSeconds: 600,
+      maxCooldownSeconds: 7200,
+    },
+  }
+  const tools = `// ${name}: tool code. A raw adapter runs in Node, in a sandbox of its own: Node's built-ins, npm
+// packages added with valet_add_dependency, zod, @valet/core and files under src/. Its connections
+// reach only manifest.json's endpoints (each must be TLS, with the endpoint's own name), and an
+// entrusted credential comes from ctx.secrets.get. It has no page and no ctx.http.
+
+import { tool, ValetError } from '@valet/core'
+import { z } from 'zod'
+
+declare const require: (id: string) => any
+
+/** The first line of the answer, cut to 200 characters. Pure, so a case can test it. */
+export function statusLine(text: string): string {
+  return (text.split(/\\r?\\n/)[0] ?? '').slice(0, 200)
+}
+
+function get(path: string): Promise<string> {
+  const https = require('node:https')
+  return new Promise((resolve, reject) => {
+    const request = https.get({ host: 'api.example.com', path, timeout: 10_000 }, (response: any) => {
+      let body = ''
+      response.setEncoding('utf8')
+      response.on('data', (chunk: string) => {
+        if (body.length < 100_000) body += chunk
+      })
+      response.on('end', () =>
+        response.statusCode === 200 ? resolve(body) : reject(new ValetError('tool-run', 'unavailable')),
+      )
+    })
+    request.on('timeout', () => request.destroy(new ValetError('tool-run', 'timed-out')))
+    request.on('error', reject)
+  })
+}
+
+export const tools = {
+  get_status: tool({
+    // A case passes the answer in; a real call leaves it out and asks the service.
+    input: z.object({ answer: z.string().max(10_000).optional() }),
+    output: z.object({ status: z.string() }),
+    async run(_ctx, input) {
+      return { status: statusLine(input.answer ?? (await get('/status'))) }
+    },
+  }),
+}
+`
+  const cases = {
+    cases: [
+      {
+        name: 'the first line of an answer',
+        tool: 'get_status',
+        input: { answer: 'All systems normal\nsince 09:00' },
+        expect: { output: { status: 'All systems normal' } },
+      },
+    ],
+  }
+  return {
+    'manifest.json': `${JSON.stringify(manifest, null, 2)}\n`,
+    'src/tools.ts': tools,
+    'test/example.json': `${JSON.stringify(cases, null, 2)}\n`,
+  }
+}
