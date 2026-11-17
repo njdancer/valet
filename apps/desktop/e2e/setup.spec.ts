@@ -204,6 +204,14 @@ test('Claude Code’s token lists the six namespaced tools with manifest-derived
     }),
   )
   const { tools } = await client.listTools()
+  // Connected as soon as it opened a session: setup's Connect step stops saying "Not connected yet"
+  // without the app having to call a site tool first.
+  await expect
+    .poll(
+      async () =>
+        (await control.evaluate(() => window.valet?.clients.list()))?.find((c) => c.id === code.id)?.lastSeen,
+    )
+    .not.toBeNull()
   const byName = Object.fromEntries(siteTools(tools).map((t) => [t.name, t.annotations]))
   expect(Object.keys(byName).sort()).toEqual([
     'woolworths_add_to_cart',
