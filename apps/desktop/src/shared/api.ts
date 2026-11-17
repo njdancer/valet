@@ -234,6 +234,8 @@ export interface AdapterDetail extends AdapterSummary {
   readonly tools: readonly ToolInfo[]
   readonly settings: readonly AdapterSettingInfo[]
   readonly secretRequests: readonly SecretRequestInfo[]
+  /** Credentials the adapter's code uses outside a browser login (secrets v2), as declared. */
+  readonly credentials: readonly CredentialRequestInfo[]
   readonly messages: readonly MessagesSourceInfo[]
   /**
    * What the last hand-off copied: counts only. Null when the main process can't tell (the driver
@@ -567,6 +569,18 @@ export interface VaultItem {
 export type VaultListing =
   | { readonly status: 'ok'; readonly items: readonly VaultItem[] }
   | { readonly status: 'declined' | 'unavailable'; readonly account: string | null }
+
+/** A credential an adapter declares (secrets v2): Valet's own sentence for it, and its targets. */
+export interface CredentialRequestInfo {
+  readonly name: string
+  /** The manifest author's words: shown as the adapter's, never as a headline. */
+  readonly description: string
+  /** describeCredentialUse: who holds it and where it may go. */
+  readonly sentence: string
+  readonly kind: 'password' | 'token' | 'ssh-key'
+  readonly custody: 'kept' | 'entrusted'
+  readonly targets: readonly string[]
+}
 
 /** A credential grant (secrets v2) as the window shows it. Never the item's reference or contents. */
 export interface CredentialGrantInfo {

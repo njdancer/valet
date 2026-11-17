@@ -283,6 +283,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         internal: false,
       },
     ],
+    credentials: [],
     secretRequests: [
       {
         name: 'login',
@@ -379,6 +380,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         internal: false,
       },
     ],
+    credentials: [],
     secretRequests: [
       {
         name: 'login',

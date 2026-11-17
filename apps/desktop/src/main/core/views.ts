@@ -6,6 +6,8 @@ import {
   type AdapterManifest,
   type AuditRecord,
   credentialsOf,
+  credentialTargets,
+  describeCredentialUse,
   type Grant,
   hasLogin,
   MESSAGES_SECRET,
@@ -233,6 +235,14 @@ export function adapterDetail(state: AdapterState): AdapterDetail {
     })),
     settings: settingInfos(state),
     secretRequests: secretRequests(state),
+    credentials: Object.entries(credentialsOf(manifest)).map(([name, c]) => ({
+      name,
+      description: c.description,
+      sentence: describeCredentialUse(name, c),
+      kind: c.kind,
+      custody: c.custody,
+      targets: [...credentialTargets(c)],
+    })),
     messages: messagesInfo(state),
     handedOver: state.handedOver,
   }
