@@ -20,6 +20,7 @@ import {
   Code,
   Dialog,
   HashChip,
+  Inline,
   RadioGroup,
   RadioOption,
   SearchInput,
@@ -32,7 +33,7 @@ import {
 } from '@valet/ui'
 import { Check, LockKeyhole, X } from 'lucide-react'
 import { type ReactNode, useEffect, useId, useLayoutEffect, useState } from 'react'
-import type { AdapterDetail, HashRoute, ProviderStatus, VaultItem } from '../../../shared/api'
+import type { AdapterDetail, HashRoute, ProviderStatus, VaultItem, VaultListing } from '../../../shared/api'
 import { useAction, useApi, useLoad } from '../../lib/api-context'
 import { hostOf, plural } from '../../lib/format'
 import { href, navigate } from '../../lib/router'
@@ -177,12 +178,14 @@ function GrantForm({
   const items = useLoad(
     (a) =>
       target.kind === 'messages'
-        ? Promise.resolve([] as readonly VaultItem[])
+        ? Promise.resolve<VaultListing>({ status: 'ok', items: [] })
         : a.grants.vaultItems(provider),
     [provider, target.kind],
     ['grants-changed'],
   )
-  const vaultItems = items.status === 'ready' ? items.data : []
+  const vaultItems: readonly VaultItem[] =
+    items.status === 'ready' && items.data.status === 'ok' ? items.data.items : []
+  const listingProblem = items.status === 'ready' && items.data.status !== 'ok' ? items.data : null
   const matching = vaultItems.filter((v) => v.title.toLowerCase().includes(query.trim().toLowerCase()))
 
   // Once items load, re-select the item an earlier grant used, by id: titles needn't be unique.
@@ -321,7 +324,42 @@ function GrantForm({
                 value={query}
                 onValueChange={setQuery}
               />
-              {items.status === 'error' ? (
+              {listingProblem?.status === 'declined' ? (
+                <Banner
+                  tone="warning"
+                  title="1Password didn’t give Valet access"
+                  action={
+                    <Button size="sm" onClick={items.reload}>
+                      Ask 1Password again
+                    </Button>
+                  }
+                >
+                  Valet needs your OK in 1Password to list your items. If you said no or closed its window,
+                  ask again and choose Allow.
+                </Banner>
+              ) : listingProblem?.status === 'unavailable' ? (
+                <Banner
+                  tone="warning"
+                  title={
+                    listingProblem.account === null
+                      ? 'Valet couldn’t reach 1Password'
+                      : `Valet couldn’t open the 1Password account “${listingProblem.account}”`
+                  }
+                  action={
+                    <Inline gap={2}>
+                      <Button size="sm" onClick={items.reload}>
+                        Try again
+                      </Button>
+                      <Button size="sm" asChild>
+                        <a href={href.secrets()}>Open Secrets</a>
+                      </Button>
+                    </Inline>
+                  }
+                >
+                  Check the account name matches the one 1Password shows (Settings, Accounts), and that
+                  1Password is open with “Integrate with other apps” turned on.
+                </Banner>
+              ) : items.status === 'error' ? (
                 <Banner
                   tone="warning"
                   title="Couldn’t list the vault. Is 1Password set up?"

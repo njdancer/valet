@@ -162,7 +162,7 @@ test('grant login from the person’s 1Password item, approved in its prompt, wi
 test('connect Claude Code and Claude Desktop, each with its own config to copy', async () => {
   await expect(h1('Connect Claude')).toBeVisible()
   await control.getByRole('button', { name: 'Add Claude Code' }).click()
-  const codeSnippet = control.locator('pre', { hasText: 'claude mcp add valet' })
+  const codeSnippet = control.locator('pre', { hasText: 'claude mcp add --scope user valet' })
   await expect(codeSnippet).toBeVisible()
   await control.getByRole('button', { name: 'Copy' }).first().click()
   await expect.poll(clipboard).toBe(await codeSnippet.textContent())

@@ -134,3 +134,12 @@ export function formatClock(iso: string | number): string {
 
 /** A call's short ref, "7F2A": the same one tool results and notifications name. */
 export { callRef } from '@valet/core/vocabulary'
+
+/**
+ * What the person typed, tidied: trimmed, and a number typed with spaces or dashes (" 2 0 0 0 ",
+ * "2000-") closed up, so a postcode typed loosely still finds its stores.
+ */
+export function tidyQuery(typed: string): string {
+  const trimmed = typed.trim()
+  return /^[\d\s-]+$/.test(trimmed) ? trimmed.replace(/[\s-]+/g, '') : trimmed.replace(/\s+/g, ' ')
+}

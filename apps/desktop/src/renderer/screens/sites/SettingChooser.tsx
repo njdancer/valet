@@ -23,7 +23,7 @@ import {
 import { type ReactNode, useId, useState } from 'react'
 import type { AdapterDetail, AdapterSettingInfo, SettingChoicesReply } from '../../../shared/api'
 import { useAction, useApi } from '../../lib/api-context'
-import { formatIn, formatTime } from '../../lib/format'
+import { formatIn, formatTime, tidyQuery } from '../../lib/format'
 import { ActionError, SiteText } from './site-ui'
 
 export interface SearchReply {
@@ -39,7 +39,7 @@ export function useSettingSearch(adapterId: string, setting: string) {
   const [reply, setReply] = useState<SearchReply | null>(null)
   const run = () =>
     search.run(async () => {
-      const asked = query.trim()
+      const asked = tidyQuery(query)
       setReply(null)
       setReply({ query: asked, reply: await api.adapters.settingChoices(adapterId, setting, asked) })
     })

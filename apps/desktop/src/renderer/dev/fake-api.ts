@@ -1261,7 +1261,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       },
       async vaultItems(provider) {
         enter('grants.vaultItems', provider)
-        return provider === 'messages' ? [] : clone(vault)
+        return { status: 'ok', items: provider === 'messages' ? [] : clone(vault) }
       },
       async make(request: GrantRequest) {
         enter('grants.make', request)
@@ -1426,7 +1426,10 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         const bridge = '/Applications/Valet.app/Contents/MacOS/valet-bridge'
         const config = `~/Library/Application Support/valet/client-configs/${clientId}.json`
         const list: ClientSnippet[] = [
-          { client: 'claude-code', text: `claude mcp add valet -- \\\n  ${bridge} \\\n  '${config}'` },
+          {
+            client: 'claude-code',
+            text: `claude mcp add --scope user valet -- \\\n  ${bridge} \\\n  '${config}'`,
+          },
           {
             client: 'claude-desktop',
             text: `{ "mcpServers": { "valet": { "command":\n  "${bridge}",\n  "args": ["${config}"]\n} } }`,

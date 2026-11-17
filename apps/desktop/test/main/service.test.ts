@@ -881,9 +881,10 @@ describe('grants', () => {
       }),
     ])
     expect((await s.api.grants.providers()).find((p) => p.kind === 'fake')?.grantCount).toBe(1)
-    expect(await s.api.grants.vaultItems('fake')).toEqual([
-      { id: 'demo-woolworths', title: 'Woolworths (demo account)' },
-    ])
+    expect(await s.api.grants.vaultItems('fake')).toEqual({
+      status: 'ok',
+      items: [{ id: 'demo-woolworths', title: 'Woolworths (demo account)' }],
+    })
     await s.api.grants.make({ ...request, secret: 'messages', provider: 'messages', itemRef: 'ShopBank' })
     expect((await s.api.adapters.get('shop'))?.messages[0]?.grant?.itemTitle).toBe('ShopBank')
     await expect(s.api.grants.revoke('shop', 'bank')).rejects.toThrow()
@@ -1050,6 +1051,55 @@ describe('tool calls', () => {
       ['Claude Desktop', 'stdio'],
       ['Claude Code', 'http'],
     ])
+  })
+
+  it('counts a client as connected once it opens a session, before it calls any site tool', async () => {
+    const s = await approved()
+    const code = await s.api.clients.add('Code')
+    expect((await s.api.clients.list()).find((c) => c.id === code.id)?.lastSeen).toBeNull()
+    s.endpoint.live = {
+      total: 1,
+      bridge: 0,
+      http: 1,
+      sessions: [
+        { identity: { origin: 'local', clientId: code.id }, transport: 'http', client: 'Claude Code' },
+      ],
+    }
+    s.events.splice(0)
+    s.endpoint.sessionsChanged?.(s.endpoint.live)
+    expect(s.events).toEqual([{ type: 'clients-changed' }, { type: 'endpoint-changed' }])
+    const seen = (await s.api.clients.list()).find((c) => c.id === code.id)
+    expect(seen?.lastSeen).not.toBeNull()
+    expect([seen?.reportedName, seen?.transport]).toEqual(['Claude Code', 'http'])
+    // A session whose client hasn't said its name yet keeps the name it said before.
+    s.endpoint.live = {
+      ...s.endpoint.live,
+      sessions: [{ ...s.endpoint.live.sessions[0]!, client: 'unknown' }],
+    }
+    s.endpoint.sessionsChanged?.(s.endpoint.live)
+    expect((await s.api.clients.list()).find((c) => c.id === code.id)?.reportedName).toBe('Claude Code')
+  })
+
+  it('says why a vault couldn’t be listed: declined in 1Password, or the account named couldn’t be opened', async () => {
+    const demo = testCredentials(disabledOtpReader)
+    let failure: 'locked' | 'unavailable' = 'locked'
+    const credentials: Credentials = {
+      ...demo,
+      async vaultItems() {
+        throw new CredentialError(failure)
+      },
+    }
+    const s = await setup({ credentials })
+    await s.api.settings.set({ onePasswordAccount: 'Smith Family' })
+    expect(await s.api.grants.vaultItems('keychain-copy')).toEqual({
+      status: 'declined',
+      account: 'Smith Family',
+    })
+    failure = 'unavailable'
+    expect(await s.api.grants.vaultItems('keychain-copy')).toEqual({
+      status: 'unavailable',
+      account: 'Smith Family',
+    })
   })
 
   it('ends a call the client cancels, and every call still running when the app stops', async () => {
@@ -1848,7 +1898,7 @@ describe('endpoint, settings, audit and the app', () => {
       expect(snippet.text).not.toContain(TOKEN)
     }
     await s.api.clients.copyConfig(code.id, 'claude-code')
-    expect(s.ui.clipboard[0]).toContain('claude mcp add valet-demo --')
+    expect(s.ui.clipboard[0]).toContain('claude mcp add --scope user valet-demo --')
     expect(s.ui.clipboard[0]).toContain(configPath)
     expect(await s.api.clients.snippets('c_0000000000000000')).toEqual([])
     await expect(s.api.clients.copyConfig('c_0000000000000000', 'claude-code')).rejects.toThrow()

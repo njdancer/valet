@@ -67,8 +67,10 @@ export function stepsDone(facts: SetupFacts): StepsDone {
   // Connected, not just added: copying a config isn't the client using it.
   const clients = facts.clients.some((c) => c.revokedAt === null && c.lastSeen !== null)
   // A provider can be ready before the person has done anything (set up outside the app, or demo
-  // mode's test provider), so it alone doesn't skip the welcome.
-  return { welcome: approve || grant || clients, onepassword, approve, grant, store, clients }
+  // mode's test provider), so it alone doesn't skip the welcome. An account name the person typed
+  // does: they were past the welcome, and setup should reopen where they were.
+  const typedAccount = facts.settings.onePasswordAccount !== null
+  return { welcome: approve || grant || clients || typedAccount, onepassword, approve, grant, store, clients }
 }
 
 /**

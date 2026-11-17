@@ -141,7 +141,7 @@ describe('first-run setup', () => {
     expect(screen.getByText(/http:\/\/127\.0\.0\.1:47821\/mcp/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Finish without an app' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Add Claude Code' }))
-    const code = await screen.findByText(/^claude mcp add valet/)
+    const code = await screen.findByText(/^claude mcp add --scope user valet/)
     expect(code.tagName).toBe('PRE')
     await user.click(screen.getByRole('button', { name: 'Add Claude Desktop' }))
     await screen.findByText(/"mcpServers"/)
@@ -316,7 +316,7 @@ describe('first-run setup', () => {
     renderAt('#/setup', api)
     await heading('Connect Claude')
     // Its clients exist already: their setup is shown, not an Add button.
-    await screen.findByText(/^claude mcp add valet/)
+    await screen.findByText(/^claude mcp add --scope user valet/)
     expect(screen.queryByRole('button', { name: /^Add Claude/ })).toBeNull()
     expect(screen.getAllByText('Connected')).toHaveLength(2)
     // Every other step is done; this one is the current one.
@@ -413,7 +413,7 @@ describe('setup’s store step', () => {
     [{ status: 'not-approved' }, /isn’t approved, so it can’t search/],
     [{ status: 'site-changed' }, /The adapter may need an update/],
     [{ status: 'failed' }, /The search didn’t work/],
-    [{ status: 'ok', choices: [] }, /Nothing found for “9999”/],
+    [{ status: 'ok', choices: [] }, /Nothing found for “9999”. Check the postcode/],
   ])('words a search that came back %j in the app’s own words', async (reply, wording) => {
     const user = userEvent.setup()
     const fake = createFakeApi({ now: NOW })
@@ -473,6 +473,22 @@ describe('setup’s step logic', () => {
       clients: false,
     })
     expect(resumeStep(done)).toBe('welcome')
+  })
+
+  it('reopens past the welcome once the person has typed a 1Password account name', async () => {
+    const f = await facts(createFakeApi({ now: NOW, firstRun: true }))
+    const typed = { ...f, settings: { ...f.settings, onePasswordAccount: 'Smith Family' } }
+    expect(stepsDone(typed).welcome).toBe(true)
+    expect(resumeStep(stepsDone(typed))).not.toBe('welcome')
+  })
+
+  it('numbers the sidebar’s steps the way the header counts them: welcome and done aren’t numbered', async () => {
+    renderAt('#/setup/onepassword', createFakeApi({ now: NOW, firstRun: true }))
+    expect(await screen.findByText('Step 1 of 5')).toBeTruthy()
+    const steps = screen.getByRole('navigation', { name: 'Setup steps' })
+    const row = (sub: string) => within(steps).getByText(sub).closest('li')?.textContent ?? ''
+    expect(row('Where passwords come from')).toMatch(/^1/)
+    expect(row('Claude Desktop or Code')).toMatch(/^5/)
   })
 
   it('a grant for another hash, or a revoked client, doesn’t count', async () => {

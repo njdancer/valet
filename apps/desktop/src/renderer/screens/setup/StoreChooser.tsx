@@ -5,10 +5,10 @@
 
 import { Badge, Button, Field, Input, Stack, Text } from '@valet/ui'
 import { Search } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { AdapterDetail, AdapterSettingInfo, SettingChoicesReply } from '../../../shared/api'
 import { useAction, useApi } from '../../lib/api-context'
-import { formatIn, formatTime } from '../../lib/format'
+import { formatIn, formatTime, tidyQuery } from '../../lib/format'
 import { Failed } from './SetupSteps'
 
 export function StoreChooser({
@@ -32,9 +32,18 @@ export function StoreChooser({
   const approved = adapter.approval === 'approved'
   const title = setting.title.toLowerCase()
 
+  // After a pick the list goes away; focus moves to the chosen card's button rather than the page.
+  const changeButton = useRef<HTMLButtonElement>(null)
+  const [picked, setPicked] = useState(false)
+  useEffect(() => {
+    if (!picked || setting.chosen === null) return
+    changeButton.current?.focus()
+    setPicked(false)
+  }, [picked, setting.chosen])
+
   const runSearch = () =>
     search.run(async () => {
-      const asked = query.trim()
+      const asked = tidyQuery(query)
       setReply(null)
       setReply({ query: asked, reply: await api.adapters.settingChoices(adapter.id, setting.name, asked) })
     })
@@ -44,6 +53,7 @@ export function StoreChooser({
       setOpen(false)
       setReply(null)
       setQuery('')
+      setPicked(true)
     })
 
   return (
@@ -78,7 +88,11 @@ export function StoreChooser({
               From {adapter.site} · chosen {formatTime(setting.chosen.chosenAt, now)}
             </Text>
           </div>
-          {searching ? null : <Button onClick={() => setOpen(true)}>Change {title}…</Button>}
+          {searching ? null : (
+            <Button ref={changeButton} onClick={() => setOpen(true)}>
+              Change {title}…
+            </Button>
+          )}
         </div>
       ) : setting.required ? (
         <Text size="sm" tone="muted">
@@ -137,7 +151,14 @@ export function StoreChooser({
           </form>
           <Failed failed={search.failed} what={`search for a ${title}`} />
           {reply === null ? null : (
-            <Choices reply={reply} site={adapter.site} busy={choose.busy} now={now} onPick={pick} />
+            <Choices
+              reply={reply}
+              site={adapter.site}
+              queryLabel={setting.queryLabel}
+              busy={choose.busy}
+              now={now}
+              onPick={pick}
+            />
           )}
           <Failed failed={choose.failed} what={`save the ${title}`} />
         </Stack>
@@ -149,12 +170,14 @@ export function StoreChooser({
 function Choices({
   reply: { query, reply },
   site,
+  queryLabel,
   busy,
   now,
   onPick,
 }: {
   readonly reply: { readonly query: string; readonly reply: SettingChoicesReply }
   readonly site: string
+  readonly queryLabel: string
   readonly busy: boolean
   readonly now: number
   readonly onPick: (choiceId: string) => void
@@ -172,7 +195,8 @@ function Choices({
       'The site answered in a way the adapter doesn’t understand. The adapter may need an update.',
     )
   if (reply.status === 'failed') return status('The search didn’t work. Try again in a moment.')
-  if (reply.choices.length === 0) return status(`Nothing found for “${query}”.`)
+  if (reply.choices.length === 0)
+    return status(`Nothing found for “${query}”. Check the ${queryLabel.toLowerCase()} and search again.`)
   // What the site sent back through the adapter: one line says so, and each choice is plain text.
   return (
     <Stack gap={1.5}>

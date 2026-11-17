@@ -229,7 +229,7 @@ function KeychainCopyCard({
               className="min-w-[min(100%,18rem)] flex-1"
             >
               <Input
-                placeholder="my.1password.com"
+                placeholder="e.g. Smith Family"
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
               />

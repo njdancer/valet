@@ -3467,7 +3467,20 @@ export class AppService {
     this.endpoint = await this.deps.startEndpoint(
       this.caller,
       this.clients.active(),
-      () => this.emit('endpoint-changed'),
+      (sessions) => {
+        // A client that opened a session has connected, whether or not it has called a site tool
+        // yet: setup's "Connect" step and the Connections page wait on lastSeen.
+        let seen = false
+        for (const session of sessions.sessions) {
+          if (session.identity.origin !== 'local') continue
+          const existing = this.clients.get(session.identity.clientId)
+          const name = session.client === 'unknown' ? (existing?.reportedName ?? 'unknown') : session.client
+          if (this.clients.seen(session.identity.clientId, name, shownTransport(session.transport)))
+            seen = true
+        }
+        if (seen) this.emit('clients-changed')
+        this.emit('endpoint-changed')
+      },
       this.adminReader(),
       this.authoring,
     )
@@ -3982,7 +3995,16 @@ export class AppService {
             ).length,
           }))
         },
-        vaultItems: (provider) => deps.credentials.vaultItems(provider),
+        vaultItems: async (provider) => {
+          try {
+            return { status: 'ok', items: await deps.credentials.vaultItems(provider) }
+          } catch (error) {
+            // Only the kind of failure crosses to the window, and the account name the person typed.
+            const account = (await this.settings.get()).onePasswordAccount
+            const declined = error instanceof CredentialError && error.failure === 'locked'
+            return { status: declined ? 'declined' : 'unavailable', account }
+          }
+        },
         make: async (request) => {
           const adapter = this.requireAdapter(request.adapterId)
           const checked = await checkGrantRequest(request, {

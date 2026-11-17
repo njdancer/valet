@@ -79,7 +79,7 @@ describe('connections', () => {
     await user.type(field, 'Claude Code on the laptop{Enter}')
     expect(called(api, 'clients.add')).toEqual([['Claude Code on the laptop']])
     const setup = within(await screen.findByRole('dialog', { name: 'Set up Claude Code on the laptop' }))
-    expect(await setup.findByText(/claude mcp add valet/)).toBeTruthy()
+    expect(await setup.findByText(/claude mcp add --scope user valet/)).toBeTruthy()
     const [id] = called(api, 'clients.snippets').at(-1) as [string]
     await user.click(setup.getByRole('button', { name: 'Copy command' }))
     expect(called(api, 'clients.copyConfig')).toEqual([[id, 'claude-code']])
@@ -230,7 +230,7 @@ describe('an app’s page', () => {
     const api = createFakeApi({ now: NOW })
     renderPage(api, <ClientPage clientId={CLAUDE_CODE} />)
     await user.click(await screen.findByText('Show setup command'))
-    expect(await screen.findByText(/claude mcp add valet/)).toBeTruthy()
+    expect(await screen.findByText(/claude mcp add --scope user valet/)).toBeTruthy()
     expect(called(api, 'clients.snippets')).toEqual([[CLAUDE_CODE]])
     await user.click(screen.getByRole('button', { name: 'Copy entry' }))
     expect(called(api, 'clients.copyConfig')).toEqual([[CLAUDE_CODE, 'claude-desktop']])

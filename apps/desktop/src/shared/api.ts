@@ -477,6 +477,16 @@ export interface VaultItem {
   readonly title: string
 }
 
+/**
+ * What listing a vault came to. `declined`: 1Password said no, or the person closed its prompt (or
+ * it is locked), so asking again may work. `unavailable`: 1Password couldn't be reached with the
+ * account named, which is most often a wrong account name, or the app not running or not letting
+ * other apps in.
+ */
+export type VaultListing =
+  | { readonly status: 'ok'; readonly items: readonly VaultItem[] }
+  | { readonly status: 'declined' | 'unavailable'; readonly account: string | null }
+
 export interface GrantRequest {
   readonly adapterId: string
   /** The exact hash the person is granting for. A grant never carries to another hash. */
@@ -1355,8 +1365,8 @@ export interface ValetApi {
   readonly grants: {
     list(): Promise<readonly GrantInfo[]>
     providers(): Promise<readonly ProviderStatus[]>
-    /** Items in the Valet vault, title only. */
-    vaultItems(provider: ProviderKind): Promise<readonly VaultItem[]>
+    /** Items in the Valet vault (or, for a Keychain copy, the person's 1Password), title only. */
+    vaultItems(provider: ProviderKind): Promise<VaultListing>
     /** The main process checks origins ⊆ the manifest's request for that hash, and refuses otherwise. */
     make(request: GrantRequest): Promise<void>
     revoke(adapterId: string, secret: string): Promise<void>
