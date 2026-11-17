@@ -40,16 +40,26 @@ public struct MacStatus: Equatable, Sendable {
     public var id: Int { index }
   }
 
+  /// The Valet account the Mac and this phone are on (relay-hub.md, step 4c): where the phone
+  /// reads the account's device list. Absent while the Mac is on no account.
+  public struct Account: Equatable, Sendable {
+    public let hub: String
+    public let accountId: String
+  }
+
   public let at: Date
   public let safety: Safety
   public let sites: [Site]
   public let agents: [Agent]
   public let devices: [Device]
   public let recent: [Recent]
+  public let account: Account?
 
   /// Parses the whole `status` message (its `type` and `seq` included).
   public static func parse(_ value: JSONValue) throws -> MacStatus {
-    let f = try Fields(value, path: "status", required: ["type", "seq", "at", "safety", "sites", "agents", "devices", "recent"])
+    let f = try Fields(
+      value, path: "status", required: ["type", "seq", "at", "safety", "sites", "agents", "devices", "recent"],
+      optional: ["account"])
     let optionalDate = { (fields: Fields, key: String) throws -> Date? in
       try (fields.raw(key).isNull ? nil : fields.dateTime(key))
     }
@@ -91,7 +101,16 @@ public struct MacStatus: Equatable, Sendable {
           isCall: try r.oneOf("kind", ["call", "change"]) == "call",
           text: try r.display("text", max: 200)
         )
-      }
+      },
+      account: try f.has("account") ? parseAccount(try f.raw("account")) : nil
+    )
+  }
+
+  static func parseAccount(_ value: JSONValue) throws -> Account {
+    let a = try Fields(value, path: "status.account", required: ["hub", "accountId"])
+    return Account(
+      hub: try a.string("hub", pattern: Patterns.hubOrigin, max: 200),
+      accountId: try a.string("accountId", pattern: Patterns.accountId)
     )
   }
 }

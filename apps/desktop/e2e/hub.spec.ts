@@ -499,14 +499,25 @@ test('a phone paired once goes on the account’s device list, and reads the acc
   // The Mac puts it on the account's list by itself (the e2e build's Touch ID says yes).
   await expect(control.getByText(devicesLine(2))).toBeVisible()
 
-  hubPhone = new HubPhone(phone, HUB, (path, body) =>
-    fetch(`${HUB}${path}`, {
+  // Signed in to the Mac's relay object, the phone hears which account it is on, and where.
+  phone.socket?.close()
+  await phone.dial((nonce) => phone.hello(nonce))
+  const status = await until(() =>
+    phone.messages.findLast((m) => m['type'] === 'status' && m['account'] !== undefined),
+  )
+  const told = status['account'] as { hub: string; accountId: string }
+  expect(told.hub).toBe(HUB)
+
+  hubPhone = new HubPhone(phone, told.hub, (path, body) =>
+    fetch(`${told.hub}${path}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     }),
   )
   const account = await hubPhone.account()
+  expect(account.account).toBe(told.accountId)
+  expect(account.relay).toBe(RELAY_ORIGIN)
   expect([...HubPhone.roster(account).devices.keys()]).toEqual([offer.macId, phone.deviceId])
   expect(account.nodes).toMatchObject([{ slug: 'test-mac', name: MAC_NAME, online: true }])
   expect(account.joining).toEqual([])

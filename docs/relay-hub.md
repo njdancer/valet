@@ -380,10 +380,13 @@ so the account outlives any one Mac.
    hello (its transport key). The hub accepts it only if the phone is on the account's list. Over
    it, the phone gets the chain, any Mac waiting to join, and each Mac's relay address. It also
    sends roster changes it signed with Face ID.
-4. **Signing a phone in by QR goes through the hub (4c-2).** This is the reviewed pairing protocol
-   (one-time secret in the QR, sealed messages, a nonce, six digits from the whole transcript),
-   carried to the inviting device through the hub instead of a Mac's relay object. The result is
-   a roster add signed by that device.
+4. **Signing a phone in by QR (4c-2).** Decided by recommendation, needs Nick's review: the
+   reviewed pairing protocol stays as it is, through the inviting Mac's relay object, rather than
+   being carried through the hub. It already ends with the phone on the account's list (the Mac
+   adds every phone it pairs), so a second path would only add risk. Once on the list, the phone
+   hears which account it is on in the Mac's `status` message (`account`: the hub's address and
+   the account's id), and the hub's answer names the relay every Mac dials (`relay`). A phone
+   inviting another phone can come later if it's wanted.
 5. **The iPhone app (4c-3).** Swift parts:
    - roster verification and roster-change signing, checked against core's test vectors as the
      other formats are;
