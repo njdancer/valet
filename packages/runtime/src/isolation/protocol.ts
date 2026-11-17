@@ -10,6 +10,8 @@
 import {
   ERROR_CLASSES,
   type ErrorClass,
+  type InputIssue,
+  inputIssue,
   NEEDS_USER_REASONS,
   NeedsUserError,
   type NeedsUserReason,
@@ -58,13 +60,32 @@ const MAX_NODES = 200_000
 
 /** How an error crosses the channel: a stage and class, a needsUser reason, or nothing at all. */
 export type WireError =
-  | { readonly kind: 'valet'; readonly stage: Stage; readonly errorClass: ErrorClass }
+  | {
+      readonly kind: 'valet'
+      readonly stage: Stage
+      readonly errorClass: ErrorClass
+      readonly detail?: string
+      /** A tool-input refusal's where and why; checked against the vocabulary when decoded. */
+      readonly issue?: InputIssue
+    }
   | { readonly kind: 'needsUser'; readonly reason: NeedsUserReason }
-  | { readonly kind: 'other' }
+  /** `detail`, only for a run that asked for it: what the tool threw, in its own words, clipped. */
+  | { readonly kind: 'other'; readonly detail?: string }
 
 export type HostMessage =
   | { readonly t: 'init'; readonly script: string }
-  | { readonly t: 'run'; readonly tool: string; readonly input: unknown; readonly url: string }
+  | {
+      readonly t: 'run'
+      readonly tool: string
+      readonly input: unknown
+      readonly url: string
+      /**
+       * Asks for a failure's detail on the wire: what a plain thrown error said, or where the
+       * output broke its schema. Only for an author's cases, which run on their own fixtures; never
+       * for a call or trial on a real site, whose page text could be in it.
+       */
+      readonly detail?: true
+    }
   | {
       readonly t: 'reply'
       readonly id: number
@@ -95,7 +116,10 @@ export type ProcessMessage =
     }
   | { readonly t: 'done'; readonly ok: true; readonly value?: unknown }
   | { readonly t: 'done'; readonly ok: false; readonly error: WireError }
-  /** The answer to describe: by tool, its schemas (null where one isn't representable), or null. */
+  /**
+   * The answer to describe: by tool, its schemas ('missing' where the tool gives none, null where one
+   * isn't representable), or null.
+   */
   | { readonly t: 'checked'; readonly ok: boolean }
   | { readonly t: 'described'; readonly tools: Readonly<Record<string, DescribedTool | null>> | null }
 
@@ -144,7 +168,10 @@ export function withinSize(value: unknown): boolean {
 }
 
 export function encodeError(error: unknown): WireError {
-  if (error instanceof ValetError) return { kind: 'valet', stage: error.stage, errorClass: error.errorClass }
+  if (error instanceof ValetError) {
+    const wire = { kind: 'valet', stage: error.stage, errorClass: error.errorClass } as const
+    return error.issue === undefined ? wire : { ...wire, issue: error.issue }
+  }
   if (error instanceof NeedsUserError) return { kind: 'needsUser', reason: error.reason }
   return { kind: 'other' }
 }
@@ -153,15 +180,36 @@ export function encodeError(error: unknown): WireError {
  * What the other side said was thrown, as an error the runtime knows, checked against the fixed
  * vocabularies. Anything unrecognised is a plain Error, which reports as internal.
  */
-export function decodeError(wire: unknown): Error {
+export function decodeError(wire: unknown, withDetail = false): Error {
+  let error: Error = new Error('tool code failed')
+  let detail: unknown
   if (wire !== null && typeof wire === 'object') {
-    const w = wire as Partial<Record<'kind' | 'stage' | 'errorClass' | 'reason', unknown>>
+    const w = wire as Partial<
+      Record<'kind' | 'stage' | 'errorClass' | 'reason' | 'detail' | 'issue', unknown>
+    >
     if (w.kind === 'valet' && isStage(w.stage) && isErrorClass(w.errorClass)) {
-      return new ValetError(w.stage, w.errorClass)
+      // ValetError keeps an issue for tool-input only, and only the parts the vocabulary allows.
+      error = new ValetError(w.stage, w.errorClass, inputIssue(w.issue))
+    } else if (w.kind === 'needsUser' && isReason(w.reason)) {
+      return new NeedsUserError(w.reason)
     }
-    if (w.kind === 'needsUser' && isReason(w.reason)) return new NeedsUserError(w.reason)
+    detail = w.detail
   }
-  return new Error('tool code failed')
+  if (withDetail && typeof detail === 'string' && detail !== '')
+    details.set(error, detail.slice(0, MAX_DETAIL))
+  return error
+}
+
+/** The most of a failure's detail kept. */
+export const MAX_DETAIL = 300
+const details = new WeakMap<object, string>()
+
+/**
+ * What tool code's failure said, for a run that asked for it (runIsolated's `detail`): a plain
+ * error's own message, or where the output broke its schema. Null otherwise.
+ */
+export function failureDetail(error: unknown): string | null {
+  return typeof error === 'object' && error !== null ? (details.get(error) ?? null) : null
 }
 
 const isStage = (v: unknown): v is Stage => STAGES.some((s) => s === v)

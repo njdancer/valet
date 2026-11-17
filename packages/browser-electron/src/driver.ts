@@ -764,11 +764,12 @@ export class ElectronSessionDriver implements SessionDriver {
         return true
       }
       // Sockets come from page script (WebRTC, WebTransport): tool code can't open one through
-      // the capability API.
+      // the capability API. An allowed host on another port says so: the URL's port is the fix.
+      const hostOk = hostAllowed(host, egress) && hostAllowed(host, run.policy.egress)
       this.report(run, {
         method: 'CONNECT',
         target: requestTarget(`https://${host}:${port}`, false),
-        reason: 'host-not-allowed',
+        reason: hostOk ? 'port-not-allowed' : 'host-not-allowed',
         initiator: 'page',
       })
       return false

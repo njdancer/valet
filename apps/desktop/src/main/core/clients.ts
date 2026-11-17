@@ -5,7 +5,7 @@
 
 import { randomBytes } from 'node:crypto'
 import { join } from 'node:path'
-import { ValetError } from '@valet/core'
+import { type ClientCapability, ValetError } from '@valet/core'
 import type { EndpointClient } from '@valet/mcp-server'
 import type { ClientTransport } from '@valet/runtime'
 import { z } from 'zod'
@@ -75,6 +75,15 @@ export const DEFAULT_CAPABILITIES: ClientCapabilities = {
   seeValet: true,
   allActivity: false,
   askForChanges: true,
+}
+
+/** The capabilities that are on, by the audit log's fixed names, in a fixed order. */
+export function capabilityNames(capabilities: ClientCapabilities): ClientCapability[] {
+  return [
+    ...(capabilities.seeValet ? (['see-valet'] as const) : []),
+    ...(capabilities.allActivity ? (['all-activity'] as const) : []),
+    ...(capabilities.askForChanges ? (['ask-for-changes'] as const) : []),
+  ]
 }
 
 /**
@@ -241,10 +250,14 @@ export class ClientRegistry {
     if (existing === null) return false
     const changed = existing.reportedName !== reportedName || existing.transport !== transport
     const at = this.now().toISOString()
+    const last = existing.lastSeen === null ? Number.NaN : Date.parse(existing.lastSeen)
+    // Written at most once a minute unless what it shows changed: sessions opening and closing in
+    // a loop don't rewrite the registry each time.
+    const stale = !(this.now().getTime() - last < 60_000)
     this.clients = this.clients.map((c) =>
       c.id === id ? { ...c, lastSeen: at, reportedName: reportedName.slice(0, 200), transport } : c,
     )
-    void this.save().catch(() => undefined)
+    if (changed || stale) void this.save().catch(() => undefined)
     return changed || existing.lastSeen === null
   }
 

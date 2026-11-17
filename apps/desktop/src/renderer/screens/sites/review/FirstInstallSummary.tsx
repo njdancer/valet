@@ -14,6 +14,7 @@ import {
 } from '@valet/ui'
 import type { PendingReview } from '../../../../shared/api'
 import { hostOf, plural } from '../../../lib/format'
+import { reviewLogsIn } from '../../../lib/permissions'
 import { FIELD_WORDING } from '../../../lib/wording'
 import { capText, PURPOSE_WORDING } from './words'
 
@@ -108,7 +109,9 @@ export function FirstInstallSummary({ review }: { readonly review: PendingReview
           {internal === 0
             ? null
             : `Valet runs ${internal === 1 ? 'one more' : `${internal} more`} itself, for its settings.`}{' '}
-          Nothing is given to it yet: after approving, you choose which login it may use.
+          {reviewLogsIn(review)
+            ? 'Nothing is given to it yet: after approving, you choose which login it may use.'
+            : 'It needs no login: it only opens the pages listed here, signed out.'}
         </p>
       </CardHeader>
       <CardContent>

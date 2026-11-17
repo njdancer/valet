@@ -58,7 +58,7 @@ function show(hash: string, api: ValetApi) {
 const ROUTES: [string, string][] = [
   ['#/sites/woolworths/versions/review', 'Permission changes'],
   ['#/sites/woolworths/login/login', 'Fill it only on'],
-  ['#/sites/coles/login/messages', 'Sender the manifest declared'],
+  ['#/sites/coles/login/messages', 'Sender the adapter declared'],
 ]
 
 describe('no secret reaches the review page or the grant sheet', () => {

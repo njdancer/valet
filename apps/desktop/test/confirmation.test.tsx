@@ -255,7 +255,7 @@ describe('the confirmation window', () => {
     renderAt('#/confirm/cf_a40f3c', createFakeApi({ now: NOW }))
     const listed = await screen.findByTestId('confirm-requests')
     expect(listed.textContent).toContain('POST /api/v3/ui/trolley/update')
-    expect(listed.textContent).toContain('declared in the manifest')
+    expect(listed.textContent).toContain('declared by the adapter')
     expect(screen.getByText('Approving unlocks no irreversible request')).toBeTruthy()
     expect(screen.getByTestId('adapter-note').textContent).toContain('Cavendish Bananas')
   })
@@ -321,6 +321,23 @@ describe('the confirmation window', () => {
     const second = { ...CHECKOUT, id: 'cf_two', requestedAt: new Date(NOW).toISOString() }
     renderWindow('cf_checkout', withAttention(fake, [CHECKOUT, second]))
     expect(await screen.findByText(/of 2 waiting/)).toBeTruthy()
+  })
+
+  it('counts only confirmations in its queue, not site reviews (persona QA)', async () => {
+    const fake = createFakeApi({ now: NOW })
+    const review = (id: string): AttentionItem => ({
+      kind: 'review',
+      id: `rv_${id}`,
+      adapterId: id,
+      adapterName: id,
+      version: '1.0.0',
+      addsPermissions: false,
+      firstInstall: true,
+    })
+    renderWindow('cf_checkout', withAttention(fake, [CHECKOUT, review('coles'), review('aldi')]))
+    expect((await screen.findAllByText(/Place order/)).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/of 3 waiting/)).toBeNull()
+    expect(screen.queryByText(/ of \d+ waiting/)).toBeNull()
   })
 
   it('says so when the confirmation is gone', async () => {

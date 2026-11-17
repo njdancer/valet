@@ -1,6 +1,7 @@
 export * from './admin-tools'
 export * from './admin-write'
 export * from './auth'
+export { AUTHORING_GUIDE } from './authoring-guide'
 export * from './authoring-tools'
 export * from './bridge'
 export * from './bridge-config'

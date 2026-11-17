@@ -1,6 +1,8 @@
 // Errors leave the runtime as a stage plus an error class from fixed vocabularies, never as free
 // text: page text and exception messages can carry secrets or personal data.
 
+import { type InputIssue, inputIssue } from './input-issue'
+
 export const STAGES = [
   'manifest',
   'grant',
@@ -104,12 +106,21 @@ export const ERROR_CLASSES = [
 export type ErrorClass = (typeof ERROR_CLASSES)[number]
 
 export class ValetError extends Error {
+  /**
+   * For stage tool-input only: where the input was wrong and why, from a fixed vocabulary
+   * (input-issue.ts). Checked here, so whatever tool code passed only reaches a client as codes.
+   */
+  readonly issue?: InputIssue
+
   constructor(
     readonly stage: Stage,
     readonly errorClass: ErrorClass,
+    issue?: InputIssue,
   ) {
     super(`${stage}: ${errorClass}`)
     this.name = 'ValetError'
+    const checked = stage === 'tool-input' ? inputIssue(issue) : undefined
+    if (checked !== undefined) this.issue = checked
   }
 }
 

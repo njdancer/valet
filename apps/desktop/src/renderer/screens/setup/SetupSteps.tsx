@@ -229,7 +229,7 @@ function KeychainCopyCard({
               className="min-w-[min(100%,18rem)] flex-1"
             >
               <Input
-                placeholder="my.1password.com"
+                placeholder="e.g. Smith Family"
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
               />
@@ -297,11 +297,18 @@ export function ApproveStep({
           </Text>
         </div>
       ) : (
-        <Text tone="muted">
-          {adapter.approval === 'rejected'
-            ? `You turned down ${adapter.name} ${adapter.version}. Its tools stay off MCP.`
-            : 'Nothing is waiting for review.'}
-        </Text>
+        <div className="flex flex-wrap items-center gap-3">
+          {adapter.approval === 'rejected' ? (
+            <Button variant="primary" size="lg" asChild>
+              <a href={href.setupReview()}>Review {adapter.name} again…</a>
+            </Button>
+          ) : null}
+          <Text tone="muted">
+            {adapter.approval === 'rejected'
+              ? `You turned down ${adapter.name} ${adapter.version}. Its tools stay off MCP until you approve it.`
+              : 'Nothing is waiting for review.'}
+          </Text>
+        </div>
       )}
     </>
   )
@@ -346,9 +353,18 @@ function AdapterFacts({
               term: 'Tools',
               value: (
                 <span className="inline-flex flex-wrap gap-1.5">
-                  <RiskBadge purpose="read">{adapter.toolCounts.read} read</RiskBadge>
-                  <RiskBadge purpose="write">{adapter.toolCounts.write} write</RiskBadge>
-                  <RiskBadge purpose="irreversible">{adapter.toolCounts.irreversible} irreversible</RiskBadge>
+                  {/* Only the kinds it has: "0 irreversible" in red read as a warning. */}
+                  {adapter.toolCounts.read > 0 ? (
+                    <RiskBadge purpose="read">{adapter.toolCounts.read} read only</RiskBadge>
+                  ) : null}
+                  {adapter.toolCounts.write > 0 ? (
+                    <RiskBadge purpose="write">{adapter.toolCounts.write} change things</RiskBadge>
+                  ) : null}
+                  {adapter.toolCounts.irreversible > 0 ? (
+                    <RiskBadge purpose="irreversible">
+                      {adapter.toolCounts.irreversible} can’t be undone
+                    </RiskBadge>
+                  ) : null}
                 </span>
               ),
             },

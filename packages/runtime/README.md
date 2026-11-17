@@ -293,7 +293,8 @@ from memory.
 
 The driver reports each request it refuses to `onBlocked`. Each becomes a `request-blocked` audit
 event with the driver's initiator and the refusal mapped onto the error vocabulary
-(`purpose-exceeded` is `denied-path`, `bad-url` is `invalid`). Identical refusals are recorded once
+(`purpose-exceeded` is `denied-path`, `port-not-allowed` is `host-not-allowed`, `bad-url` is
+`invalid`). Identical refusals are recorded once
 per call, and at most 50 per call (a `request-blocked-capped` diagnostic says when the cap is hit).
 
 - Initiator `tool`: a raw `ToolPage.fetch`/`goto` the driver refused (one the guarded page let
@@ -301,9 +302,10 @@ per call, and at most 50 per call (a `request-blocked-capped` diagnostic says wh
 - Initiator `page`: the site's own scripts **and** `evaluate()`d code, which the driver can't tell
   apart. `denied-path`, `ambiguous-path`, `purpose-exceeded` and `request-ceiling` are sticky
   violations whoever asked, since the site's own scripts have no reason to cause them; so a
-  `fetch('/checkout/...')` inside `evaluate()` fails the call. `host-not-allowed`, `undeclared` and
-  `bad-url` from the page (its analytics, say) are recorded only. So `evaluate()`d code can still
-  try off-list hosts and undeclared endpoints without failing the call; the driver refuses each.
+  `fetch('/checkout/...')` inside `evaluate()` fails the call. `host-not-allowed`,
+  `port-not-allowed`, `undeclared` and `bad-url` from the page (its analytics, say) are recorded
+  only. So `evaluate()`d code can still try off-list hosts and undeclared endpoints without failing
+  the call; the driver refuses each.
 - None of them touches the site's breaker. They are our own policy at work, not the site refusing
   us; site blocks are seen in responses (below).
 

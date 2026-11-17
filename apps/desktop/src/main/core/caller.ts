@@ -14,6 +14,10 @@
 // - while the call's site is paused: config: site-paused.
 // A client the person revoked never gets this far: its token is gone, so the endpoint refuses it.
 //
+// Calls the MCP SDK refuses itself (a tool name the session doesn't offer, arguments the schema
+// refuses) never reach call(); the endpoint reports them to refusedByProtocol, and hooks.protocolRefused
+// audits them. RefusalBudget keeps a client in a loop from filling the log with them.
+//
 // The runtime's lock keeps calls and the app's own login work (ToolHost.runLoginStep) on an adapter
 // apart, so nothing here waits for either.
 
@@ -22,6 +26,8 @@ import {
   type ClientIdentity,
   identityLabel,
   type ListedTool,
+  type ProtocolRefusal,
+  SlidingWindow,
   type ToolCall,
   type ToolCaller,
 } from '@valet/mcp-server'
@@ -65,6 +71,8 @@ export interface CallerHooks {
   readonly finished: (call: ToolCall, result: ToolCallResult) => void
   /** The app refused a call itself: audit it. A refusal that can't be recorded is still a refusal. */
   readonly refused: (call: ToolCall, refusal: AppRefusal) => Promise<void>
+  /** The MCP SDK refused a call before it reached the app: audit it. Absent: not recorded. */
+  readonly protocolRefused?: (refusal: ProtocolRefusal) => Promise<void>
 }
 
 const NONE: ReadonlySet<string> = new Set()
@@ -105,6 +113,10 @@ export class RuntimeToolCaller implements ToolCaller {
     } catch {
       return NONE
     }
+  }
+
+  async refusedByProtocol(refusal: ProtocolRefusal): Promise<void> {
+    await this.hooks.protocolRefused?.(refusal)
   }
 
   /** Cancels every call in flight, and every later one, e.g. on quit. */
@@ -159,7 +171,10 @@ export function outcomeOf(result: ToolCallResult): CallOutcome {
     case 'needsUser':
       return { status: 'needsUser', reason: result.reason }
     case 'failed':
-      return { status: 'failed', stage: result.stage, errorClass: result.errorClass }
+      // An input refusal's where and why, as codes; the endpoint writes the sentence.
+      return result.issue === undefined
+        ? { status: 'failed', stage: result.stage, errorClass: result.errorClass }
+        : { status: 'failed', stage: result.stage, errorClass: result.errorClass, issue: result.issue }
     case 'blocked':
       // Valet's own hourly cap for the site: a wait like a block, with our budget as the cause.
       if (result.cause === 'hourly-cap') {
@@ -185,6 +200,7 @@ export function outcomeOf(result: ToolCallResult): CallOutcome {
         errorClass: 'busy',
         retryAfterMs: result.retryAfterMs,
         ahead: result.ahead,
+        ...(result.waitingFor === 'login' ? { waitingFor: 'login' as const } : {}),
       }
     case 'logging-in':
       // A wait the client can sit out, with the login as the cause.
@@ -196,5 +212,58 @@ export function outcomeOf(result: ToolCallResult): CallOutcome {
       }
     case 'declined':
       return result.timedOut === true ? { status: 'declined', timedOut: true } : { status: 'declined' }
+  }
+}
+
+/** Protocol refusals recorded one by one per client within a window. */
+export const REFUSALS_PER_WINDOW = 20
+export const REFUSAL_WINDOW_MS = 60_000
+
+export interface DroppedRefusals {
+  readonly client: string
+  readonly clientId: string | undefined
+  readonly count: number
+}
+
+interface RefusalTimers {
+  setTimeout(run: () => void, ms: number): unknown
+}
+
+/**
+ * How many protocol refusals each client gets recorded one by one: REFUSALS_PER_WINDOW in any
+ * REFUSAL_WINDOW_MS. Past that they are only counted, and the count is recorded once, a window
+ * after the first one left out, so a client stuck calling a tool that isn't there can't bury the log.
+ */
+export class RefusalBudget {
+  private readonly window: SlidingWindow
+  private readonly dropped = new Map<
+    string,
+    { client: string; clientId: string | undefined; count: number }
+  >()
+
+  constructor(
+    private readonly timers: RefusalTimers,
+    private readonly flush: (dropped: DroppedRefusals) => Promise<void>,
+    now: () => number,
+  ) {
+    this.window = new SlidingWindow({ limit: REFUSALS_PER_WINDOW, windowMs: REFUSAL_WINDOW_MS }, now)
+  }
+
+  /** True if this refusal is to be recorded now; else it is counted toward the next summary. */
+  take(client: string, clientId: string | undefined): boolean {
+    const key = clientId ?? `unnamed:${client}`
+    if (this.window.take(key)) return true
+    const counted = this.dropped.get(key)
+    if (counted !== undefined) {
+      counted.count++
+      return false
+    }
+    this.dropped.set(key, { client, clientId, count: 1 })
+    this.timers.setTimeout(() => {
+      const ended = this.dropped.get(key)
+      this.dropped.delete(key)
+      if (ended !== undefined) void this.flush(ended).catch(() => undefined)
+    }, REFUSAL_WINDOW_MS)
+    return false
   }
 }

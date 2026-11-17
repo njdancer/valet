@@ -59,6 +59,11 @@ export interface SessionStatus {
 export interface SecretSummary {
   readonly name: string
   readonly granted: boolean
+  /**
+   * A grant was given for it and no longer counts (it isn't signed by this Mac's approval keys now,
+   * for one: the keys changed). It is asked for again, never trusted. Absent: false.
+   */
+  readonly lapsed?: boolean
 }
 
 export interface AdapterSummary {
@@ -74,8 +79,20 @@ export interface AdapterSummary {
   readonly pendingUpdate: { readonly version: string; readonly hash: string } | null
   readonly toolCounts: Readonly<Record<Purpose, number>>
   readonly secrets: readonly SecretSummary[]
-  /** Declared Messages one-time-code sources and whether each has a grant. */
-  readonly messagesSources: readonly { readonly sender: string; readonly granted: boolean }[]
+  /**
+   * Declared Messages one-time-code sources and whether each has a grant. `lapsed`: a grant was
+   * given and no longer counts, as for SecretSummary.
+   */
+  readonly messagesSources: readonly {
+    readonly sender: string
+    readonly granted: boolean
+    readonly lapsed?: boolean
+  }[]
+  /**
+   * Not approved now, but this Mac's earlier approval keys approved it: the keys changed, so that
+   * approval no longer counts and the person approves it again. Absent: false.
+   */
+  readonly approvedBefore?: boolean
   readonly session: SessionStatus
   readonly calls7d: number
   /**
@@ -381,9 +398,20 @@ export interface PendingReview {
   /** Null for a first install. */
   readonly from: { readonly version: string; readonly hash: string } | null
   readonly to: { readonly version: string; readonly hash: string }
+  /** When it was asked for: the agent's request for a draft, else when this run of Valet found it. */
   readonly submittedAt: IsoTime
-  /** Where the bundle came from. */
-  readonly source: 'import' | 'ide' | 'authoring-agent'
+  /**
+   * Where the bundle came from: `agent` an agent's draft ("Written by Claude Code"), `builtin` a
+   * bundle that comes with Valet, `import` one installed from a folder.
+   */
+  readonly source: 'import' | 'ide' | 'authoring-agent' | 'agent' | 'builtin'
+  /** For an agent's draft: the request it made, as the agent was told and the phone shows it. */
+  readonly request?: ReviewRequestInfo | null
+  /**
+   * The version under review is stored apart and the approved one keeps serving until the person
+   * decides (an agent's update to an approved site). Otherwise an update's tools are off meanwhile.
+   */
+  readonly staged?: boolean
   readonly diff: PermissionDiff
   readonly manifestDiff: readonly ManifestDiffLine[]
   readonly files: readonly FileChange[]
@@ -397,9 +425,37 @@ export interface PendingReview {
    * signed-in session for the site (B's review, point 4). The review leads with that.
    */
   readonly takesSession?: boolean
+  /**
+   * This version logs in: a session check, a secret, an SMS code or login steps. One that doesn't
+   * (a dictionary) is reviewed in terms of the pages it opens, never logins or cookies.
+   */
+  readonly logsIn?: boolean
+  /** This Mac's earlier approval keys approved the site; they changed, so it is approved again. */
+  readonly approvedBefore?: boolean
 }
 
 export type PackageOrigin = 'builtin' | 'folder' | 'draft'
+
+/**
+ * An agent's request to install its draft, as the review shows it. Everything here but `checks` is
+ * the agent's or its client's own claim, shown as theirs.
+ */
+export interface ReviewRequestInfo {
+  /** Four characters of the request's digest: the ref the agent quotes and Touch ID names. */
+  readonly ref: string
+  /** What the asking client calls itself. */
+  readonly client: string
+  /** A cloud agent rather than an app on this Mac. */
+  readonly remote: boolean
+  /** The agent's own words, shown as its words. */
+  readonly note: string | null
+  /** Valet's own checks of the draft, one line each. */
+  readonly checks: readonly string[]
+  /** The agent's own test cases as Valet ran them, counted apart from Valet's checks. */
+  readonly agentTests: { readonly passed: number; readonly failed: number } | null
+  readonly draftId: string | null
+  readonly expiresAt: IsoTime
+}
 
 /**
  * A draft adapter an agent is writing over MCP (docs/authoring-tools.md), as Sites lists it
@@ -502,6 +558,16 @@ export interface VaultItem {
   readonly title: string
 }
 
+/**
+ * What listing a vault came to. `declined`: 1Password said no, or the person closed its prompt (or
+ * it is locked), so asking again may work. `unavailable`: 1Password couldn't be reached with the
+ * account named, which is most often a wrong account name, or the app not running or not letting
+ * other apps in.
+ */
+export type VaultListing =
+  | { readonly status: 'ok'; readonly items: readonly VaultItem[] }
+  | { readonly status: 'declined' | 'unavailable'; readonly account: string | null }
+
 export interface GrantRequest {
   readonly adapterId: string
   /** The exact hash the person is granting for. A grant never carries to another hash. */
@@ -591,7 +657,7 @@ export type TraceStep = {
       readonly status: number | null
       readonly blockedReason: BlockedRequest['reason'] | null
     }
-  | { readonly type: 'confirmation'; readonly answer: 'approved' | 'declined' | 'timed-out' }
+  | { readonly type: 'confirmation'; readonly answer: 'approved' | 'declined' | 'timed-out' | 'cancelled' }
   | { readonly type: 'needs-user'; readonly reason: NeedsUserReason }
   | { readonly type: 'failed'; readonly errorClass: ErrorClass }
   | { readonly type: 'output'; readonly redactions: number; readonly bytes: number }
@@ -700,7 +766,7 @@ export interface EndpointStatus {
   readonly listening: boolean
   /** http://127.0.0.1:<port>/mcp, or null while stopped. */
   readonly url: string | null
-  /** MCP sessions open now, over the bridge or plain HTTP. */
+  /** Apps (one per token) with an MCP session open now, over the bridge or plain HTTP. */
   readonly connectedClients: number
 }
 
@@ -843,6 +909,38 @@ export interface ReviewItem {
   readonly addsPermissions: boolean
   /** No version of the site was approved before: "Review Woolworths before first use". */
   readonly firstInstall?: boolean
+  /** The approved version keeps serving until the person decides (PendingReview.staged). */
+  readonly keepsServing?: boolean
+  /** For an agent's draft: who asked, and the approval ref it was told. */
+  readonly requestedBy?: { readonly client: string; readonly ref: string } | null
+  /**
+   * Approved before under this Mac's earlier approval keys, which changed: "Review Woolworths
+   * again". The old approval no longer counts.
+   */
+  readonly approvedBefore?: boolean
+}
+
+/**
+ * This Mac's approval keys changed (made again after they were lost, or a new Mac), so what the old
+ * keys signed no longer counts: site approvals, logins, settings turned on. Nothing is trusted on
+ * the strength of the old signatures (docs/agent-run-security.md#devices-and-keys); this item only
+ * explains it and lists what to do again. It goes once each listed site is approved and its logins
+ * given again, or when the person dismisses it.
+ */
+export interface KeysChangedItem {
+  readonly kind: 'keys-changed'
+  readonly id: string
+  /** Each installed site with something to do again. */
+  readonly sites: readonly {
+    readonly adapterId: string
+    readonly adapterName: string
+    /** Its approval is to give again. */
+    readonly review: boolean
+    /** The secrets (manifest names; MESSAGES_SECRET for its one-time codes) to grant again. */
+    readonly logins: readonly string[]
+  }[]
+  /** Other approvals the old keys signed (a setting turned on, remote access), asked for again when needed. */
+  readonly others: number
 }
 
 /**
@@ -976,6 +1074,7 @@ export type AttentionItem =
   | LoginMissingItem
   | RepairItem
   | MissedItem
+  | KeysChangedItem
 
 /** How long a missed item stays in Needs you. */
 export const MISSED_KEEP_MS = 24 * 60 * 60_000
@@ -1388,15 +1487,18 @@ export interface ValetApi {
   }
   readonly approvals: {
     pending(): Promise<readonly PendingReview[]>
+    /** Versions the person turned down (not agents' drafts), which they can review again and approve. */
+    turnedDown(): Promise<readonly PendingReview[]>
     /** Approves exactly this hash; rejects if a different bundle is now pending. */
     approve(adapterId: string, hash: string): Promise<void>
-    reject(adapterId: string, hash: string): Promise<void>
+    /** The note, if any, goes to the agent that asked (an agent's draft only). */
+    reject(adapterId: string, hash: string, note?: string): Promise<void>
   }
   readonly grants: {
     list(): Promise<readonly GrantInfo[]>
     providers(): Promise<readonly ProviderStatus[]>
-    /** Items in the Valet vault, title only. */
-    vaultItems(provider: ProviderKind): Promise<readonly VaultItem[]>
+    /** Items in the Valet vault (or, for a Keychain copy, the person's 1Password), title only. */
+    vaultItems(provider: ProviderKind): Promise<VaultListing>
     /** The main process checks origins ⊆ the manifest's request for that hash, and refuses otherwise. */
     make(request: GrantRequest): Promise<void>
     revoke(adapterId: string, secret: string): Promise<void>
@@ -1453,7 +1555,10 @@ export interface ValetApi {
      * first.
      */
     list(): Promise<readonly AttentionItem[]>
-    /** Removes a missed item. Rejects for any other kind, or an id that isn't there. */
+    /**
+     * Removes a missed item, or the approval-keys-changed notice (until the keys change again).
+     * Rejects for any other kind, or an id that isn't there.
+     */
     dismiss(id: string): Promise<void>
     /**
      * Approves an agent's request with Touch ID (the Mac's own signature), or, for a removal, removes

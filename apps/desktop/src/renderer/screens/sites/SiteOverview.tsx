@@ -37,6 +37,7 @@ import {
   SESSION_WORDING,
 } from '../../lib/wording'
 import { matchesOutcome } from '../activity/calls-list'
+import { sourceWording } from './review/words'
 import type { SiteData } from './SitePage'
 import { ActionError, callers, callsToday, SiteFixButton, SiteText } from './site-ui'
 
@@ -74,6 +75,7 @@ export function SiteOverview({ data }: { readonly data: SiteData }) {
 
 function FirstReviewBanner({ adapter }: { readonly adapter: AdapterDetail }) {
   const rejected = adapter.approval === 'rejected'
+  const again = !rejected && adapter.approvedBefore === true
   const needs = [
     adapter.secretRequests.length > 0 ? `your ${adapter.name} login` : null,
     ...adapter.settings.filter((s) => s.required).map((s) => `a ${s.title.toLowerCase()}`),
@@ -84,17 +86,23 @@ function FirstReviewBanner({ adapter }: { readonly adapter: AdapterDetail }) {
       title={
         rejected
           ? `You turned down ${adapter.name} ${adapter.version}.`
-          : `${adapter.name} isn’t approved yet.`
+          : again
+            ? `Approve ${adapter.name} again: this Mac’s approval keys changed.`
+            : `${adapter.name} isn’t approved yet.`
       }
       action={
         <Button size="sm" variant="primary" asChild>
-          <a href={href.review(adapter.id)}>Review {adapter.name}</a>
+          <a href={href.review(adapter.id)}>
+            {again ? `Review ${adapter.name} again` : `Review ${adapter.name}`}
+          </a>
         </Button>
       }
     >
       {rejected
         ? 'Its tools are off. Review it again to turn them on.'
-        : `Nothing runs until you review what it can do.${needs.length > 0 ? ` It will ask for ${needs.join(' and ')} next.` : ''}`}
+        : again
+          ? `You approved it before, but that approval was signed with this Mac’s old keys, so it no longer counts and its tools are off.${needs.length > 0 ? ` It will ask for ${needs.join(' and ')} again next.` : ''}`
+          : `Nothing runs until you review what it can do.${needs.length > 0 ? ` It will ask for ${needs.join(' and ')} next.` : ''}`}
     </Banner>
   )
 }
@@ -137,12 +145,6 @@ export function updateSummary(review: PendingReview): string {
   return `It adds ${list}.`
 }
 
-const SOURCE_WORDING: Readonly<Record<PendingReview['source'], string>> = {
-  import: 'Imported from a file',
-  ide: 'Made in your IDE',
-  'authoring-agent': 'Made by the authoring agent (IDE)',
-}
-
 function UpdateBanner({
   adapter,
   review,
@@ -164,7 +166,7 @@ function UpdateBanner({
       {adapter.approval === 'approved'
         ? `Calls keep using ${adapter.version} until you approve.`
         : 'Its tools are off until you approve it.'}{' '}
-      {SOURCE_WORDING[review.source]} at {formatClock(review.submittedAt)}.
+      {sourceWording(review)} at {formatClock(review.submittedAt)}.
     </Banner>
   )
 }
@@ -337,7 +339,14 @@ function LoginCard({ adapter }: { readonly adapter: AdapterDetail }) {
                   { term: 'From', value: <Value mono>{m.sender}</Value> },
                   {
                     term: 'Valet may read them',
-                    value: m.grant !== null ? <Badge tone="success">Yes, from Messages</Badge> : 'Not yet',
+                    value:
+                      m.grant !== null ? (
+                        <Badge tone="success">Yes, from Messages</Badge>
+                      ) : adapter.messagesSources.some((x) => x.sender === m.sender && x.lapsed === true) ? (
+                        <Badge tone="warning">Not now: what you allowed before no longer counts</Badge>
+                      ) : (
+                        'Not yet'
+                      ),
                   },
                 ]}
               />
@@ -486,8 +495,9 @@ function TodayCard({
     return (
       <SiteCard title="Today">
         <Text tone="subtle">
-          Agents can’t call {adapter.name} until it is approved. They are told it is waiting for review in
-          Valet.
+          {adapter.approval === 'rejected'
+            ? `You turned down ${adapter.name}, so agents can’t call it. A new version would come back here for your review.`
+            : `Agents can’t call ${adapter.name} until it is approved. They are told it is waiting for review in Valet.`}
         </Text>
       </SiteCard>
     )

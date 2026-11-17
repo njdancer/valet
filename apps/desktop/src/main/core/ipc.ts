@@ -186,10 +186,14 @@ const HANDLERS: Readonly<
   'drafts.endSession': entry(z.tuple([DRAFT]), (api, [id]) => api.drafts.endSession(id)),
   'adapters.installFromFolder': entry(none, (api) => api.adapters.installFromFolder()),
   'approvals.pending': entry(none, (api) => api.approvals.pending()),
+  'approvals.turnedDown': entry(none, (api) => api.approvals.turnedDown()),
   'approvals.approve': entry(z.tuple([ADAPTER_ID, HASH]), (api, [id, hash]) =>
     api.approvals.approve(id, hash),
   ),
-  'approvals.reject': entry(z.tuple([ADAPTER_ID, HASH]), (api, [id, hash]) => api.approvals.reject(id, hash)),
+  'approvals.reject': entry(
+    z.tuple([ADAPTER_ID, HASH, z.string().max(280).optional()]),
+    (api, [id, hash, note]) => api.approvals.reject(id, hash, note),
+  ),
   'grants.list': entry(none, (api) => api.grants.list()),
   'grants.providers': entry(none, (api) => api.grants.providers()),
   'grants.vaultItems': entry(z.tuple([PROVIDER]), (api, [provider]) => api.grants.vaultItems(provider)),

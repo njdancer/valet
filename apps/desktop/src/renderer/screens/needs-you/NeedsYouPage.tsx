@@ -144,6 +144,7 @@ export function NeedsYouPage({ item }: { readonly item: string | null }) {
 function NeedsYouRow({ view, now }: { readonly view: NeedsYouView; readonly now: number }) {
   const api = useApi()
   const action = useAction()
+  const dismiss = useAction()
   return (
     <InboxItem
       tone={
@@ -178,14 +179,26 @@ function NeedsYouRow({ view, now }: { readonly view: NeedsYouView; readonly now:
         view.deadline !== null ? <DeadlineChip until={view.deadline} now={now} subject={view.title} /> : null
       }
       action={
-        <Button
-          variant={view.kind === 'confirmation' ? 'primary' : 'secondary'}
-          size="sm"
-          loading={action.busy}
-          onClick={() => void action.run(() => runNeedsYouAction(api, view.action, navigate))}
-        >
-          {view.actionLabel}
-        </Button>
+        <>
+          {view.dismissable === true ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              loading={dismiss.busy}
+              onClick={() => void dismiss.run(() => api.attention.dismiss(view.id))}
+            >
+              Dismiss
+            </Button>
+          ) : null}
+          <Button
+            variant={view.kind === 'confirmation' ? 'primary' : 'secondary'}
+            size="sm"
+            loading={action.busy}
+            onClick={() => void action.run(() => runNeedsYouAction(api, view.action, navigate))}
+          >
+            {view.actionLabel}
+          </Button>
+        </>
       }
     />
   )
@@ -384,7 +397,7 @@ function StatusCard() {
           loading={verify.busy}
           onClick={() => void verify.run(() => api.audit.verify())}
         >
-          Check audit log now
+          Check the audit log is intact
         </Button>
       </CardHeader>
       <CardContent className="flex flex-col gap-2.5">

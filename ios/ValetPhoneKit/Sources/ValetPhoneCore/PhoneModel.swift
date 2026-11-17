@@ -154,8 +154,11 @@ public final class PhoneModel {
   /// The relay stopped forwarding remote traffic to the Mac (a phone or the recovery page asked).
   public private(set) var relayLocked = false
   public private(set) var handoffs: [HandoffEntry] = []
+  /// The Valet account the paired Mac says this phone is on, once it says (step 4c).
+  public private(set) var account: AccountModel?
 
   private let transport: RelayTransport
+  private let hub: HubTransport?
   private let store: PhoneStore
   private let clock: PhoneClock
   private var persisted: PersistedPhone?
@@ -185,8 +188,11 @@ public final class PhoneModel {
 
   private let keyFactory: Keys
 
-  public init(transport: RelayTransport, store: PhoneStore, clock: PhoneClock = .system, keys keyFactory: Keys) {
+  public init(
+    transport: RelayTransport, store: PhoneStore, clock: PhoneClock = .system, keys keyFactory: Keys, hub: HubTransport? = nil
+  ) {
     self.transport = transport
+    self.hub = hub
     self.store = store
     self.clock = clock
     self.keyFactory = keyFactory
@@ -207,6 +213,7 @@ public final class PhoneModel {
     hardwareKeys = keys.hardwareBacked
     phase = .paired
     for text in saved.requests { accept(requestText: text) }
+    if let pin = saved.account { openAccount(hub: pin.hub, accountId: pin.accountId) }
   }
 
   // MARK: Identity
@@ -470,6 +477,7 @@ public final class PhoneModel {
       if alerts.count > 50 { alerts.removeLast() }
     case let .status(_, status):
       self.status = status
+      if let named = status.account { openAccount(hub: named.hub, accountId: named.accountId) }
       if status.safety == .lockdown {
         for i in cards.indices where cards[i].state.isOpen { cards[i].state = .lockedDown }
       }
@@ -487,6 +495,7 @@ public final class PhoneModel {
   }
 
   private func resetToUnpaired(notice: String?) {
+    account = nil
     keys = nil
     persisted = nil
     cards = []
@@ -506,6 +515,23 @@ public final class PhoneModel {
   public func unpair() {
     disconnect()
     resetToUnpaired(notice: nil)
+  }
+
+  // MARK: The account
+
+  /// Starts on the account the Mac named, unless it's the one already open. The view reads it
+  /// with `account.refresh()` when it shows, and the person adds a waiting Mac from there.
+  private func openAccount(hub url: String, accountId: String) {
+    guard let hub, let keys, let persisted else { return }
+    if let account, account.hub == url, account.accountId == accountId { return }
+    account = AccountModel(
+      hub: url, accountId: accountId, transport: hub, keys: keys,
+      pairedMac: (id: persisted.macId, approvalKey: persisted.macApprovalKey), pin: persisted.account, clock: clock,
+      onPin: { [weak self] pin in
+        self?.persisted?.account = pin
+        self?.save()
+      }
+    )
   }
 
   // MARK: Sending

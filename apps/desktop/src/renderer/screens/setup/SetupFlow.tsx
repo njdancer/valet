@@ -25,6 +25,7 @@ import {
   Text,
   TextLink,
 } from '@valet/ui'
+import { Flag, Hand } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
 import { useAction, useApi } from '../../lib/api-context'
 import { navigate } from '../../lib/router'
@@ -149,30 +150,39 @@ function SetupShell({
 }) {
   const done = facts === null ? null : stepsDone(facts)
   const siteName = facts?.adapter?.name ?? 'your site'
-  const steps: { id: string; label: string; state: StepState; href?: string; hint: string }[] =
-    SETUP_STEPS.map((s) => {
-      const label = stepLabel(s, siteName)
-      const isDone = done?.[s] === true && s !== 'welcome'
-      const state: StepState =
-        !finished && s === step ? 'current' : isDone ? 'done' : finished ? 'skipped' : 'upcoming'
-      return {
-        id: s,
-        label: label.title,
-        state,
-        href: href.setup(s),
-        hint:
-          isDone && facts !== null
-            ? doneHint(s, facts)
-            : finished && s === 'clients' && facts !== null && waitingClients(facts).length > 0
-              ? 'Waiting for it to connect'
-              : finished && s !== 'welcome'
-                ? 'Skipped'
-                : label.sub,
-      }
-    })
+  const steps: {
+    id: string
+    label: string
+    state: StepState
+    href?: string
+    hint: string
+    marker?: ReactNode
+  }[] = SETUP_STEPS.map((s) => {
+    const label = stepLabel(s, siteName)
+    const isDone = done?.[s] === true && s !== 'welcome'
+    const state: StepState =
+      !finished && s === step ? 'current' : isDone ? 'done' : finished ? 'skipped' : 'upcoming'
+    return {
+      id: s,
+      label: label.title,
+      state,
+      // The welcome isn't one of the "five short steps" the header counts.
+      ...(s === 'welcome' ? { marker: <Hand className="size-3" aria-hidden="true" /> } : {}),
+      href: href.setup(s),
+      hint:
+        isDone && facts !== null
+          ? doneHint(s, facts)
+          : finished && s === 'clients' && facts !== null && waitingClients(facts).length > 0
+            ? 'Waiting for it to connect'
+            : finished && s !== 'welcome'
+              ? 'Skipped'
+              : label.sub,
+    }
+  })
   steps.push({
     id: 'done',
     label: 'Done',
+    marker: <Flag className="size-3" aria-hidden="true" />,
     state: finished ? 'current' : 'upcoming',
     hint: finished ? 'Change anything later' : 'Open Valet',
   })
@@ -309,16 +319,20 @@ function DoneView({ facts, done }: { readonly facts: SetupFacts; readonly done: 
       <PageBody>
         <div className="mx-auto flex w-full max-w-[760px] flex-col gap-5 pt-6">
           <Stack gap={3} className="items-start">
-            <Sparkle play={left === 0}>
-              <SuccessCheck size={56} />
-            </Sparkle>
+            {left === 0 ? (
+              <Sparkle play>
+                <SuccessCheck size={56} />
+              </Sparkle>
+            ) : null}
             <Heading level={1} size="page" id="setup-title">
               {left === 0 ? 'You’re set up' : 'Almost set up'}
             </Heading>
             <Text tone="muted">
               {left === 0
                 ? `Ask Claude to use ${siteName}. Valet asks you here before anything that can’t be undone.`
-                : `${left === 1 ? 'One step waits' : `${left} steps wait`} for you. Until they’re done, Claude may not be able to use ${siteName}; they stay in the menu bar as “Finish setup”.`}
+                : left === 1
+                  ? `One step waits for you. Until it’s done, Claude may not be able to use ${siteName}; it stays in the menu bar as “Finish setup”.`
+                  : `${left} steps wait for you. Until they’re done, Claude may not be able to use ${siteName}; they stay in the menu bar as “Finish setup”.`}
             </Text>
           </Stack>
           <CheckList label="Setup">

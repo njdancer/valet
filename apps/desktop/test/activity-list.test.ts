@@ -1,6 +1,7 @@
+import type { ClientCapability } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { NO_CALL_FILTERS } from '../src/renderer/lib/routes'
-import { eventWords } from '../src/renderer/screens/activity/audit-events'
+import { approvalAnswerWords, eventWords } from '../src/renderer/screens/activity/audit-events'
 import {
   describeFilters,
   foldRetries,
@@ -136,6 +137,36 @@ describe('a call’s outcome in words', () => {
 })
 
 describe('audit event words', () => {
+  it('names Valet’s own pause and resume, and calls out an app given more', () => {
+    expect(eventWords({ type: 'app-paused', paused: true })).toEqual({
+      label: 'Valet paused',
+      tone: 'warning',
+    })
+    expect(eventWords({ type: 'app-paused', paused: false })).toEqual({
+      label: 'Valet resumed',
+      tone: 'success',
+    })
+    const change = (before: ClientCapability[], after: ClientCapability[]) =>
+      eventWords({ type: 'client-access-changed', clientId: 'local:c_1', before, after })
+    expect(change(['see-valet'], ['see-valet', 'ask-for-changes'])).toEqual({
+      label: 'App access widened',
+      tone: 'warning',
+    })
+    expect(change(['see-valet', 'ask-for-changes'], ['see-valet'])).toEqual({
+      label: 'App access changed',
+      tone: 'neutral',
+    })
+  })
+
+  it('tells the person’s decline from a withdrawal, and says why one was withdrawn', () => {
+    expect(approvalAnswerWords('declined', undefined)).toBe('declined by the person')
+    expect(approvalAnswerWords('withdrawn', 'client-revoked')).toBe('withdrawn: the agent was revoked')
+    expect(approvalAnswerWords('withdrawn', 'call-cancelled')).toBe('withdrawn: the call was cancelled')
+    expect(approvalAnswerWords('withdrawn', 'asker')).toBe('withdrawn by the asker')
+    expect(approvalAnswerWords('expired', undefined)).toBe('expired')
+    expect(approvalAnswerWords('withdrawn', 'something-new')).toBe('withdrawn (something-new)')
+  })
+
   it('names a resume as a resume, though one event type records both', () => {
     expect(eventWords({ type: 'site-paused', adapterId: 'woolworths', paused: true }).label).toBe(
       'Site paused',

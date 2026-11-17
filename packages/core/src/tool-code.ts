@@ -6,6 +6,7 @@
 export { MAX_CONFIRM_NOTE, tool } from './adapter'
 export * from './errors'
 export * from './feeds'
+export * from './input-issue'
 export * from './settings'
 export * from './tool-urls'
 export { BLOCK_REASONS } from './vocab'

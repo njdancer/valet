@@ -188,7 +188,7 @@ export function createManifest({
     schemaVersion: 1,
     id: 'woolworths',
     name: 'Woolworths',
-    version: '0.4.0',
+    version: '0.5.0',
     description: 'Search Woolworths (Australia) products and manage the online shopping cart.',
     home: `${origin}/`,
     // Opened in the person's own browser to check out: Valet never places orders.
@@ -271,14 +271,14 @@ export function createManifest({
         name: 'get_cart',
         title: 'Get cart',
         description:
-          'The items in the Woolworths cart, with quantities, line totals, subtotal and savings, and cartUrl: the trolley page where the person checks out in their own browser. This adapter never places orders.',
+          'The items in the Woolworths cart, with quantities, line totals, subtotal and savings, and cartUrl: the trolley page where the person checks out in their own browser. This adapter never places orders. The first cart call logs in to Woolworths, which can take a minute.',
         sideEffect: 'read',
       },
       {
         name: 'add_to_cart',
         title: 'Add to cart',
         description:
-          'Adds a quantity of a product to the cart, on top of any already there. Does not check out.',
+          'Adds a quantity of a product to the cart, on top of any already there. A line holds at most 20 of one product. Does not check out. The first cart call logs in to Woolworths, which can take a minute.',
         sideEffect: 'write',
         // Only adds, but advertised destructive until Nick answers D30 (docs/plan.md). Not
         // idempotent: a second call adds again.
@@ -288,7 +288,8 @@ export function createManifest({
       {
         name: 'set_cart_quantity',
         title: 'Set cart quantity',
-        description: 'Sets the exact quantity of a product in the cart. Quantity 0 removes it.',
+        description:
+          'Sets the exact quantity of a product in the cart, at most 20 of one product. Quantity 0 removes it. The first cart call logs in to Woolworths, which can take a minute.',
         sideEffect: 'write',
         // Lowers quantities and removes lines; the same quantity twice is the same cart (AC3).
         destructive: true,
@@ -307,7 +308,7 @@ export function createManifest({
         name: 'update_cart',
         title: 'Update cart',
         description:
-          'Adds or sets many products in one call, for a whole shopping list: each item adds a quantity (mode "add", the default) or sets it exactly (mode "set", 0 removes). Up to 30 products, each once. Far faster than one call per product. Does not check out.',
+          'Adds or sets many products in one call, for a whole shopping list: each item adds a quantity (mode "add", the default) or sets it exactly (mode "set", which needs a quantity; 0 removes). Up to 30 products, each once, and at most 20 of one product. Far faster than one call per product. Does not check out. The first cart call logs in to Woolworths, which can take a minute.',
         sideEffect: 'write',
         // Lowers quantities and removes lines; adds again when called twice.
         destructive: true,

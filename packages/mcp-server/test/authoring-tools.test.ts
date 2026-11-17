@@ -7,6 +7,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { describe, expect, it } from 'vitest'
 import { ADMIN_LOCKED_DOWN_RESULT, ADMIN_WITHHELD_RESULT, type AdminReader } from '../src/admin-tools'
 import type { ClientIdentity } from '../src/auth'
+import { AUTHORING_GUIDE } from '../src/authoring-guide'
 import {
   AUTHORING_TOOL_NAMES,
   AUTHORING_TOOLS,
@@ -195,6 +196,24 @@ describe('authoring tools', () => {
         'tools',
       ]),
     )
+  })
+
+  it('tells the guide’s truths: goto needs no declaration, the error vocabulary, no type checking, feedback only if listed', () => {
+    const flat = AUTHORING_GUIDE.replace(/\s+/g, ' ')
+    expect(flat).not.toMatch(/every page `page\.goto` loads/)
+    expect(flat).toContain('`page.goto` to a page on an egress host needs no declaration')
+    expect(flat).toContain('`tool-run`/`not-found`')
+    expect(flat).not.toMatch(/tool-input.{0,20}not-found/)
+    expect(flat).toContain('No type checking runs')
+    expect(flat).toContain('If Valet gives you valet_send_feedback')
+    expect(flat).toContain('`port-not-allowed`')
+  })
+
+  it('tells the check budget and that an unchanged package doesn’t count', () => {
+    const check = tool('valet_check_draft')
+    expect(check.description).toContain('20 checks an hour')
+    expect(check.description).toContain('reused: true')
+    expect(check.output.shape).toHaveProperty('reused')
   })
 
   it('tries a read tool live only with Ask for changes, and hands the output back as the site’s', async () => {

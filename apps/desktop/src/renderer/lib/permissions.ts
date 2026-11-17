@@ -3,7 +3,14 @@
 // tick can't be skipped by a review that under-reports.
 
 import type { Purpose, RequestDeclaration } from '@valet/core'
-import type { LimitsInfo, PermissionDiff, ProbeInfo, SecretDiffEntry, ToolDiffEntry } from '../../shared/api'
+import type {
+  LimitsInfo,
+  PendingReview,
+  PermissionDiff,
+  ProbeInfo,
+  SecretDiffEntry,
+  ToolDiffEntry,
+} from '../../shared/api'
 import { plural } from './format'
 
 export type Tone = 'read' | 'write' | 'irreversible' | 'secret'
@@ -181,8 +188,32 @@ function badge(count: number, one: string, many: string, tone: Tone): AdditionBa
   return count > 0 ? [{ label: `+${count} ${count === 1 ? one : many}`, tone }] : []
 }
 
+/**
+ * Whether the version under review logs in: it asks for a secret, an SMS code, or has login steps,
+ * a session check, or session hand-over. Only then does a review speak of logins and cookies; a
+ * site with none (a dictionary) just opens pages.
+ */
+export function diffHasLogin(diff: PermissionDiff): boolean {
+  const kept = <T>(list: { readonly added: readonly T[]; readonly unchanged: readonly T[] }) =>
+    list.added.length + list.unchanged.length > 0
+  return (
+    kept(diff.secrets) ||
+    kept(diff.secretFills) ||
+    kept(diff.authSteps) ||
+    kept(diff.messagesSources) ||
+    kept(diff.cookieDomains) ||
+    kept(diff.storage) ||
+    (diff.probe !== null && diff.probe.after.kind !== 'none')
+  )
+}
+
+/** Whether a review should speak of logins: the main process says, else the diff shows it. */
+export function reviewLogsIn(review: Pick<PendingReview, 'diff' | 'logsIn'>): boolean {
+  return review.logsIn ?? diffHasLogin(review.diff)
+}
+
 /** The "This update asks for more" badges, riskiest first. */
-export function additionBadges(diff: PermissionDiff): AdditionBadge[] {
+export function additionBadges(diff: PermissionDiff, login = diffHasLogin(diff)): AdditionBadge[] {
   const tools = diff.tools.added
   const requests = diff.requests.added
   const secrets = secretChanges(diff)
@@ -196,9 +227,11 @@ export function additionBadges(diff: PermissionDiff): AdditionBadge[] {
       'accesses on this Mac',
       'write',
     ),
-    ...badge(diff.egress.added.length, 'host', 'hosts', 'write'),
-    ...badge(diff.navigation.added.length, 'login origin', 'login origins', 'write'),
-    ...badge(diff.frameOrigins.added.length, 'frame origin', 'frame origins', 'write'),
+    ...badge(diff.egress.added.length, 'site it contacts', 'sites it contacts', 'write'),
+    ...(login
+      ? badge(diff.navigation.added.length, 'login site', 'login sites', 'write')
+      : badge(diff.navigation.added.length, 'site it opens', 'sites it opens', 'write')),
+    ...badge(diff.frameOrigins.added.length, 'embedded site', 'embedded sites', 'write'),
     ...badge(secrets.filter((s) => s.was === null).length, 'secret', 'secrets', 'secret'),
     ...badge(
       secrets.reduce((n, s) => n + s.newFields.length, 0),
@@ -208,36 +241,62 @@ export function additionBadges(diff: PermissionDiff): AdditionBadge[] {
     ),
     ...badge(
       secrets.reduce((n, s) => n + s.newOrigins.length, 0),
-      'secret origin',
-      'secret origins',
+      'site a secret is typed on',
+      'sites secrets are typed on',
       'secret',
     ),
-    ...badge(diff.secretFills.added.length, 'secret fill', 'secret fills', 'secret'),
+    ...badge(diff.secretFills.added.length, 'place a secret is typed', 'places secrets are typed', 'secret'),
     ...badge(diff.messagesSources.added.length, 'SMS code source', 'SMS code sources', 'secret'),
-    ...badge(diff.authSteps.added.length, 'login step', 'login steps', 'write'),
+    // Every step is listed below; one line here says the login changed, not "+87 login steps".
+    ...(diff.authSteps.added.length > 0 ? [{ label: 'login changed', tone: 'write' as const }] : []),
     ...(removedSafeguards(diff) > 0
       ? [{ label: `−${plural(removedSafeguards(diff), 'login safeguard')}`, tone: 'write' as const }]
       : []),
     ...(probeChanged(diff) ? [{ label: 'new login check', tone: 'write' as const }] : []),
-    ...badge(diff.cookieDomains.added.length, 'hand-over domain', 'hand-over domains', 'write'),
-    ...badge(diff.storage.added.length, 'storage key', 'storage keys', 'write'),
+    ...badge(
+      diff.cookieDomains.added.length,
+      'site it stays signed in to',
+      'sites it stays signed in to',
+      'write',
+    ),
+    ...badge(diff.storage.added.length, 'kind of saved site data', 'kinds of saved site data', 'write'),
     ...badge(
       tools.filter((t) => t.sideEffect === 'irreversible').length,
-      'irreversible tool',
-      'irreversible tools',
+      'tool that can’t be undone',
+      'tools that can’t be undone',
       'irreversible',
     ),
-    ...badge(tools.filter((t) => t.sideEffect === 'write').length, 'write tool', 'write tools', 'write'),
-    ...badge(tools.filter((t) => t.sideEffect === 'read').length, 'read tool', 'read tools', 'read'),
+    ...badge(
+      tools.filter((t) => t.sideEffect === 'write').length,
+      'tool that changes things',
+      'tools that change things',
+      'write',
+    ),
+    ...badge(
+      tools.filter((t) => t.sideEffect === 'read').length,
+      'read-only tool',
+      'read-only tools',
+      'read',
+    ),
     ...badge(diff.settings.added.length, 'setting', 'settings', 'write'),
     ...badge(
       requests.filter((r) => r.purpose === 'irreversible').length,
-      'irreversible path',
-      'irreversible paths',
+      'API call that can’t be undone',
+      'API calls that can’t be undone',
       'irreversible',
     ),
-    ...badge(requests.filter((r) => r.purpose === 'write').length, 'write path', 'write paths', 'write'),
-    ...badge(requests.filter((r) => r.purpose === 'read').length, 'read path', 'read paths', 'read'),
+    ...badge(
+      requests.filter((r) => r.purpose === 'write').length,
+      'API call that changes things',
+      'API calls that change things',
+      'write',
+    ),
+    ...badge(
+      requests.filter((r) => r.purpose === 'read').length,
+      'read-only API call',
+      'read-only API calls',
+      'read',
+    ),
     ...(diff.limits !== null && limitsLoosened(diff.limits.before, diff.limits.after)
       ? [{ label: 'looser limits', tone: 'write' as const }]
       : []),

@@ -139,6 +139,8 @@ async function setup(
     toolProcess?: ToolProcessFactory
     sandbox?: ServiceDeps['sandbox']
     trialDriver?: ServiceDeps['trialDriver']
+    /** Collects the diagnostics log's lines (their types). */
+    diagnostics?: string[]
     egress?: ServiceDeps['egress']
   } = {},
 ) {
@@ -217,6 +219,9 @@ async function setup(
     ...(options.toolProcess === undefined ? {} : { toolProcess: options.toolProcess }),
     ...(options.sandbox === undefined ? {} : { sandbox: options.sandbox }),
     ...(options.trialDriver === undefined ? {} : { trialDriver: options.trialDriver }),
+    ...(options.diagnostics === undefined
+      ? {}
+      : { diagnostics: (d: { readonly type: string }) => options.diagnostics?.push(d.type) }),
     ...(options.egress === undefined ? {} : { egress: options.egress }),
     createDriver: async (_manifest, reporters) => {
       driver.reporters = reporters
@@ -543,6 +548,18 @@ describe('first run', () => {
     await s.api.approvals.reject('shop', s.adapter.hash)
     expect((await s.api.adapters.list())[0]?.approval).toBe('rejected')
     expect(await s.api.attention.list()).toEqual([])
+    expect(await s.api.approvals.pending()).toEqual([])
+  })
+
+  it('offers a turned-down version again, and approving it then turns it on', async () => {
+    const s = await setup()
+    expect(await s.api.approvals.turnedDown()).toEqual([])
+    await s.api.approvals.reject('shop', s.adapter.hash)
+    const again = await s.api.approvals.turnedDown()
+    expect(again.map((r) => [r.adapterId, r.to.hash])).toEqual([['shop', s.adapter.hash]])
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    expect((await s.api.adapters.list())[0]?.approval).toBe('approved')
+    expect(await s.api.approvals.turnedDown()).toEqual([])
   })
 })
 
@@ -698,9 +715,12 @@ describe('an update', () => {
     ;(first.presence as { answer: boolean }).answer = true
     await restarted.api.approvals.approve('shop', next.hash)
     expect((await restarted.api.adapters.list())[0]?.secrets).toEqual([{ name: 'login', granted: true }])
-    // A rejected update takes the kept grant with it: the install's evidence is what backs it.
+    // A rejected update takes the kept grant with it: the install's evidence is what backs it. The
+    // copy left in grants.json reads as given before and no longer counting, never as given.
     await restarted.api.approvals.reject('shop', next.hash)
-    expect((await restarted.api.adapters.list())[0]?.secrets).toEqual([{ name: 'login', granted: false }])
+    expect((await restarted.api.adapters.list())[0]?.secrets).toEqual([
+      { name: 'login', granted: false, lapsed: true },
+    ])
   })
 
   it('keeps nothing when the approved snapshot was edited to hide a widening', async () => {
@@ -885,9 +905,10 @@ describe('grants', () => {
       }),
     ])
     expect((await s.api.grants.providers()).find((p) => p.kind === 'fake')?.grantCount).toBe(1)
-    expect(await s.api.grants.vaultItems('fake')).toEqual([
-      { id: 'demo-woolworths', title: 'Woolworths (demo account)' },
-    ])
+    expect(await s.api.grants.vaultItems('fake')).toEqual({
+      status: 'ok',
+      items: [{ id: 'demo-woolworths', title: 'Woolworths (demo account)' }],
+    })
     await s.api.grants.make({ ...request, secret: 'messages', provider: 'messages', itemRef: 'ShopBank' })
     expect((await s.api.adapters.get('shop'))?.messages[0]?.grant?.itemTitle).toBe('ShopBank')
     await expect(s.api.grants.revoke('shop', 'bank')).rejects.toThrow()
@@ -1010,8 +1031,10 @@ describe('tool calls', () => {
       ],
     )
     const called = (await s.api.audit.page({ clientId: `local:${desktop.id}` })).records.map((r) => r.event)
+    // Its call, and the person adding it, newest first.
     expect(called).toEqual([
       expect.objectContaining({ type: 'tool-called', callId: 'call_c', clientId: `local:${desktop.id}` }),
+      { type: 'client-added', clientId: `local:${desktop.id}` },
     ])
   })
 
@@ -1039,6 +1062,18 @@ describe('tool calls', () => {
     s.endpoint.sessionsChanged?.(s.endpoint.live)
     expect(s.events).toEqual([{ type: 'endpoint-changed' }])
     expect((await s.api.endpoint.status()).connectedClients).toBe(2)
+    // One app with a second session (it reconnected, leaving the first behind) is still one app
+    // (persona QA: "2 apps connected" with one app).
+    const again = s.endpoint.live.sessions[1] as LiveSessions['sessions'][number]
+    s.endpoint.live = {
+      ...s.endpoint.live,
+      total: 3,
+      http: 2,
+      sessions: [...s.endpoint.live.sessions, again],
+    }
+    expect((await s.api.endpoint.status()).connectedClients).toBe(2)
+    s.endpoint.live = { total: 2, bridge: 0, http: 2, sessions: [again, again] }
+    expect((await s.api.endpoint.status()).connectedClients).toBe(1)
     const desktop = await s.api.clients.add('Desktop')
     const code = await s.api.clients.add('Code')
     const id = (clientId: string) => ({ origin: 'local' as const, clientId })
@@ -1056,6 +1091,55 @@ describe('tool calls', () => {
     ])
   })
 
+  it('counts a client as connected once it opens a session, before it calls any site tool', async () => {
+    const s = await approved()
+    const code = await s.api.clients.add('Code')
+    expect((await s.api.clients.list()).find((c) => c.id === code.id)?.lastSeen).toBeNull()
+    s.endpoint.live = {
+      total: 1,
+      bridge: 0,
+      http: 1,
+      sessions: [
+        { identity: { origin: 'local', clientId: code.id }, transport: 'http', client: 'Claude Code' },
+      ],
+    }
+    s.events.splice(0)
+    s.endpoint.sessionsChanged?.(s.endpoint.live)
+    expect(s.events).toEqual([{ type: 'clients-changed' }, { type: 'endpoint-changed' }])
+    const seen = (await s.api.clients.list()).find((c) => c.id === code.id)
+    expect(seen?.lastSeen).not.toBeNull()
+    expect([seen?.reportedName, seen?.transport]).toEqual(['Claude Code', 'http'])
+    // A session whose client hasn't said its name yet keeps the name it said before.
+    s.endpoint.live = {
+      ...s.endpoint.live,
+      sessions: [{ ...s.endpoint.live.sessions[0]!, client: 'unknown' }],
+    }
+    s.endpoint.sessionsChanged?.(s.endpoint.live)
+    expect((await s.api.clients.list()).find((c) => c.id === code.id)?.reportedName).toBe('Claude Code')
+  })
+
+  it('says why a vault couldn’t be listed: declined in 1Password, or the account named couldn’t be opened', async () => {
+    const demo = testCredentials(disabledOtpReader)
+    let failure: 'locked' | 'unavailable' = 'locked'
+    const credentials: Credentials = {
+      ...demo,
+      async vaultItems() {
+        throw new CredentialError(failure)
+      },
+    }
+    const s = await setup({ credentials })
+    await s.api.settings.set({ onePasswordAccount: 'Smith Family' })
+    expect(await s.api.grants.vaultItems('keychain-copy')).toEqual({
+      status: 'declined',
+      account: 'Smith Family',
+    })
+    failure = 'unavailable'
+    expect(await s.api.grants.vaultItems('keychain-copy')).toEqual({
+      status: 'unavailable',
+      account: 'Smith Family',
+    })
+  })
+
   it('ends a call the client cancels, and every call still running when the app stops', async () => {
     const s = await approved()
     const client = new AbortController()
@@ -1066,11 +1150,16 @@ describe('tool calls', () => {
       await new Promise((r) => setTimeout(r, 10))
     client.abort()
     expect(await cancelled).toEqual({ status: 'failed', stage: 'tool-run', errorClass: 'aborted' })
-    // The panel closed with the call, and the answer is on record as declined.
+    // The panel closed with the call, and the answer is on record as cancelled: nobody declined it.
     expect(s.ui.closedConfirmations).toEqual(s.ui.shownConfirmations)
     expect(s.service.confirmationPending(s.ui.shownConfirmations[0] as string)).toBe(false)
     const events = (await s.api.audit.page({})).records.map((r) => r.event)
-    expect(events).toContainEqual(expect.objectContaining({ type: 'confirmation', answer: 'declined' }))
+    expect(events).toContainEqual(expect.objectContaining({ type: 'confirmation', answer: 'cancelled' }))
+    await vi.waitFor(async () =>
+      expect((await s.api.audit.page({})).records.map((r) => r.event)).toContainEqual(
+        expect.objectContaining({ type: 'approval-answered', answer: 'withdrawn', reason: 'call-cancelled' }),
+      ),
+    )
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'tool-finished',
@@ -1852,7 +1941,7 @@ describe('endpoint, settings, audit and the app', () => {
       expect(snippet.text).not.toContain(TOKEN)
     }
     await s.api.clients.copyConfig(code.id, 'claude-code')
-    expect(s.ui.clipboard[0]).toContain('claude mcp add valet-demo --')
+    expect(s.ui.clipboard[0]).toContain('claude mcp add --scope user valet-demo --')
     expect(s.ui.clipboard[0]).toContain(configPath)
     expect(await s.api.clients.snippets('c_0000000000000000')).toEqual([])
     await expect(s.api.clients.copyConfig('c_0000000000000000', 'claude-code')).rejects.toThrow()
@@ -1892,6 +1981,31 @@ describe('endpoint, settings, audit and the app', () => {
     s.endpoint.clients.clear()
     await s.api.endpoint.setListening(true)
     expect([...s.endpoint.clients.keys()]).toEqual([desktop.id])
+  })
+
+  /** An audit log that refuses every append, as a broken chain or a full disk does. */
+  function breakAudit(service: unknown): void {
+    const audit = (service as { audit: { append: () => Promise<never> } }).audit
+    audit.append = () => Promise.reject(new Error('audit log refused'))
+  }
+
+  it('still cuts a revoked client off when the audit log can’t be written', async () => {
+    const s = await approved()
+    const code = await s.api.clients.add('Claude Code')
+    breakAudit(s.service)
+    await s.api.clients.revoke(code.id)
+    expect(s.endpoint.ops).toContain(`refuse ${code.id}`)
+    expect(s.endpoint.ops).toContain(`remove ${code.id}`)
+    expect(existsSync(join(s.paths.clientConfigs, `${code.id}.json`))).toBe(false)
+  })
+
+  it('undoes widening an app’s access when the change can’t be recorded', async () => {
+    const s = await approved()
+    const code = await s.api.clients.add('Claude Code')
+    const before = await s.api.clients.access(code.id)
+    breakAudit(s.service)
+    await expect(s.api.clients.setAccess(code.id, { askForChanges: !before.askForChanges })).rejects.toThrow()
+    expect((await s.api.clients.access(code.id)).askForChanges).toBe(before.askForChanges)
   })
 
   it('deletes the shared bridge config left from before per-client tokens', async () => {
@@ -2175,6 +2289,8 @@ describe('an adapter setting (D69)', () => {
       adapterId: 'shop',
     })
     if (item?.kind !== 'agent-request') throw new Error('no item')
+    // The site by the name the person knows it by, not its adapter id (persona QA).
+    expect(item.details[0]).toBe('A Shop setting.')
     expect(item.choices?.map((c) => c.value)).toContain('12')
     expect(item.ref).toMatch(/^[0-9A-F]{4}$/)
     expect(await s.api.attention.approveRequest(asked.requestId, '12')).toBe(true)
@@ -3064,6 +3180,209 @@ describe('pausing one site', () => {
   })
 })
 
+describe('the person’s own controls and refused calls, in the audit log', () => {
+  const events = async (s: {
+    api: { audit: { page(q: object): Promise<{ records: readonly { event: unknown }[] }> } }
+  }) =>
+    (await s.api.audit.page({ limit: 500 })).records.map((r) => r.event).reverse() as Array<{ type: string }>
+  const local = (id: string) => ({
+    transport: 'http' as const,
+    identity: { origin: 'local' as const, clientId: id },
+  })
+  /** The confirmation shown nth (from 0), once its signed request is made. */
+  async function shown(s: Awaited<ReturnType<typeof approved>>, n: number): Promise<string> {
+    await vi.waitFor(() => expect(s.ui.shownConfirmations.length).toBeGreaterThan(n))
+    const id = s.ui.shownConfirmations[n] as string
+    await expect
+      .poll(async () =>
+        (await s.api.attention.list()).some(
+          (i) => i.kind === 'confirmation' && i.id === id && i.ref !== null,
+        ),
+      )
+      .toBe(true)
+    return id
+  }
+
+  it('records adding, widening, resetting and revoking an app, and pausing Valet, by fixed names only', async () => {
+    const s = await approved()
+    const app = await s.api.clients.add('My  secret <b>name</b>')
+    const label = `local:${app.id}`
+    await s.api.clients.setAccess(app.id, { askForChanges: false })
+    await s.api.clients.setAccess(app.id, { askForChanges: true, allActivity: true })
+    // Setting what is already set changes nothing, and records nothing.
+    await s.api.clients.setAccess(app.id, { askForChanges: true })
+    await s.api.clients.resetAccess(app.id)
+    await s.api.app.setPaused(true)
+    await s.api.app.setPaused(true)
+    await s.api.app.setPaused(false)
+    await s.api.clients.revoke(app.id)
+
+    const mine = (await events(s)).filter((e) => e.type.startsWith('client-') || e.type === 'app-paused')
+    expect(mine).toEqual([
+      { type: 'client-added', clientId: label },
+      {
+        type: 'client-access-changed',
+        clientId: label,
+        before: ['see-valet', 'ask-for-changes'],
+        after: ['see-valet'],
+      },
+      {
+        type: 'client-access-changed',
+        clientId: label,
+        before: ['see-valet'],
+        after: ['see-valet', 'all-activity', 'ask-for-changes'],
+      },
+      { type: 'client-reset', clientId: label },
+      { type: 'app-paused', paused: true },
+      { type: 'app-paused', paused: false },
+      { type: 'client-revoked', clientId: label },
+    ])
+    // The person's own name for the app is their text, kept in the app's list, never in the log.
+    expect(JSON.stringify(await events(s))).not.toContain('secret')
+  })
+
+  it('records the person’s Decline as a decline from this Mac, counted against the agent until it cools down', async () => {
+    const s = await approved()
+    const app = await s.api.clients.add('Claude Code')
+    for (let n = 0; n < 3; n++) {
+      const pending = s.call('add', { item: 'milk' }, 'Claude Code', `call_no${n}`, local(app.id))
+      const id = await shown(s, n)
+      await s.api.answerConfirmation(id, false, { role: 'tray', shows: null })
+      expect(await pending).toEqual({ status: 'ok', output: { added: false } })
+    }
+    // The site's own approval aside, each confirmation's request.
+    const confirmations = async () =>
+      (await events(s)).filter(
+        (e) => e.type === 'approval-answered' && (e as { answer?: string }).answer !== 'approved',
+      )
+    await vi.waitFor(async () => expect(await confirmations()).toHaveLength(3))
+    const answered = await confirmations()
+    for (const event of answered)
+      expect(event).toEqual({
+        type: 'approval-answered',
+        requestId: expect.any(String),
+        answer: 'declined',
+        deviceId: expect.any(String),
+      })
+    expect((await events(s)).filter((e) => e.type === 'confirmation')).toEqual(
+      Array(3).fill(expect.objectContaining({ answer: 'declined' })),
+    )
+    // Three declines: the agent's next confirmation isn't raised as a signed request while it cools
+    // down, and its call is declined.
+    const asked = (await events(s)).filter((e) => e.type === 'approval-requested').length
+    expect(await s.call('add', { item: 'eggs' }, 'Claude Code', 'call_no3', local(app.id))).toEqual({
+      status: 'ok',
+      output: { added: false },
+    })
+    expect((await events(s)).filter((e) => e.type === 'approval-requested')).toHaveLength(asked)
+  })
+
+  it('ends a call waiting on a confirmation at once when the person revokes its agent, recorded as revoked', async () => {
+    const s = await approved()
+    const app = await s.api.clients.add('Claude Code')
+    const pending = s.call('add', { item: 'milk' }, 'Claude Code', 'call_rv', local(app.id))
+    const id = await shown(s, 0)
+
+    await s.api.clients.revoke(app.id)
+
+    // The call ends before the app removes the client from the endpoint, so its answer reaches it.
+    expect(await pending).toEqual({ status: 'failed', stage: 'tool-run', errorClass: 'aborted' })
+    expect(s.ui.closedConfirmations).toEqual([id])
+    expect(s.endpoint.ops.slice(-2)).toEqual([`refuse ${app.id}`, `remove ${app.id}`])
+    await vi.waitFor(async () =>
+      expect(await events(s)).toContainEqual(
+        expect.objectContaining({ type: 'approval-answered', answer: 'withdrawn', reason: 'client-revoked' }),
+      ),
+    )
+    const all = await events(s)
+    expect(all).toContainEqual(
+      expect.objectContaining({ type: 'confirmation', callId: 'call_rv', answer: 'cancelled' }),
+    )
+    expect(all).toContainEqual({ type: 'client-revoked', clientId: `local:${app.id}` })
+    // Nobody declined anything.
+    expect(all).not.toContainEqual(expect.objectContaining({ answer: 'declined' }))
+  })
+
+  it('records calls the endpoint refused before they ran, by client, never their arguments', async () => {
+    const s = await approved()
+    const app = await s.api.clients.add('Claude Code')
+    const caller = s.endpoint.caller as ToolCaller
+    await caller.refusedByProtocol?.({
+      reason: 'unknown-tool',
+      name: 'shop_delete_account',
+      client: 'Claude\u0007 Code',
+      identity: { origin: 'local', clientId: app.id },
+      callId: 'call_unknown',
+    })
+    await caller.refusedByProtocol?.({
+      reason: 'invalid-input',
+      name: 'shop_echo',
+      tool: { adapterId: 'shop', tool: 'echo' },
+      client: 'Claude Code',
+      identity: { origin: 'local', clientId: app.id },
+      callId: 'call_badargs',
+    })
+    const all = await events(s)
+    expect(all).toContainEqual({
+      type: 'call-refused',
+      client: 'Claude Code',
+      clientId: `local:${app.id}`,
+      tool: 'shop_delete_account',
+      reason: 'unknown-tool',
+    })
+    // A site tool's refused arguments are a refused call of that tool, among the calls.
+    expect(all).toContainEqual(
+      expect.objectContaining({
+        type: 'tool-called',
+        tool: 'echo',
+        callId: 'call_badargs',
+        clientId: `local:${app.id}`,
+      }),
+    )
+    expect(all).toContainEqual(
+      expect.objectContaining({
+        type: 'tool-finished',
+        callId: 'call_badargs',
+        outcome: 'failed',
+        stage: 'tool-input',
+        errorClass: 'invalid',
+      }),
+    )
+    expect((await s.api.runs.list({})).map((r) => r.callId)).toContain('call_badargs')
+  })
+
+  it('records a client’s refused calls one by one up to a limit, then how many more there were', async () => {
+    const timers = new ManualTimers()
+    const s = await setup({ timers })
+    const caller = s.endpoint.caller as ToolCaller
+    const refuse = (clientId: string, n: number) =>
+      caller.refusedByProtocol?.({
+        reason: 'unknown-tool',
+        name: `nope_${n}`,
+        client: 'Looping agent',
+        identity: { origin: 'local', clientId },
+        callId: `call_${clientId}_${n}`,
+      })
+    for (let n = 0; n < 25; n++) await refuse('c_aaaaaaaaaaaaaaaa', n)
+    // Another client's are its own.
+    await refuse('c_bbbbbbbbbbbbbbbb', 0)
+    const refused = (await events(s)).filter((e) => e.type === 'call-refused') as unknown as Array<{
+      clientId: string
+    }>
+    expect(refused.filter((e) => e.clientId === 'local:c_aaaaaaaaaaaaaaaa')).toHaveLength(20)
+    expect(refused.filter((e) => e.clientId === 'local:c_bbbbbbbbbbbbbbbb')).toHaveLength(1)
+    timers.fire()
+    await vi.waitFor(async () =>
+      expect(await events(s)).toContainEqual({
+        type: 'refusals-dropped',
+        client: 'Looping agent',
+        clientId: 'local:c_aaaaaaaaaaaaaaaa',
+        count: 5,
+      }),
+    )
+  })
+})
+
 describe('Needs you items', () => {
   it('lists a login Valet was never given, for approved sites only', async () => {
     const s = await setup()
@@ -3885,8 +4204,17 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
       const versions = await s.api.adapters.versions('shop')
       expect(versions.versions.find((v) => v.hash === s.v2)).toMatchObject({ active: false })
       const review = (await s.api.approvals.pending()).find((r) => r.to.hash === s.v2)
-      expect(review).toMatchObject({ from: { hash: s.v1 }, to: { hash: s.v2 } })
-      expect((await s.api.attention.list()).some((i) => i.kind === 'review')).toBe(true)
+      expect(review).toMatchObject({
+        from: { hash: s.v1 },
+        to: { hash: s.v2 },
+        source: 'agent',
+        staged: true,
+        request: { ref: asked.ref, agentTests: { passed: 2, failed: 0 } },
+      })
+      // Needs you says v1 keeps working, and who asked with the ref the agent was told.
+      const item = (await s.api.attention.list()).find((i) => i.kind === 'review')
+      expect(item).toMatchObject({ keepsServing: true, requestedBy: { ref: asked.ref } })
+      expect(asked.tellThePerson).toContain(`approval ${asked.ref}`)
       expect((await s.authoring.getDraft(s.viewer, false, s.draftId)).draft.status).toBe('waiting')
       await s.api.approvals.approve('shop', s.v2)
       await vi.waitFor(async () =>
@@ -3908,11 +4236,14 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     it('a decline reaches the agent, and a version stored only for the draft goes', async () => {
       const s = await withDraft()
       await s.authoring.submit(s.viewer, s.draftId, NO_NOTE)
-      await s.api.approvals.reject('shop', s.v2)
+      await s.api.approvals.reject('shop', s.v2, 'Keep the old selector.')
       await vi.waitFor(async () =>
         expect((await s.api.adapters.versions('shop')).versions.map((v) => v.hash)).toEqual([s.v1]),
       )
-      expect((await s.authoring.getDraft(s.viewer, false, s.draftId)).draft.status).toBe('declined')
+      const declined = (await s.authoring.getDraft(s.viewer, false, s.draftId)).draft
+      expect(declined.status).toBe('declined')
+      // The person's reason reaches the agent that asked.
+      expect(declined.submission?.note).toBe('Keep the old selector.')
       expect(await s.call('echo', { text: 'hi' })).toMatchObject({ output: { text: 'v1:hi' } })
       expect((await s.api.approvals.pending()).some((r) => r.to.hash === s.v2)).toBe(false)
     })
@@ -3936,9 +4267,22 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
       }
       const authoring = s.endpoint.authoring as Authoring
       const { draft } = await authoring.createDraft(viewer, { adapterId: 'example', from: 'blank' })
-      const asked = await authoring.submit(viewer, draft.draftId, NO_NOTE)
+      const asked = await authoring.submit(viewer, draft.draftId, {
+        ...NO_NOTE,
+        note: 'Reads one page.',
+      })
       const review = (await s.api.approvals.pending()).find((r) => r.adapterId === 'example')
-      expect(review).toMatchObject({ from: null, to: { hash: asked.adapterHash }, origin: 'draft' })
+      expect(review).toMatchObject({
+        from: null,
+        to: { hash: asked.adapterHash },
+        origin: 'draft',
+        // Dated and attributed by the agent's request, not the app's launch.
+        source: 'agent',
+        staged: false,
+        request: { ref: asked.ref, client: 'Claude Code', note: 'Reads one page.', remote: false },
+      })
+      expect(review?.request?.checks.length).toBeGreaterThan(0)
+      expect(Date.parse(review?.submittedAt ?? '')).toBeGreaterThan(0)
       expect(s.endpoint.caller?.listTools().some((t) => t.adapterId === 'example')).toBe(false)
       await s.api.approvals.approve('example', asked.adapterHash)
       expect((await authoring.getDraft(viewer, false, draft.draftId)).draft.status).toBe('approved')
@@ -4219,6 +4563,30 @@ describe('admin tools (docs/admin-tools.md)', () => {
     expect(await callIds(s.C1)).toEqual(new Set(['c_7f2a01', 'c_9b01aa']))
   })
 
+  it('shows an app another agent’s refused calls only if it may see all activity', async () => {
+    const s = await withLogin()
+    const caller = s.endpoint.caller as ToolCaller
+    for (const identity of [s.C1, s.C2])
+      await caller.refusedByProtocol?.({
+        reason: 'unknown-tool',
+        name: `nope_${identity.clientId}`,
+        client: 'agent',
+        identity,
+        callId: `c_${identity.clientId}`,
+      })
+    const refused = async (viewer: ClientIdentity) =>
+      (
+        (await run(s.admin, 'valet_audit_log', { limit: 100 }, viewer)).structuredContent as {
+          records: { event: { type: string; tool?: string } }[]
+        }
+      ).records
+        .filter((r) => r.event.type === 'call-refused')
+        .map((r) => r.event.tool)
+    expect(await refused(s.C1)).toEqual([`nope_${s.C1.clientId}`])
+    await s.registry.setCapabilities(s.C1.clientId, { allActivity: true })
+    expect(await refused(s.C1)).toEqual([`nope_${s.C2.clientId}`, `nope_${s.C1.clientId}`])
+  })
+
   it('refuses an app the person hasn’t let see Valet, and one it doesn’t know', async () => {
     const s = await withLogin()
     await s.registry.setCapabilities(s.C2.clientId, { seeValet: false })
@@ -4451,3 +4819,122 @@ function readAudit(path: string): { type: string; [key: string]: unknown }[] {
     .filter((line) => line.trim() !== '')
     .map((line) => (JSON.parse(line) as { event: { type: string } }).event)
 }
+
+describe('when this Mac’s approval keys change (persona QA, key loss)', () => {
+  const grantRequest = (hash: string, secret: 'login' | 'messages') =>
+    secret === 'login'
+      ? {
+          adapterId: 'shop',
+          adapterHash: hash,
+          secret,
+          provider: 'fake' as const,
+          itemRef: 'demo-woolworths',
+          origins: ['https://login.shop.test'],
+        }
+      : {
+          adapterId: 'shop',
+          adapterHash: hash,
+          secret,
+          provider: 'messages' as const,
+          itemRef: 'ShopBank',
+          origins: ['https://login.shop.test'],
+        }
+
+  /** Approved, both grants made, then the Mac's keys are lost and made again at the next start. */
+  async function afterKeyLoss() {
+    const first = await approved()
+    await first.api.grants.make(grantRequest(first.adapter.hash, 'login'))
+    await first.api.grants.make(grantRequest(first.adapter.hash, 'messages'))
+    await first.service.stop()
+    rmSync(join(first.dir, 'approval-keys.json'))
+    const diagnostics: string[] = []
+    const again = await setup({ dir: first.dir, diagnostics })
+    return { ...again, diagnostics }
+  }
+
+  it('still counts nothing the old keys signed, and says so in plain words', async () => {
+    const s = await afterKeyLoss()
+    // The safe outcome stays: no approval, no grant, no call.
+    const summary = (await s.api.adapters.list())[0]
+    expect(summary?.approval).toBe('unapproved')
+    expect(summary?.approvedBefore).toBe(true)
+    expect(await s.api.grants.list()).toEqual([])
+    expect(await s.call('echo', { text: 'hi' })).toMatchObject({ status: 'failed' })
+    expect(s.endpoint.caller?.listTools()).toEqual([])
+    expect(s.diagnostics).toContain('approval-keys-changed')
+
+    const items = await s.api.attention.list()
+    expect(items).toContainEqual({
+      kind: 'keys-changed',
+      id: 'keys-changed',
+      sites: [{ adapterId: 'shop', adapterName: 'Shop', review: true, logins: ['login', 'messages'] }],
+      others: 0,
+    })
+    // The review reads as approving again, not as a first look.
+    expect(items).toContainEqual(
+      expect.objectContaining({
+        kind: 'review',
+        adapterId: 'shop',
+        firstInstall: false,
+        approvedBefore: true,
+      }),
+    )
+    expect((await s.api.approvals.pending())[0]?.approvedBefore).toBe(true)
+    // An agent can tell why a tool is missing.
+    const status = await (s.endpoint.admin as AdminReader).status()
+    expect(status.sites).toMatchObject({ installed: 1, approved: 0, toApproveAgain: 1 })
+  })
+
+  it('lists what is left until each is given again, and never shows a lapsed grant as given', async () => {
+    const s = await afterKeyLoss()
+    const hash = s.adapter.hash
+    await s.api.approvals.approve('shop', hash)
+    const keysItem = async () => (await s.api.attention.list()).find((i) => i.kind === 'keys-changed')
+    expect(await keysItem()).toMatchObject({ sites: [{ review: false, logins: ['login', 'messages'] }] })
+    let summary = (await s.api.adapters.list())[0]
+    expect(summary?.approval).toBe('approved')
+    expect(summary?.approvedBefore).toBeUndefined()
+    expect(summary?.secrets).toEqual([{ name: 'login', granted: false, lapsed: true }])
+    expect(summary?.messagesSources).toEqual([{ sender: 'ShopBank', granted: false, lapsed: true }])
+
+    await s.api.grants.make(grantRequest(hash, 'login'))
+    expect(await keysItem()).toMatchObject({ sites: [{ review: false, logins: ['messages'] }] })
+    summary = (await s.api.adapters.list())[0]
+    expect(summary?.secrets).toEqual([{ name: 'login', granted: true }])
+    // The code grant left in grants.json still doesn't count, and the summary says so.
+    expect(summary?.messagesSources).toEqual([{ sender: 'ShopBank', granted: false, lapsed: true }])
+
+    await s.api.grants.make(grantRequest(hash, 'messages'))
+    expect(await keysItem()).toBeUndefined()
+    summary = (await s.api.adapters.list())[0]
+    expect(summary?.messagesSources).toEqual([{ sender: 'ShopBank', granted: true }])
+  })
+
+  it('can be dismissed, and comes back only if the keys change again', async () => {
+    const s = await afterKeyLoss()
+    await s.api.attention.dismiss('keys-changed')
+    expect((await s.api.attention.list()).some((i) => i.kind === 'keys-changed')).toBe(false)
+    // The review stays: dismissing the notice approves nothing.
+    expect((await s.api.attention.list()).some((i) => i.kind === 'review')).toBe(true)
+    await s.service.stop()
+    const same = await setup({ dir: s.dir })
+    expect((await same.api.attention.list()).some((i) => i.kind === 'keys-changed')).toBe(false)
+    await same.service.stop()
+    rmSync(join(s.dir, 'approval-keys.json'))
+    const changed = await setup({ dir: s.dir })
+    expect((await changed.api.attention.list()).some((i) => i.kind === 'keys-changed')).toBe(true)
+  })
+
+  it('raises nothing on a Mac whose keys never changed', async () => {
+    const diagnostics: string[] = []
+    const first = await approved()
+    await first.api.grants.make(grantRequest(first.adapter.hash, 'login'))
+    await first.service.stop()
+    const again = await setup({ dir: first.dir, diagnostics })
+    expect((await again.api.attention.list()).some((i) => i.kind === 'keys-changed')).toBe(false)
+    expect(diagnostics).not.toContain('approval-keys-changed')
+    await expect(again.api.attention.dismiss('keys-changed')).rejects.toEqual(
+      new ValetError('config', 'not-found'),
+    )
+  })
+})

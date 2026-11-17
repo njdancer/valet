@@ -3,6 +3,7 @@
 // button that fixes a site's health line, so the fix always sits next to the problem (IA
 // principle 2) and every surface names it the same way.
 
+import { MESSAGES_SECRET } from '@valet/core/vocab'
 import { Button, Text, toast } from '@valet/ui'
 import type { AdapterSummary, RunSummary, ValetApi } from '../../../shared/api'
 import { useAction, useApi } from '../../lib/api-context'
@@ -25,7 +26,7 @@ export function capSiteText(text: string, max = MAX_SITE_TEXT): string {
  */
 export function SiteText({
   text,
-  from = 'From the manifest',
+  from = 'From the adapter',
   className,
 }: {
   readonly text: string
@@ -125,11 +126,17 @@ export function SiteFixButton({
       )
     case 'login': {
       const missing = adapter.secrets.find((s) => !s.granted)
-      return missing === undefined ? null : (
+      if (missing !== undefined)
+        return (
+          <Button size="sm" variant={variant} asChild>
+            <a href={href.grant(adapter.id, missing.name)}>Choose {adapter.name} login…</a>
+          </Button>
+        )
+      return adapter.messagesSources.some((m) => !m.granted && m.lapsed === true) ? (
         <Button size="sm" variant={variant} asChild>
-          <a href={href.grant(adapter.id, missing.name)}>Choose {adapter.name} login…</a>
+          <a href={href.grant(adapter.id, MESSAGES_SECRET)}>Allow SMS codes again…</a>
         </Button>
-      )
+      ) : null
     }
     case 'show-login':
       return (

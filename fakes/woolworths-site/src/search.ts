@@ -1,6 +1,7 @@
 // Product search and product detail, in the captured response envelopes. Search is a plain
-// case-insensitive substring match on every word of the term; the real ranking is unknowable and
-// tests only need something predictable.
+// case-insensitive substring match on every word of the term, with a plural matching its singular
+// ("breads" finds bread); the real ranking is unknowable and tests only need something predictable.
+// A few known misspellings get a SuggestedTerm, so a client's suggestion path has something to read.
 
 import { catalogue, findProduct, placementOf } from './catalogue'
 import {
@@ -72,6 +73,27 @@ export function searchQueryFromParams(params: URLSearchParams): SearchQuery | nu
   }
 }
 
+/**
+ * Misspellings the fake suggests a spelling for, word by word. The live site's suggestions were
+ * never captured; only the field is (SuggestedTerm, null in every capture).
+ */
+export const SPELLING_SUGGESTIONS: Readonly<Record<string, string>> = {
+  bannana: 'banana',
+  bannanas: 'bananas',
+  chese: 'cheese',
+  chesse: 'cheese',
+  coffe: 'coffee',
+  brede: 'bread',
+}
+
+/** The word and the singulars it may be the plural of: "boxes" gives box and boxe, too. */
+function forms(word: string): string[] {
+  const found = [word]
+  if (word.length > 3 && word.endsWith('s')) found.push(word.slice(0, -1))
+  if (word.length > 4 && word.endsWith('es')) found.push(word.slice(0, -2))
+  return found
+}
+
 function matches(product: Product, words: readonly string[]): boolean {
   const placement = placementOf(product.Stockcode)
   const haystack = [
@@ -84,7 +106,16 @@ function matches(product: Product, words: readonly string[]): boolean {
   ]
     .join(' ')
     .toLowerCase()
-  return words.every((word) => haystack.includes(word))
+  return words.every((word) => forms(word).some((form) => haystack.includes(form)))
+}
+
+/** The term with every known misspelling corrected, or null when it has none. */
+export function suggestedTerm(term: string): string | null {
+  const words = term.toLowerCase().split(/\s+/).filter(Boolean)
+  if (!words.some((word) => Object.hasOwn(SPELLING_SUGGESTIONS, word))) return null
+  return words
+    .map((word) => (Object.hasOwn(SPELLING_SUGGESTIONS, word) ? SPELLING_SUGGESTIONS[word] : word))
+    .join(' ')
 }
 
 const comparators: Record<SortType, ((a: Product, b: Product) => number) | null> = {
@@ -125,7 +156,7 @@ export function searchResponse(query: SearchQuery, trolley: Trolley): SearchBody
   }))
   response.SearchResultsCount = found.length
   response.Corrections = null
-  response.SuggestedTerm = null
+  response.SuggestedTerm = suggestedTerm(query.term)
   return response
 }
 

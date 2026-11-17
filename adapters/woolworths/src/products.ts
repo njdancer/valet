@@ -7,21 +7,31 @@ import { htmlToText, httpsUrl, list, text } from './text'
 import { type ProductDetailWire, type ProductTileWire, productDetailWire, searchWire } from './wire'
 
 /** Woolworths stockcodes are positive integers; the bound keeps them a plain path segment. */
-export const stockcodeSchema = z.number().int().min(1).max(999_999_999)
+export const stockcodeSchema = z
+  .number()
+  .int()
+  .min(1)
+  .max(999_999_999)
+  .describe("The product's stockcode, as search_products, get_product or get_cart give it.")
 
 export const productSummarySchema = z.object({
-  stockcode: z.number().int(),
+  stockcode: z.number().int().describe('The id to pass to get_product and the cart tools.'),
   name: z.string(),
   brand: z.string().nullable(),
   /** Pack size as printed, e.g. "2L". */
-  size: z.string().nullable(),
-  price: z.number().nullable(),
+  size: z.string().nullable().describe('Pack size as printed, e.g. "2L".'),
+  price: z
+    .number()
+    .nullable()
+    .describe('Dollars for one unit, at the chosen store. Null when the site gives none.'),
   /** Unit price as printed, e.g. "$2.10 / 1L". */
-  cupPrice: z.string().nullable(),
+  cupPrice: z.string().nullable().describe('Unit price as printed, e.g. "$2.10 / 1L".'),
   /** The pre-special price, only when the product is on special. */
-  wasPrice: z.number().nullable(),
+  wasPrice: z.number().nullable().describe('The price before the special, only when onSpecial is true.'),
   onSpecial: z.boolean(),
-  available: z.boolean(),
+  available: z
+    .boolean()
+    .describe('False when the store has none: it can still be added, but is set aside in the cart.'),
   imageUrl: z.string().nullable(),
 })
 export type ProductSummary = z.infer<typeof productSummarySchema>
@@ -71,16 +81,19 @@ export function searchRequest(input: {
 
 export const searchProducts = tool({
   input: z.object({
-    query: z.string().trim().min(1).max(100),
-    page: z.number().int().min(1).max(50).default(1),
-    pageSize: z.number().int().min(1).max(MAX_PAGE_SIZE).default(12),
-    specialsOnly: z.boolean().default(false),
+    query: z.string().trim().min(1).max(100).describe('Words to search for, e.g. "milk 2l". Not blank.'),
+    page: z.number().int().min(1).max(50).default(1).describe('Which page of results, from 1.'),
+    pageSize: z.number().int().min(1).max(MAX_PAGE_SIZE).default(12).describe('Products per page.'),
+    specialsOnly: z.boolean().default(false).describe('Only products on special.'),
   }),
   output: z.object({
     /** The number of matches the site reports across all pages. */
-    total: z.number().int(),
+    total: z.number().int().describe('Matches the site reports across all pages.'),
     /** The site's spelling suggestion, when it made one. */
-    suggestedQuery: z.string().nullable(),
+    suggestedQuery: z
+      .string()
+      .nullable()
+      .describe("The site's suggested spelling of the query, when it made one: search again with it."),
     products: z.array(productSummarySchema),
   }),
   async run(ctx, input) {

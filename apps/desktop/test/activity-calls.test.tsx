@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { ControlPanel } from '../src/renderer/control/App'
 import { createFakeApi, type FakeApi } from '../src/renderer/dev/fake-api'
 import { ApiProvider } from '../src/renderer/lib/api-context'
+import { outcomeWords } from '../src/renderer/screens/activity/shared'
 import type { RunSummary, ValetApi } from '../src/shared/api'
 
 const NOW = Date.parse('2026-11-07T21:48:00+11:00')
@@ -175,5 +176,42 @@ describe('Activity › Calls', () => {
     fake.fake.failNext('runs.list')
     renderAt('#/activity/calls', fake)
     expect(await screen.findByText('Valet couldn’t load the calls.')).toBeTruthy()
+  })
+})
+
+describe('a call the person’s own stop refused (persona QA)', () => {
+  const run = (stage: RunSummary['stage'], errorClass: RunSummary['errorClass']): RunSummary => ({
+    callId: 'c_1a2b3c',
+    adapterId: 'woolworths',
+    adapterName: 'Woolworths',
+    tool: 'get_cart',
+    sideEffect: 'read',
+    client: 'Claude Code',
+    startedAt: new Date(NOW).toISOString(),
+    durationMs: 0,
+    outcome: 'failed',
+    needsUser: null,
+    stage,
+    errorClass,
+    blockedRequests: 0,
+    detail: null,
+  })
+
+  it('says Paused or Locked down, not Failed', () => {
+    expect(outcomeWords(run('config', 'unavailable'))).toEqual({ text: 'Paused', tone: 'warning' })
+    expect(outcomeWords(run('config', 'locked-down'))).toEqual({ text: 'Locked down', tone: 'danger' })
+    expect(outcomeWords(run('config', 'site-paused'))).toEqual({ text: 'Site paused', tone: 'warning' })
+    // Anything else that failed still says so.
+    expect(outcomeWords(run('tool-run', 'unavailable')).text).toBe('Failed')
+    expect(outcomeWords(run('config', 'invalid')).text).toBe('Failed')
+  })
+
+  it('shows it in the Calls list', async () => {
+    const api = createFakeApi({ now: NOW })
+    const locked = { ...run('config', 'locked-down'), callId: 'c_9d8e7f' }
+    renderAt('#/activity/calls', { ...api, runs: { ...api.runs, list: async () => [locked] } })
+    const t = await table()
+    expect(rows(t)[0]?.textContent).toContain('Locked down')
+    expect(rows(t)[0]?.textContent).not.toContain('Failed')
   })
 })

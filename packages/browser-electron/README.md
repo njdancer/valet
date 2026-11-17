@@ -102,8 +102,9 @@ to measure a decision or an opt-in rather than to test the default.
   or TLS) and WebTransport's QUIC never pass through `webRequest`. In the e2e suite both reached an
   undeclared host with only the old measures in place. The partition now sends every connection,
   loopback included, through `egress-proxy.ts`, which allows only egress hosts (the run's too) on
-  443 and never resolves a refused hostname; with WebRTC limited to proxied traffic and no
-  UDP-capable proxy, neither gets out.
+  443 (`egressPorts`) and never resolves a refused hostname; with WebRTC limited to proxied traffic
+  and no UDP-capable proxy, neither gets out. A refused connection is reported as `CONNECT` with
+  `host-not-allowed`, or `port-not-allowed` when the host is allowed but the port isn't.
 - **Adapter code runs in its own world.** `evaluate()` source runs in isolated world 1001; the
   runtime's own scripts (fetch, extract, storage handoff) in 1000, so adapter code can't patch
   the `fetch`, `JSON` or `Storage` they use.

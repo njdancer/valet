@@ -45,7 +45,7 @@ import { linksOpenInValet, needsYouHref } from '../lib/open-in-valet'
 import { href } from '../lib/routes'
 import { healthFor, isFirstReview, siteStatus } from '../lib/site-status'
 import { askedToRetry, clientClaim } from '../lib/wording'
-import { stepsDone as doneOf, stepsLeft, useSetupFacts } from '../screens/setup/setup-logic'
+import { useSetupLeft } from '../screens/setup/setup-logic'
 
 /** Needs you rows shown in full; the rest are one link to the window. */
 export const TRAY_NEEDS_YOU_ROWS = 3
@@ -60,7 +60,7 @@ export function TrayPopover() {
   const health = useLoad((a) => a.health.sites(), [], ['health-changed'])
   const stats = useLoad((a) => a.runs.statsToday(), [], ['runs-changed'])
   const runs = useLoad((a) => a.runs.list({ limit: 200 }), [], ['runs-changed'])
-  const facts = useSetupFacts()
+  const left = useSetupLeft()
   const action = useAction()
   const [opened, setOpened] = useState<boolean | null>(null)
   const [lockOpen, setLockOpen] = useState(false)
@@ -81,7 +81,6 @@ export function TrayPopover() {
   const waiting = views.filter((v) => !v.missed)
   const missed = views.filter((v) => v.missed)
 
-  const left = facts.status === 'ready' ? stepsLeft(doneOf(facts.data)) : null
   // Skipped steps wait here as one item until done (IA: "Finish setup (N steps left)").
   const finishSetup = left !== null && left > 0
   const shown = waiting.slice(0, finishSetup ? TRAY_NEEDS_YOU_ROWS - 1 : TRAY_NEEDS_YOU_ROWS)
@@ -418,10 +417,12 @@ export function subLine(view: NeedsYouView, items: readonly AttentionItem[]): st
     case 'review':
       if (view.actionLabel === 'Review') return 'Its tools are off until you review it'
       // A changed bundle's tools are off until it is approved (the tool host lists only approved
-      // hashes), so nothing here says calls carry on.
-      return item.addsPermissions
-        ? 'Asks for more · its tools are off until you decide'
-        : 'Asks for nothing new · its tools are off until you decide'
+      // hashes), unless it is an agent's update staged beside the approved version, which keeps on.
+      return `${item.addsPermissions ? 'Asks for more' : 'Asks for nothing new'} · ${
+        item.keepsServing === true
+          ? 'the approved version keeps working until you decide'
+          : 'its tools are off until you decide'
+      }`
     default:
       return view.description
   }

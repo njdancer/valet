@@ -58,6 +58,7 @@ export function attentionTitle(item: AttentionItem): string {
         adapterName: item.adapterName,
         version: item.version,
         ...(item.firstInstall === undefined ? {} : { firstInstall: item.firstInstall }),
+        ...(item.approvedBefore === true ? { approvedBefore: true } : {}),
       })
     case 'remote-consent':
       return needsYouTitle({ kind: 'remote-consent' })
@@ -71,6 +72,8 @@ export function attentionTitle(item: AttentionItem): string {
       return needsYouTitle({ kind: 'login-missing', adapterName: item.adapterName })
     case 'repair':
       return needsYouTitle({ kind: 'repair', adapterName: item.adapterName })
+    case 'keys-changed':
+      return needsYouTitle({ kind: 'keys-changed' })
     case 'missed':
     case 'agent-request':
       return item.title
@@ -94,6 +97,7 @@ export function attentionTarget(item: AttentionItem): NotificationTarget {
       return { kind: 'panel', route: href.grant(item.adapterId, item.secret) }
     case 'repair':
       return { kind: 'panel', route: href.call(item.callId) }
+    case 'keys-changed':
     case 'missed':
     case 'agent-request':
       return { kind: 'panel', route: href.needsYou(item.id) }

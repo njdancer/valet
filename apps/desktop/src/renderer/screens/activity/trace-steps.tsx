@@ -46,7 +46,8 @@ export function offset(ms: number): string {
   return `${(ms / 1000).toFixed(3)} s`
 }
 
-function confirmationWords(answer: 'approved' | 'declined' | 'timed-out'): string {
+function confirmationWords(answer: 'approved' | 'declined' | 'timed-out' | 'cancelled'): string {
+  if (answer === 'cancelled') return 'cancelled before anyone answered'
   return answer === 'approved' ? 'approved' : answer === 'declined' ? 'declined' : 'didn’t answer'
 }
 
@@ -208,7 +209,7 @@ function stepFacts(step: TraceStep, trace: RunTrace): readonly { term: ReactNode
       ]
     case 'login-started':
       return [
-        { term: 'How', value: 'The manifest’s declarative login steps, run by Valet, with no adapter code' },
+        { term: 'How', value: 'Login steps the adapter declares, run by Valet itself: no adapter code runs' },
       ]
     case 'auth-step':
       return [

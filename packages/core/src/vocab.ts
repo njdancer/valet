@@ -14,6 +14,8 @@ export {
 /** Why the driver refused a request, in either partition; BlockedRequest['reason'] in page.ts. */
 export const BLOCK_REASONS = [
   'host-not-allowed',
+  /** The host is allowed but not that port: a socket to a port the driver doesn't open. */
+  'port-not-allowed',
   'undeclared',
   'denied-path',
   'ambiguous-path',

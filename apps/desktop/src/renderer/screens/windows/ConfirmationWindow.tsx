@@ -82,7 +82,10 @@ export function ConfirmationWindow({
   }, [attention.status, found, answered])
 
   const views = needsYouOrder(items.map((i) => needsYouView(i, () => false))).filter((v) => !v.missed)
-  const position = views.findIndex((v) => v.id === confirmationId)
+  // "1 of 3 waiting" counts confirmations only: a site review or a missing login waiting in Needs you
+  // isn't another one of these (persona QA). The banner after an answer still counts everything.
+  const confirmations = views.filter((v) => v.kind === 'confirmation')
+  const position = confirmations.findIndex((v) => v.id === confirmationId)
 
   return (
     // In-app links (the call, the next item) open in the control panel, never in this window.
@@ -120,8 +123,8 @@ export function ConfirmationWindow({
           armDelayMs={armDelayMs}
           queue={
             position === -1
-              ? { position: 1, total: views.length + 1 }
-              : { position: position + 1, total: views.length }
+              ? { position: 1, total: confirmations.length + 1 }
+              : { position: position + 1, total: confirmations.length }
           }
           next={answered === null ? null : (views.find((v) => v.id !== confirmationId) ?? null)}
           waiting={views.filter((v) => v.id !== confirmationId).length}
@@ -399,14 +402,14 @@ function Checked({ item }: { readonly item: ConfirmationItem }) {
                   <Code>{describeDeclaration(r)}</Code> <RiskBadge purpose={r.purpose} />{' '}
                 </span>
               ))}
-              . Each is declared in the manifest and allowed for this tool. Approving doesn’t unlock them.
+              . Each is declared by the adapter and allowed for this tool. Approving doesn’t unlock them.
             </span>
           }
         />
       ) : null}
       <CheckItem
         state="pass"
-        title={`Its requests stay within the manifest’s declared paths, at most ${item.requestCeiling} this run`}
+        title={`Its requests stay within the paths the adapter declared, at most ${item.requestCeiling} this run`}
       />
       <CheckItem
         state={item.unlocks.length === 0 ? 'pass' : 'info'}

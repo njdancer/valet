@@ -24,10 +24,23 @@ export function stepWhy(op: string): string {
   return Object.hasOwn(STEP_WHY, op) ? STEP_WHY[op as AuthStepEntry['op']] : 'A login step.'
 }
 
-export const SOURCE_WORDING: Readonly<Record<PendingReview['source'], string>> = {
-  import: 'Imported',
+const SOURCE_WORDING: Readonly<Record<PendingReview['source'], string>> = {
+  import: 'Installed from a folder',
   ide: 'Made in the IDE',
   'authoring-agent': 'Made by the authoring agent (IDE)',
+  agent: 'Written by your agent',
+  builtin: 'Comes with Valet',
+}
+
+/**
+ * Where a waiting version came from, to go before its time: "Written by Claude Code", "Comes with
+ * Valet", "Imported". A client's name is its own claim; a cloud agent's is marked as one.
+ */
+export function sourceWording(review: Pick<PendingReview, 'source' | 'request'>): string {
+  const request = review.request ?? null
+  if (review.source === 'agent' && request !== null)
+    return `Written by ${request.remote ? `“${capText(request.client, 60)}” (a cloud agent)` : capText(request.client, 60)}`
+  return SOURCE_WORDING[review.source]
 }
 
 /** The longest adapter-supplied string shown anywhere, so a manifest can't fill the screen. */

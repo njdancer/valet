@@ -12,6 +12,7 @@ import {
   hostOf,
   plural,
   shortHash,
+  tidyQuery,
   tinyHash,
 } from '../src/renderer/lib/format'
 
@@ -83,5 +84,14 @@ describe('format', () => {
     expect(plural(1, 'grant')).toBe('1 grant')
     expect(plural(3, 'grant')).toBe('3 grants')
     expect(plural(2, 'match', 'matches')).toBe('2 matches')
+  })
+})
+
+describe('tidyQuery', () => {
+  it('closes up a number typed with spaces or dashes, and trims everything else', () => {
+    expect(tidyQuery(' 2 0 0 0 ')).toBe('2000')
+    expect(tidyQuery('2000-')).toBe('2000')
+    expect(tidyQuery('  Surry   Hills ')).toBe('Surry Hills')
+    expect(tidyQuery('NSW 2000')).toBe('NSW 2000')
   })
 })
