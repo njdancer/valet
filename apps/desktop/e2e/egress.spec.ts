@@ -28,6 +28,7 @@ import {
   launch,
   type McpClient,
   siteTools,
+  siteTrolley,
   tempDir,
   windowWithTitle,
 } from './harness'
@@ -141,6 +142,37 @@ test('approved and searched, the app itself sends nothing to evil.test', async (
   await chooseStore(control)
   const found = await callTool(client, 'woolworths_search_products', { query: 'bread' })
   expect(found.isError, found.text).toBe(false)
+  expect(leaks()).toEqual({ connections: 0, requests: [] })
+})
+
+// Persona QA: {"qty":3} used to run as quantity 1, and a blank query failed with no reason. Neither
+// sends anything to the site, so this costs no login.
+test('a misspelled argument is refused by name, and a blank query says why, with nothing sent', async () => {
+  const { tools } = await client.listTools()
+  const add = tools.find((t) => t.name === 'woolworths_add_to_cart')
+  const update = tools.find((t) => t.name === 'woolworths_update_cart')
+  expect(add?.inputSchema).toMatchObject({ additionalProperties: false })
+  expect(update?.inputSchema).toMatchObject({
+    additionalProperties: false,
+    properties: { items: { items: { additionalProperties: false } } },
+  })
+  // A site tool's schema doesn't advertise the meaningless ±2^53 bounds zod adds to every int.
+  expect(JSON.stringify(siteTools(tools))).not.toContain(String(Number.MAX_SAFE_INTEGER))
+
+  const before = await siteTrolley(launched)
+  const misspelt = await callTool(client, 'woolworths_add_to_cart', { stockcode: 88436, qty: 3 })
+  expect(misspelt.isError, misspelt.text).toBe(true)
+  expect(misspelt.text).toContain('"qty"')
+  const nested = await callTool(client, 'woolworths_update_cart', {
+    items: [{ stockcode: 88436, count: 0, mode: 'set' }],
+  })
+  expect(nested.isError, nested.text).toBe(true)
+  expect(nested.text).toContain('"count"')
+  // Refused by the tool's own schema in the tool process: trimmed, it is empty.
+  const blank = await callTool(client, 'woolworths_search_products', { query: '   ' })
+  expect(blank.isError, blank.text).toBe(true)
+  expect(blank.text).toContain('query must not be blank')
+  expect(await siteTrolley(launched)).toEqual(before)
   expect(leaks()).toEqual({ connections: 0, requests: [] })
 })
 
