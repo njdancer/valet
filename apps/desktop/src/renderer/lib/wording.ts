@@ -139,6 +139,7 @@ export const ERROR_WORDING: Readonly<Record<ErrorClass, string>> = {
   'login-in-progress': 'Login already running',
   'sni-mismatch': 'Connection named another server',
   'upload-budget': 'Sent more than its upload budget',
+  'command-not-allowed': 'Asked for something its tool may not do',
   unsupported: 'Unsupported',
   'signature-invalid': 'Signature didn’t verify',
   expired: 'Expired',

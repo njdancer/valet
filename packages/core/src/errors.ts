@@ -82,6 +82,11 @@ export const ERROR_CLASSES = [
   'sni-mismatch',
   /** The run sent more than its upload budget allows, so the broker closed the connection. */
   'upload-budget',
+  /**
+   * A protocol command the tool's declared side effect doesn't allow, or a folder or path the
+   * manifest doesn't name, so nothing was sent (docs/imap.md).
+   */
+  'command-not-allowed',
   'unsupported',
   /** A signature did not verify: an update feed's envelope, or a downloaded build. */
   'signature-invalid',

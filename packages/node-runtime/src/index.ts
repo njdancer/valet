@@ -11,8 +11,11 @@ export {
   HOST_SCRIPT,
   type NodeRuntimeOptions,
   nodeArguments,
+  type NodeChannel,
   nodeRuntimeProcess,
   SANDBOX_EXEC,
+  type SandboxedNodeOptions,
+  sandboxedNode,
 } from './spawn'
 export {
   type Endpoint,
