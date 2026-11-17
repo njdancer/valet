@@ -113,6 +113,9 @@ importers:
       '@valet/mcp-server':
         specifier: workspace:*
         version: link:../../packages/mcp-server
+      '@valet/node-runtime':
+        specifier: workspace:*
+        version: link:../../packages/node-runtime
       '@valet/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
