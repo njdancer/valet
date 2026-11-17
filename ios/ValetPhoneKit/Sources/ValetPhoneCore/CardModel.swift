@@ -395,6 +395,10 @@ public enum CardModel {
     case "limits": return "Limits"
     case "sandbox-mode": return "The sandbox"
     case "sandbox-exception": return "Sandbox exceptions"
+    case "auth-steps": return "Login steps"
+    case "probe": return "How it checks you're signed in"
+    case "runtime": return "What kind of adapter it is"
+    case "private-network": return "Devices on your network"
     default: return area
     }
   }
@@ -409,6 +413,8 @@ public enum CardModel {
     case "side-effect": return "A tool can now do more than it could. See below."
     case "tool": return "Changes its tools. See below."
     case "egress", "navigation": return "Reaches more of the web. See below."
+    case "private-network": return "Reaches a device on your own network. See below."
+    case "runtime": return "Changes how the adapter runs. See below."
     default: return "Changes \(areaLabel(change.area).lowercased()). See below."
     }
   }

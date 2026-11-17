@@ -20,6 +20,7 @@ import {
   checkPackage,
   PackageError,
   type PackageFiles,
+  runtimeOf,
 } from '@valet/core'
 import { type BuiltinAdapter, builtinAdapter } from './registry'
 
@@ -122,6 +123,9 @@ export class PackageManager {
     const sandbox = loaded.manifest.sandbox
     if (sandbox?.mode === 'sandboxed' && sandbox.exceptions.some((e) => e.kind === 'app'))
       throw new InstallError('Apple Events exceptions aren’t supported yet.')
+    // Until the app wires the egress broker in, only browser adapters can run here.
+    if (runtimeOf(loaded.manifest) !== 'browser')
+      throw new InstallError('This version of Valet can’t run adapters that aren’t browser adapters yet.')
     return { loaded, source, adapter: toInstalled(loaded, source) }
   }
 

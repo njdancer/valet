@@ -289,7 +289,7 @@ describe('carriesOver: what an update may keep (D47)', () => {
         before,
         parseManifest({
           ...SHOP,
-          navigation: [...SHOP.navigation, 'https://sso.shop.test'],
+          navigation: [...(SHOP.navigation ?? []), 'https://sso.shop.test'],
           secrets: {
             login: { ...SHOP_LOGIN, origins: ['https://login.shop.test', 'https://sso.shop.test'] },
           },
@@ -324,7 +324,7 @@ describe('carriesOver: what an update may keep (D47)', () => {
     ).toBe(false)
     const wider = parseManifest({
       ...SHOP,
-      navigation: [...SHOP.navigation, 'https://sso.shop.test'],
+      navigation: [...(SHOP.navigation ?? []), 'https://sso.shop.test'],
     } as typeof SHOP)
     expect(carriesOver(messages, before, wider)).toBe(false)
   })
