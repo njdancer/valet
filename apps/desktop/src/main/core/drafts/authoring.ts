@@ -60,7 +60,7 @@ import {
 } from './research'
 import { siteInputType, siteMethod, siteMime, siteRole, siteTag } from './site-text'
 import { DRAFT_LIMITS, DraftError, type DraftRecord, type DraftStore, type TrialSummary } from './store'
-import { blankDraft } from './template'
+import { blankDraft, blankHttpDraft } from './template'
 import { runTrial, type SignedInTrial, TRIAL_LIMITS, type TrialDeps, type TrialResult } from './trial'
 
 /** A whole check's time, so a submit answers inside an MCP client's usual timeout. */
@@ -217,6 +217,7 @@ export class DraftAuthoring implements Authoring {
       readonly from: 'blank' | 'installed'
       readonly name?: string
       readonly repairId?: string
+      readonly runtime?: 'browser' | 'http'
     },
   ): Promise<DraftDetail> {
     const client = clientKey(viewer)
@@ -251,7 +252,10 @@ export class DraftAuthoring implements Authoring {
         throw new AuthoringRefusal(
           `${request.adapterId} is installed already. Start from "installed" to update it, or pick another id.`,
         )
-      files = blankDraft(request.adapterId, request.name ?? request.adapterId)
+      files =
+        request.runtime === 'http'
+          ? blankHttpDraft(request.adapterId, request.name ?? request.adapterId)
+          : blankDraft(request.adapterId, request.name ?? request.adapterId)
     }
     this.notifyLimit(client)
     const record = await this.wrap(() =>

@@ -15,6 +15,8 @@ import {
   type SessionDriver,
   sha256Hex,
 } from '@valet/core'
+import { EgressBroker } from '@valet/egress'
+import { startFakeApi } from '@valet/fake-http-api'
 import { AuthoringRefusal, type ClientIdentity } from '@valet/mcp-server'
 import type { SiteGuards } from '@valet/runtime'
 import { buildToolLibrary } from '@valet/runtime/tool-script'
@@ -189,6 +191,49 @@ describe('checks', () => {
     expect(report.findings.filter((f) => f.level === 'error')).toEqual([])
     expect(report.cases.map((c) => c.passed)).toEqual([true, true])
     expect(report.ok).toBe(true)
+  }, 60_000)
+
+  it('passes the blank http draft: no page, its cases answered through ctx.http’s own guard', async () => {
+    const { authoring } = await harness()
+    const draft = await authoring.createDraft(AGENT, {
+      adapterId: 'api',
+      from: 'blank',
+      name: 'API',
+      runtime: 'http',
+    })
+    const manifest = JSON.parse(
+      (await authoring.readFile(AGENT, false, draft.draft.draftId, 'manifest.json')).content,
+    )
+    expect(manifest.runtime).toBe('http')
+    const report = await authoring.check(AGENT, draft.draft.draftId)
+    expect(report.findings.filter((f) => f.level === 'error')).toEqual([])
+    expect(report.cases.map((c) => c.passed)).toEqual([true, true])
+    expect(report.ok).toBe(true)
+  }, 60_000)
+
+  it('fails an http draft’s case that reaches a host its manifest doesn’t name, or sends a refused header', async () => {
+    const { authoring } = await harness()
+    const { draft } = await authoring.createDraft(AGENT, {
+      adapterId: 'api',
+      from: 'blank',
+      name: 'API',
+      runtime: 'http',
+    })
+    const tools = (await authoring.readFile(AGENT, false, draft.draftId, 'src/tools.ts')).content
+    await authoring.writeFile(
+      AGENT,
+      draft.draftId,
+      'src/tools.ts',
+      tools.replace(
+        "headers: { accept: 'application/json' }",
+        "headers: { accept: 'application/json', host: 'evil.example' }",
+      ),
+    )
+    const report = await authoring.check(AGENT, draft.draftId)
+    expect(report.cases[0]).toMatchObject({
+      passed: false,
+      reason: expect.stringContaining('request-surface/undeclared-request'),
+    })
   }, 60_000)
 
   it('fails a case whose tool calls a path the manifest does not declare, even with a response listed', async () => {
@@ -811,6 +856,85 @@ describe('live trials', () => {
     await authoring.writeFile(AGENT, draftId, 'README.md', 'changed')
     await authoring.submit(AGENT, draftId, { note: null, references: [], followOns: [] })
     expect(submits[1]?.checks).toContain('Live trial: not run on this version')
+  }, 60_000)
+
+  it('runs an http draft’s read tool through the egress broker, with no browser and public hosts only', async () => {
+    const api = await startFakeApi()
+    try {
+      const { fake, driver } = trialDriver(item)
+      const g = guards()
+      const h = await harness({
+        trials: {
+          start: sandbox,
+          driver,
+          guards: () => g.site,
+          signedIn: async () => new Map(),
+          egress: (endpoints) =>
+            new EgressBroker(endpoints, {
+              lookup: (_name, cb) => cb(null, [{ address: '127.0.0.1', family: 4 }]),
+              testing: {
+                allowAddresses: ['127.0.0.1'],
+                ca: api.cert as string,
+                route: () => ({ address: '127.0.0.1', port: api.port }),
+              },
+            }),
+        },
+      })
+      const { draft } = await h.authoring.createDraft(AGENT, {
+        adapterId: 'api',
+        from: 'blank',
+        name: 'API',
+        runtime: 'http',
+      })
+      for (const path of ['manifest.json', 'src/tools.ts']) {
+        const text = (await h.authoring.readFile(AGENT, false, draft.draftId, path)).content
+        await h.authoring.writeFile(
+          AGENT,
+          draft.draftId,
+          path,
+          text.replaceAll('api.example.com', 'api.example.test'),
+        )
+      }
+      const manifest = JSON.parse(
+        (await h.authoring.readFile(AGENT, false, draft.draftId, 'manifest.json')).content,
+      )
+      manifest.privateHosts = [{ address: '192.168.1.20', port: 80, scheme: 'http' }]
+      manifest.requests.push({
+        method: 'GET',
+        host: '192.168.1.20:80',
+        path: '/v1/items/:id',
+        purpose: 'read',
+      })
+      await h.authoring.writeFile(AGENT, draft.draftId, 'manifest.json', JSON.stringify(manifest))
+      const report = await h.authoring.liveTrial(AGENT, draft.draftId, 'get_item', { id: '1' })
+      expect(report).toMatchObject({
+        ok: true,
+        output: { fromSite: { id: '1', name: 'First item', price: null } },
+      })
+      expect(api.seen.at(-1)).toMatchObject({ url: '/v1/items/1', servername: 'api.example.test' })
+      // No browser was opened for it.
+      expect(fake.labels).toEqual([])
+      // The private host waits for the person: the trial is refused it before anything is sent.
+      const tools = (await h.authoring.readFile(AGENT, false, draft.draftId, 'src/tools.ts')).content
+      await h.authoring.writeFile(
+        AGENT,
+        draft.draftId,
+        'src/tools.ts',
+        tools.replace(
+          '`/v1/items/${encodeURIComponent(input.id)}`',
+          '`http://192.168.1.20/v1/items/${encodeURIComponent(input.id)}`',
+        ),
+      )
+      const before = api.seen.length
+      const refused = await h.authoring.liveTrial(AGENT, draft.draftId, 'get_item', { id: '1' })
+      expect(refused).toMatchObject({
+        ok: false,
+        blocked: [expect.objectContaining({ reason: 'host-not-allowed' })],
+      })
+      expect(api.seen.length).toBe(before)
+    } finally {
+      await api.close()
+    }
   }, 60_000)
 
   describe('signed in (docs/authoring-tools.md#signed-in-authoring-sessions-pr-3)', () => {

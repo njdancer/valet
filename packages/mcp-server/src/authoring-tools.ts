@@ -301,7 +301,13 @@ export type SubmitReport = z.output<typeof submitReportSchema>
 export interface Authoring {
   createDraft(
     viewer: ClientIdentity,
-    request: { readonly adapterId: string; readonly from: 'blank' | 'installed'; readonly name?: string },
+    request: {
+      readonly adapterId: string
+      readonly from: 'blank' | 'installed'
+      readonly name?: string
+      /** For a blank draft: what kind of adapter it starts as (docs/adapter-kinds.md). */
+      readonly runtime?: 'browser' | 'http'
+    },
   ): Promise<DraftDetail>
   listDrafts(viewer: ClientIdentity, all: boolean): Promise<DraftList>
   requestPrivateNetwork(
@@ -456,6 +462,14 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
         .max(80)
         .optional()
         .describe('The site’s name, for a blank draft, e.g. "Yahoo Finance".'),
+      runtime: z
+        .enum(['browser', 'http'])
+        .optional()
+        .describe(
+          'For a blank draft: "browser" (the default) drives the site in Valet’s browser; "http" opens no page and ' +
+            'calls an API, a feed, CalDAV/CardDAV or a device on the person’s network through ctx.http. ' +
+            'valet_authoring_guide says which fits.',
+        ),
       repairId: z
         .string()
         .regex(/^R-[A-Z2-7]{4}$/)
@@ -470,6 +484,7 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
         adapterId: args['adapterId'] as string,
         from: (args['from'] as 'blank' | 'installed' | undefined) ?? 'blank',
         ...(typeof args['name'] === 'string' ? { name: args['name'] } : {}),
+        ...(args['runtime'] === 'http' || args['runtime'] === 'browser' ? { runtime: args['runtime'] } : {}),
         ...(typeof args['repairId'] === 'string' ? { repairId: args['repairId'] } : {}),
       }),
   },

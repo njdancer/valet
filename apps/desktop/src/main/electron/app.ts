@@ -436,8 +436,8 @@ async function main(): Promise<void> {
     },
     // The broker an http adapter reaches the network through: its manifest's exact endpoints, the
     // broker's own DNS, and never this Mac's own addresses (docs/adapter-kinds.md#f1-the-egress-broker).
-    egress: (manifest) =>
-      new EgressBroker({ egress: manifest.egress, privateHosts: manifest.privateHosts ?? [] }),
+    egress: (endpoints) =>
+      new EgressBroker({ egress: endpoints.egress, privateHosts: endpoints.privateHosts ?? [] }),
     // Demo mode keeps only the shop on this machine: the other built-ins (no login, public data)
     // reach their real sites.
     createDriver: (manifest, reporters) =>

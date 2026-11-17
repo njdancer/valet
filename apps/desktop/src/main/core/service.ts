@@ -30,6 +30,7 @@ import {
   type NeedsUserReason,
   needsYouTitle,
   type PackageFiles,
+  type PrivateHost,
   type ProviderKind,
   parseManifest,
   plainName,
@@ -282,7 +283,10 @@ export interface ServiceDeps {
    * The egress broker for an adapter whose runtime isn't browser (docs/adapter-kinds.md), built
    * from its manifest's endpoints. Without it, ctx.http is not granted.
    */
-  readonly egress?: (manifest: AdapterManifest) => HttpEgress
+  readonly egress?: (endpoints: {
+    readonly egress: readonly string[]
+    readonly privateHosts?: readonly PrivateHost[] | undefined
+  }) => HttpEgress
   /** Builds an adapter's driver, with the reporters its refusals outside a run go to. */
   readonly createDriver: (manifest: AdapterManifest, reporters: DriverReporters) => Promise<SessionDriver>
   readonly credentials: Credentials
@@ -2809,6 +2813,12 @@ export class AppService {
               // The installed adapters' own budget and breaker for the host.
               guards: (host: string) => this.runtime().siteGuards(host),
               signedIn: () => this.signedInDomains(),
+              ...(this.deps.egress === undefined
+                ? {}
+                : {
+                    egress: (endpoints: { readonly egress: readonly string[] }) =>
+                      (this.deps.egress as NonNullable<ServiceDeps['egress']>)({ egress: endpoints.egress }),
+                  }),
             },
           }),
     })
