@@ -7,6 +7,7 @@ import { type DependencyLock, dependencySummary } from './dependencies'
 import { type AdapterManifest, type PrivateHost, type RuntimeKind, runtimeOf } from './manifest'
 import type { PermissionChange, Risk } from './permission-change'
 import {
+  escalatedSftpPaths,
   narrowedImapFolders,
   type Protocols,
   type SftpProtocol,
@@ -14,7 +15,7 @@ import {
   widenedRecipients,
 } from './protocols'
 import { privateHostKey } from './request-surface'
-import { rootAllows } from './sftp-policy'
+import { rootAllows, rootOf } from './sftp-policy'
 
 /** What a kind means, as the card says it. */
 export function describeRuntime(kind: RuntimeKind): string {
@@ -163,6 +164,21 @@ export function sftpPermissionChanges(
   const narrowed = fresh.filter(([, r]) => covered(r)).map(([text]) => text)
   if (narrowed.length > 0)
     changes.push({ area: 'requests', change: 'narrowed', items: narrowed, risk: 'low' })
+  // A removed nested root hands its subtree to the root above it, which may allow more: that is a
+  // widening, said as what the subtree may now do (sweep red team, workstream I).
+  if (same && before !== null && after !== null) {
+    for (const path of escalatedSftpPaths(before.roots, after.roots)) {
+      const parent = rootOf(path, after.roots)
+      if (parent === null) continue
+      const root = { ...parent, path }
+      changes.push({
+        area: 'requests',
+        change: 'widened',
+        items: [describeSftpRoot(root)],
+        risk: rootRisk(root),
+      })
+    }
+  }
   const removed = [...had.keys()].filter((text) => !has.has(text))
   if (removed.length > 0) changes.push({ area: 'requests', change: 'removed', items: removed, risk: 'low' })
   return changes
