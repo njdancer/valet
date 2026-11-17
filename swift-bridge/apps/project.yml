@@ -1,0 +1,77 @@
+# XcodeGen spec for the two helpers that keep Valet's secrets, built as small app bundles so they
+# can carry a provisioning profile: the data protection Keychain's access group is a restricted
+# entitlement, and macOS kills a binary that claims it without one (swift-bridge/README.md,
+# "Valet's secure store"). Development builds only for now; releases still ship the plain
+# binaries and the classic Keychain until a Developer ID profile exists.
+#
+# Build with swift-bridge/build-helper-apps.sh, which sets VALET_TEAM_ID and lets Xcode create the
+# development profiles. The generated project is not committed.
+name: ValetHelpers
+options:
+  bundleIdPrefix: me.dncr
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    DEVELOPMENT_TEAM: ${VALET_TEAM_ID}
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_HARDENED_RUNTIME: YES
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    GENERATE_INFOPLIST_FILE: NO
+targets:
+  ValetHelperKit:
+    type: library.static
+    platform: macOS
+    sources:
+      - path: ../Sources/ValetHelperKit
+    settings:
+      base:
+        CODE_SIGNING_ALLOWED: NO
+  ValetApprover:
+    type: application
+    platform: macOS
+    sources:
+      - path: ../Sources/valet-approver
+    dependencies:
+      - target: ValetHelperKit
+      - sdk: LocalAuthentication.framework
+      - sdk: libsqlite3.tbd
+    info:
+      path: Generated/Info-ValetApprover.plist
+      properties:
+        CFBundleExecutable: valet-approver
+        LSBackgroundOnly: true
+    entitlements:
+      path: Generated/ValetApprover.entitlements
+      properties:
+        keychain-access-groups: ["$(AppIdentifierPrefix)me.dncr.valet.dev.keys"]
+    settings:
+      base:
+        PRODUCT_NAME: Valet Approver
+        EXECUTABLE_NAME: valet-approver
+        PRODUCT_BUNDLE_IDENTIFIER: me.dncr.valet.dev.approver
+  ValetKeychain:
+    type: application
+    platform: macOS
+    sources:
+      - path: ../Sources/valet-keychain
+    dependencies:
+      - target: ValetHelperKit
+      - sdk: libsqlite3.tbd
+    info:
+      path: Generated/Info-ValetKeychain.plist
+      properties:
+        CFBundleExecutable: valet-keychain
+        LSBackgroundOnly: true
+    entitlements:
+      path: Generated/ValetKeychain.entitlements
+      properties:
+        keychain-access-groups: ["$(AppIdentifierPrefix)me.dncr.valet.dev.keys"]
+    settings:
+      base:
+        PRODUCT_NAME: Valet Keychain
+        EXECUTABLE_NAME: valet-keychain
+        PRODUCT_BUNDLE_IDENTIFIER: me.dncr.valet.dev.keychain

@@ -68,6 +68,9 @@ public final class KeychainStore {
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: item.service,
       kSecAttrAccount as String: item.account,
+      // Explicitly the classic Keychain: a binary with an access group would otherwise reach the
+      // data protection one, and the migration's "remove the old copy" would delete the new.
+      kSecUseDataProtectionKeychain as String: false,
     ]
     if let keychain { query[kSecMatchSearchList as String] = [keychain] }
     return query
@@ -108,6 +111,7 @@ public final class KeychainStore {
         kSecAttrLabel as String: item.service,
         kSecValueData as String: data,
         kSecAttrComment as String: comment,
+        kSecUseDataProtectionKeychain as String: false,
       ]
       if let keychain { add[kSecUseKeychain as String] = keychain }
       status = SecItemAdd(add as CFDictionary, nil)
@@ -130,6 +134,7 @@ public final class KeychainStore {
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service,
       kSecMatchLimit as String: kSecMatchLimitAll,
+      kSecUseDataProtectionKeychain as String: false,
     ]
     if let keychain { query[kSecMatchSearchList as String] = [keychain] }
     var passes = 0

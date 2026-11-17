@@ -175,6 +175,17 @@ jobs:
         run: pnpm exec vitest run --project desktop test/main/approver-contract
         env:
           VALET_SWIFT_APPROVER: ${{ github.workspace }}/swift-bridge/.build/debug/valet-approver
+      # The same helpers as the app bundles a development build uses for Valet's secure store
+      # (swift-bridge/apps/project.yml). Unsigned here, so they carry no access group and take the
+      # throwaway keychain like the plain binaries: this proves the bundles build and behave the same.
+      - run: swift-bridge/build-helper-apps.sh --unsigned
+      - name: contract suites against the helper app bundles
+        run: |
+          pnpm exec vitest run --project credentials test/keychain-contract
+          pnpm exec vitest run --project desktop test/main/approver-contract
+        env:
+          VALET_SWIFT_KEYCHAIN: "${{ github.workspace }}/swift-bridge/.build/apps/Debug/Valet Keychain.app/Contents/MacOS/valet-keychain"
+          VALET_SWIFT_APPROVER: "${{ github.workspace }}/swift-bridge/.build/apps/Debug/Valet Approver.app/Contents/MacOS/valet-approver"
 
   release-dry-run:
     needs: changes

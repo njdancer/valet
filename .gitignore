@@ -15,3 +15,7 @@ ios/ValetPhone/Generated/
 ios/build/
 apps/relay/wrangler.local.jsonc
 mise.local.toml
+
+# The helpers' generated Xcode project (swift-bridge/apps/project.yml)
+swift-bridge/apps/ValetHelpers.xcodeproj/
+swift-bridge/apps/Generated/
