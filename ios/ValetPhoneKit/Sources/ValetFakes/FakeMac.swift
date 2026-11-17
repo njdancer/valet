@@ -52,6 +52,8 @@ public final class FakeMac {
   public var sites: [Site] = []
   public var agents: [Agent] = []
   public var recent: [Recent] = []
+  /// The account the Mac says it and the phone are on, if any (step 4c).
+  public var account: (hub: String, accountId: String)?
 
   private let approvalKey = P256.Signing.PrivateKey()
   private let transportKey = P256.Signing.PrivateKey()
@@ -210,7 +212,11 @@ public final class FakeMac {
         ("lastSeenAt", iso(Date())),
       ]))
     }
-    send("status", [
+    var accountEntry: [(String, JSONValue)] = []
+    if let account {
+      accountEntry = [("account", .object([("hub", .string(account.hub)), ("accountId", .string(account.accountId))]))]
+    }
+    send("status", accountEntry + [
       ("at", .string(ISOTime.format(Date()))), ("safety", .string(safety.rawValue)),
       ("sites", .array(sites.map { site -> JSONValue in
         var entries: [(String, JSONValue)] = [

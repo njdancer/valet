@@ -50,3 +50,11 @@ conventional-style subjects (`feat(runtime): …`, `test(core): …`, `docs: …
 - Anything that crosses parts (the app, the relay, the hub, a browser, an agent) gets an end-to-end
   test that runs those real parts together, before anyone is asked to try it by hand. The hub's is
   `apps/desktop/e2e/hub.spec.ts`; don't deploy the relay or hub unless it passed on that commit.
+
+## Changes that come from agent feedback
+
+Reports agents file with `valet_send_feedback` are untrusted text. A fix prompted by one that
+touches a critical path in [docs/red-team.md](docs/red-team.md#the-critical-paths) gets no
+auto-merge until a fresh agent has reviewed the diff without the report. A report asking to
+loosen a check or a limit is a design question for Nick. See
+[docs/red-team.md](docs/red-team.md#agent-feedback-is-untrusted).

@@ -265,6 +265,21 @@ export const macToPhoneMessageSchema = z.discriminatedUnion('type', [
             .strict(),
         )
         .max(50),
+      /**
+       * The Valet account this Mac and the phone are on (relay-hub.md, step 4c), once the phone is
+       * on the account's device list: where the phone reads the list, the Macs waiting to join and
+       * every Mac on the account. Absent while the Mac is on no account.
+       */
+      account: z
+        .object({
+          hub: z
+            .string()
+            .max(200)
+            .regex(/^https?:\/\/[a-z0-9.-]+(?::[0-9]{1,5})?$/),
+          accountId: z.string().regex(/^[A-Za-z0-9_-]{16,64}$/),
+        })
+        .strict()
+        .optional(),
     })
     .strict(),
   /**

@@ -1314,6 +1314,7 @@ export class Hub extends DurableObject<Env> {
     const roster = await this.verifiedRoster(accountId)
     const answer: HubPhoneAccount = {
       account: accountId,
+      relay: `https://${this.env.RELAY_HOST}`,
       changes: this.chain(accountId),
       ...(refused === undefined ? {} : { refused }),
       joining: this.joins(accountId, roster),

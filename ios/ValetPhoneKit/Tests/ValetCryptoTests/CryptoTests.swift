@@ -26,6 +26,22 @@ final class CoreVectorTests: XCTestCase {
     }
     struct Info: Decodable { let from, to, info: String }
     struct Display: Decodable { let value: String; let valid: Bool }
+    struct Device: Decodable {
+      let deviceId, role, platform, name, approvalKey, transportKey, agreementKey: String
+      var device: RosterDevice {
+        RosterDevice(
+          deviceId: deviceId, role: role, platform: platform, name: name, approvalKey: approvalKey,
+          transportKey: transportKey, agreementKey: agreementKey
+        )
+      }
+    }
+    struct Join: Decodable { let macId: String; let record: Signed; let device: Device }
+    struct RosterSet: Decodable {
+      let account, genesis, head: String
+      let chain: [Signed]
+      let devices: [String]
+      let join: Join
+    }
     let macId: String
     let macApprovalKey: String
     let requests: [Request]
@@ -37,6 +53,7 @@ final class CoreVectorTests: XCTestCase {
     let envelopeInfo: Info
     let displayText: [Display]
     let permissionAreas: [String]
+    let roster: RosterSet
   }
 
   func vectors() throws -> Vectors {
@@ -150,6 +167,148 @@ final class CoreVectorTests: XCTestCase {
       ("pairing", .object([("sealedReply", sealedReply.json), ("reply", .string(reply)), ("code", .string(code))])),
     ]))
     try Data(json.utf8).write(to: URL(fileURLWithPath: out))
+  }
+}
+
+final class RosterTests: XCTestCase {
+  func roster() throws -> CoreVectorTests.Vectors.RosterSet {
+    let url = try XCTUnwrap(Bundle.module.url(forResource: "core-vectors", withExtension: "json", subdirectory: "Vectors"))
+    return try JSONDecoder().decode(CoreVectorTests.Vectors.self, from: Data(contentsOf: url)).roster
+  }
+
+  func chain(_ r: CoreVectorTests.Vectors.RosterSet) -> [SignedText] {
+    r.chain.map { SignedText(payload: $0.payload, signature: $0.signature) }
+  }
+
+  func failure(_ result: Result<Roster, Roster.CheckError>) -> Roster.CheckError? {
+    if case let .failure(error) = result { return error }
+    return nil
+  }
+
+  func testChecksTheListCoreSigned() throws {
+    let r = try roster()
+    let checked = try Roster.verify(chain(r), pinned: r.genesis).get()
+    XCTAssertEqual(checked.account, r.account)
+    XCTAssertEqual(checked.genesis, r.genesis)
+    XCTAssertEqual(checked.head, r.head)
+    XCTAssertEqual(checked.seq, 1)
+    XCTAssertEqual(checked.order, r.devices)
+    XCTAssertEqual(Set(checked.devices.keys), Set(r.devices))
+    XCTAssertNoThrow(try Roster.verify(chain(r), known: (seq: 0, head: r.genesis)).get())
+    XCTAssertNoThrow(try Roster.verify(chain(r), known: (seq: 1, head: r.head)).get())
+  }
+
+  func testRefusesListsThatDontCheck() throws {
+    let r = try roster()
+    let good = chain(r)
+    XCTAssertEqual(failure(Roster.verify([])), Roster.CheckError(at: -1, reason: .empty))
+    XCTAssertEqual(failure(Roster.verify(good, pinned: String(repeating: "0", count: 64))), Roster.CheckError(at: 0, reason: .wrongGenesis))
+    XCTAssertEqual(
+      failure(Roster.verify(good, known: (seq: 0, head: String(repeating: "0", count: 64)))),
+      Roster.CheckError(at: 0, reason: .brokenChain)
+    )
+    XCTAssertEqual(failure(Roster.verify(good, known: (seq: 2, head: r.head))), Roster.CheckError(at: -1, reason: .stale))
+    // A hub that drops the first change, or reorders them.
+    XCTAssertEqual(failure(Roster.verify([good[1]])), Roster.CheckError(at: 0, reason: .brokenChain))
+    XCTAssertEqual(failure(Roster.verify([good[1], good[0]])), Roster.CheckError(at: 0, reason: .brokenChain))
+    // A changed payload, the phone's name here, no longer has the signature.
+    let renamed = SignedText(payload: good[1].payload.replacingOccurrences(of: "\"iPhone\"", with: "\"iPhonf\""), signature: good[1].signature)
+    XCTAssertNotEqual(renamed.payload, good[1].payload)
+    XCTAssertEqual(failure(Roster.verify([good[0], renamed])), Roster.CheckError(at: 1, reason: .badSignature))
+    // A change with a key core's strict schema wouldn't take.
+    let extra = SignedText(payload: good[1].payload.replacingOccurrences(of: "{\"v\":1,", with: "{\"v\":1,\"x\":1,"), signature: good[1].signature)
+    XCTAssertEqual(failure(Roster.verify([good[0], extra])), Roster.CheckError(at: 1, reason: .malformed))
+    // The same change twice.
+    XCTAssertEqual(failure(Roster.verify([good[0], good[1], good[1]])), Roster.CheckError(at: 2, reason: .brokenChain))
+    // A Mac's join record isn't a roster change.
+    let join = SignedText(payload: r.join.record.payload, signature: r.join.record.signature)
+    XCTAssertEqual(failure(Roster.verify([join])), Roster.CheckError(at: 0, reason: .malformed))
+  }
+
+  func testBuildsTheSameChangeTextAsCore() throws {
+    let r = try roster()
+    let good = chain(r)
+    let first = try Roster.verify([good[0]]).get()
+    let change = try RosterChange.parse(good[1].payload)
+    let at = try XCTUnwrap(ISOTime.parse(change.at))
+    XCTAssertEqual(Roster.next(first, account: "ignored", by: change.by, change: change.change, at: at), good[1].payload)
+    let root = try RosterChange.parse(good[0].payload)
+    XCTAssertEqual(
+      Roster.next(nil, account: r.account, by: root.by, change: root.change, at: try XCTUnwrap(ISOTime.parse(root.at))),
+      good[0].payload
+    )
+  }
+
+  func testReadsAMacsRequestToJoin() throws {
+    let r = try roster()
+    let record = SignedText(payload: r.join.record.payload, signature: r.join.record.signature)
+    XCTAssertEqual(Roster.joinDevice(record), r.join.device.device)
+    XCTAssertEqual(Roster.joinDevice(record, macId: r.join.macId), r.join.device.device)
+    XCTAssertNil(Roster.joinDevice(record, macId: String(repeating: "a", count: 32)))
+    // Signed by someone else, or with the signature of another text.
+    XCTAssertNil(Roster.joinDevice(SignedText(payload: record.payload, signature: r.chain[0].signature)))
+    // A roster change isn't a join record.
+    XCTAssertNil(Roster.joinDevice(SignedText(payload: r.chain[0].payload, signature: r.chain[0].signature)))
+  }
+
+  func testReadsTheAccountTheHubSends() throws {
+    let r = try roster()
+    let text = JSON.serialize(.object([
+      ("account", .string(r.account)), ("relay", .string("https://relay.example")),
+      ("changes", .array(chain(r).map(\.json))),
+      ("joining", .array([.object([
+        ("macId", .string(r.join.macId)),
+        ("record", SignedText(payload: r.join.record.payload, signature: r.join.record.signature).json),
+        ("at", .string("2026-11-17T00:00:00.000Z")),
+      ])])),
+      ("nodes", .array([.object([
+        ("macId", .string(r.join.macId)), ("slug", .string("laptop")), ("name", .string("Laptop")), ("online", .bool(true)),
+      ])])),
+    ]))
+    let account = try HubPhone.Account.parse(text)
+    XCTAssertEqual(account.changes.count, 2)
+    XCTAssertNil(account.refused)
+    XCTAssertEqual(account.joining.first?.macId, r.join.macId)
+    XCTAssertEqual(account.nodes.first?.slug, "laptop")
+    XCTAssertNoThrow(try Roster.verify(account.changes, pinned: r.genesis).get())
+    // Strict, as core's schema is.
+    XCTAssertThrowsError(try HubPhone.Account.parse(text.replacingOccurrences(of: "\"nodes\"", with: "\"extra\":1,\"nodes\"")))
+    XCTAssertThrowsError(try HubPhone.Account.parse(text.replacingOccurrences(of: "https://relay.example", with: "http://relay.example")))
+    XCTAssertThrowsError(try HubPhone.Account.parse(text.replacingOccurrences(of: "\"Laptop\"", with: "\"Lap\\u0000top\"")))
+    let challenge = try HubPhone.Challenge.parse(#"{"nonce":"abcdefghijklmnopqrstuv","expiresAt":"2026-11-17T00:01:00.000Z"}"#)
+    XCTAssertEqual(challenge.nonce, "abcdefghijklmnopqrstuv")
+    XCTAssertThrowsError(try HubPhone.Challenge.parse(#"{"nonce":"short","expiresAt":"2026-11-17T00:01:00.000Z"}"#))
+    XCTAssertEqual(
+      HubPhone.request(deviceId: r.join.macId, nonce: challenge.nonce, signature: "sig"),
+      #"{"deviceId":"\#(r.join.macId)","nonce":"abcdefghijklmnopqrstuv","signature":"sig"}"#
+    )
+  }
+
+  /// A phone starts a list, then adds the vectors' waiting Mac: for core to check (VALET_IOS_SWIFT_OUT).
+  func testWritesASwiftSignedRosterForCore() async throws {
+    let r = try roster()
+    let keys = SoftwareDeviceKeys()
+    let me = keys.publicKeys.deviceId
+    func sign(_ payload: String) async throws -> SignedText {
+      let signature = try await keys.signApproval(Signing.input(.rosterChange, payload), reason: "test")
+      return SignedText(payload: payload, signature: Base64URL.encode(signature))
+    }
+    let genesis = try await sign(Roster.next(nil, account: r.account, by: me, change: .add(RosterDevice(keys: keys.publicKeys, name: "iPhone")), at: Date()))
+    let started = try Roster.verify([genesis]).get()
+    XCTAssertEqual(started.order, [me])
+    let mac = try XCTUnwrap(Roster.joinDevice(SignedText(payload: r.join.record.payload, signature: r.join.record.signature)))
+    let added = try await sign(Roster.next(started, account: r.account, by: me, change: .add(mac), at: Date()))
+    let chain = [genesis, added]
+    let checked = try Roster.verify(chain, pinned: started.genesis, known: (seq: 0, head: started.head)).get()
+    XCTAssertEqual(checked.order, [me, r.join.macId])
+    // Removing the Mac again is fine; removing the phone too would leave nobody.
+    let removed = try await sign(Roster.next(checked, account: r.account, by: me, change: .remove(r.join.macId), at: Date()))
+    let alone = try Roster.verify(chain + [removed]).get()
+    let last = try await sign(Roster.next(alone, account: r.account, by: me, change: .remove(me), at: Date()))
+    XCTAssertEqual(failure(Roster.verify(chain + [removed, last])), Roster.CheckError(at: 3, reason: .lastDevice))
+    guard let out = ProcessInfo.processInfo.environment["VALET_IOS_SWIFT_OUT"], !out.isEmpty else { return }
+    let json = JSON.serialize(.object([("chain", .array(chain.map(\.json)))]))
+    try Data(json.utf8).write(to: URL(fileURLWithPath: "\(out).roster.json"))
   }
 }
 
