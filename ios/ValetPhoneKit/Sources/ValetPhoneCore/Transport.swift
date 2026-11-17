@@ -52,8 +52,10 @@ public struct PersistedPhone: Codable, Equatable, Sendable {
   public var requests: [String]
   /// The account the phone accepted at the hub, once it has (step 4c).
   public var account: AccountPin? = nil
+  /// A Mac this phone reaches because both are on the Valet account, not because it paired here.
+  public var viaAccount: Bool? = nil
 
-  public var paired: Bool { recordPayload != nil }
+  public var paired: Bool { recordPayload != nil || viaAccount == true }
 }
 
 public protocol PhoneStore: AnyObject {

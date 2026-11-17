@@ -214,3 +214,28 @@ final class FakeConnection: RelayConnection {
     onClose()
   }
 }
+
+/// Several fake Macs behind one relay origin, as the real relay serves every Mac on an account:
+/// each connection goes to the fake relay for the Mac it names.
+@MainActor
+public final class FakeRelays: RelayTransport {
+  public private(set) var relays: [FakeRelay]
+
+  public init(_ relays: [FakeRelay]) { self.relays = relays }
+
+  public func add(_ relay: FakeRelay) { relays.append(relay) }
+
+  public func connect(
+    relay: String, macId: String, path: RelayPath, onFrame: @escaping @MainActor (String) -> Void, onClose: @escaping @MainActor () -> Void
+  ) -> RelayConnection {
+    let target = relays.first { $0.mac.macId == macId } ?? relays[0]
+    return target.connect(relay: relay, macId: macId, path: path, onFrame: onFrame, onClose: onClose)
+  }
+
+  /// Delivers everything queued on every relay, until all are quiet.
+  public func drain() {
+    for _ in 0..<20 {
+      for relay in relays { relay.drain() }
+    }
+  }
+}

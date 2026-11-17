@@ -5,7 +5,7 @@ import ValetProtocol
 /// The first tab: open cards, logins that need a code, and the Mac's alerts.
 struct NeedsYouView: View {
   let model: PhoneModel
-  @State private var selected: String?
+  @State private var selected: SheetID?
 
   var body: some View {
     NavigationStack {
@@ -37,18 +37,31 @@ struct NeedsYouView: View {
             }
           }
         }
-        if model.openCards.isEmpty && model.handoffs.isEmpty {
+        if model.allMacs.allSatisfy({ $0.openCards.isEmpty }) && model.handoffs.isEmpty {
           ContentUnavailableView(
             "Nothing needs you", systemImage: "checkmark.circle",
             description: Text("When an agent asks for something that matters, it shows up here.")
           )
           .accessibilityIdentifier("needs.empty")
         }
+        // The other Macs on the account, each with its own cards (step 4c).
+        ForEach(model.otherMacs.filter { $0.phase == .paired && !$0.openCards.isEmpty }, id: \.macId) { mac in
+          Section(header: SectionHeader("Waiting for you on \(mac.macName)")) {
+            ForEach(mac.openCards) { entry in
+              Button {
+                selected = SheetID(macId: mac.macId, cardId: entry.id)
+              } label: {
+                CardRowView(entry: entry, remaining: mac.remaining(entry))
+              }
+              .accessibilityIdentifier("card.\(entry.card.ref)")
+            }
+          }
+        }
         if !model.openCards.isEmpty {
           Section(header: SectionHeader("Waiting for you")) {
             ForEach(model.openCards) { entry in
               Button {
-                selected = entry.id
+                selected = SheetID(macId: model.macId, cardId: entry.id)
               } label: {
                 CardRowView(entry: entry, remaining: model.remaining(entry))
               }
@@ -61,7 +74,7 @@ struct NeedsYouView: View {
           Section(header: SectionHeader("Answered")) {
             ForEach(answered.reversed()) { entry in
               Button {
-                selected = entry.id
+                selected = SheetID(macId: model.macId, cardId: entry.id)
               } label: {
                 VStack(alignment: .leading, spacing: 4) {
                   Text(verbatim: entry.card.title).foregroundStyle(Color.primary)
@@ -87,8 +100,8 @@ struct NeedsYouView: View {
         }
       }
       .navigationTitle("Needs you")
-      .sheet(item: Binding(get: { selected.map(SheetID.init) }, set: { selected = $0?.id })) { sheet in
-        CardSheet(model: model, requestId: sheet.id)
+      .sheet(item: $selected) { sheet in
+        CardSheet(model: model.allMacs.first { $0.macId == sheet.macId } ?? model, requestId: sheet.cardId)
       }
     }
   }
@@ -101,8 +114,11 @@ struct NeedsYouView: View {
   }
 }
 
+/// A card on one of the Macs this phone reaches.
 struct SheetID: Identifiable {
-  let id: String
+  let macId: String?
+  let cardId: String
+  var id: String { "\(macId ?? ""):\(cardId)" }
 }
 
 struct CardRowView: View {

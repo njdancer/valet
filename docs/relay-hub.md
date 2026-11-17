@@ -436,7 +436,15 @@ so the account outlives any one Mac.
   first, the phone takes the new list and asks the person to try again rather than signing twice.
 - _Removing._ The phone can remove another device with Face ID, but not itself: Unpair stays the
   way to stop using this iPhone.
-- _When it reads._ When the Valet tab shows, as the phone does for cards with no push.
+- _When it reads._ When the Valet tab shows and when the app comes back to the front, as the
+  phone does for cards with no push.
+- _Every Mac on the list._ For each other Mac on the checked list the phone opens a channel of its
+  own at the account's relay, with its own keys and the Mac's keys from the list: nothing to pair.
+  Each keeps its own order, outbox and cards, and survives a relaunch. A Mac the list drops is
+  forgotten; a Mac that removes the phone stops only its own channel.
+- _Where its cards show._ Needs you lists each other Mac's waiting cards under "Waiting for you
+  on <Mac>", and the tab's badge counts them all. Activity, Sites and Agents still show the paired
+  Mac; a per-Mac switcher there is left for the Devices step.
 
 **What stays the same.** The hub still can't add a device: every change is signed by a device on
 the list, and every node checks the chain itself. Removing the Mac that started the list resets it

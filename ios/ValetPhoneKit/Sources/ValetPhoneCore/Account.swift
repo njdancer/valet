@@ -104,12 +104,14 @@ public final class AccountModel {
   private let pairedMac: (id: String, approvalKey: String)
   private let clock: PhoneClock
   private let onPin: (AccountPin) -> Void
+  private let onList: () -> Void
   private var chain: [SignedText] = []
   private var busy = false
 
   public init(
     hub: String, accountId: String, transport: HubTransport, keys: DeviceKeys, pairedMac: (id: String, approvalKey: String),
-    pin: AccountPin?, clock: PhoneClock = .system, onPin: @escaping (AccountPin) -> Void
+    pin: AccountPin?, clock: PhoneClock = .system, onPin: @escaping (AccountPin) -> Void,
+    onList: @escaping () -> Void = {}
   ) {
     self.hub = hub
     self.accountId = accountId
@@ -118,6 +120,7 @@ public final class AccountModel {
     self.pairedMac = pairedMac
     self.clock = clock
     self.onPin = onPin
+    self.onList = onList
     // A pin for another account (the Mac moved) doesn't count here.
     self.pin = pin.flatMap { $0.hub == hub && $0.accountId == accountId ? $0 : nil }
   }
@@ -244,6 +247,7 @@ public final class AccountModel {
       onPin(next)
     }
     state = .ready
+    onList()
     return true
   }
 }
