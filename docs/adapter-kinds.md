@@ -599,10 +599,29 @@ note it here. Each one can be reversed.
   name `mail`, the same shape as a Messages grant.
 - **Sign-in mail is polled every five seconds**, with one host session per account kept for 30
   seconds between polls (10 minutes at most), so the server sees one sign-in per login.
-- **The app wiring is a follow-up.** The protocol host needs the signed Node binary (workstream
-  C's follow-up), and the mail grant needs a card in the app alongside secrets v2's grant cards.
-  Until both land, the app registers no IMAP backend or mail reader, so protocol adapters' tools
-  answer not-granted and mail sign-in steps answer unavailable.
+- **The app runs the protocol host from a file beside app.asar** (added 2026-11-17, with the
+  app wiring). The sandboxed Node can't read inside app.asar, and Valet's data folder is one of
+  the places its profile denies, so the main build emits `protocol-host.cjs` and electron-builder
+  unpacks it into `app.asar.unpacked`, sealed by the app's signature. A development run uses
+  `out/main` and `.node-runtime/valet-node`; without that binary, protocol adapters answer
+  not-granted and sign-in mail is not offered.
+- **The mail grant is a login grant, shown with Messages, not a credential grant** (2026-11-17).
+  It lets a browser adapter's login read its own sign-in mail, so it sits in the site's Login
+  card next to "One-time codes by SMS", uses the same grant sheet, and is signed as a
+  `secret-grant` whose provider is now `mail` (the phone shows it as "Sign-in mail"). The
+  `credential-grant` kind and secrets v2's Credentials card are for an adapter's own code, and
+  stay as they are.
+- **A mail account is checked again on every lookup** (2026-11-17). It must be an installed,
+  approved protocol adapter whose kept IMAP credential has a grant that counts, with no tool that
+  may change INBOX. Another adapter that may change INBOX and holds a grant to the same item also
+  disqualifies it, since it may be the same mailbox. Nothing is copied into the mail grant, so
+  revoking the account's password, an update that adds a write tool, or uninstalling it stops
+  sign-in mail at once. The lookup signs in through that adapter's CredentialGate, so it is
+  audited as that adapter's `secret-used`, and its connection as `egress-connection` with call
+  `sign-in-mail`.
+- **A mail grant carries over an update** only when every mail step of the new version is one the
+  old version had (same sender, subject, link origin, pattern and age) and navigation doesn't
+  grow, the same rule as Messages.
 
 **Workstream C (the Node runtime, [node-runtime.md](node-runtime.md)):**
 

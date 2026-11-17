@@ -116,9 +116,13 @@ response size (16 MB), nesting (40) and value count. It times out each command, 
 past 64 MB on the connection. It fails closed on anything it can't parse, on a reply tagged for
 another command, on a go-ahead nobody asked for, and on a `PREAUTH` greeting.
 
-**Shipping.** The app runs the host with the signed Node binary that the Node runtime ships. That
-binary is workstream C's follow-up, so the desktop app doesn't create protocol adapters' backends
-yet. Everything else is in place, and it is tested end to end against the fake server.
+**Shipping.** The main build emits the host as `out/main/protocol-host.cjs`
+(`apps/desktop/protocol-host-plugin.ts`). Packaged, electron-builder unpacks it beside app.asar
+(`Contents/Resources/app.asar.unpacked/out/main/`), because the sandboxed Node can't read inside
+the archive, and the release check makes sure the shipped `valet-node` parses it. The app runs it
+with `Contents/MacOS/valet-node`, or in a development run with `.node-runtime/valet-node`
+(`scripts/node-runtime.mjs`). Without the binary, protocol adapters answer not-granted and
+sign-in mail isn't offered (`src/main/core/protocol-host.ts`).
 
 ## iCloud
 
@@ -139,18 +143,24 @@ mail account Valet already holds, without any adapter code seeing the mail.
 { "op": "otp", "selector": "#code", "source": { "mail": { "from": "login@shop.example", "pattern": "code: ([0-9]{6})", "maxAgeSeconds": 300 } } }
 ```
 
-- **The grant.** The person binds the browser adapter's mail sign-in to a mail account, which is a
-  protocol adapter's kept IMAP credential, and approves the one sender. The grant is stored under
-  the reserved secret name `mail` with provider `mail`. Its item is
+- **The grant.** The site's Login card shows the sender ("Sign-in links by email"), and its
+  grant sheet lists the mail accounts Valet holds. The person picks one and the origins, and signs
+  it with Touch ID or on the phone, as a `secret-grant` with provider `mail`. The grant is stored
+  under the reserved secret name `mail` with provider `mail`. Its item is
   `<adapterId>/<credential> <sender>`. Every mail step in a manifest names the same sender, and a
   link's origin must be in `navigation`.
+- **The account.** A mail account is a protocol adapter's kept IMAP credential: installed and
+  approved, its credential granted, and none of its tools able to change INBOX. Another adapter
+  that may change INBOX and was granted the same item disqualifies it, since that may be the same
+  mailbox. This is checked when the sheet lists accounts and again on every lookup, so revoking
+  the account's password stops sign-in mail at once.
 - **The account must be read-only for INBOX.** A message that an IMAP client appends skips the
   receiving server, so its own forged Authentication-Results would be the topmost one. A mail
   account whose adapter has any tool that may change INBOX (core's `mayWriteInbox`) can't serve
   sign-in mail, and the mail reader refuses it.
 - **The lookup.** It's one built-in, read-only operation in the protocol host (`imap/signin.ts`),
-  signed in with the mail account's own kept credential (the app wires this through that adapter's
-  credential gate in a follow-up, so the use is audited there too). It examines INBOX
+  signed in with the mail account's own kept credential, through that adapter's CredentialGate,
+  so the use is audited as that adapter's. It examines INBOX
   and takes only messages that pass all of these checks:
   - The message arrived after the login asked for it, inside `maxAgeSeconds`. The server's clock
     may be up to 30 seconds behind Valet's, or two minutes ahead.
@@ -188,4 +198,10 @@ All of these tests run against the fake server, never real mail.
   checks, the tool host and the isolated tool process.
 - `packages/auth-flow/test/mail.test.ts` covers the two login sources.
 - `packages/core/test/manifest-protocol.test.ts` covers the manifest rules.
+- `apps/desktop/test/main/service.test.ts` ("mail adapters and sign-in mail") runs both through
+  the real app service and protocol host: a protocol adapter's tool signs in with its granted
+  password, a browser adapter is granted sign-in mail from it, and the account stops serving when
+  its password is revoked or a write-capable adapter holds the same item.
+  `apps/desktop/test/main/protocol-host.test.ts` covers where the app finds the host, and
+  `grant-sheet.test.tsx` the mail grant's screens.
 - `*.redteam.test.ts` files keep the red team's proofs of concept.

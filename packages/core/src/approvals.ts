@@ -90,7 +90,17 @@ const subjects = {
         .array(z.enum(['username', 'password', 'otp']))
         .min(1)
         .max(3),
-      provider: z.enum(['keychain-copy', 'onepassword-service-account', 'onepassword-desktop', 'messages']),
+      /**
+       * `mail`: sign-in links and codes read from a mail account Valet holds (docs/imap.md#email-sign-in);
+       * the title names the sender and the account, the fingerprint is of both.
+       */
+      provider: z.enum([
+        'keychain-copy',
+        'onepassword-service-account',
+        'onepassword-desktop',
+        'messages',
+        'mail',
+      ]),
       /** The item's title as the provider shows it; never its reference or contents. */
       itemTitle: displayText(120),
       /** First 16 hex of SHA-256 of the item reference: tells two items with one title apart. */

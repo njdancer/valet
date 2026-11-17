@@ -2,11 +2,11 @@
 // the manifest asked for, for the adapter's installed hash; it can narrow them, never widen.
 
 // From core's browser-safe vocabulary: core's index pulls in Node modules the renderer can't load.
-import { MESSAGES_SECRET } from '@valet/core/vocab'
+import { MAIL_SECRET, MESSAGES_SECRET } from '@valet/core/vocab'
 import type { AdapterDetail, GrantInfo } from '../../../../shared/api'
 import { FIELD_WORDING } from '../../../lib/wording'
 
-export { MESSAGES_SECRET }
+export { MAIL_SECRET, MESSAGES_SECRET }
 
 /** Null when the manifest asks for no such secret. */
 export interface Target {
@@ -14,7 +14,7 @@ export interface Target {
   readonly fields: string
   readonly requestedOrigins: readonly string[]
   readonly existing: GrantInfo | null
-  readonly kind: 'onepassword' | 'messages'
+  readonly kind: 'onepassword' | 'messages' | 'mail'
   readonly senders: readonly string[]
   /** The origins ticked when there is no earlier grant: where the secret is actually typed. */
   readonly suggestedOrigins: readonly string[]
@@ -38,6 +38,29 @@ export function targetFor(adapter: AdapterDetail, secret: string): Target | null
       kind: 'messages',
       senders: adapter.messages.map((m) => m.sender),
       suggestedOrigins: where.length > 0 ? where : origins,
+    }
+  }
+  if (secret === MAIL_SECRET) {
+    const mail = adapter.mail
+    if (mail === null) return null
+    // Where it is used: links open on their own origin, and codes are typed where the sign-in form is.
+    const signIn = new Set(adapter.secretRequests.flatMap((r) => r.origins))
+    const where = mail.requestedOrigins.filter(
+      (o) => mail.linkOrigins.includes(o) || (mail.reads.includes('code') && signIn.has(o)),
+    )
+    return {
+      title: `Let ${adapter.name} read its sign-in mail`,
+      fields:
+        mail.reads.length === 2
+          ? 'sign-in link or code'
+          : mail.reads[0] === 'link'
+            ? 'sign-in link'
+            : 'one-time code',
+      requestedOrigins: mail.requestedOrigins,
+      existing: mail.grant,
+      kind: 'mail',
+      senders: [mail.sender],
+      suggestedOrigins: where.length > 0 ? where : mail.requestedOrigins,
     }
   }
   // find() on an array, so names like "__proto__" or "constructor" can't resolve to anything.

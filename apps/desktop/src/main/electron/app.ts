@@ -22,6 +22,7 @@ import { KeychainHelper, KeychainTokenSource, messagesHelperSocketPath } from '@
 import { EgressBroker, type OpenTunnels } from '@valet/egress'
 import { startEndpoint } from '@valet/mcp-server'
 import { diskTarballStore, loadDependencies, nodeRuntimeProcess } from '@valet/node-runtime'
+import { HostMailReader, imapBackend, type ProtocolHostOptions } from '@valet/protocols'
 import { createLocalAccess } from '@valet/sandbox'
 import { app, clipboard, dialog, protocol, session, shell } from 'electron'
 import { href } from '../../renderer/lib/routes'
@@ -63,6 +64,7 @@ import {
 import { devHelperPath } from '../core/native-helpers'
 import { addOwnPort, ownPorts, recordOwnPorts } from '../core/own-ports'
 import { macName, relayFromEnv } from '../core/phones'
+import { protocolHostScript } from '../core/protocol-host'
 import { nodeRuntimeBinary, rawPaths } from '../core/raw-runtime'
 import { AppService } from '../core/service'
 import { SHOWCASE_BUILD_MARKER } from '../core/showcase'
@@ -366,6 +368,28 @@ async function main(): Promise<void> {
     close: () => undefined,
     restrict: () => undefined,
   })
+  // The protocol host behind protocol adapters' ctx.imap and sign-in mail (docs/imap.md): the Node
+  // runtime's signed binary (the raw adapters' own), sandboxed, running Valet's own bundled client.
+  // Without the binary or the script, those calls end not-granted.
+  const hostScript = protocolHostScript({
+    packaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    mainDir: import.meta.dirname,
+    exists: existsSync,
+  })
+  const protocolHost: ProtocolHostOptions | null =
+    nodeBinary === null || hostScript === null
+      ? null
+      : {
+          nodeBinary,
+          hostScript,
+          home,
+          // Only its first line, and only in a development run: it may echo mail it choked on.
+          onStderr: (text) => {
+            if (!app.isPackaged) log(`protocol host: ${text.split('\n')[0]?.slice(0, 200) ?? ''}`)
+          },
+        }
+  log(`protocol adapters: ${protocolHost === null ? 'unavailable (no Node runtime)' : 'ready'}`)
   const driverOptions: ManifestOptions = demoSite === null ? {} : { egressPorts: [demoSite.site.port] }
   const opDeps = defaultOpCheckDeps()
   // The packaged app's name is "Valet" for a release and "Valet Dev" otherwise (electron-builder's
@@ -498,6 +522,14 @@ async function main(): Promise<void> {
     // Each tunnel is a server in this process, so own-ports.ts records its port as Valet's own while
     // it listens: no local-service exception or other adapter can reach it.
     ...(nodeBinary === null ? {} : { raw: { start: rawProcess } }),
+    // Protocol adapters' ctx.imap, and sign-in mail (docs/imap.md#email-sign-in) in the account a
+    // grant names, both through the protocol host.
+    ...(protocolHost === null
+      ? {}
+      : {
+          imap: (protocol) => imapBackend({ protocol, host: protocolHost }),
+          mailReader: (account) => new HostMailReader({ host: protocolHost, account }),
+        }),
     // Demo mode keeps only the shop on this machine: the other built-ins (no login, public data)
     // reach their real sites.
     createDriver: (manifest, reporters) =>

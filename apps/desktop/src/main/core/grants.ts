@@ -5,7 +5,8 @@
 //   doesn't widen it: carriesOver, below);
 // - a provider that is available in this launch (the fake only in demo mode);
 // - a secret the manifest requests (never the reserved Messages name for a vault item), or for
-//   Messages a sender the manifest declares, character for character;
+//   Messages a sender the manifest declares, character for character, or for sign-in mail a mail
+//   account Valet may read it from (MailAccounts) and the manifest's one sender;
 // - origins that are a non-empty subset of what the manifest asks for: the secret's origins, or for
 //   Messages the navigation origins;
 // - an item the provider lists right now, by its opaque id; the stored reference is built here.
@@ -19,9 +20,13 @@ import {
   credentialTargets,
   type Grant,
   isBareOrigin,
+  MAIL_SECRET,
   MESSAGES_SECRET,
+  mailGrantRef,
+  mailSourcesIn,
   messagesSourcesIn,
   type ProviderKind,
+  parseMailGrantRef,
   ValetError,
 } from '@valet/core'
 import type { GrantInfo, GrantRequest, VaultItem } from '../../shared/api'
@@ -35,6 +40,12 @@ export interface GrantCheck {
   readonly available: ReadonlySet<ProviderKind>
   /** The provider's items right now. Only called for vault providers. */
   readonly vaultItems: (provider: ProviderKind) => Promise<readonly VaultItem[]>
+  /**
+   * The mail accounts sign-in mail may be read from right now (service.ts mailAccounts): each a
+   * protocol adapter's granted, kept IMAP credential that no tool may use to change INBOX. Only
+   * called for provider `mail`; without it, a mail grant is unavailable.
+   */
+  readonly mailAccounts?: () => Promise<readonly VaultItem[]>
   readonly now: () => Date
 }
 
@@ -45,6 +56,11 @@ export interface CheckedGrant {
 }
 
 const VAULT_ITEM_ID = /^[A-Za-z0-9_-]{1,64}$/
+
+/** What a mail grant is shown and signed as: the sender, and the account it is read from. */
+export function mailGrantTitle(sender: string, accountTitle: string): string {
+  return `${sender}, read from ${accountTitle}`.slice(0, 120)
+}
 
 export async function checkGrantRequest(request: GrantRequest, check: GrantCheck): Promise<CheckedGrant> {
   const { manifest } = check
@@ -63,8 +79,23 @@ export async function checkGrantRequest(request: GrantRequest, check: GrantCheck
     requested = manifest.navigation
     itemRef = request.itemRef
     title = request.itemRef
+  } else if (request.provider === 'mail') {
+    if (request.secret !== MAIL_SECRET) throw new ValetError('grant', 'invalid')
+    // Every mail step names the same sender (the manifest refuses anything else).
+    const sender = mailSourcesIn(manifest.auth.steps)[0]?.from
+    if (sender === undefined) throw new ValetError('grant', 'not-granted')
+    if (check.mailAccounts === undefined) throw new ValetError('grant', 'unavailable')
+    const account = (await check.mailAccounts()).find((a) => a.id === request.itemRef)
+    if (account === undefined) throw new ValetError('grant', 'not-found')
+    requested = manifest.navigation
+    itemRef = mailGrantRef(account.id, sender)
+    title = mailGrantTitle(sender, account.title)
   } else {
-    if (request.secret === MESSAGES_SECRET || !Object.hasOwn(manifest.secrets, request.secret)) {
+    if (
+      request.secret === MESSAGES_SECRET ||
+      request.secret === MAIL_SECRET ||
+      !Object.hasOwn(manifest.secrets, request.secret)
+    ) {
       throw new ValetError('grant', 'not-granted')
     }
     requested = manifest.secrets[request.secret]?.origins ?? []
@@ -117,6 +148,8 @@ export function itemRefFor(provider: ProviderKind, itemId: string): string {
 
 /** The opaque id the renderer knows an item by: the reverse of itemRefFor. */
 export function itemIdOf(grant: Grant): string {
+  // A mail grant is known by its account, as vaultItems('mail') lists it.
+  if (grant.provider === 'mail') return parseMailGrantRef(grant.itemRef)?.account ?? grant.itemRef
   if (grant.provider === 'keychain-copy' && grant.itemRef.startsWith('op://')) {
     return grant.itemRef.slice('op://'.length).replace('/', '-')
   }
@@ -142,9 +175,11 @@ export function grantInfo(
     itemTitle:
       grant.provider === 'messages'
         ? grant.itemRef
-        : Object.hasOwn(titles, grant.itemRef)
-          ? (titles[grant.itemRef] as string)
-          : '(item)',
+        : grant.provider === 'mail' && !Object.hasOwn(titles, grant.itemRef)
+          ? (parseMailGrantRef(grant.itemRef)?.sender ?? '(sign-in mail)')
+          : Object.hasOwn(titles, grant.itemRef)
+            ? (titles[grant.itemRef] as string)
+            : '(item)',
     origins: [...grant.origins],
     grantedAt: grant.grantedAt,
     lastUsedAt,
@@ -176,6 +211,19 @@ export function carriesOver(grant: Grant, before: AdapterManifest, after: Adapte
     const same = (a: { pattern: string; maxAgeSeconds: number }, b: typeof a) =>
       a.pattern === b.pattern && a.maxAgeSeconds === b.maxAgeSeconds
     if (!now.every((n) => was.some((w) => same(n, w)))) return false
+    if (!within(after.navigation, before.navigation)) return false
+    return grant.origins.length > 0 && within(grant.origins, after.navigation)
+  }
+  if (grant.provider === 'mail' || grant.secret === MAIL_SECRET) {
+    if (grant.provider !== 'mail' || grant.secret !== MAIL_SECRET) return false
+    const ref = parseMailGrantRef(grant.itemRef)
+    if (ref === null) return false
+    // Every way the new version reads this sender's mail is one the approved version had.
+    const key = (s: ReturnType<typeof mailSourcesIn>[number]) => canonicalJson(s)
+    const was = mailSourcesIn(before.auth.steps).map(key)
+    const now = mailSourcesIn(after.auth.steps)
+    if (was.length === 0 || now.length === 0) return false
+    if (!now.every((n) => n.from === ref.sender && was.includes(key(n)))) return false
     if (!within(after.navigation, before.navigation)) return false
     return grant.origins.length > 0 && within(grant.origins, after.navigation)
   }
