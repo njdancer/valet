@@ -61,7 +61,8 @@ export interface SessionState {
 export function checkCommand(command: Command, state: SessionState): void {
   const needed = VERB_PURPOSE[command.verb]
   if (needed === undefined) throw new CommandRefused('not-allowed')
-  if (PURPOSE_RANK[needed] > PURPOSE_RANK[state.purpose]) throw new CommandRefused('not-allowed')
+  if (PURPOSE_RANK[needed] > PURPOSE_RANK[state.purpose])
+    throw new CommandRefused(needed === 'irreversible' ? 'needs-irreversible' : 'not-allowed')
   switch (command.verb) {
     case 'UID FETCH': {
       const items = command.args[1]
