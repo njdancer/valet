@@ -354,7 +354,7 @@ decoys at the Mac instead of words. All of these are built in the phone.
   `VALET_FAKES`, and CI checks the release binary has no `FakeMac` symbol.
 - **CI:** an `ios` job in `ci.yml` on `macos-latest`. A change to `packages/core/` runs only the
   Swift package tests and the interop vectors; a change under `ios/` (or to the workflow) also runs
-  the journeys on two parallel simulator clones and the shipping-build check. The screenshots for
+  the journeys on the simulator and the shipping-build check. The screenshots for
   review (`ScreensForReviewTests`) run nightly and with the `ios-screens` label, not on every push.
 
 ## Design review

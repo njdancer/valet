@@ -3,8 +3,8 @@ import XCTest
 /// The journeys (docs/ux/agent-run/journeys.md) on the simulator, against the fake Mac and relay in
 /// the ValetPhoneDev build. Face ID is the fake's: it succeeds unless `-valet-faceid-fails`.
 ///
-/// The tests are split into several classes so CI can run them on parallel simulator clones: Xcode
-/// hands out whole classes to its test workers. This base class holds the helpers and no tests,
+/// The tests are split into a class per journey, so a run can pick or skip whole classes (CI skips
+/// ScreensForReviewTests outside the nightly run). This base class holds the helpers and no tests,
 /// since a subclass would run any test it inherited.
 class JourneyTestCase: XCTestCase {
   var app: XCUIApplication!
@@ -27,6 +27,19 @@ class JourneyTestCase: XCTestCase {
     return e
   }
 
+  /// Taps `id` and waits for `shown`. A tap that lands while the screen is still settling (after a
+  /// scroll or a launch) can be dropped on a busy CI simulator, which failed runs with "never
+  /// appeared", so it taps again, up to three times, before failing.
+  @discardableResult
+  func tap(_ id: String, until shown: String) -> XCUIElement {
+    let target = element(shown)
+    for _ in 0..<3 {
+      waitFor(id).tap()
+      if target.waitForExistence(timeout: 10) { break }
+    }
+    return waitFor(shown)
+  }
+
   func openCard(_ ref: String) {
     // Cards further down the list may not exist until scrolled to.
     // The list keeps its scroll position between cards, so look further down first, then back up.
@@ -36,8 +49,7 @@ class JourneyTestCase: XCTestCase {
       if tries < 4 { app.swipeUp() } else { app.swipeDown() }
       tries += 1
     }
-    waitFor("card.\(ref)").tap()
-    _ = waitFor("card.title")
+    tap("card.\(ref)", until: "card.title")
     // Valet won't take an approval in the first second after a card changes (the settle time).
     Thread.sleep(forTimeInterval: 1.2)
   }
@@ -49,8 +61,7 @@ final class PairingJourneyTests: JourneyTestCase {
 
   func testJ1PairsWhenTheCodesMatch() {
     launch("pair")
-    waitFor("pair.fake").tap()
-    let code = waitFor("pair.code")
+    let code = tap("pair.fake", until: "pair.code")
     XCTAssertEqual(code.label.replacingOccurrences(of: " ", with: "").count, 6)
     waitFor("fake.mac.confirm").tap()
     XCTAssertTrue(app.tabBars.buttons["Needs you"].waitForExistence(timeout: 10))
@@ -59,8 +70,7 @@ final class PairingJourneyTests: JourneyTestCase {
 
   func testJ1NothingPairsWhenTheMacSaysNoneMatch() {
     launch("pair")
-    waitFor("pair.fake").tap()
-    _ = waitFor("pair.code")
+    tap("pair.fake", until: "pair.code")
     waitFor("fake.mac.reject").tap()
     XCTAssertTrue(waitFor("pair.failed").label.contains("Nothing was paired"))
   }
@@ -247,8 +257,7 @@ final class ScreensForReviewTests: JourneyTestCase {
   func testScreensForReview() {
     launch("pair")
     shot("01 pair start")
-    waitFor("pair.fake").tap()
-    _ = waitFor("pair.code")
+    tap("pair.fake", until: "pair.code")
     shot("02 pair code")
     launch("cards")
     _ = waitFor("card.1D99")

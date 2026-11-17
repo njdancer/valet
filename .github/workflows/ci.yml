@@ -52,6 +52,7 @@ jobs:
       ios: ${{ steps.pick.outputs.ios }}
       ios_app: ${{ steps.pick.outputs.ios_app }}
       e2e: ${{ steps.matrix.outputs.e2e }}
+      check: ${{ steps.matrix.outputs.check }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -97,26 +98,50 @@ jobs:
           fi
       - id: matrix
         # The end-to-end runners. fast: one. full: the desktop suite's two slow files on runners of
-        # their own, beside everything else.
+        # their own, beside everything else. And where pnpm check runs: Linux on every run, macOS
+        # too in the full suite.
         env:
           SUITE: ${{ steps.pick.outputs.suite }}
         run: |
           if [ "$SUITE" = full ]; then
             echo 'e2e=[{"part":"fast"},{"part":"journey"},{"part":"update"}]' >> "$GITHUB_OUTPUT"
+            echo 'check=["ubuntu-latest","macos-latest"]' >> "$GITHUB_OUTPUT"
           else
             echo 'e2e=[{"part":"fast"}]' >> "$GITHUB_OUTPUT"
+            echo 'check=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
           fi
 
   check:
     needs: changes
-    # macOS, because the updater tests use ditto and the app only ships for macOS.
-    runs-on: macos-latest
+    # Lint, typecheck and the unit suite with coverage. On Linux for every run: there are plenty of
+    # Linux runners and only a few macOS ones, and the suite runs faster there. The updater's two
+    # test files need macOS's ditto, so they are left out here and run in the e2e job below; the
+    # sandbox's command tests pass here without Seatbelt and run there again with it. Keep the
+    # lists in step. The full suite also runs the whole of pnpm check on macOS.
+    name: check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.changes.outputs.check) }}
+    env:
+      # xcodegen is in mise.toml for the iOS job, and only exists for macOS.
+      MISE_DISABLE_TOOLS: ${{ matrix.os == 'ubuntu-latest' && 'xcodegen' || '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
       - run: pnpm install --frozen-lockfile
-      - run: pnpm check
+      - if: matrix.os == 'macos-latest'
+        run: pnpm check
+      - if: matrix.os != 'macos-latest'
+        env:
+          # Leaves the code only those files cover out of the coverage gate (vitest.config.ts).
+          VALET_COVERAGE_WITHOUT_MACOS_ONLY: "1"
+        run: |
+          pnpm lint
+          pnpm typecheck
+          pnpm coverage --exclude '**/test/updater/feed-server.test.ts' --exclude '**/test/updater/make-feed.test.ts'
 
   e2e:
     needs: changes
@@ -145,6 +170,11 @@ jobs:
       - name: desktop end to end, ${{ matrix.part }}.spec.ts
         if: matrix.part != 'fast'
         run: pnpm --filter @valet/desktop test:e2e --trace off ${{ matrix.part }}.spec.ts
+      - name: unit tests that need macOS (left out of the Linux check job; keep the lists in step)
+        if: matrix.part == 'fast'
+        run: |
+          pnpm exec vitest run test/updater/feed-server.test.ts test/updater/make-feed.test.ts \
+            test/local-command.test.ts
       - name: drift smoke test, dry run against the fake (the live run skips without VALET_LIVE_SMOKE)
         if: matrix.part == 'fast'
         run: |
@@ -261,9 +291,9 @@ jobs:
           xcrun simctl list devices | grep "$id"
       - name: journeys on the simulator (fakes build)
         if: needs.changes.outputs.ios_app == 'true'
-        # Two clones of the simulator, each taking whole test classes (JourneyTests.swift is split
-        # by journey for this). The screenshots for review only take pictures, so they wait for the
-        # full suite or the ios-screens label.
+        # The screenshots for review only take pictures, so they wait for the full suite or the
+        # ios-screens label. (Parallel simulator clones were tried: xcodebuild ran every class on
+        # one clone anyway, so they bought nothing.)
         env:
           SUITE: ${{ needs.changes.outputs.suite }}
         run: |
@@ -271,7 +301,7 @@ jobs:
           [ "$SUITE" = full ] || skip=(-skip-testing:ValetPhoneUITests/ScreensForReviewTests)
           xcodebuild test -project ios/ValetPhone.xcodeproj -scheme ValetPhoneDev \
             -destination "id=$SIMULATOR" -resultBundlePath "$RUNNER_TEMP/ios-ui.xcresult" \
-            -parallel-testing-enabled YES -parallel-testing-worker-count 2 "${skip[@]}" \
+            "${skip[@]}" \
             CODE_SIGNING_ALLOWED=NO > "$RUNNER_TEMP/ios-ui.log" 2>&1 || status=$?
           grep -iE "error:|Test Case .*(passed|failed)|\*\* TEST" "$RUNNER_TEMP/ios-ui.log" | tail -150
           if [ "${status:-0}" != 0 ]; then
