@@ -17,7 +17,14 @@ import { fromBase64url, randomToken, toBase64url } from '../src/encoding'
 import { logFailure } from '../src/log'
 import { escapeHtml, problemPage, redirectResponse, waitingPage } from '../src/pages'
 import { ApnsPushSender, NO_PUSH, pushPayload } from '../src/push'
-import { keyIdOf, verifyBinding, verifyRelayAuth } from '../src/verify'
+import {
+  keyIdOf,
+  verifyBinding,
+  verifyDeviceRecordSignature,
+  verifyHubGrantSignature,
+  verifyRelayAuth,
+  verifyRosterSignature,
+} from '../src/verify'
 import { WindowCounter } from '../src/window'
 import { testKey } from './keys'
 
@@ -129,6 +136,19 @@ describe('signatures and encodings', () => {
     expect(await verifyRelayAuth('!', payload, signature)).toBe(false)
     expect(await verifyRelayAuth(key.publicKey, payload, 'AAAA')).toBe(false)
     expect(await verifyRelayAuth('AAAA', payload, signature)).toBe(false)
+  })
+
+  it('checks each approval-key signature the hub takes only in its own domain', async () => {
+    const key = testKey()
+    const checks = [
+      [verifyRosterSignature, SIGNING_DOMAINS.rosterChange],
+      [verifyHubGrantSignature, SIGNING_DOMAINS.hubGrant],
+      [verifyDeviceRecordSignature, SIGNING_DOMAINS.deviceRecord],
+    ] as const
+    for (const [check, domain] of checks) {
+      expect(await check(key.publicKey, '{}', key.signDomain(domain, '{}'))).toBe(true)
+      expect(await check(key.publicKey, '{}', key.signDomain(SIGNING_DOMAINS.relayAuth, '{}'))).toBe(false)
+    }
   })
 
   it('round-trips base64url and makes random tokens', () => {
