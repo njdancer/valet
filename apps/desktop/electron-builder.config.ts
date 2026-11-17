@@ -18,7 +18,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { signAsync } from '@electron/osx-sign'
 import type { Configuration } from 'electron-builder'
-import { PROTOCOL_HOST_PACKAGED } from './src/main/core/protocol-host'
+import { PROTOCOL_HOST_PACKAGED, SFTP_HOST_PACKAGED } from './src/main/core/protocol-host'
 import { SHOWCASE_BUILD_MARKER } from './src/main/core/showcase'
 import { SMOKE_BUILD_MARKER } from './src/main/core/smoke'
 import { validateFeedUrl } from './src/main/updater/feed-url'
@@ -477,7 +477,7 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
     asar: true,
     // The protocol host (docs/imap.md#the-protocol-host) is read by the sandboxed Node, which can't
     // read inside app.asar: it ships beside it, in app.asar.unpacked, sealed by the app's signature.
-    asarUnpack: [PROTOCOL_HOST_PACKAGED],
+    asarUnpack: [PROTOCOL_HOST_PACKAGED, SFTP_HOST_PACKAGED],
     npmRebuild: false,
     forceCodeSigning: release,
     electronFuses: { ...ELECTRON_FUSES, resetAdHocDarwinSignature: !signs },

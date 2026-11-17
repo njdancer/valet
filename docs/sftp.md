@@ -128,7 +128,11 @@ handle and session (64 MB).
 
 The SFTP host is its own bundle (`packages/protocols/src/host/sftp-host.ts`, built by
 `buildSftpHost`), because it carries `ssh2` and its few pure-JavaScript dependencies; the IMAP host
-stays free of npm code. `ssh2`'s native and WebAssembly parts are left out of the bundle.
+stays free of npm code. `ssh2`'s native and WebAssembly parts are left out of the bundle. So are
+`child_process`, `dns` and `fs`: each is a stub that throws, since the host signs in with the key it
+is given over the socket it is given. The app ships it as `out/main/sftp-host.cjs`, unpacked beside
+app.asar (the sandboxed Node can't read inside it), and the release check runs `valet-node --check`
+on it.
 
 It runs like the IMAP host: one Node process per call, under the Seatbelt profile on macOS, with no
 network but one loopback port from the broker's tunnel (`plainTcp`, since SSH isn't TLS) to the one

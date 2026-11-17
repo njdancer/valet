@@ -22,7 +22,7 @@ import { KeychainHelper, KeychainTokenSource, messagesHelperSocketPath } from '@
 import { EgressBroker, type OpenTunnels } from '@valet/egress'
 import { startEndpoint } from '@valet/mcp-server'
 import { diskTarballStore, loadDependencies, nodeRuntimeProcess } from '@valet/node-runtime'
-import { HostMailReader, imapBackend, type ProtocolHostOptions, smtpBackend } from '@valet/protocols'
+import { HostMailReader, imapBackend, type ProtocolHostOptions, sftpBackend, smtpBackend } from '@valet/protocols'
 import { createLocalAccess } from '@valet/sandbox'
 import { app, clipboard, dialog, protocol, session, shell } from 'electron'
 import { href } from '../../renderer/lib/routes'
@@ -64,7 +64,7 @@ import {
 import { devHelperPath } from '../core/native-helpers'
 import { addOwnPort, ownPorts, recordOwnPorts } from '../core/own-ports'
 import { macName, relayFromEnv } from '../core/phones'
-import { protocolHostScript } from '../core/protocol-host'
+import { protocolHostScript, sftpHostScript } from '../core/protocol-host'
 import { nodeRuntimeBinary, rawPaths } from '../core/raw-runtime'
 import { AppService } from '../core/service'
 import { SHOWCASE_BUILD_MARKER } from '../core/showcase'
@@ -390,6 +390,17 @@ async function main(): Promise<void> {
           },
         }
   log(`protocol adapters: ${protocolHost === null ? 'unavailable (no Node runtime)' : 'ready'}`)
+  // The SFTP host (docs/sftp.md#the-protocol-host) runs the same way from its own bundle, which
+  // carries ssh2. Its stderr is never logged: it could echo a file name the server sent.
+  const sftpScript = sftpHostScript({
+    packaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    mainDir: import.meta.dirname,
+    exists: existsSync,
+  })
+  const sftpHost: ProtocolHostOptions | null =
+    nodeBinary === null || sftpScript === null ? null : { nodeBinary, hostScript: sftpScript, home }
+  log(`SFTP adapters: ${sftpHost === null ? 'unavailable' : 'ready'}`)
   const driverOptions: ManifestOptions = demoSite === null ? {} : { egressPorts: [demoSite.site.port] }
   const opDeps = defaultOpCheckDeps()
   // The packaged app's name is "Valet" for a release and "Valet Dev" otherwise (electron-builder's
@@ -531,6 +542,8 @@ async function main(): Promise<void> {
           smtp: (protocol) => smtpBackend({ protocol, host: protocolHost }),
           mailReader: (account) => new HostMailReader({ host: protocolHost, account }),
         }),
+    // Protocol adapters' ctx.sftp, through the SFTP host, its server's host key pinned.
+    ...(sftpHost === null ? {} : { sftp: (protocol) => sftpBackend({ protocol, host: sftpHost }) }),
     // Demo mode keeps only the shop on this machine: the other built-ins (no login, public data)
     // reach their real sites.
     createDriver: (manifest, reporters) =>

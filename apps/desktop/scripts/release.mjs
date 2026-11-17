@@ -559,11 +559,16 @@ function checkNodeRuntime(app, expect) {
   }
   // The protocol host (docs/imap.md#the-protocol-host) is a real file beside app.asar, sealed by the
   // app's signature, which the shipped Node can parse.
-  const host = join(app, 'Contents', 'Resources', 'app.asar.unpacked', 'out', 'main', 'protocol-host.cjs')
-  expect('the protocol host ships beside app.asar', existsSync(host))
-  if (existsSync(host)) {
-    const parsed = capture(node, ['--check', host])
-    expect('valet-node parses the protocol host', parsed.code === 0, parsed.stdout + parsed.stderr)
+  for (const [file, name] of [
+    ['protocol-host.cjs', 'the protocol host'],
+    ['sftp-host.cjs', 'the SFTP host'],
+  ]) {
+    const host = join(app, 'Contents', 'Resources', 'app.asar.unpacked', 'out', 'main', file)
+    expect(`${name} ships beside app.asar`, existsSync(host))
+    if (existsSync(host)) {
+      const parsed = capture(node, ['--check', host])
+      expect(`valet-node parses ${name}`, parsed.code === 0, parsed.stdout + parsed.stderr)
+    }
   }
 }
 

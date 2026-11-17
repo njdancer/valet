@@ -86,7 +86,7 @@ export const ASAR_ALLOWED = [
   /^out\/main\/chunks\/[\w-]+\.js$/,
   // The protocol host (docs/imap.md#the-protocol-host): listed in the asar's index but unpacked
   // beside it (asarUnpack), so the sandboxed Node can read it.
-  /^out\/main\/protocol-host\.cjs$/,
+  /^out\/main\/(protocol-host|sftp-host)\.cjs$/,
   /^out\/preload\/index\.cjs$/,
   // The sandbox renderer's preload and QuickJS (docs/sandbox.md).
   /^out\/preload\/(sandbox\.cjs|quickjs\.wasm)$/,

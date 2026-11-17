@@ -53,6 +53,7 @@
     "@valet/fake-example-services": "workspace:*",
     "@valet/fake-http-api": "workspace:*",
     "@valet/fake-imap": "workspace:*",
+    "@valet/fake-sftp": "workspace:*",
     "@valet/fake-onepassword": "workspace:*",
     "@valet/fake-woolworths-site": "workspace:*",
     "@valet/ui": "workspace:*",

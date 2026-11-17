@@ -102,6 +102,16 @@ export async function buildSftpHost(): Promise<string> {
             loader: 'js',
             resolveDir: dirname(ssh2Client),
           }))
+          // What ssh2's agent and connect-by-name code reach for, never used here (the host signs in
+          // with the key it is given, over the socket it is given): each function throws.
+          b.onResolve({ filter: /^(node:)?(child_process|dns|fs)$/ }, (args) => ({
+            path: args.path,
+            namespace: 'valet-refused',
+          }))
+          b.onLoad({ filter: /.*/, namespace: 'valet-refused' }, (args) => ({
+            contents: `module.exports = new Proxy({}, { get: (_, name) => name === '__esModule' ? false : () => { throw new Error(${JSON.stringify(`${args.path} is not in the SFTP host`)}) } })`,
+            loader: 'js',
+          }))
           b.onResolve({ filter: /^[^./]/ }, (args) => {
             const bare = args.path.startsWith('node:') ? args.path.slice(5) : args.path
             if (BUILTINS.has(bare)) return { path: args.path, external: true }
