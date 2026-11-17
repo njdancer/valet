@@ -169,7 +169,7 @@ describe('addsPermissions', () => {
       },
     }
     expect(addsPermissions(diff)).toBe(true)
-    expect(additionBadges(diff)).toEqual([{ label: '+1 irreversible tool', tone: 'irreversible' }])
+    expect(additionBadges(diff)).toEqual([{ label: '+1 tool that can’t be undone', tone: 'irreversible' }])
   })
 
   it('treats looser limits as an addition and tighter ones as not', () => {
@@ -208,7 +208,7 @@ describe('addsPermissions', () => {
       },
     }
     expect(addsPermissions(diff)).toBe(true)
-    expect(additionBadges(diff)).toEqual([{ label: '+1 login step', tone: 'write' }])
+    expect(additionBadges(diff)).toEqual([{ label: 'login changed', tone: 'write' }])
   })
 
   it('needs the tick when the update removes a login safeguard, but not another step', () => {
@@ -299,12 +299,12 @@ describe('additionBadges', () => {
       },
     }
     expect(additionBadges(diff).map((b) => b.label)).toEqual([
-      '+2 hosts',
-      '+1 write tool',
-      '+1 read tool',
-      '+1 irreversible path',
-      '+1 write path',
-      '+1 read path',
+      '+2 sites it contacts',
+      '+1 tool that changes things',
+      '+1 read-only tool',
+      '+1 API call that can’t be undone',
+      '+1 API call that changes things',
+      '+1 read-only API call',
     ])
   })
 })
@@ -319,16 +319,16 @@ describe('a site with no login', () => {
     probe: null,
   }
 
-  it('calls its pages page origins, not login origins', () => {
+  it('calls its pages sites it opens, not login sites', () => {
     expect(diffHasLogin(NO_LOGIN)).toBe(false)
-    expect(additionBadges(NO_LOGIN).map((b) => b.label)).toEqual(['+1 page origin'])
+    expect(additionBadges(NO_LOGIN).map((b) => b.label)).toEqual(['+1 site it opens'])
     expect(additionBadges(NO_LOGIN, false).some((b) => /login/.test(b.label))).toBe(false)
   })
 
   it('keeps login wording for a site that logs in, and trusts the main process’s answer first', () => {
     const login = { ...NO_LOGIN, authSteps: NOTHING_NEW.authSteps }
     expect(diffHasLogin(login)).toBe(true)
-    expect(additionBadges(login).map((b) => b.label)).toEqual(['+1 login origin'])
+    expect(additionBadges(login).map((b) => b.label)).toEqual(['+1 login site'])
     expect(reviewLogsIn({ diff: NO_LOGIN, logsIn: true })).toBe(true)
     expect(reviewLogsIn({ diff: login, logsIn: false })).toBe(false)
     expect(reviewLogsIn({ diff: NO_LOGIN })).toBe(false)
@@ -360,7 +360,10 @@ describe('changed secrets and tools', () => {
     expect(secretChanges(diff)).toEqual([
       expect.objectContaining({ newFields: ['otp'], newOrigins: ['https://www.woolworths.com.au'] }),
     ])
-    expect(additionBadges(diff).map((b) => b.label)).toEqual(['+1 secret field', '+1 secret origin'])
+    expect(additionBadges(diff).map((b) => b.label)).toEqual([
+      '+1 secret field',
+      '+1 site a secret is typed on',
+    ])
     expect(addsPermissions(diff)).toBe(true)
   })
 

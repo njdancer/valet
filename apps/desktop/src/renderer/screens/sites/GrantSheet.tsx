@@ -100,7 +100,7 @@ export function GrantSheet({
     const target = targetFor(detail.data, secret)
     content =
       target === null ? (
-        <Message onClose={close}>This adapter’s manifest doesn’t ask for a secret with that name.</Message>
+        <Message onClose={close}>This adapter doesn’t ask for a secret with that name.</Message>
       ) : (
         <GrantForm
           key={`${detail.data.hash}:${secret}`}
@@ -394,7 +394,7 @@ function GrantForm({
             </Group>
           </>
         ) : (
-          <Group title="Sender the manifest declared">
+          <Group title="Sender the adapter declared">
             <RadioGroup aria-label="Sender" value={item ?? ''} onValueChange={setItem}>
               {target.senders.map((sender) => (
                 <RadioOption
@@ -436,7 +436,7 @@ function GrantForm({
                       ? 'Where the sign-in form is'
                       : 'Visited during sign-in. Leave off unless codes are typed here.'
                     : index === 0
-                      ? 'Requested by the manifest'
+                      ? 'Requested by the adapter'
                       : 'Also requested. Leave off unless sign-in moves here.'
                 }
               />
@@ -444,7 +444,7 @@ function GrantForm({
           </div>
           <Text size="sm" tone="muted">
             Before every fill, Valet checks the page’s web address, the field and where the form sends it.
-            Only {plural(target.requestedOrigins.length, 'web address', 'web addresses')} the manifest asked
+            Only {plural(target.requestedOrigins.length, 'web address', 'web addresses')} the adapter asked
             for can be chosen.
           </Text>
         </fieldset>

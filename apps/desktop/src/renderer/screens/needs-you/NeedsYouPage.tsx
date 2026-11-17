@@ -397,7 +397,7 @@ function StatusCard() {
           loading={verify.busy}
           onClick={() => void verify.run(() => api.audit.verify())}
         >
-          Check audit log now
+          Check the audit log is intact
         </Button>
       </CardHeader>
       <CardContent className="flex flex-col gap-2.5">
