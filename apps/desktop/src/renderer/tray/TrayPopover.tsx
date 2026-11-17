@@ -45,7 +45,7 @@ import { linksOpenInValet, needsYouHref } from '../lib/open-in-valet'
 import { href } from '../lib/routes'
 import { healthFor, isFirstReview, siteStatus } from '../lib/site-status'
 import { askedToRetry, clientClaim } from '../lib/wording'
-import { stepsDone as doneOf, stepsLeft, useSetupFacts } from '../screens/setup/setup-logic'
+import { useSetupLeft } from '../screens/setup/setup-logic'
 
 /** Needs you rows shown in full; the rest are one link to the window. */
 export const TRAY_NEEDS_YOU_ROWS = 3
@@ -60,7 +60,7 @@ export function TrayPopover() {
   const health = useLoad((a) => a.health.sites(), [], ['health-changed'])
   const stats = useLoad((a) => a.runs.statsToday(), [], ['runs-changed'])
   const runs = useLoad((a) => a.runs.list({ limit: 200 }), [], ['runs-changed'])
-  const facts = useSetupFacts()
+  const left = useSetupLeft()
   const action = useAction()
   const [opened, setOpened] = useState<boolean | null>(null)
   const [lockOpen, setLockOpen] = useState(false)
@@ -81,7 +81,6 @@ export function TrayPopover() {
   const waiting = views.filter((v) => !v.missed)
   const missed = views.filter((v) => v.missed)
 
-  const left = facts.status === 'ready' ? stepsLeft(doneOf(facts.data)) : null
   // Skipped steps wait here as one item until done (IA: "Finish setup (N steps left)").
   const finishSetup = left !== null && left > 0
   const shown = waiting.slice(0, finishSetup ? TRAY_NEEDS_YOU_ROWS - 1 : TRAY_NEEDS_YOU_ROWS)

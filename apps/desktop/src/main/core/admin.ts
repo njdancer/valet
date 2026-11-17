@@ -130,6 +130,8 @@ export function adminReader(source: AdminSource): AdminReader {
           installed: adapters.length,
           approved: adapters.filter((a) => a.approval === 'approved').length,
           paused: adapters.filter((a) => a.paused).length,
+          toApproveAgain: adapters.filter((a) => a.approval !== 'approved' && a.approvedBefore === true)
+            .length,
         },
         today: {
           toolCalls: today.toolCalls,
@@ -549,6 +551,7 @@ function atOf(item: Exclude<AttentionItem, AgentRequestItem>): string | null {
     case 'review':
     case 'setting-missing':
     case 'login-missing':
+    case 'keys-changed':
       return null
   }
 }

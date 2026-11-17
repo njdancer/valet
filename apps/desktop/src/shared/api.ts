@@ -59,6 +59,11 @@ export interface SessionStatus {
 export interface SecretSummary {
   readonly name: string
   readonly granted: boolean
+  /**
+   * A grant was given for it and no longer counts (it isn't signed by this Mac's approval keys now,
+   * for one: the keys changed). It is asked for again, never trusted. Absent: false.
+   */
+  readonly lapsed?: boolean
 }
 
 export interface AdapterSummary {
@@ -74,8 +79,20 @@ export interface AdapterSummary {
   readonly pendingUpdate: { readonly version: string; readonly hash: string } | null
   readonly toolCounts: Readonly<Record<Purpose, number>>
   readonly secrets: readonly SecretSummary[]
-  /** Declared Messages one-time-code sources and whether each has a grant. */
-  readonly messagesSources: readonly { readonly sender: string; readonly granted: boolean }[]
+  /**
+   * Declared Messages one-time-code sources and whether each has a grant. `lapsed`: a grant was
+   * given and no longer counts, as for SecretSummary.
+   */
+  readonly messagesSources: readonly {
+    readonly sender: string
+    readonly granted: boolean
+    readonly lapsed?: boolean
+  }[]
+  /**
+   * Not approved now, but this Mac's earlier approval keys approved it: the keys changed, so that
+   * approval no longer counts and the person approves it again. Absent: false.
+   */
+  readonly approvedBefore?: boolean
   readonly session: SessionStatus
   readonly calls7d: number
   /**
@@ -372,6 +389,8 @@ export interface PendingReview {
    * signed-in session for the site (B's review, point 4). The review leads with that.
    */
   readonly takesSession?: boolean
+  /** This Mac's earlier approval keys approved the site; they changed, so it is approved again. */
+  readonly approvedBefore?: boolean
 }
 
 export type PackageOrigin = 'builtin' | 'folder' | 'draft'
@@ -818,6 +837,34 @@ export interface ReviewItem {
   readonly addsPermissions: boolean
   /** No version of the site was approved before: "Review Woolworths before first use". */
   readonly firstInstall?: boolean
+  /**
+   * Approved before under this Mac's earlier approval keys, which changed: "Review Woolworths
+   * again". The old approval no longer counts.
+   */
+  readonly approvedBefore?: boolean
+}
+
+/**
+ * This Mac's approval keys changed (made again after they were lost, or a new Mac), so what the old
+ * keys signed no longer counts: site approvals, logins, settings turned on. Nothing is trusted on
+ * the strength of the old signatures (docs/agent-run-security.md#devices-and-keys); this item only
+ * explains it and lists what to do again. It goes once each listed site is approved and its logins
+ * given again, or when the person dismisses it.
+ */
+export interface KeysChangedItem {
+  readonly kind: 'keys-changed'
+  readonly id: string
+  /** Each installed site with something to do again. */
+  readonly sites: readonly {
+    readonly adapterId: string
+    readonly adapterName: string
+    /** Its approval is to give again. */
+    readonly review: boolean
+    /** The secrets (manifest names; MESSAGES_SECRET for its one-time codes) to grant again. */
+    readonly logins: readonly string[]
+  }[]
+  /** Other approvals the old keys signed (a setting turned on, remote access), asked for again when needed. */
+  readonly others: number
 }
 
 /**
@@ -949,6 +996,7 @@ export type AttentionItem =
   | LoginMissingItem
   | RepairItem
   | MissedItem
+  | KeysChangedItem
 
 /** How long a missed item stays in Needs you. */
 export const MISSED_KEEP_MS = 24 * 60 * 60_000
@@ -1413,7 +1461,10 @@ export interface ValetApi {
      * first.
      */
     list(): Promise<readonly AttentionItem[]>
-    /** Removes a missed item. Rejects for any other kind, or an id that isn't there. */
+    /**
+     * Removes a missed item, or the approval-keys-changed notice (until the keys change again).
+     * Rejects for any other kind, or an id that isn't there.
+     */
     dismiss(id: string): Promise<void>
     /**
      * Approves an agent's request with Touch ID (the Mac's own signature), or, for a removal, removes

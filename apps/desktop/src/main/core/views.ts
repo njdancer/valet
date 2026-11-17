@@ -60,6 +60,13 @@ export interface AdapterState {
   readonly chosen: Readonly<Record<string, ChosenSetting>>
   /** The person paused this site (app-state.ts). Absent: not paused. */
   readonly paused?: boolean
+  /**
+   * Grants for the installed hash that are stored but not signed now (keys-changed.ts): never
+   * handed out, shown as to give again. Absent: none.
+   */
+  readonly lapsed?: readonly Grant[]
+  /** Not approved now, but this Mac's earlier approval keys approved it. Absent: false. */
+  readonly approvedBefore?: boolean
 }
 
 /** The manifest's settings with the person's choices. A choice for a setting it no longer declares is not shown. */
@@ -140,6 +147,17 @@ function secretRequests(state: AdapterState): SecretRequestInfo[] {
   })
 }
 
+/** A grant for this secret (and, for codes, this sender) was given and no longer counts. */
+function lapsedFor(state: AdapterState, secret: string, sender: string | null): boolean {
+  return (state.lapsed ?? []).some(
+    (g) =>
+      g.secret === secret &&
+      (secret === MESSAGES_SECRET
+        ? g.provider === 'messages' && g.itemRef === sender
+        : g.provider !== 'messages'),
+  )
+}
+
 function toolCounts(manifest: AdapterManifest): Record<Purpose, number> {
   const counts: Record<Purpose, number> = { read: 0, write: 0, irreversible: 0 }
   // Only the tools a client can call: a setting's own tools are Valet's to run.
@@ -165,8 +183,17 @@ export function adapterSummary(state: AdapterState): AdapterSummary {
         ? { version: manifest.version, hash: state.adapter.hash }
         : null,
     toolCounts: toolCounts(manifest),
-    secrets: secrets.map((s) => ({ name: s.name, granted: s.grant !== null })),
-    messagesSources: messagesInfo(state).map((m) => ({ sender: m.sender, granted: m.grant !== null })),
+    secrets: secrets.map((s) => ({
+      name: s.name,
+      granted: s.grant !== null,
+      ...(s.grant === null && lapsedFor(state, s.name, null) ? { lapsed: true } : {}),
+    })),
+    messagesSources: messagesInfo(state).map((m) => ({
+      sender: m.sender,
+      granted: m.grant !== null,
+      ...(m.grant === null && lapsedFor(state, MESSAGES_SECRET, m.sender) ? { lapsed: true } : {}),
+    })),
+    ...(state.approvedBefore === true && !state.approved ? { approvedBefore: true } : {}),
     session: state.session,
     calls7d: state.calls.get(manifest.id) ?? 0,
     settingsNeeded: settingInfos(state)
@@ -228,6 +255,7 @@ export function pendingReview(state: AdapterState, submittedAt: string): Pending
     files: fileChanges(before?.files ?? null, state.adapter.files),
     origin: state.adapter.source ?? 'builtin',
     takesSession: (state.adapter.source ?? 'builtin') !== 'builtin' && hasLogin(manifest),
+    ...(state.approvedBefore === true ? { approvedBefore: true } : {}),
   }
 }
 
@@ -239,7 +267,8 @@ export function reviewItem(review: PendingReview): ReviewItem {
     adapterName: review.name,
     version: review.to.version,
     addsPermissions: addsPermissions(review.diff),
-    firstInstall: review.from === null,
+    firstInstall: review.from === null && review.approvedBefore !== true,
+    ...(review.approvedBefore === true ? { approvedBefore: true } : {}),
   }
 }
 
