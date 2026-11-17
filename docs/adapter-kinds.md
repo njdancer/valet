@@ -496,6 +496,84 @@ Residual risks, accepted for now:
 - **Unverified on macOS:** the profile lets the adapter read `kern.hostname` (the Mac's name, often
   the person's), and `(remote ip "localhost:PORT")` probably also matches `::1` on the same port.
 
+## H. Example adapters
+
+Worked examples an agent can start a draft from (`valet_create_draft` with `from: "example"` and an
+`example` name), one per thing the new kinds can do. They live under `examples/`, each a package
+with a README, its own cases and fixtures. None is installed or approved by anyone; a draft from one
+goes through the same check and approval as any other.
+
+#### As built (workstream H)
+
+| Example           | Kind   | What it shows                                                                                         |
+| ----------------- | ------ | ----------------------------------------------------------------------------------------------------- |
+| `hacker-news`     | `http` | A public JSON API with no login and no home workaround: lists and items, HTML to text                 |
+| `feed-reader`     | `http` | RSS (BBC News sections) and Atom (GitHub releases) from two hosts with `parseFeed`                    |
+| `icloud-calendar` | `http` | CalDAV: discovery across hosts, PROPFIND, REPORT and an idempotent PUT, with a kept password          |
+| `icloud-contacts` | `http` | CardDAV: discovery and an `addressbook-query` search, with a kept password                            |
+| `home-hub`        | `http` | A private host pinned by its certificate, a kept token, REST to read and a WebSocket (a write) to act |
+| `cache-reader`    | `raw`  | Its own TLS to one endpoint, the `redis-parser` npm package, and an entrusted password                |
+
+- **Fakes.** `fakes/example-services` answers as each service, by Host and TLS name: Hacker
+  News's API, BBC News's feeds, GitHub's release feeds, iCloud-style CalDAV and CardDAV (Basic
+  auth, a principal on `caldav.icloud.com` and the data on a partition host), a home hub on
+  `192.168.1.20:8123` (https with a self-signed certificate, REST and a WebSocket that needs the
+  token on the upgrade), and a Redis-style cache over TLS with an ACL. Each records what reached it.
+- **End to end** (`apps/desktop/test/main/examples.e2e.test.ts`): each example starts as a draft
+  from the example, passes `valet_check_draft` with every case, and runs for real. Live trials
+  reach the fakes through the real egress broker. Then each runs as installed, through `ToolHost`
+  with the real broker, the real credential gate over a test grant, and for `cache-reader` the
+  Node runtime, with `redis-parser` and `redis-errors` added by `valet_add_dependency` from a fake
+  registry serving their real npm tarballs (vendored under `apps/desktop/test/fixtures/npm`).
+- **What building them changed in Valet:**
+  - **Cases can use kept credentials.** A case fills each kept header credential with a
+    placeholder (`case-username`, `case-password`, `case-token`), through the real gate, so a tool
+    that names a credential runs in a case as it would installed. Before, it failed as not granted,
+    so no credentialed http adapter could pass its check.
+  - **Cases can script a WebSocket** (`sockets`: server messages, the client messages the tool must
+    send, and a close). Before, a case couldn't open one, so no WebSocket adapter could pass.
+  - **`{ "inline": null }` answers JSON `null`** to `ctx.http` (it was an empty body), and `ctx.http`
+    gets a fixture's text as it is.
+  - **Fixtures may be `.xml`**, for feeds and WebDAV answers.
+  - **Closing a socket that has closed already does nothing** (it failed the call as
+    `tool-run/invalid`, so `finally { await socket.close() }` broke when the far end closed first).
+    Using a closed socket is `egress/unavailable`.
+  - **A raw adapter with npm dependencies can be installed.** The app's registry hashed sources and
+    manifest only, while the package hash covers `valet-lock.json` too, so any raw adapter with a
+    dependency failed its check with "The package hash did not match". Both formulas now add the
+    lock the same way (`lockHashEntry` in core). Hashes of packages without a lock are unchanged.
+  - The authoring guide lists the examples and covers kept credentials, pinned private hosts,
+    sockets in cases, and the sandbox's lack of a `URL` class.
+
+#### Decisions for Nick's review (workstream H)
+
+Taken while Nick was away, each the recommendation. Any can be changed.
+
+1. **Examples are drafts, not built-ins.** They ship embedded so an agent can start from one, but
+   nothing is installed, so nothing new asks for Nick's approval.
+2. **iCloud's partition hosts are named, not discovered.** iCloud keeps each account on its own
+   server (`pNN-caldav.icloud.com`), which discovery names. Egress takes exact hosts only, so the
+   examples name `p01` and say which server an account is on (`list_calendars` returns it), for a
+   new version to add. A "discovered host" (allowed if a declared host names it) would remove the
+   step, at the cost of a host the person never saw on the card. Not built.
+3. **The home hub reads over REST and acts over its WebSocket, which is declared a write.** A
+   socket's declaration covers every message sent on it, so a read-declared socket could act from a
+   read tool. Declaring it a write keeps reads from opening it. Per-message purposes would let one
+   socket do both; not built.
+4. **The hub's token goes on the socket's upgrade**, as a kept credential. Hubs that want it in the
+   first message (Home Assistant) can't be reached with a kept credential; that needs an entrusted
+   one, which only `raw` may hold, or a "credential in a message" placeholder, which isn't built.
+5. **A raw example takes an optional `reply` input for its cases.** Raw cases have no network, and
+   the check needs a passing case that checks each tool's output, so the tool decodes a given
+   answer instead of asking the cache. It's a read and only decodes what it is given. Scripted
+   sockets for raw cases, like the http ones, would remove it.
+6. **The cache example ships without its lockfile**, so the agent's first step is
+   `valet_add_dependency`, as for any raw draft.
+7. **Case credentials are fixed placeholders**, not values the case chooses, so a case can't make
+   the gate hand anything else, and the fixtures don't check headers.
+8. **Examples use `tool-run/not-found`** for a missing thing, as the authoring guide says. The blank
+   http template used `tool-input` and now matches.
+
 ## Approval cards and the permission diff
 
 Each new thing a manifest can ask for becomes a line in the permission diff
