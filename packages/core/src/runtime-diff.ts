@@ -3,6 +3,7 @@
 // the Mac from the old and new manifests; the agent that wrote the adapter never writes these.
 
 import { canonicalAddress, parseEndpoint } from './addresses'
+import { type DependencyLock, dependencySummary } from './dependencies'
 import { type AdapterManifest, type PrivateHost, type RuntimeKind, runtimeOf } from './manifest'
 import type { PermissionChange, Risk } from './permission-change'
 import type { SftpProtocol } from './protocols'
@@ -18,18 +19,29 @@ export function describeRuntime(kind: RuntimeKind): string {
     case 'protocol':
       return 'Uses mail or file protocols through Valet'
     case 'raw':
-      return 'Runs its own code with network access through Valet'
+      return 'Runs its own code and npm packages in its own sandbox, reaching only the endpoints listed'
   }
 }
 
-/** How much a change to `kind` widens what an adapter can do. */
+/**
+ * How much a change to `kind` widens what an adapter can do. `raw` is high, not critical: it is
+ * approved on the phone or the Mac like everything else (Nick, 2026-11-17), and the card's other
+ * lines (endpoints, credentials, packages) say what it can reach.
+ */
 function runtimeRisk(kind: RuntimeKind): Risk {
-  if (kind === 'raw') return 'critical'
+  if (kind === 'raw') return 'high'
   return kind === 'browser' ? 'low' : 'medium'
 }
 
+/** One raw endpoint as the card says it. Valet checks a TLS connection's server name, not its contents. */
+export function describeRawEndpoint(endpoint: string): string {
+  return `${endpoint} (its own encrypted connection; Valet checks the server name)`
+}
+
 /** One private host as the card says it: where, how, and whether its certificate is pinned. */
-export function describePrivateHost(host: PrivateHost): string {
+export function describePrivateHost(host: PrivateHost, kind: RuntimeKind = 'http'): string {
+  // A raw adapter speaks whatever it likes to the host: Valet carries the bytes, unread.
+  if (kind === 'raw') return `${privateHostKey(host)} on your network (its own connection)`
   const scheme = host.scheme ?? 'https'
   const how =
     scheme === 'http'
@@ -41,14 +53,15 @@ export function describePrivateHost(host: PrivateHost): string {
 }
 
 /**
- * The lines for the kind and private hosts between the approved manifest (null for a first
- * install) and the new one. A first install that isn't a browser adapter says what it is; a change
- * of kind is a line at the new kind's risk. Each added private host is high: it reaches a device
- * on the person's own network, which nothing else on the card covers.
+ * The lines for the kind, a raw adapter's endpoints and the private hosts between the approved
+ * manifest (null for a first install) and the new one. A first install that isn't a browser
+ * adapter says what it is; a change of kind is a line at the new kind's risk. Each added private
+ * host is high: it reaches a device on the person's own network, which nothing else on the card
+ * covers. Each added raw endpoint is high: Valet can't see inside the adapter's connections.
  */
 export function runtimePermissionChanges(
-  before: Pick<AdapterManifest, 'runtime' | 'privateHosts' | 'protocols'> | null,
-  after: Pick<AdapterManifest, 'runtime' | 'privateHosts' | 'protocols'>,
+  before: Pick<AdapterManifest, 'runtime' | 'privateHosts' | 'endpoints' | 'protocols'> | null,
+  after: Pick<AdapterManifest, 'runtime' | 'privateHosts' | 'endpoints' | 'protocols'>,
 ): PermissionChange[] {
   const changes: PermissionChange[] = []
   const was = before === null ? null : runtimeOf(before)
@@ -56,13 +69,19 @@ export function runtimePermissionChanges(
   if (was !== now && !(was === null && now === 'browser')) {
     changes.push({ area: 'runtime', change: 'added', items: [describeRuntime(now)], risk: runtimeRisk(now) })
   }
-  const had = new Set((before?.privateHosts ?? []).map(describePrivateHost))
-  const has = new Set((after.privateHosts ?? []).map(describePrivateHost))
-  const added = [...has].filter((h) => !had.has(h))
-  const removed = [...had].filter((h) => !has.has(h))
-  if (added.length > 0) changes.push({ area: 'private-network', change: 'added', items: added, risk: 'high' })
-  if (removed.length > 0)
-    changes.push({ area: 'private-network', change: 'removed', items: removed, risk: 'low' })
+  const diff = (area: PermissionChange['area'], had: Set<string>, has: Set<string>) => {
+    const added = [...has].filter((h) => !had.has(h))
+    const removed = [...had].filter((h) => !has.has(h))
+    if (added.length > 0) changes.push({ area, change: 'added', items: added.slice(0, 50), risk: 'high' })
+    if (removed.length > 0)
+      changes.push({ area, change: 'removed', items: removed.slice(0, 50), risk: 'low' })
+  }
+  const endpoints = (m: typeof after | null) =>
+    new Set(m === null || runtimeOf(m) !== 'raw' ? [] : (m.endpoints ?? []).map(describeRawEndpoint))
+  diff('egress', endpoints(before), endpoints(after))
+  const hosts = (m: typeof after | null) =>
+    new Set((m?.privateHosts ?? []).map((h) => describePrivateHost(h, runtimeOf(m ?? {}))))
+  diff('private-network', hosts(before), hosts(after))
   changes.push(...sftpPermissionChanges(before?.protocols?.sftp ?? null, after.protocols?.sftp ?? null))
   return changes
 }
@@ -132,4 +151,24 @@ export function sftpPermissionChanges(
   const removed = [...had.keys()].filter((text) => !has.has(text))
   if (removed.length > 0) changes.push({ area: 'requests', change: 'removed', items: removed, risk: 'low' })
   return changes
+}
+
+/**
+ * A raw adapter's npm packages, on every card for one of its versions (the lockfile isn't in the
+ * manifest, and the code is new each time anyway): the direct ones by name and version, and a
+ * count of the rest. Empty for an adapter without any.
+ */
+export function dependencyPermissionChanges(lock: DependencyLock | null): PermissionChange[] {
+  const summary = dependencySummary(lock)
+  if (summary.direct.length === 0) return []
+  const names = summary.direct.slice(0, 48).map((d) => `npm package ${d.name} ${d.version}`)
+  const rest = summary.direct.length - names.length + summary.others
+  return [
+    {
+      area: 'runtime',
+      change: 'added',
+      items: rest === 0 ? names : [...names, `and ${rest} package${rest === 1 ? '' : 's'} they use`],
+      risk: 'high',
+    },
+  ]
 }

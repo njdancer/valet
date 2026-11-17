@@ -183,6 +183,9 @@ jobs:
         run: |
           pnpm exec vitest run test/updater/feed-server.test.ts test/updater/make-feed.test.ts \
             test/local-command.test.ts
+      - name: the Node runtime and raw adapters under Seatbelt (they run without it on Linux)
+        if: matrix.part == 'fast'
+        run: pnpm exec vitest run packages/node-runtime/test apps/desktop/test/main/raw-drafts.test.ts
       - name: the protocol hosts under Seatbelt (they run on Linux too, unsandboxed)
         if: matrix.part == 'fast'
         run: |

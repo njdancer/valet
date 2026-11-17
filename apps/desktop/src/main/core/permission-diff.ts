@@ -272,7 +272,7 @@ export function permissionDiff(before: AdapterManifest | null, after: AdapterMan
     navigation: pick((m) => m.navigation),
     frameOrigins: pick((m) => m.auth.frameOrigins),
     egress: pick((m) => m.egress),
-    privateHosts: pick((m) => (m.privateHosts ?? []).map(describePrivateHost)),
+    privateHosts: pick((m) => (m.privateHosts ?? []).map((h) => describePrivateHost(h, runtimeOf(m)))),
     runtime: {
       before: before === null ? null : describeRuntime(runtimeOf(before)),
       after: describeRuntime(runtimeOf(after)),

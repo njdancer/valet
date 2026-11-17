@@ -19,10 +19,21 @@ import type { RunContext } from './broker'
 import { type DialOptions, type DialTarget, dial } from './dial'
 import { MAX_CLIENT_HELLO_BYTES, readClientHello } from './sni'
 
+/** One call's tunnels: a listener per endpoint, by endpoint as the caller named it. */
+export interface TunnelSet {
+  readonly ports: ReadonlyMap<string, number>
+  close(): void
+  /**
+   * From now on, carries connections to these endpoints only (named as when opened): every open
+   * connection to any other is closed at once, and a new one is refused. Narrows only: a later
+   * call can't widen it again. A raw adapter's tunnels are restricted when it is given an entrusted
+   * credential, to the endpoints that credential is for (docs/adapter-kinds.md#f2-secrets-version-2).
+   */
+  restrict(endpoints: readonly string[]): void
+}
+
 /** The runtime's view (packages/node-runtime): listeners for `endpoints`, by endpoint. */
-export type OpenTunnels = (
-  endpoints: readonly string[],
-) => Promise<{ readonly ports: ReadonlyMap<string, number>; close(): void }>
+export type OpenTunnels = (endpoints: readonly string[]) => Promise<TunnelSet>
 
 /** How long a client has to send its ClientHello. */
 export const HELLO_TIMEOUT_MS = 10_000
@@ -56,7 +67,7 @@ export async function openTunnels(
   rules: (endpoint: { host: string; port: number }) => TunnelEndpointRule | null,
   run: RunContext,
   options: TunnelOptions,
-): Promise<{ readonly ports: ReadonlyMap<string, number>; close(): void }> {
+): Promise<TunnelSet> {
   if (run.signal.aborted) throw new ValetError('tool-run', 'aborted')
   const plan: { key: string; endpoint: { host: string; port: number }; rule: TunnelEndpointRule }[] = []
   for (const value of new Set(endpoints)) {
@@ -67,6 +78,11 @@ export async function openTunnels(
   }
   const servers: Server[] = []
   const live = new Set<Socket>()
+  /** Each client connection's endpoint, as the caller named it. */
+  const endpointOf = new Map<Socket, string>()
+  /** Null until restrict(): every planned endpoint may be carried. */
+  let allowed: Set<string> | null = null
+  const permits = (key: string) => allowed === null || allowed.has(key)
   let closed = false
   const close = () => {
     if (closed) return
@@ -84,16 +100,37 @@ export async function openTunnels(
           client.destroy()
           return
         }
+        if (!permits(key)) {
+          client.destroy()
+          run.record({
+            endpoint: hostPort(endpoint.host, endpoint.port),
+            kind: 'tunnel',
+            bytesUp: 0,
+            bytesDown: 0,
+            errorClass: 'host-not-allowed',
+          })
+          return
+        }
         live.add(client)
         // Request and reply protocols (SSH, IMAP) send small writes one at a time.
         client.setNoDelay(true)
-        client.once('close', () => live.delete(client))
-        void carry(client, endpoint, rule, run, options, live)
+        endpointOf.set(client, key)
+        client.once('close', () => {
+          live.delete(client)
+          endpointOf.delete(client)
+        })
+        void carry(client, endpoint, rule, run, options, live, () => permits(key))
       })
       servers.push(server)
       await new Promise<void>((resolve, reject) => {
         server.once('error', reject)
-        server.listen(0, '127.0.0.1', () => resolve())
+        server.listen(0, '127.0.0.1', () => {
+          server.removeListener('error', reject)
+          // A listener's later error (an accept that fails, out of file descriptors) would otherwise
+          // be unhandled and end Valet's main process: the call's tunnels close instead (red team F).
+          server.on('error', close)
+          resolve()
+        })
       })
       const address = server.address()
       if (address === null || typeof address === 'string') throw new ValetError('egress', 'unavailable')
@@ -103,7 +140,12 @@ export async function openTunnels(
     close()
     throw error instanceof ValetError ? error : new ValetError('egress', 'unavailable')
   }
-  return { ports, close }
+  const restrict = (endpoints: readonly string[]) => {
+    const next = new Set(endpoints.filter((e) => permits(e)))
+    allowed = next
+    for (const [client, key] of endpointOf) if (!next.has(key)) client.destroy()
+  }
+  return { ports, close, restrict }
 }
 
 async function carry(
@@ -113,6 +155,7 @@ async function carry(
   run: RunContext,
   options: TunnelOptions,
   live: Set<Socket>,
+  permitted: () => boolean,
 ): Promise<void> {
   const key = hostPort(endpoint.host, endpoint.port)
   let up = 0
@@ -171,14 +214,17 @@ async function carry(
     })
     if (hello !== 'ok') return end(hello)
   }
+  // Restricted while it waited for its slot or its ClientHello: nothing has been sent yet.
+  if (!permitted()) return end('host-not-allowed')
   for (const chunk of held) if (!spend(chunk)) return
   try {
     upstream = await dial(rule.target, { ...options.dial, signal: run.signal, passThrough: true })
   } catch (error) {
     return end(error instanceof ValetError ? error.errorClass : 'unavailable')
   }
-  if (recorded) {
+  if (recorded || !permitted()) {
     upstream.destroy()
+    if (!recorded) end('host-not-allowed')
     return
   }
   live.add(upstream)
