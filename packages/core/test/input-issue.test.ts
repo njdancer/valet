@@ -94,7 +94,7 @@ describe('issueFromZod', () => {
   })
 
   it("takes a refinement's reason from the vocabulary, never its message", () => {
-    const unique = z.object({ ids: z.array(z.number()) }).superRefine((value, ctx) => {
+    const unique = z.object({ ids: z.array(z.number()) }).superRefine((_value, ctx) => {
       ctx.addIssue({
         code: 'custom',
         path: ['ids', 1],
