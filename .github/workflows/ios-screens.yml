@@ -33,8 +33,8 @@ jobs:
       - name: screens
         run: |
           xcodebuild test -project ios/ValetPhone.xcodeproj -scheme ValetPhoneDev -destination "id=$SIMULATOR" \
-            -only-testing:ValetPhoneUITests/JourneyTests/testScreensForReview \
-            -only-testing:ValetPhoneUITests/JourneyTests/testCardAtTheLargestTextSizeInDarkMode \
+            -only-testing:ValetPhoneUITests/ScreensForReviewTests \
+            -only-testing:ValetPhoneUITests/AccessibilityTests/testCardAtTheLargestTextSizeInDarkMode \
             -resultBundlePath "$RUNNER_TEMP/screens.xcresult" CODE_SIGNING_ALLOWED=NO > "$RUNNER_TEMP/screens.log" 2>&1 || true
           grep -E "error:|Test Case" "$RUNNER_TEMP/screens.log" | tail -20
           mkdir -p "$RUNNER_TEMP/shots"
