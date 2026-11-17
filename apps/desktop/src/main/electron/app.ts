@@ -22,7 +22,13 @@ import { KeychainHelper, KeychainTokenSource, messagesHelperSocketPath } from '@
 import { EgressBroker, type OpenTunnels } from '@valet/egress'
 import { startEndpoint } from '@valet/mcp-server'
 import { diskTarballStore, loadDependencies, nodeRuntimeProcess } from '@valet/node-runtime'
-import { HostMailReader, imapBackend, type ProtocolHostOptions, sftpBackend, smtpBackend } from '@valet/protocols'
+import {
+  HostMailReader,
+  imapBackend,
+  type ProtocolHostOptions,
+  sftpBackend,
+  smtpBackend,
+} from '@valet/protocols'
 import { createLocalAccess } from '@valet/sandbox'
 import { app, clipboard, dialog, protocol, session, shell } from 'electron'
 import { href } from '../../renderer/lib/routes'
