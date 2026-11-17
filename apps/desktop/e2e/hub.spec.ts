@@ -159,7 +159,9 @@ async function linkMac(): Promise<void> {
   await hubPage.getByText(`Add ${MAC_NAME} to your account?`).waitFor()
   await hubPage.click('#confirm button[type=submit]')
   await hubPage.waitForURL(`${HUB}/`)
-  await expect(control.getByText(/This Mac is on .* account at localhost/)).toBeVisible()
+  // Settings › Devices leads with the account: a dot and one plain line, then where.
+  await expect(control.getByTestId('account-line')).toHaveText(/^connected to .*’s account as /)
+  await expect(control.getByText(/^At localhost/)).toBeVisible()
 }
 
 /**

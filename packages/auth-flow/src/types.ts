@@ -9,6 +9,7 @@ import type {
   ErrorClass,
   FetchResult,
   GrantStore,
+  MailReader,
   NeedsUserReason,
   OtpReader,
   ProviderKind,
@@ -75,6 +76,11 @@ export interface AuthFlowInput {
   readonly grants: GrantStore
   readonly providers: Partial<Record<ProviderKind, CredentialProvider>>
   readonly otpReader: OtpReader
+  /**
+   * Finds sign-in links and codes in mail (docs/imap.md#email-sign-in), read-only, in the mail
+   * account the mail grant names. Without it, a mail step ends `otp: unavailable`.
+   */
+  readonly mailReader?: MailReader
   /**
    * The manifest's session probe, run against the auth partition by assertLoggedIn and, if the
    * flow didn't just do that, once more before the flow reports ok. The caller copies the session

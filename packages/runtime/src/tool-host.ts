@@ -84,6 +84,7 @@ import { CallState } from './call-state'
 import { type Clock, type Sleep, systemClock, systemSleep } from './clock'
 import { CredentialGate, type CredentialGateOptions } from './credential-gate'
 import { GuardedHttp, type HttpCredentials, type HttpEgress, NO_HTTP_ACCESS } from './guarded-http'
+import { GuardedImap, type ImapBackend, NO_IMAP_ACCESS } from './guarded-imap'
 import { GuardedToolPage } from './guarded-page'
 import { checkInputIsolated, type InputCheck, runIsolated, type ToolProcessFactory } from './isolation/host'
 import type { LoginMarkerStore } from './login-marker'
@@ -193,6 +194,12 @@ export interface RegisteredAdapter {
    * adapter's tools to run at all; `isolation` is not used for one.
    */
   readonly raw?: RawIsolation
+  /**
+   * The protocol host behind ctx.imap, for a `protocol` adapter with protocols.imap (docs/imap.md).
+   * It signs in with the manifest's kept credential through a CredentialGate over
+   * `credentialGrants`. Without it, every ctx.imap call is not-granted.
+   */
+  readonly imap?: ImapBackend
 }
 
 /**
@@ -395,6 +402,7 @@ export class ToolHost {
       ...(adapter.credentials === undefined ? {} : { credentials: adapter.credentials }),
       ...(adapter.credentialGrants === undefined ? {} : { credentialGrants: adapter.credentialGrants }),
       ...(adapter.raw === undefined ? {} : { raw: adapter.raw }),
+      ...(adapter.imap === undefined ? {} : { imap: adapter.imap }),
     })
   }
 
@@ -1073,6 +1081,7 @@ export class ToolHost {
       },
       signal: controller.signal,
       http: this.httpFor(entry, declaration, state),
+      imap: this.imapFor(entry, declaration, state),
       ...(entry.isolation?.local === undefined || raw !== null
         ? {}
         : { local: this.liveLocal(entry.isolation.local, manifest.id, state) }),
@@ -1450,11 +1459,75 @@ export class ToolHost {
       broker: entry.http,
       ...this.credentialsFor(entry, state),
       credentialHeaders: [...credentialHeaderNames(manifest)],
-      run: {
-        meter: new RunMeter(uploadBudget(manifest, declaration.sideEffect)),
-        signal: state.signal,
-        record: this.connectionRecorder(manifest.id, state),
+      run: this.runFor(entry, declaration, state),
+    })
+  }
+
+  /**
+   * ctx.imap for one call: the protocol host behind the call's checks, signed in through the call's
+   * own CredentialGate, with the run's upload budget, and its connection recorded. Not-granted for
+   * any adapter but a protocol adapter with protocols.imap and a backend.
+   */
+  private imapFor(entry: Entry, declaration: ToolDeclaration, state: CallState): ToolContext['imap'] {
+    const manifest = entry.definition.manifest
+    const imap = manifest.protocols?.imap
+    if (entry.imap === undefined || imap === undefined || runtimeOf(manifest) !== 'protocol')
+      return NO_IMAP_ACCESS
+    const grants = entry.credentialGrants
+    return new GuardedImap({
+      adapterId: manifest.id,
+      manifest,
+      sideEffect: declaration.sideEffect,
+      site: entry.site,
+      state,
+      audit: (event) => this.record(event),
+      clock: this.clock,
+      backend: entry.imap,
+      signIn: async () => {
+        if (grants === undefined) throw new ValetError('credential', 'not-granted')
+        return this.gateFor(entry, grants, state).signIn(imap.credential, 'imap', imap.endpoint)
       },
+      run: this.runFor(entry, declaration, state),
+    })
+  }
+
+  /** One call's run context for the broker: its upload budget, signal and connection records. */
+  private runFor(entry: Entry, declaration: ToolDeclaration, state: CallState) {
+    const manifest = entry.definition.manifest
+    return {
+      meter: new RunMeter(uploadBudget(manifest, declaration.sideEffect)),
+      signal: state.signal,
+      record: (c: {
+        readonly endpoint: string
+        readonly kind: 'https' | 'http' | 'websocket' | 'tunnel'
+        readonly bytesUp: number
+        readonly bytesDown: number
+        readonly errorClass: ErrorClass | null
+      }) =>
+        void this.record({
+          type: 'egress-connection',
+          adapterId: manifest.id,
+          callId: state.callId,
+          endpoint: c.endpoint,
+          kind: c.kind,
+          bytesUp: c.bytesUp,
+          bytesDown: c.bytesDown,
+          errorClass: c.errorClass,
+        }),
+    }
+  }
+
+  private gateFor(entry: Entry, grants: CredentialGrantSource, state: CallState): CredentialGate {
+    const manifest = entry.definition.manifest
+    return new CredentialGate({
+      adapterId: manifest.id,
+      adapterHash: entry.bundleHash,
+      credentials: manifest.credentials,
+      findGrant: grants.findGrant,
+      resolve: grants.resolve,
+      audit: this.options.audit,
+      remember: (secret) => state.keepSent(secret),
+      callId: state.callId,
     })
   }
 
@@ -1631,18 +1704,8 @@ export class ToolHost {
    * audited is refused rather than sent.
    */
   private credentialsFor(entry: Entry, state: CallState): { credentials?: HttpCredentials } {
-    const manifest = entry.definition.manifest
     if (entry.credentialGrants !== undefined) {
-      const gate = new CredentialGate({
-        adapterId: manifest.id,
-        adapterHash: entry.bundleHash,
-        credentials: manifest.credentials,
-        findGrant: entry.credentialGrants.findGrant,
-        resolve: entry.credentialGrants.resolve,
-        audit: this.options.audit,
-        remember: (secret) => state.keepSent(secret),
-        callId: state.callId,
-      })
+      const gate = this.gateFor(entry, entry.credentialGrants, state)
       return { credentials: { headerFor: (credential, host) => gate.headerFor(credential, host) } }
     }
     return entry.credentials === undefined ? {} : { credentials: entry.credentials }

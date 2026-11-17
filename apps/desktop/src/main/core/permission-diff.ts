@@ -174,6 +174,10 @@ export function conditionText(condition: Condition): string {
 
 function otpText(source: OtpSource): string {
   if ('secret' in source) return `one-time code of secret ${source.secret} from 1Password`
+  if ('mail' in source) {
+    const { from, subjectContains, pattern, maxAgeSeconds } = source.mail
+    return `code from mail sent by ${JSON.stringify(from)}${subjectContains === undefined ? '' : ` with ${JSON.stringify(subjectContains)} in the subject`} matching /${pattern}/, at most ${maxAgeSeconds} s old`
+  }
   const { sender, pattern, maxAgeSeconds } = source.messages
   return `code from Messages sender ${JSON.stringify(sender)} matching /${pattern}/, at most ${maxAgeSeconds} s old`
 }
@@ -216,6 +220,8 @@ function stepDetail(step: AuthStep): string {
       return `type ${'literal' in step.value ? step.value.literal.length : 0} characters of fixed text into ${JSON.stringify(step.selector)}`
     case 'otp':
       return `type the ${otpText(step.source)} into ${JSON.stringify(step.selector)}`
+    case 'openMailLink':
+      return `open the sign-in link from mail sent by ${JSON.stringify(step.from)}${step.subjectContains === undefined ? '' : ` with ${JSON.stringify(step.subjectContains)} in the subject`}, on ${step.linkOrigin} only, at most ${step.maxAgeSeconds} s old`
     case 'pause':
       return `pause ${step.ms} ms`
     case 'when':

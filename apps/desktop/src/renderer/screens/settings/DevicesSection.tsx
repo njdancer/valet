@@ -1,5 +1,6 @@
-// Settings › Devices (#/settings/devices): the iPhones paired with this Mac, and "Pair an iPhone"
-// (J1, docs/phone-channel.md). The sheet shows a QR code; once a phone has scanned it, three codes,
+// Settings › Devices (#/settings/devices), account first (Nick, 2026-11-17): where this Mac stands
+// with the Valet account, then the iPhones, then the relay's settings under Advanced. "Pair an
+// iPhone" (J1, docs/phone-channel.md) shows a QR code; once a phone has scanned it, three codes,
 // one of which the phone shows. The right one asks for Touch ID, then the phone is paired.
 
 import {
@@ -7,6 +8,7 @@ import {
   Card,
   CardContent,
   Dialog,
+  Disclosure,
   Field,
   Inline,
   Input,
@@ -24,6 +26,7 @@ import {
 import QRCode from 'qrcode'
 import { useEffect, useMemo, useState } from 'react'
 import type { HubView, PairingView, PhonesStatus, RosterStatus } from '../../../shared/api'
+import { accountLine } from '../../lib/account-status'
 import { useAction, useApi, useLoad } from '../../lib/api-context'
 import { Failed } from '../connections/shared'
 
@@ -48,11 +51,18 @@ export function DevicesSection() {
   const status = useLoad((a) => a.phones.status(), [], ['phones-changed'])
   const [pairing, setPairing] = useState(false)
   const s = status.status === 'ready' ? status.data : null
+  const relayOnline = s?.relay === 'online'
   return (
     <Section title="Devices">
       {status.status === 'error' ? <Failed failed what="load your devices" /> : null}
       <Card>
         <CardContent className="flex flex-col gap-4">
+          <AccountStatus status={s} />
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="flex flex-col gap-4">
+          <Text weight="semibold">iPhones</Text>
           <Text tone="muted">
             A paired iPhone gets Valet’s approvals and alerts. You can approve there with Face ID or your
             passcode, and lock Valet down from it.
@@ -74,21 +84,78 @@ export function DevicesSection() {
             <Text tone="muted">{UNAVAILABLE[s.unavailableReason]}</Text>
           ) : null}
           <div>
-            <Button variant="primary" disabled={s === null || !s.available} onClick={() => setPairing(true)}>
+            <Button
+              disabled={s === null || !s.available || !relayOnline}
+              disabledReason={
+                s !== null && s.available && !relayOnline
+                  ? 'Valet isn’t connected to its relay right now'
+                  : 'Valet can’t pair a phone right now'
+              }
+              onClick={() => setPairing(true)}
+            >
               Pair an iPhone
             </Button>
           </div>
-          {s !== null && s.available ? <RelayLine status={s} /> : null}
           {s !== null && s.worksLocked === false ? <RenewKeys phones={s.phones.length} /> : null}
-          {s !== null && s.relay === 'online' && s.hub !== null && s.hub.state !== 'off' ? (
-            <HubAccount hub={s.hub} roster={s.roster} />
-          ) : null}
-          <RelaySetting paired={s?.phones.length ?? 0} />
-          <AgentHostSetting />
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="flex flex-col gap-4">
+          <AdvancedSettings paired={s?.phones.length ?? 0} />
         </CardContent>
       </Card>
       <PairSheet open={pairing} onOpenChange={setPairing} view={s?.pairing ?? { step: 'idle' }} />
     </Section>
+  )
+}
+
+/**
+ * The account first: one line with a dot saying where this Mac stands (the same line as the Needs
+ * you status card), the relay under it, then what to do about the account.
+ */
+function AccountStatus({ status }: { readonly status: PhonesStatus | null }) {
+  const line = status === null ? null : accountLine(status)
+  const hub = status?.hub ?? null
+  return (
+    <Stack gap={3}>
+      <Text weight="semibold">Valet account</Text>
+      {line !== null ? (
+        <div className="flex items-center gap-2" data-testid="account-line">
+          <StatusDot tone={line.tone} />
+          <Text>{line.text.replace(/^Valet account · /, '')}</Text>
+        </div>
+      ) : status === null || (status.relayOrigin !== null && hub === null && status.relay !== 'stopped') ? (
+        <div className="flex items-center gap-2">
+          <StatusDot tone="neutral" pulse />
+          <Text tone="muted">Checking your Valet account…</Text>
+        </div>
+      ) : status.relayOrigin === null ? (
+        <Text tone="muted">
+          Valet’s relay isn’t set up, so this Mac can’t join an account or pair a phone. Enter its host name
+          under Advanced.
+        </Text>
+      ) : hub?.state === 'off' ? (
+        <Text tone="muted">Your relay has no Valet account. Phones pair with this Mac directly.</Text>
+      ) : null}
+      {status !== null && status.relayOrigin !== null ? <RelayLine status={status} /> : null}
+      {status !== null && status.relay === 'online' && hub !== null && hub.state !== 'off' ? (
+        <HubAccount hub={hub} roster={status.roster} />
+      ) : null}
+    </Stack>
+  )
+}
+
+/** The relay's settings: most people never touch them, and a wrong value breaks everything. */
+function AdvancedSettings({ paired }: { readonly paired: number }) {
+  const settings = useLoad((a) => a.settings.get(), [], ['settings-changed'])
+  if (settings.status !== 'ready') return null
+  return (
+    <Disclosure summary="Advanced" defaultOpen={settings.data.relayHost === null}>
+      <Stack gap={4}>
+        <RelaySetting paired={paired} />
+        <AgentHostSetting />
+      </Stack>
+    </Disclosure>
   )
 }
 
@@ -209,18 +276,24 @@ function AgentHostSetting() {
   )
 }
 
+const RELAY_DOWN: Record<Exclude<PhonesStatus['relay'], 'online' | 'connecting'>, string> = {
+  offline: 'Valet keeps trying. Check this Mac is online.',
+  refused: 'The relay turned this Mac away. Check the host name under Advanced.',
+  stopped: 'Valet isn’t using the relay right now.',
+}
+
 function RelayLine({ status }: { readonly status: PhonesStatus }) {
   const online = status.relay === 'online'
+  const host = status.relayOrigin === null ? '' : ` (${new URL(status.relayOrigin).host})`
   return (
     <div className="flex items-center gap-2">
       <StatusDot tone={online ? 'success' : 'warning'} pulse={status.relay === 'connecting'} />
       <Text size="sm" tone="muted">
         {online
-          ? 'Connected to the relay'
+          ? `Connected to the relay${host}`
           : status.relay === 'connecting'
-            ? 'Connecting to the relay…'
-            : 'Relay not connected'}
-        {status.relayOrigin === null ? '' : ` (${new URL(status.relayOrigin).host})`}
+            ? `Connecting to the relay${host}…`
+            : `Not connected to the relay${host}. ${RELAY_DOWN[status.relay]}`}
       </Text>
     </div>
   )
@@ -262,10 +335,9 @@ function HubAccount({
   const host = new URL(hub.url).host
   return (
     <Stack gap={2}>
-      <Text weight="semibold">Valet account</Text>
       {hub.state === 'linked' ? (
         <Text tone="muted">
-          This Mac is on {hub.account}’s account at {host}, as {hub.name} ({hub.slug}).
+          At {host}, as {hub.name}.
         </Text>
       ) : hub.state === 'linking' ? (
         <Text tone="muted">
@@ -305,6 +377,15 @@ function HubAccount({
             </Button>
           </>
         ) : null}
+        {hub.state === 'linked' && roster.state === 'needs-you' && !confirming ? (
+          <Button
+            variant="primary"
+            loading={action.busy}
+            onClick={() => void action.run(() => api.phones.retryRoster())}
+          >
+            Try again
+          </Button>
+        ) : null}
         {hub.state === 'linked' ? (
           confirming ? (
             <>
@@ -340,27 +421,18 @@ const ROSTER_LINE: Record<Exclude<RosterStatus['state'], 'off' | 'on'>, string> 
   refused: 'The device list the hub sent doesn’t check, so Valet isn’t using it.',
 }
 
-/** The account's device list (relay-hub.md, step 4): every device on it signs who joins. */
+/**
+ * The account's device list (relay-hub.md, step 4): every device on it signs who joins. Try again,
+ * when Touch ID was cancelled, sits with the account's other buttons.
+ */
 function RosterLine({ roster }: { readonly roster: RosterStatus }) {
-  const api = useApi()
-  const action = useAction()
   if (roster.state === 'off') return null
   return (
-    <Stack gap={2}>
-      <Text tone="muted">
-        {roster.state === 'on'
-          ? `Your account’s device list has ${roster.devices} ${roster.devices === 1 ? 'device' : 'devices'}, each added by one already on it.`
-          : ROSTER_LINE[roster.state]}
-      </Text>
-      {roster.state === 'needs-you' ? (
-        <div>
-          <Button loading={action.busy} onClick={() => void action.run(() => api.phones.retryRoster())}>
-            Try again
-          </Button>
-        </div>
-      ) : null}
-      <Failed failed={action.failed} what="update the device list" />
-    </Stack>
+    <Text tone="muted">
+      {roster.state === 'on'
+        ? `Your account’s device list has ${roster.devices} ${roster.devices === 1 ? 'device' : 'devices'}, each added by one already on it.`
+        : ROSTER_LINE[roster.state]}
+    </Text>
   )
 }
 

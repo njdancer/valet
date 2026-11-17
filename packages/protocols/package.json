@@ -1,0 +1,20 @@
+{
+  "name": "@valet/protocols",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./build": "./src/build.ts"
+  },
+  "dependencies": {
+    "@valet/core": "workspace:*",
+    "@valet/egress": "workspace:*",
+    "@valet/node-runtime": "workspace:*",
+    "@valet/runtime": "workspace:*"
+  },
+  "devDependencies": {
+    "@valet/fake-imap": "workspace:*"
+  }
+}

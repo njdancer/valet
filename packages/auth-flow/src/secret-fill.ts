@@ -9,9 +9,12 @@ import {
   type ErrorClass,
   type Grant,
   httpsOrigin,
+  MAIL_SECRET,
+  type MailSignInQuery,
   MESSAGES_SECRET,
   type MessagesOtpQuery,
   originAllowed,
+  parseMailGrantRef,
   type ResolveFailure,
   type SecretField,
   type SecretRef,
@@ -45,10 +48,13 @@ export async function fillSecret(ctx: FlowContext, selector: string, ref: Secret
   // looping, and typing it again is how accounts get locked. Refused before the value is fetched.
   if (ref.field === 'password' && ctx.passwordFills > 0) throw new NeedsUserHalt('login-required', undefined)
   // The schema reserves the name; a manifest that uses it anyway would read a Messages grant as its own.
-  if (ref.secret === MESSAGES_SECRET) throw new ValetError('secret-fill', 'invalid')
+  if (ref.secret === MESSAGES_SECRET || ref.secret === MAIL_SECRET)
+    throw new ValetError('secret-fill', 'invalid')
   const grant = await findGrant(ctx, ref.secret)
-  // A Messages grant names a sender, not a credential item, and is never resolved through a provider.
-  if (grant.provider === 'messages') throw new ValetError('secret-fill', 'not-granted')
+  // A Messages or mail grant names a sender, not a credential item, and is never resolved through a
+  // provider.
+  if (grant.provider === 'messages' || grant.provider === 'mail')
+    throw new ValetError('secret-fill', 'not-granted')
   // hasOwn, because a secret named "constructor" would otherwise find Object's.
   const request = Object.hasOwn(manifest.secrets, ref.secret) ? manifest.secrets[ref.secret] : undefined
   if (request === undefined || !request.fields.includes(ref.field)) {
@@ -108,6 +114,153 @@ export async function fillMessagesOtp(
     await typeSecret(ctx, code, MESSAGES_SECRET, 'otp', element, origins)
   } finally {
     code.dispose()
+  }
+}
+
+/**
+ * The mail grant for sign-in mail from `from`: provider `mail`, under the reserved name, for this
+ * exact adapter and hash, naming the mail account and exactly this sender. Returns the account and
+ * where the code or link may be used: the grant's origins that are also navigation origins.
+ */
+async function mailGrant(
+  ctx: FlowContext,
+  from: string,
+): Promise<{ account: string; origins: readonly string[] }> {
+  const { manifest } = ctx.input
+  if (Object.hasOwn(manifest.secrets, MAIL_SECRET)) throw new ValetError('secret-fill', 'invalid')
+  const grant = await findGrant(ctx, MAIL_SECRET)
+  const ref = grant.provider === 'mail' ? parseMailGrantRef(grant.itemRef) : null
+  if (ref === null || ref.sender !== from) throw new ValetError('secret-fill', 'not-granted')
+  return { account: ref.account, origins: allowedOrigins(grant.origins, manifest.navigation) }
+}
+
+/**
+ * Polls the mail account until a matching sign-in mail arrives or the flow runs out of time. Mail
+ * that arrived before the flow started is never accepted, so an old link or code can't be replayed.
+ */
+async function readMail(ctx: FlowContext, query: MailSignInQuery): Promise<SecretValue> {
+  const reader = ctx.input.mailReader
+  if (reader === undefined) throw new ValetError('otp', 'unavailable')
+  const deadline = Math.min(ctx.deadline, now(ctx) + query.maxAgeSeconds * 1000)
+  for (;;) {
+    try {
+      return await resolveSecret(() => reader.find(query, ctx.startedAt), 'otp')
+    } catch (error) {
+      if (!(error instanceof ValetError) || error.errorClass !== 'not-found') throw error
+    }
+    await checkNavigation(ctx)
+    await checkBlocked(ctx)
+    checkAborted(ctx)
+    if (now(ctx) >= deadline) throw new ValetError('otp', 'not-found')
+    await pause(ctx, Math.min(MAIL_POLL_MS, deadline - now(ctx), remainingMs(ctx)))
+  }
+}
+
+/** How often to look for sign-in mail that hasn't arrived yet. Each look is a few IMAP commands. */
+export const MAIL_POLL_MS = 5000
+
+/**
+ * Fills a one-time code from a sign-in mail. As with Messages, reading the person's mail needs their
+ * say-so: the mail grant for this sender. The code may go only to origins in that grant that are
+ * also navigation origins.
+ */
+export async function fillMailOtp(
+  ctx: FlowContext,
+  selector: string,
+  source: {
+    readonly from: string
+    readonly subjectContains?: string | undefined
+    readonly pattern: string
+    readonly maxAgeSeconds: number
+  },
+): Promise<void> {
+  const { account, origins } = await mailGrant(ctx, source.from)
+  await checkTarget(ctx, selector, 'otp', origins)
+  const code = await readMail(ctx, {
+    account,
+    from: source.from,
+    subjectContains: source.subjectContains,
+    maxAgeSeconds: source.maxAgeSeconds,
+    extract: { pattern: source.pattern },
+  })
+  try {
+    // The reader hands back only what looks like a code; checked again here all the same.
+    if (!code.reveal((v) => /^[A-Za-z0-9]{4,10}$/.test(v))) throw new ValetError('otp', 'not-found')
+    await checkTarget(ctx, selector, 'otp', origins)
+    const element = await focusTarget(ctx, selector, 'otp', origins)
+    await typeSecret(ctx, code, MAIL_SECRET, 'otp', element, origins)
+  } finally {
+    code.dispose()
+  }
+}
+
+/**
+ * Opens the sign-in link a site mailed, in the auth partition. The link is a login secret: it is
+ * kept for redaction and audited as used before it is opened, it must be https on exactly the
+ * step's linkOrigin, and that origin must be one the grant and navigation both allow.
+ */
+export async function openMailLink(
+  ctx: FlowContext,
+  step: {
+    readonly from: string
+    readonly subjectContains?: string | undefined
+    readonly linkOrigin: string
+    readonly maxAgeSeconds: number
+  },
+): Promise<void> {
+  const { manifest, adapterHash, callId, audit, rememberSecret, page } = ctx.input
+  const { account, origins } = await mailGrant(ctx, step.from)
+  if (!origins.includes(step.linkOrigin)) throw new ValetError('secret-fill', 'origin-mismatch')
+  const link = await readMail(ctx, {
+    account,
+    from: step.from,
+    subjectContains: step.subjectContains,
+    maxAgeSeconds: step.maxAgeSeconds,
+    extract: { linkOrigin: step.linkOrigin },
+  })
+  try {
+    const target = link.reveal((v) => {
+      try {
+        const url = new URL(v)
+        return url.protocol === 'https:' &&
+          url.origin === step.linkOrigin &&
+          url.username === '' &&
+          url.password === ''
+          ? url.href
+          : null
+      } catch {
+        return null
+      }
+    })
+    if (target === null || !urlOriginAllowed(target, origins))
+      throw new ValetError('secret-fill', 'origin-mismatch')
+    checkAborted(ctx)
+    if (ctx.input.beforeAttempt !== undefined) {
+      try {
+        await ctx.input.beforeAttempt()
+      } catch {
+        throw new ValetError('secret-fill', 'internal')
+      }
+    }
+    remember(link, rememberSecret)
+    await guarded('secret-fill', () =>
+      audit.append({
+        type: 'secret-used',
+        adapterId: manifest.id,
+        adapterHash,
+        secret: MAIL_SECRET,
+        field: 'otp',
+        origin: step.linkOrigin,
+        callId,
+      }),
+    )
+    ctx.attemptStarted = true
+    const { paceNavigation } = ctx.input
+    if (paceNavigation !== undefined) await guarded('navigate', paceNavigation)
+    checkAborted(ctx)
+    await guarded('navigate', () => page.goto(target))
+  } finally {
+    link.dispose()
   }
 }
 

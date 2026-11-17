@@ -48,6 +48,8 @@ export const CAPABILITIES = [
   'http.ws.close',
   // Entrusted credentials (docs/adapter-kinds.md#raw): not-granted unless the runtime is raw.
   'secrets.get',
+  // The protocol host (docs/imap.md): one capability, the operation's name and its arguments.
+  'imap.op',
 ] as const
 export type Capability = (typeof CAPABILITIES)[number]
 

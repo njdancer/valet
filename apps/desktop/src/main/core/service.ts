@@ -23,6 +23,7 @@ import {
   describeDeclaration,
   type Grant,
   type GrantStore,
+  type ImapProtocol,
   type LocalAccess,
   type MacToPhoneMessage,
   MESSAGES_SECRET,
@@ -70,6 +71,7 @@ import {
   type CredentialGrantSource,
   DEFAULT_LOGIN_BACKOFF,
   type HttpEgress,
+  type ImapBackend,
   JsonFileStore,
   LoginAttemptMarker,
   noBrowserDriver,
@@ -316,6 +318,11 @@ export interface ServiceDeps {
    * CredentialGate over them. Without it, every credential is not-granted.
    */
   readonly credentialGrants?: CredentialGrantSource
+  /**
+   * The protocol host behind a protocol adapter's ctx.imap (docs/imap.md), for its protocols.imap.
+   * Without it, every ctx.imap call is not-granted.
+   */
+  readonly imap?: (protocol: ImapProtocol) => ImapBackend
   /** Builds an adapter's driver, with the reporters its refusals outside a run go to. */
   readonly createDriver: (manifest: AdapterManifest, reporters: DriverReporters) => Promise<SessionDriver>
   readonly credentials: Credentials
@@ -1964,6 +1971,11 @@ export class AppService {
       driver,
       ...(this.deps.egress === undefined || kind !== 'http' ? {} : { http: this.deps.egress(manifest) }),
       ...(this.deps.credentialGrants === undefined ? {} : { credentialGrants: this.deps.credentialGrants }),
+      ...(this.deps.imap === undefined ||
+      runtimeOf(manifest) !== 'protocol' ||
+      manifest.protocols?.imap === undefined
+        ? {}
+        : { imap: this.deps.imap(manifest.protocols.imap) }),
       ...(start === undefined || adapter.toolScript === null
         ? {}
         : {

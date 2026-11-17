@@ -156,9 +156,15 @@ public final class PhoneModel {
   public private(set) var handoffs: [HandoffEntry] = []
   /// The Valet account the paired Mac says this phone is on, once it says (step 4c).
   public private(set) var account: AccountModel?
+  /// The other Macs on the account, each on its own channel with its own cards (step 4c). Only
+  /// the model for the paired Mac has these; each of them is a model for one Mac.
+  public private(set) var otherMacs: [PhoneModel] = []
+  /// Every Mac this phone reaches: the paired one first.
+  public var allMacs: [PhoneModel] { [self] + otherMacs.filter { $0.phase == .paired } }
 
   private let transport: RelayTransport
   private let hub: HubTransport?
+  private let macStore: @MainActor (String) -> PhoneStore
   private let store: PhoneStore
   private let clock: PhoneClock
   private var persisted: PersistedPhone?
@@ -189,10 +195,12 @@ public final class PhoneModel {
   private let keyFactory: Keys
 
   public init(
-    transport: RelayTransport, store: PhoneStore, clock: PhoneClock = .system, keys keyFactory: Keys, hub: HubTransport? = nil
+    transport: RelayTransport, store: PhoneStore, clock: PhoneClock = .system, keys keyFactory: Keys, hub: HubTransport? = nil,
+    macStore: @escaping @MainActor (String) -> PhoneStore = { _ in MemoryPhoneStore() }
   ) {
     self.transport = transport
     self.hub = hub
+    self.macStore = macStore
     self.store = store
     self.clock = clock
     self.keyFactory = keyFactory
@@ -361,6 +369,7 @@ public final class PhoneModel {
 
   /// Opens the device channel. Called at launch when paired, and after the Mac registered us.
   public func connect() {
+    for mac in otherMacs { mac.connect() }
     guard let persisted, connection == nil else { return }
     let conn = transport.connect(relay: persisted.relay, macId: persisted.macId, path: .phone, onFrame: { [weak self] text in
       self?.receive(frame: text)
@@ -371,6 +380,7 @@ public final class PhoneModel {
   }
 
   public func disconnect() {
+    for mac in otherMacs { mac.disconnect() }
     connection?.close()
     connection = nil
     connected = false
@@ -495,6 +505,8 @@ public final class PhoneModel {
   }
 
   private func resetToUnpaired(notice: String?) {
+    for mac in otherMacs { mac.unpair() }
+    otherMacs = []
     account = nil
     keys = nil
     persisted = nil
@@ -530,8 +542,44 @@ public final class PhoneModel {
       onPin: { [weak self] pin in
         self?.persisted?.account = pin
         self?.save()
-      }
+      },
+      onList: { [weak self] in self?.syncMacs() }
     )
+  }
+
+  /// One model per other Mac on the checked list, dialling the account's relay with this phone's
+  /// own keys. The Mac knows this phone from the same list, so there's nothing to pair. A Mac the
+  /// list drops is forgotten here.
+  private func syncMacs() {
+    guard let account, let relay = account.relay, let persisted, keys != nil else { return }
+    let macs = account.devices.filter { $0.role == "mac" && $0.deviceId != persisted.macId }
+    let wanted = Set(macs.map(\.deviceId))
+    for mac in otherMacs where !wanted.contains(mac.macId ?? "") { mac.unpair() }
+    otherMacs.removeAll { !wanted.contains($0.macId ?? "") }
+    for mac in macs {
+      if let model = otherMacs.first(where: { $0.macId == mac.deviceId }), model.phase == .paired { continue }
+      otherMacs.removeAll { $0.macId == mac.deviceId }
+      let store = macStore(mac.deviceId)
+      var state = store.load()
+      if state?.viaAccount != true || state?.macApprovalKey != mac.approvalKey || state?.macAgreementKey != mac.agreementKey
+        || state?.keys != persisted.keys
+      {
+        state = PersistedPhone(
+          macId: mac.deviceId, macApprovalKey: mac.approvalKey, macAgreementKey: mac.agreementKey, relay: relay,
+          keys: persisted.keys, name: persisted.name, macName: nil, recordPayload: nil, recordSignature: nil,
+          lastInbound: 0, nextOutbound: 1, outbox: [:], requests: [], viaAccount: true
+        )
+      }
+      guard var state else { continue }
+      state.relay = relay
+      state.macName = account.name(mac.deviceId)
+      store.save(state)
+      let model = PhoneModel(transport: transport, store: store, clock: clock, keys: keyFactory)
+      guard model.phase == .paired else { continue }
+      otherMacs.append(model)
+      if connection != nil { model.connect() }
+    }
+    touch()
   }
 
   // MARK: Sending
@@ -778,6 +826,7 @@ public final class PhoneModel {
 
   /// Re-checks deadlines. The app calls this every second; tests call it after moving the clock.
   public func tick() {
+    for mac in otherMacs { mac.tick() }
     let now = clock.uptime()
     for i in cards.indices {
       let entry = cards[i]
@@ -795,7 +844,7 @@ public final class PhoneModel {
   private func touch() { lastChange = clock.uptime() }
 
   private func save() {
-    if let persisted, persisted.recordPayload != nil || isPairing { store.save(persisted) }
+    if let persisted, persisted.paired || isPairing { store.save(persisted) }
   }
 
   private var isPairing: Bool { if case .pairing = phase { return true } else { return false } }

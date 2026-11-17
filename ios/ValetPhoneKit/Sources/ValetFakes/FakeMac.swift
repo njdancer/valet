@@ -168,6 +168,14 @@ public final class FakeMac {
     return SignedText(payload: payload, signature: Base64URL.encode(signature.rawRepresentation))
   }
 
+  /// A phone on the account's list that this Mac didn't pair: it trusts it from the list, as the
+  /// Mac's DeviceStore does with account phones, and the relay lets it in.
+  public func trust(phone: RosterDevice) {
+    let signed = record(role: "phone", deviceId: phone.deviceId, name: phone.name, approval: phone.approvalKey,
+                        transport: phone.transportKey, agreement: phone.agreementKey)
+    phoneRecord = try? DeviceRecord.parse(signed.payload)
+  }
+
   /// This Mac's own record, signed by its own key: what it sends the hub to ask to join a list.
   public func joinRecord() -> SignedText {
     record(role: "mac", deviceId: macId, name: name, approval: Signing.spki(approvalKey.publicKey),

@@ -21,6 +21,8 @@ export function subjectProvider(provider: ProviderKind): ApprovalSubject<'secret
   if (provider === 'fake') return 'keychain-copy'
   // A Valet-made SSH key is only ever a credential's, never a browser login's secret.
   if (provider === 'valet-key') throw new ValetError('grant', 'invalid')
+  // Granting sign-in mail in the app comes with the credential grant screens (docs/imap.md).
+  if (provider === 'mail') throw new ValetError('grant', 'invalid')
   // The 1Password CLI reads the person's vault through the 1Password app, as the desktop one does.
   if (provider === 'onepassword-cli') return 'onepassword-desktop'
   return provider
