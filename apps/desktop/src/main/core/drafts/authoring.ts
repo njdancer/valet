@@ -10,6 +10,7 @@ import {
   type AuditEvent,
   bundleHash,
   homeUnreachable,
+  needsYouTitle,
   type PackageFiles,
   type PermissionChange,
   parseManifest,
@@ -791,15 +792,12 @@ export class DraftAuthoring implements Authoring {
         packageHash: bundleHash(outcome.files),
         requestId: asked.requestId,
       })
-      const verb = installed === null ? 'Install' : 'Update'
       return {
         ref: asked.ref,
         requestId: asked.requestId,
         expiresAt: asked.expiresAt,
         adapterHash: loaded.adapterHash,
-        tellThePerson:
-          `Waiting for the person in Valet: “${verb} ${loaded.manifest.name} for ${domain}” (approval ${asked.ref}). ` +
-          'They can approve it on their phone or Mac.',
+        tellThePerson: submitSentence(loaded.manifest, domain, asked.ref, asked.previousHash === null),
       }
     } finally {
       this.submitting.delete(draftId)
@@ -1424,4 +1422,29 @@ function sentenceOf(error: unknown): string {
 
 function clip(text: string, max = 120): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text
+}
+
+/**
+ * What the agent tells the person after a submit, in the titles the person will see: the Mac's
+ * Needs you item and review (which show the ref) and a paired phone's card.
+ */
+export function submitSentence(
+  manifest: Pick<AdapterManifest, 'id' | 'name' | 'version'>,
+  domain: string,
+  ref: string,
+  firstInstall: boolean,
+): string {
+  const mac = needsYouTitle({
+    kind: 'review',
+    adapterName: manifest.name,
+    version: manifest.version,
+    firstInstall,
+  })
+  const phone = firstInstall
+    ? `Install an adapter for ${domain}`
+    : `Update ${manifest.id} to ${manifest.version}`
+  return (
+    `Waiting for the person in Valet: “${mac}” in Needs you on their Mac, marked approval ${ref}, ` +
+    `or “${phone}” on their phone.`
+  )
 }

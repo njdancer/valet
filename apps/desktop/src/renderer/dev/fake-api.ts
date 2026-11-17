@@ -1192,8 +1192,9 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         emit({ type: 'adapters-changed' })
         emit({ type: 'attention-changed' })
       },
-      async reject(adapterId, hash) {
-        enter('approvals.reject', adapterId, hash)
+      async reject(adapterId, hash, note) {
+        if (note === undefined) enter('approvals.reject', adapterId, hash)
+        else enter('approvals.reject', adapterId, hash, note)
         const review = reviews.find((r) => r.adapterId === adapterId)
         if (review === undefined || review.to.hash !== hash) throw new Error('stale review')
         reviews = reviews.filter((r) => r !== review)

@@ -23,6 +23,7 @@ import type {
   MessagesSourceInfo,
   PendingReview,
   ReviewItem,
+  ReviewRequestInfo,
   SecretRequestInfo,
   SessionStatus,
   SettingMissingItem,
@@ -209,25 +210,42 @@ export function adapterDetail(state: AdapterState): AdapterDetail {
   }
 }
 
-/** The review waiting for the installed bundle, or null when it is approved or rejected. */
-export function pendingReview(state: AdapterState, submittedAt: string): PendingReview | null {
+/**
+ * The review waiting for the installed bundle, or null when it is approved or rejected. An agent's
+ * draft carries its request (the note, the ref it was told, Valet's checks) and is dated by it;
+ * anything else by `submittedAt`, when this run of Valet found it.
+ */
+export function pendingReview(
+  state: AdapterState,
+  submittedAt: string,
+  extra: {
+    readonly request?: ReviewRequestInfo | null
+    readonly requestedAt?: string
+    readonly staged?: boolean
+  } = {},
+): PendingReview | null {
   if (state.approved || state.rejected) return null
   const manifest = state.adapter.definition.manifest
   const before = state.previous
+  const origin = state.adapter.source ?? 'builtin'
+  const request = extra.request ?? null
   return {
     adapterId: manifest.id,
     name: manifest.name,
     site: siteOf(manifest),
     from: before === null ? null : { version: before.version, hash: before.hash },
     to: { version: manifest.version, hash: state.adapter.hash },
-    submittedAt,
-    // Built-in bundles arrive with the app. The API's sources are for imported bundles.
-    source: 'import',
+    submittedAt: extra.requestedAt ?? submittedAt,
+    source: request !== null || origin === 'draft' ? 'agent' : origin === 'builtin' ? 'builtin' : 'import',
+    request,
+    staged: extra.staged ?? false,
     diff: permissionDiff(before?.manifest ?? null, manifest),
     manifestDiff: lineDiff(before === null ? [] : manifestText(before.manifest), manifestText(manifest)),
     files: fileChanges(before?.files ?? null, state.adapter.files),
-    origin: state.adapter.source ?? 'builtin',
-    takesSession: (state.adapter.source ?? 'builtin') !== 'builtin' && hasLogin(manifest),
+    origin,
+    takesSession: origin !== 'builtin' && hasLogin(manifest),
+    // A manifest's login is all or nothing (parseManifest): no probe, no steps, secrets or cookies.
+    logsIn: hasLogin(manifest),
   }
 }
 
@@ -240,6 +258,11 @@ export function reviewItem(review: PendingReview): ReviewItem {
     version: review.to.version,
     addsPermissions: addsPermissions(review.diff),
     firstInstall: review.from === null,
+    keepsServing: review.staged === true && review.from !== null,
+    requestedBy:
+      review.request === null || review.request === undefined
+        ? null
+        : { client: review.request.client, ref: review.request.ref },
   }
 }
 

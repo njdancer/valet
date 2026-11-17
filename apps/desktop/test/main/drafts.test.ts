@@ -25,6 +25,7 @@ import {
   DraftAuthoring,
   type RequestState,
   type SubmitRequest,
+  submitSentence,
   trialProblem,
 } from '../../src/main/core/drafts/authoring'
 import { partialMismatch } from '../../src/main/core/drafts/cases'
@@ -372,6 +373,18 @@ describe('ownership and limits', () => {
 })
 
 describe('submit', () => {
+  it('tells the agent the titles the Mac and the phone show, and the ref the Mac shows', () => {
+    const manifest = { id: 'wiktionary', name: 'Wiktionary', version: '1.1.0' }
+    expect(submitSentence(manifest, 'wiktionary.org', '5AB4', true)).toBe(
+      'Waiting for the person in Valet: “Review Wiktionary before first use” in Needs you on their Mac, ' +
+        'marked approval 5AB4, or “Install an adapter for wiktionary.org” on their phone.',
+    )
+    expect(submitSentence(manifest, 'wiktionary.org', '5AB4', false)).toBe(
+      'Waiting for the person in Valet: “Review the Wiktionary update (1.1.0)” in Needs you on their Mac, ' +
+        'marked approval 5AB4, or “Update wiktionary to 1.1.0” on their phone.',
+    )
+  })
+
   it('re-checks, then hands the broker Valet’s check lines and the agent’s cases in their own field', async () => {
     const h = await harness()
     const { draft } = await h.authoring.createDraft(AGENT, { adapterId: 'shop', from: 'blank', name: 'Shop' })
@@ -380,7 +393,9 @@ describe('submit', () => {
       references: [],
       followOns: [],
     })
-    expect(result.tellThePerson).toMatch(/Install Shop for example.com/)
+    expect(result.tellThePerson).toMatch(
+      /^Waiting for the person in Valet: “Review Shop before first use” in Needs you on their Mac, marked approval [0-9A-Z]{4}, or “Install an adapter for example.com” on their phone\.$/,
+    )
     const [request] = h.submits
     expect(request?.agentTests).toEqual({ passed: 2, failed: 0 })
     expect(request?.checks.some((line) => /case/i.test(line))).toBe(false)

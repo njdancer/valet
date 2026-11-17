@@ -14,6 +14,7 @@ import {
   probeChanged,
   probeText,
   requestsByPurpose,
+  reviewLogsIn,
   secretChanges,
   type Tone,
   toolChanges,
@@ -155,6 +156,7 @@ export function PermissionChanges({ review }: { readonly review: PendingReview }
   const { diff } = review
   const changedSecrets = changedNames(diff.secrets)
   const changedTools = changedNames(diff.tools)
+  const login = reviewLogsIn(review)
   return (
     <div className="flex flex-col">
       <Section title="Web addresses its tools may contact">
@@ -168,7 +170,11 @@ export function PermissionChanges({ review }: { readonly review: PendingReview }
             key={host}
             tone="write"
             tag="new host"
-            why="New web address. Tool pages may send requests here, including your session cookies."
+            why={
+              login
+                ? 'New web address. Tool pages may send requests here, including your session cookies.'
+                : 'New web address. Pages it opens may send requests here.'
+            }
           >
             <Code>{host}</Code>
           </Added>
@@ -180,14 +186,19 @@ export function PermissionChanges({ review }: { readonly review: PendingReview }
         ))}
       </Section>
 
-      <Section title="Pages the login may open">
+      <Section title={login ? 'Pages the login may open' : 'Pages it opens'}>
         {diff.navigation.unchanged.length > 0 ? (
           <Unchanged>
             <Code>{diff.navigation.unchanged.join(', ')}</Code>
           </Unchanged>
         ) : null}
         {diff.navigation.added.map((o) => (
-          <Added key={o} tone="write" tag="new origin" why="The login may now open pages here.">
+          <Added
+            key={o}
+            tone="write"
+            tag="new origin"
+            why={login ? 'The login may now open pages here.' : 'It may now open pages here.'}
+          >
             <Code>{o}</Code>
           </Added>
         ))}
@@ -276,49 +287,51 @@ export function PermissionChanges({ review }: { readonly review: PendingReview }
         </Section>
       )}
 
-      <Section title="What moves from the login to its tools">
-        {diff.cookieDomains.unchanged.length > 0 || diff.storage.unchanged.length > 0 ? (
-          <Unchanged>
-            <Code>
-              {`cookies on ${diff.cookieDomains.unchanged.join(', ') || 'no domains'} · ${
-                diff.storage.unchanged.length === 0
-                  ? 'no storage keys'
-                  : plural(diff.storage.unchanged.length, 'storage key')
-              }`}
-            </Code>
-          </Unchanged>
-        ) : null}
-        {diff.cookieDomains.added.map((d) => (
-          <Added
-            key={d}
-            tone="write"
-            tag="new domain"
-            why="Your session on this domain would be copied to where the adapter’s code runs."
-          >
-            <Code>{`cookies on ${d}`}</Code>
-          </Added>
-        ))}
-        {diff.cookieDomains.removed.map((d) => (
-          <Removed key={d}>
-            <Code>{`cookies on ${d}`}</Code>
-          </Removed>
-        ))}
-        {diff.storage.added.map((s) => (
-          <Added
-            key={`${s.origin} ${s.key}`}
-            tone="write"
-            tag="new storage key"
-            why="This saved web-page value would be copied to where the adapter’s code runs."
-          >
-            <Code>{`${s.origin} · ${s.key}`}</Code>
-          </Added>
-        ))}
-        {diff.storage.removed.map((s) => (
-          <Removed key={`${s.origin} ${s.key}`}>
-            <Code>{`${s.origin} · ${s.key}`}</Code>
-          </Removed>
-        ))}
-      </Section>
+      {!login && isEmpty(diff.cookieDomains) && isEmpty(diff.storage) ? null : (
+        <Section title="What moves from the login to its tools">
+          {diff.cookieDomains.unchanged.length > 0 || diff.storage.unchanged.length > 0 ? (
+            <Unchanged>
+              <Code>
+                {`cookies on ${diff.cookieDomains.unchanged.join(', ') || 'no domains'} · ${
+                  diff.storage.unchanged.length === 0
+                    ? 'no storage keys'
+                    : plural(diff.storage.unchanged.length, 'storage key')
+                }`}
+              </Code>
+            </Unchanged>
+          ) : null}
+          {diff.cookieDomains.added.map((d) => (
+            <Added
+              key={d}
+              tone="write"
+              tag="new domain"
+              why="Your session on this domain would be copied to where the adapter’s code runs."
+            >
+              <Code>{`cookies on ${d}`}</Code>
+            </Added>
+          ))}
+          {diff.cookieDomains.removed.map((d) => (
+            <Removed key={d}>
+              <Code>{`cookies on ${d}`}</Code>
+            </Removed>
+          ))}
+          {diff.storage.added.map((s) => (
+            <Added
+              key={`${s.origin} ${s.key}`}
+              tone="write"
+              tag="new storage key"
+              why="This saved web-page value would be copied to where the adapter’s code runs."
+            >
+              <Code>{`${s.origin} · ${s.key}`}</Code>
+            </Added>
+          ))}
+          {diff.storage.removed.map((s) => (
+            <Removed key={`${s.origin} ${s.key}`}>
+              <Code>{`${s.origin} · ${s.key}`}</Code>
+            </Removed>
+          ))}
+        </Section>
+      )}
 
       <Section title="Logins and codes it asks for">
         {diff.secrets.unchanged.map((s) => (

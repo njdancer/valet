@@ -368,10 +368,12 @@ site, which is why the card separates them.
      `editing` and says why. Making withdraw-and-ask one broker operation is asked of D.
 4. **Edits after submitting** change nothing that was submitted (R46 is read as: only a new submit
    makes a new request; told to A).
-5. **Return** the ref and a sentence for the agent to relay: "Waiting for the person in Valet:
-   "Install "Yahoo Finance" for yahoo.com" (approval 7B3F). They can approve it on their phone or
-   Mac." The draft shows the outcome in `valet_get_draft` once answered (D's `status`), with a
-   decline's note for the agent.
+5. **Return** the ref and a sentence for the agent to relay, in the titles the person sees:
+   "Waiting for the person in Valet: "Review Yahoo Finance before first use" in Needs you on their
+   Mac, marked approval 7B3F, or "Install an adapter for yahoo.com" on their phone." The Mac's
+   review and Needs you item show the ref, who asked, the agent's note and Valet's checks. The draft
+   shows the outcome in `valet_get_draft` once answered (D's `status`), with the person's optional
+   reason when they turn it down, for the agent.
 
 **On approval** (D's `adapter-install` handler, extended for `source: 'draft'`): precheck that the
 staged hash is still stored, the draft still exists and still names it, and both the active hash

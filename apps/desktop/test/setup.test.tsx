@@ -247,7 +247,7 @@ describe('first-run setup', () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW, firstRun: true })
     renderAt('#/setup/approve/review', api)
-    await user.click(await screen.findByRole('button', { name: 'Don’t install' }))
+    await user.click(await screen.findByRole('button', { name: 'Turn down' }))
     await waitFor(() => expect(window.location.hash).toBe('#/setup/approve'))
     await screen.findByText('Nothing is waiting for review.')
   })

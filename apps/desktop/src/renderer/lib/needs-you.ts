@@ -5,7 +5,7 @@
 
 import type { NeedsUserReason } from '@valet/core'
 import { needsYouTitle } from '@valet/core/vocabulary'
-import type { AttentionItem, ValetApi } from '../../shared/api'
+import type { AttentionItem, ReviewItem, ValetApi } from '../../shared/api'
 import { href } from './routes'
 import { needsUserWording } from './wording'
 
@@ -53,6 +53,26 @@ export function reviewTitle(adapterName: string, version: string, firstInstall: 
 }
 
 /**
+ * A review's line under its title: who asked (an agent's draft, with the ref it was told to quote),
+ * then what happens meanwhile. An update staged beside an approved version leaves that version
+ * working; any other update's tools are off until the person decides.
+ */
+export function reviewDescription(item: ReviewItem, first: boolean): string {
+  const asked =
+    item.requestedBy === null || item.requestedBy === undefined
+      ? ''
+      : `Asked by ${item.requestedBy.client} · approval ${item.requestedBy.ref}. `
+  const meanwhile = first
+    ? 'Nothing from it runs until you approve it.'
+    : `${item.addsPermissions ? 'It asks for more than the version you approved.' : 'It asks for nothing new.'} ${
+        item.keepsServing === true
+          ? 'The version you approved keeps working until you decide.'
+          : 'Its tools are off until you decide.'
+      }`
+  return `${asked}${meanwhile}`
+}
+
+/**
  * The view of one item. Titles come from @valet/core's shared vocabulary, so the window, the menu
  * bar, the notification and the tool result name it the same way. Kinds this build doesn't know (a
  * newer main process) still show, as a generic item that opens Needs you, rather than vanishing.
@@ -96,11 +116,7 @@ export function needsYouView(
       return {
         ...base,
         title: reviewTitle(item.adapterName, item.version, first),
-        description: first
-          ? 'Nothing from it runs until you approve it.'
-          : item.addsPermissions
-            ? 'It asks for more than the version you approved. Its tools are off until you decide.'
-            : 'It asks for nothing new. Its tools are off until you decide.',
+        description: reviewDescription(item, first),
         adapterId: item.adapterId,
         adapterName: item.adapterName,
         callId: null,

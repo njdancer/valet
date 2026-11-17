@@ -103,7 +103,7 @@ import type {
 import { AdapterSettingsStore } from './adapter-settings'
 import { adminReader } from './admin'
 import { AdminWriterImpl, type AgentSettingValues, type WriterSource } from './admin-writer'
-import { agentRequestItem } from './agent-requests'
+import { agentRequestItem, draftReviewRequest } from './agent-requests'
 import { AppStateStore } from './app-state'
 import {
   AnchoredFile,
@@ -3118,6 +3118,26 @@ export class AppService {
     return this.draftRequests(adapterId).find((r) => r.subject.adapterHash === hash) ?? null
   }
 
+  /** The draft's request as the review shows it, or null when no agent's request names this hash. */
+  private draftReviewInfo(adapterId: string, hash: string) {
+    const request = this.draftRequestFor(adapterId, hash)
+    const serialized = request === null ? undefined : this.approvalBroker?.get(request.id)
+    const info = serialized === null || serialized === undefined ? null : draftReviewRequest(serialized)
+    return info === null || request === null ? null : { request: info, requestedAt: request.createdAt }
+  }
+
+  /** Every review waiting: each installed bundle not yet decided, then each agent's staged update. */
+  private async pendingReviews(states: readonly AdapterState[]): Promise<PendingReview[]> {
+    return [
+      ...states.flatMap((s) => {
+        const id = s.adapter.definition.manifest.id
+        const review = pendingReview(s, this.startedAt, this.draftReviewInfo(id, s.adapter.hash) ?? {})
+        return review === null ? [] : [review]
+      }),
+      ...(await this.stagedReviews(states)),
+    ]
+  }
+
   private async isStored(adapterId: string, hash: string): Promise<boolean> {
     const state = await this.packages?.versions(adapterId)
     return state?.versions.some((v) => v.hash === hash) ?? false
@@ -3224,6 +3244,7 @@ export class AppService {
       const review = pendingReview(
         { ...state, adapter: staged, approved: false, rejected: false, previous: snapshot },
         request.createdAt,
+        { ...(this.draftReviewInfo(adapterId, adapterHash) ?? {}), staged: true },
       )
       if (review !== null) out.push(review)
     }
@@ -3925,16 +3946,7 @@ export class AppService {
         endSession: async (draftId) => this.endAuthoringSession(draftId),
       },
       approvals: {
-        pending: async () => {
-          const states = await this.states()
-          return [
-            ...states.flatMap((s) => {
-              const review = pendingReview(s, this.startedAt)
-              return review === null ? [] : [review]
-            }),
-            ...(await this.stagedReviews(states)),
-          ]
-        },
+        pending: async () => this.pendingReviews(await this.states()),
         approve: async (adapterId, hash) => {
           const adapter = this.requireAdapter(adapterId)
           // An agent's draft: the person approves the agent's own request, so the agent learns
@@ -3959,11 +3971,16 @@ export class AppService {
               : 'local-folder'
           await this.signInstall(adapter, source)
         },
-        reject: async (adapterId, hash) => {
+        reject: async (adapterId, hash, note) => {
           const adapter = this.requireAdapter(adapterId)
-          // An agent's draft is declined, so the agent hears it; a staged one never ran.
+          // An agent's draft is declined, so the agent hears it, with the person's note if they gave
+          // one; a staged one never ran.
           const draft = this.draftRequestFor(adapterId, hash)
-          if (draft !== null) await this.approvalBroker?.decline(draft.id, { via: 'mac' }).catch(() => false)
+          const said = note?.trim() ?? ''
+          if (draft !== null)
+            await this.approvalBroker
+              ?.decline(draft.id, { via: 'mac' }, said === '' ? {} : { note: said })
+              .catch(() => false)
           if (draft !== null && adapter.hash !== hash) return
           if (adapter.hash !== hash) throw new ValetError('manifest', 'invalid')
           // Only tightens: the evidence goes first, so a failed store write still leaves it off.
@@ -4183,13 +4200,7 @@ export class AppService {
       attention: {
         list: async (): Promise<AttentionItem[]> => {
           const states = await this.states()
-          const reviews = [
-            ...states.flatMap((s) => {
-              const review = pendingReview(s, this.startedAt)
-              return review === null ? [] : [review]
-            }),
-            ...(await this.stagedReviews(states)),
-          ].map(reviewItem)
+          const reviews = (await this.pendingReviews(states)).map(reviewItem)
           return sortAttention([
             ...this.handoffs.list(),
             ...this.broker.list(),
