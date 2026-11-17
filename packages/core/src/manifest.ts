@@ -4,9 +4,10 @@
 import { z } from 'zod'
 import { canonicalAddress, hostPort, isPrivateHostAddress, parseEndpoint } from './addresses'
 import { type CredentialDeclaration, credentialDeclarationSchema, credentialIssues } from './credential'
-import { MESSAGES_SECRET } from './credentials'
+import { MAIL_SECRET, MESSAGES_SECRET } from './credentials'
 import { type ERROR_CLASSES, NEEDS_USER_REASONS, type NeedsUserReason } from './errors'
 import { hostAllowed, isBareOrigin, isHostname, isHostPattern } from './origins'
+import { type Protocols, protocolIssues, protocolsSchema } from './protocols'
 import { isScreenedPattern } from './regex-screen'
 import {
   BROWSER_METHODS,
@@ -75,8 +76,32 @@ export const conditionSchema: z.ZodType<Condition> = z.lazy(() =>
   ]),
 )
 
+/** A sender's mail address as a sign-in mail source names it: one address, lower case. */
+const mailSender = z
+  .string()
+  .max(254)
+  .regex(/^[a-z0-9._%+-]{1,64}@[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63})+$/, 'one mail address, in lower case')
+
 export const otpSourceSchema = z.union([
   z.object({ secret: name }).strict(),
+  z
+    .object({
+      /**
+       * A code from a sign-in mail (docs/imap.md#email-sign-in). Valet looks it up itself, read-only,
+       * in the mail account the person binds this source to; adapter code never sees the mail.
+       */
+      mail: z
+        .object({
+          /** The sender's address; the person approves it when granting. */
+          from: mailSender,
+          subjectContains: z.string().min(1).max(100).optional(),
+          /** First capture group (or the whole match) is the code. */
+          pattern: screenedRegex(200),
+          maxAgeSeconds: z.number().int().min(10).max(1800),
+        })
+        .strict(),
+    })
+    .strict(),
   z
     .object({
       messages: z
@@ -116,6 +141,18 @@ export type AuthStep =
       readonly value: { readonly literal: string } | SecretRef
     }
   | { readonly op: 'otp'; readonly selector: string; readonly source: OtpSource }
+  | {
+      /**
+       * Opens the sign-in link a site mailed, in the auth partition (docs/imap.md#email-sign-in).
+       * Valet finds it itself, read-only; adapter code never sees it.
+       */
+      readonly op: 'openMailLink'
+      readonly from: string
+      readonly subjectContains: string
+      /** The link must be https on exactly this origin, which must be a navigation origin. */
+      readonly linkOrigin: string
+      readonly maxAgeSeconds: number
+    }
   | { readonly op: 'pause'; readonly ms: number }
   | {
       readonly op: 'when'
@@ -141,6 +178,19 @@ export const authStepSchema: z.ZodType<AuthStep> = z.lazy(() =>
       })
       .strict(),
     z.object({ op: z.literal('otp'), selector, source: otpSourceSchema }).strict(),
+    z
+      .object({
+        op: z.literal('openMailLink'),
+        from: mailSender,
+        /**
+         * Required for a link: the sender's other mail (an invitation, a shared item) can be set off
+         * by anyone, and must not be taken for the sign-in mail.
+         */
+        subjectContains: z.string().min(1).max(100),
+        linkOrigin: origin,
+        maxAgeSeconds: z.number().int().min(10).max(1800),
+      })
+      .strict(),
     z.object({ op: z.literal('pause'), ms: z.number().int().min(0).max(30_000) }).strict(),
     z
       .object({
@@ -224,7 +274,7 @@ const requestMethod = z.enum(REQUEST_METHODS)
 export const RUNTIME_KINDS = ['browser', 'http', 'protocol', 'raw'] as const
 export type RuntimeKind = (typeof RUNTIME_KINDS)[number]
 /** The kinds a manifest may name today. A workstream that builds a kind adds it here. */
-export const AVAILABLE_RUNTIMES: readonly RuntimeKind[] = ['browser', 'http']
+export const AVAILABLE_RUNTIMES: readonly RuntimeKind[] = ['browser', 'http', 'protocol']
 
 /** The manifest's kind: `browser` when it doesn't say, so every older manifest means what it did. */
 export function runtimeOf(manifest: { readonly runtime?: RuntimeKind | undefined }): RuntimeKind {
@@ -545,6 +595,12 @@ export const manifestSchema = z
       .record(name, credentialDeclarationSchema)
       .refine((credentials) => Object.keys(credentials).length <= 8, 'at most 8 credentials')
       .optional(),
+    /**
+     * `protocol` adapters only: the protocol clients Valet runs for the adapter, each signed in with
+     * one of its kept credentials (docs/imap.md). Optional with no default, so other manifests hash
+     * exactly as before.
+     */
+    protocols: protocolsSchema.optional(),
   })
   .strict()
   .superRefine((manifest, ctx) => {
@@ -647,8 +703,23 @@ export const manifestSchema = z
         })
       }
     }
-    if (Object.hasOwn(manifest.secrets, MESSAGES_SECRET)) {
-      ctx.addIssue({ code: 'custom', message: `secret name ${MESSAGES_SECRET} is reserved` })
+    for (const reserved of [MESSAGES_SECRET, MAIL_SECRET]) {
+      if (Object.hasOwn(manifest.secrets, reserved)) {
+        ctx.addIssue({ code: 'custom', message: `secret name ${reserved} is reserved` })
+      }
+    }
+    const mailSources = mailSourcesIn(manifest.auth.steps)
+    for (const source of mailSources) {
+      if (source.kind === 'link' && !manifest.navigation.includes(source.linkOrigin)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `openMailLink linkOrigin ${source.linkOrigin} is not in navigation`,
+        })
+      }
+    }
+    // One grant covers a manifest's mail sign-in, for one sender: the person approves that sender.
+    if (new Set(mailSources.map((s) => s.from)).size > 1) {
+      ctx.addIssue({ code: 'custom', message: 'every mail sign-in step names the same sender' })
     }
     for (const ref of secretRefsIn(manifest.auth.steps)) {
       const request = Object.hasOwn(manifest.secrets, ref.secret) ? manifest.secrets[ref.secret] : undefined
@@ -696,15 +767,25 @@ function homeIsDerived(manifest: {
   readonly home?: string | undefined
   readonly egress: readonly string[]
   readonly privateHosts?: readonly PrivateHost[] | undefined
+  readonly protocols?: Protocols | undefined
 }): boolean {
-  if (manifest.egress.length === 0 && (manifest.privateHosts ?? []).length === 0) return false
+  if (
+    manifest.egress.length === 0 &&
+    (manifest.privateHosts ?? []).length === 0 &&
+    manifest.protocols?.imap === undefined
+  )
+    return false
   return manifest.home === endpointHome(manifest)
 }
 
 function endpointHome(manifest: {
   readonly egress: readonly string[]
   readonly privateHosts?: readonly PrivateHost[] | undefined
+  readonly protocols?: Protocols | undefined
 }): string {
+  // A protocol adapter's home is its server's name: only the key its pacing and breaker are kept under.
+  const imap = manifest.protocols?.imap
+  if (imap !== undefined) return `https://${imap.endpoint.slice(0, imap.endpoint.lastIndexOf(':'))}/`
   const host = manifest.egress[0]
   if (host !== undefined) return `https://${host}/`
   const first = manifest.privateHosts?.[0]
@@ -738,12 +819,21 @@ function runtimeIssues(manifest: {
     readonly uploadBytesPerRun?: number | undefined
     readonly writeUploadBytesPerRun?: number | undefined
   }
+  readonly protocols?: Protocols | undefined
+  readonly credentials?: Readonly<Record<string, CredentialDeclaration>> | undefined
 }): string[] {
   const kind = runtimeOf(manifest)
   if (!AVAILABLE_RUNTIMES.includes(kind)) return [`runtime ${kind} is not available yet`]
   const issues: string[] = []
   const nonBrowser = (field: string) => `${field} is only for adapters whose runtime is not browser`
   if (manifest.endpoints !== undefined) issues.push('endpoints is only for raw adapters')
+  if (kind === 'protocol') {
+    // Parsing sets home to the server's name, so a parsed manifest parses again unchanged.
+    if (manifest.home !== undefined && !homeIsDerived(manifest))
+      issues.push('a protocol adapter has no home: it opens no pages')
+    return [...issues, ...protocolIssues(manifest)]
+  }
+  if (manifest.protocols !== undefined) issues.push('protocols is only for protocol adapters')
   if (kind === 'browser') {
     if (manifest.home === undefined) issues.push('a browser adapter needs home')
     else if (!manifest.home.startsWith('https:')) issues.push('home must be https')
@@ -892,6 +982,44 @@ export function messagesSourcesIn(
   const visit = (list: readonly AuthStep[]): void => {
     for (const step of list) {
       if (step.op === 'otp' && 'messages' in step.source) sources.push(step.source.messages)
+      if (step.op === 'when') {
+        visit(step.steps)
+        if (step.otherwise) visit(step.otherwise)
+      }
+      if (step.op === 'retry') visit(step.steps)
+    }
+  }
+  visit(steps)
+  return sources
+}
+
+/** A sign-in mail source: a code to type, or a link to open. */
+export type MailSource =
+  | {
+      readonly kind: 'code'
+      readonly from: string
+      readonly subjectContains?: string | undefined
+      readonly pattern: string
+      readonly maxAgeSeconds: number
+    }
+  | {
+      readonly kind: 'link'
+      readonly from: string
+      readonly subjectContains?: string | undefined
+      readonly linkOrigin: string
+      readonly maxAgeSeconds: number
+    }
+
+/** The sign-in mail sources an auth flow uses, nested steps included. They need the mail grant. */
+export function mailSourcesIn(steps: readonly AuthStep[]): MailSource[] {
+  const sources: MailSource[] = []
+  const visit = (list: readonly AuthStep[]): void => {
+    for (const step of list) {
+      if (step.op === 'otp' && 'mail' in step.source) sources.push({ kind: 'code', ...step.source.mail })
+      if (step.op === 'openMailLink') {
+        const { op: _op, ...rest } = step
+        sources.push({ kind: 'link', ...rest })
+      }
       if (step.op === 'when') {
         visit(step.steps)
         if (step.otherwise) visit(step.otherwise)

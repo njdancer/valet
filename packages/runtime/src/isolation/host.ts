@@ -12,6 +12,7 @@
 import {
   type HttpSocket,
   type InputIssue,
+  isOperation,
   issueFromZod,
   MAX_SOCKETS_PER_CALL,
   type ToolContext,
@@ -151,6 +152,7 @@ function dispatch(
 ): Promise<unknown> {
   if (capability.startsWith('local.')) return dispatchLocal(ctx.local, capability, args)
   if (capability.startsWith('http.')) return dispatchHttp(ctx, capability, args, sockets)
+  if (capability === 'imap.op') return dispatchImap(ctx, args)
   // Strings where the capability takes a selector, a URL or source text; the guards check the rest.
   const takesString = capability.startsWith('page.')
   if (takesString && typeof args[0] !== 'string') return Promise.reject(new ValetError('tool-run', 'invalid'))
@@ -209,6 +211,18 @@ class SocketTable {
   get size(): number {
     return this.open.size + this.opening
   }
+}
+
+/** `imap.op`: the operation's name and its argument list; GuardedImap checks both. */
+function dispatchImap(ctx: ToolContext, args: readonly unknown[]): Promise<unknown> {
+  const imap = ctx.imap
+  if (imap === undefined) return Promise.reject(new ValetError('tool-run', 'not-granted'))
+  const [name, list] = args
+  if (!isOperation(name) || !Array.isArray(list) || list.length > 4) {
+    return Promise.reject(new ValetError('tool-run', 'invalid'))
+  }
+  const method = imap[name] as (...a: unknown[]) => Promise<unknown>
+  return method.apply(imap, list)
 }
 
 async function dispatchHttp(

@@ -9,10 +9,13 @@ export {
   DEFAULT_MAX_LIFETIME_MS,
   forbiddenUnderHome,
   HOST_SCRIPT,
+  type NodeChannel,
   type NodeRuntimeOptions,
   nodeArguments,
   nodeRuntimeProcess,
   SANDBOX_EXEC,
+  type SandboxedNodeOptions,
+  sandboxedNode,
 } from './spawn'
 export {
   type Endpoint,

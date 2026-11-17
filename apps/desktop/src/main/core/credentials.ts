@@ -19,6 +19,7 @@
 
 import { lstat, realpath } from 'node:fs/promises'
 import { dirname, isAbsolute } from 'node:path'
+import type { MailReader } from '@valet/core'
 import {
   CredentialError,
   type CredentialProvider,
@@ -59,6 +60,11 @@ export interface Credentials {
   /** The providers runAuthFlow may resolve through, by kind. */
   providers(): Partial<Record<ProviderKind, CredentialProvider>>
   otpReader(): OtpReader
+  /**
+   * Sign-in mail (docs/imap.md#email-sign-in), once this Mac can run the protocol host. Absent
+   * until then, and a mail step in a login ends `otp: unavailable`.
+   */
+  mailReader?(): MailReader
   /** Each provider this launch offers, with grant counts filled in by the caller. */
   status(): Promise<readonly Omit<ProviderStatus, 'grantCount'>[]>
   /** Items in the vault, title only. Empty for providers without a vault. */

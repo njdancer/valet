@@ -220,7 +220,9 @@ export class HarnessRuntime {
         return
       case 'otp':
         if ('secret' in step.source) await this.fillSecret(page, step.selector, step.source.secret, 'otp')
-        else await this.fillMessagesCode(page, step.selector, step.source.messages)
+        else if ('messages' in step.source)
+          await this.fillMessagesCode(page, step.selector, step.source.messages)
+        else throw new Error('the harness does not model mail codes')
         return
       case 'pause':
         // Pages here change only on a request, which completes before the step that made it.

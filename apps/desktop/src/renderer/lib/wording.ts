@@ -139,6 +139,7 @@ export const ERROR_WORDING: Readonly<Record<ErrorClass, string>> = {
   'login-in-progress': 'Login already running',
   'sni-mismatch': 'Connection named another server',
   'upload-budget': 'Sent more than its upload budget',
+  'command-not-allowed': 'Asked for something its tool may not do',
   unsupported: 'Unsupported',
   'signature-invalid': 'Signature didn’t verify',
   expired: 'Expired',
@@ -285,6 +286,11 @@ export const PROVIDER_WORDING: Readonly<
   messages: {
     title: 'Messages',
     detail: 'Reads one-time codes that arrive by SMS from one sender you approve. Needs Full Disk Access.',
+  },
+  mail: {
+    title: 'Sign-in mail',
+    detail:
+      'Finds sign-in links and codes in mail from one sender you approve, in a mail account Valet already reads. It only looks: nothing is marked read.',
   },
   'valet-key': {
     title: 'SSH key made by Valet',

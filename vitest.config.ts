@@ -41,6 +41,10 @@ export default defineConfig({
         // The Node runtime's host script runs only inside the sandboxed child process, out of reach
         // of this process's coverage; test/runtime.test.ts and test/redteam drive every part of it.
         'packages/node-runtime/src/host/**',
+        // The protocol host, likewise: it runs only in its sandboxed child process, and
+        // test/host.e2e.test.ts and test/mail-reader.e2e.test.ts drive it; the client and operations
+        // it runs are covered directly.
+        'packages/protocols/src/host/**',
         // The hub's Durable Object and the glue that reaches it (docs/relay-hub.md): covered by
         // test/hub.test.ts, which runs them in workerd, as above.
         'apps/relay/src/hub/hub.ts',
