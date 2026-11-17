@@ -103,6 +103,8 @@ export const BOOTSTRAP = `(function (send) {
         })
       }),
     }),
+    // Credentials entrusted to a raw adapter (docs/adapter-kinds.md#raw); not-granted for the rest.
+    secrets: Object.freeze({ get: (name) => call('secrets.get', name) }),
   })
   return function deliver(text) {
     const m = JSON.parse(text)

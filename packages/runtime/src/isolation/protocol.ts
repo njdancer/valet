@@ -44,6 +44,8 @@ export const CAPABILITIES = [
   'http.ws.send',
   'http.ws.receive',
   'http.ws.close',
+  // Entrusted credentials (docs/adapter-kinds.md#raw): not-granted unless the runtime is raw.
+  'secrets.get',
 ] as const
 export type Capability = (typeof CAPABILITIES)[number]
 

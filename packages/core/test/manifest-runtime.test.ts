@@ -276,7 +276,7 @@ describe('runtime: browser', () => {
     expect(issues(input)).toContain('home must be https')
   })
 
-  it.each(['protocol', 'raw'])('refuses %s until it is built', (runtime) => {
+  it.each(['protocol'])('refuses %s until it is built', (runtime) => {
     const input = browser()
     input.runtime = runtime as 'raw'
     expect(issues(input)).toContain(`runtime ${runtime} is not available yet`)

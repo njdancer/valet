@@ -46,6 +46,7 @@ import {
   ValetError,
 } from '@valet/core'
 import { FileGrantStore } from '@valet/credentials'
+import type { OpenTunnels, RunContext } from '@valet/egress'
 import {
   type AdminReader,
   type Authoring,
@@ -65,6 +66,7 @@ import { addDependency, diskTarballStore } from '@valet/node-runtime'
 import {
   ApprovalStore,
   AuditLog,
+  type CredentialGrantSource,
   DEFAULT_LOGIN_BACKOFF,
   type HttpEgress,
   JsonFileStore,
@@ -287,7 +289,24 @@ export interface ServiceDeps {
   readonly egress?: (endpoints: {
     readonly egress: readonly string[]
     readonly privateHosts?: readonly PrivateHost[] | undefined
-  }) => HttpEgress
+    readonly endpoints?: readonly string[] | undefined
+  }) => HttpEgress & {
+    /** A raw adapter's tunnels for one call (EgressBroker.tunnels). */
+    readonly tunnels?: (run: RunContext, options: { readonly admit: () => Promise<void> }) => OpenTunnels
+  }
+  /**
+   * The Node runtime for `raw` adapters (docs/node-runtime.md): one call's process for a raw
+   * adapter's version, its tunnels opened by `openTunnels`. Without it (off macOS, or no Node
+   * binary), a raw adapter's calls are unavailable.
+   */
+  readonly raw?: {
+    start(manifest: AdapterManifest, openTunnels: OpenTunnels): ToolProcessFactory
+  }
+  /**
+   * The grants and provider behind manifests' credentials (secrets v2). Each call gets its own
+   * CredentialGate over them. Without it, every credential is not-granted.
+   */
+  readonly credentialGrants?: CredentialGrantSource
   /** Builds an adapter's driver, with the reporters its refusals outside a run go to. */
   readonly createDriver: (manifest: AdapterManifest, reporters: DriverReporters) => Promise<SessionDriver>
   readonly credentials: Credentials
@@ -1883,13 +1902,14 @@ export class AppService {
     const sandboxed = (manifest.sandbox ?? DEFAULT_SANDBOX).mode === 'sandboxed'
     const start =
       sandbox !== undefined && sandboxed ? sandbox.forAdapter(adapter.hash) : this.deps.toolProcess
+    const kind = runtimeOf(manifest)
+    if (kind === 'raw') return this.rawRegistration(adapter, driver)
     return {
       definition: adapter.definition,
       bundleHash: adapter.hash,
       driver,
-      ...(this.deps.egress === undefined || runtimeOf(manifest) === 'browser'
-        ? {}
-        : { http: this.deps.egress(manifest) }),
+      ...(this.deps.egress === undefined || kind !== 'http' ? {} : { http: this.deps.egress(manifest) }),
+      ...(this.deps.credentialGrants === undefined ? {} : { credentialGrants: this.deps.credentialGrants }),
       ...(start === undefined || adapter.toolScript === null
         ? {}
         : {
@@ -1897,6 +1917,38 @@ export class AppService {
               script: adapter.toolScript,
               start,
               ...(sandbox === undefined ? {} : { local: sandbox.local(manifest) }),
+            },
+          }),
+    }
+  }
+
+  /**
+   * A raw adapter's registration (docs/adapter-kinds.md#raw): its Node bundle runs only in the Node
+   * runtime, its network only through the broker's tunnels for its endpoints. Without either, it
+   * registers with no runtime at all and its calls are unavailable; it never falls back to another.
+   */
+  private rawRegistration(adapter: BuiltinAdapter, driver: SessionDriver) {
+    const manifest = adapter.definition.manifest
+    const raw = this.deps.raw
+    const broker = this.deps.egress?.({
+      egress: [],
+      privateHosts: manifest.privateHosts ?? [],
+      endpoints: manifest.endpoints ?? [],
+    })
+    const tunnels = broker?.tunnels
+    return {
+      definition: adapter.definition,
+      bundleHash: adapter.hash,
+      driver,
+      ...(this.deps.credentialGrants === undefined ? {} : { credentialGrants: this.deps.credentialGrants }),
+      ...(raw === undefined || tunnels === undefined || adapter.toolScript === null
+        ? {}
+        : {
+            raw: {
+              script: adapter.toolScript,
+              start: (openTunnels: OpenTunnels) => raw.start(manifest, openTunnels),
+              tunnels: (run: RunContext, options: { readonly admit: () => Promise<void> }) =>
+                tunnels.call(broker, run, options),
             },
           }),
     }
