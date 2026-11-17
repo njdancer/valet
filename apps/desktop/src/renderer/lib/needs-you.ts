@@ -115,7 +115,7 @@ export function needsYouView(
       return {
         ...base,
         title: needsYouTitle({ kind: 'remote-consent' }),
-        description: `${item.clientName === null ? 'A cloud agent' : `Something calling itself “${item.clientName}” (not verified)`} at ${item.clientHost}${item.source === null ? '' : `, from ${item.source}`}. Type the code its browser shows.`,
+        description: `${item.clientName === null ? 'A cloud agent' : `Something calling itself “${item.clientName}” (not verified)`} at ${item.clientHost}${item.via === 'hub' ? ', through your Valet account' : item.source === null ? '' : `, from ${item.source}`}. Type the code its browser shows.`,
         adapterId: null,
         adapterName: null,
         callId: null,
@@ -224,9 +224,28 @@ export function needsYouView(
   }
 }
 
+/**
+ * Several agents asking to connect are one thing to do: one sheet, where the browser's code picks
+ * the right request. So they show as one item, not one card each that all open the same sheet.
+ */
+export function foldConsents(items: readonly NeedsYouView[]): NeedsYouView[] {
+  const consents = items.filter((v) => v.kind === 'remote-consent' && !v.missed)
+  if (consents.length < 2) return [...items]
+  const deadlines = consents.map((v) => v.deadline).filter((d): d is number => d !== null)
+  const first = consents[0] as NeedsYouView
+  const folded: NeedsYouView = {
+    ...first,
+    title: `Approve ${consents.length} connections`,
+    description: `${consents.length} cloud agents are asking. The code your browser shows picks yours; decline the rest.`,
+    deadline: deadlines.length > 0 ? Math.min(...deadlines) : null,
+    at: Math.min(...consents.map((v) => v.at)),
+  }
+  return [...items.filter((v) => !consents.includes(v)), folded]
+}
+
 /** Soonest deadline first, then items without one by age (IA section 5); missed last. */
 export function needsYouOrder(items: readonly NeedsYouView[]): NeedsYouView[] {
-  return [...items].sort((a, b) => {
+  return foldConsents(items).sort((a, b) => {
     if (a.missed !== b.missed) return a.missed ? 1 : -1
     if (a.deadline !== null && b.deadline !== null) return a.deadline - b.deadline
     if (a.deadline !== null) return -1

@@ -1484,6 +1484,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           source: r.source,
           requestedAt: r.requestedAt,
           expiresAt: r.expiresAt,
+          ...(r.via === undefined ? {} : { via: r.via }),
         }))
         const missing = [...adapters.values()].flatMap((a) => missingOf(detailOf(a)))
         return clone(sorted([...attention, ...consents, ...agentRequests, ...missing, ...repairs, ...missed]))

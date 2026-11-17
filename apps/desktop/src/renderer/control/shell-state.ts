@@ -3,6 +3,7 @@
 
 import type { DotTone } from '@valet/ui'
 import type { AppStatus } from '../../shared/api'
+import { waitingCount } from '../../shared/waiting-count'
 import { useLoad } from '../lib/api-context'
 import { useSetupLeft } from '../screens/setup/setup-logic'
 
@@ -30,8 +31,7 @@ export function useShellState(): ShellState {
   const setupLeft = useSetupLeft()
   // Unfinished setup is one more waiting item, as the menu bar counts it.
   const needsYou =
-    (attention.status === 'ready' ? attention.data.filter((i) => i.kind !== 'missed').length : 0) +
-    (setupLeft === null ? 0 : 1)
+    (attention.status === 'ready' ? waitingCount(attention.data) : 0) + (setupLeft === null ? 0 : 1)
   const apps = endpoint.status === 'ready' ? endpoint.data.connectedClients : null
   const listening = endpoint.status === 'ready' ? endpoint.data.listening : null
   let tone: DotTone = 'success'
