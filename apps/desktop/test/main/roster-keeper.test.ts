@@ -94,7 +94,13 @@ function phoneGenesis(owner: Phone): SignedText {
   )
 }
 
-async function setup(options: { present?: () => boolean } = {}) {
+async function setup(
+  options: {
+    present?: () => boolean
+    /** A signer that signs one payload at a time, failing when this says so (a helper that broke). */
+    oneAtATime?: () => boolean
+  } = {},
+) {
   let present = options.present ?? (() => true)
   const signer = new SoftwareSigner(() => present())
   const keys = await signer.keys()
@@ -104,16 +110,26 @@ async function setup(options: { present?: () => boolean } = {}) {
   const devices = new DeviceStore(ledger, keys)
   /** One prompt for every payload, as the Secure Enclave helper does it. */
   const prompts: { reason: string; count: number }[] = []
-  const channel: ChannelKeys = {
-    ...signer.channel,
-    signApprovals: async (domain, payloads, reason) => {
-      prompts.push({ reason, count: payloads.length })
-      if (!present()) return null
-      const out: string[] = []
-      for (const p of payloads) out.push((await signer.sign(domain, p, reason)) as string)
-      return out
-    },
-  }
+  const fails = options.oneAtATime
+  const channel: ChannelKeys =
+    fails !== undefined
+      ? {
+          ...signer.channel,
+          signApproval: async (domain, payload, reason) => {
+            if (fails()) throw new Error('the helper failed')
+            return signer.sign(domain, payload, reason)
+          },
+        }
+      : {
+          ...signer.channel,
+          signApprovals: async (domain, payloads, reason) => {
+            prompts.push({ reason, count: payloads.length })
+            if (!present()) return null
+            const out: string[] = []
+            for (const p of payloads) out.push((await signer.sign(domain, p, reason)) as string)
+            return out
+          },
+        }
   const hub: SignedText[] = []
   const sent: SignedText[][] = []
   const removed: { deviceId: string; by: string }[] = []
@@ -494,6 +510,36 @@ describe('the Mac and the account’s device list', () => {
     expect(t.keeper.view.state).toBe('refused')
     expect(t.ledger.data.roster).toBeUndefined()
     expect(t.handed).toEqual([])
+  })
+
+  it('with a signer that fails, asks the person again instead of joining or starting', async () => {
+    let failing = true
+    const t = await setup({ oneAtATime: () => failing })
+    const genesis = phoneGenesis(phone('Owner'))
+    await t.keeper.linked(ACCOUNT, true)
+    await t.keeper.received([genesis])
+    expect(t.keeper.view).toEqual({ state: 'needs-you', devices: 1 })
+    expect(t.joins).toEqual([])
+    failing = false
+    await t.keeper.retry()
+    expect(t.keeper.view).toEqual({ state: 'joining', devices: 1 })
+
+    // Starting a list one signature at a time: a failure there is a cancel too.
+    const u = await setup({ oneAtATime: () => failing })
+    await u.pair(phone('iPhone'))
+    failing = true
+    await u.keeper.linked(ACCOUNT)
+    await u.keeper.received([])
+    expect(u.keeper.view.state).toBe('needs-you')
+    failing = false
+    await u.keeper.retry()
+    await u.answer()
+    expect(u.keeper.view).toEqual({ state: 'on', devices: 2 })
+    // A phone revoked here can't be paired back in with its old record.
+    const p = phone('Old iPhone')
+    await u.pair(p)
+    await u.devices.revoke(p.deviceId, 'mac-ui', new Date(T0).toISOString())
+    await expect(u.pair(p)).rejects.toThrow(/revoked/)
   })
 
   it('waits, without asking, on a list with no phone to add it', async () => {
