@@ -234,6 +234,8 @@ export interface AdapterDetail extends AdapterSummary {
   readonly tools: readonly ToolInfo[]
   readonly settings: readonly AdapterSettingInfo[]
   readonly secretRequests: readonly SecretRequestInfo[]
+  /** Credentials the adapter's code uses outside a browser login (secrets v2), as declared. */
+  readonly credentials: readonly CredentialRequestInfo[]
   readonly messages: readonly MessagesSourceInfo[]
   /**
    * What the last hand-off copied: counts only. Null when the main process can't tell (the driver
@@ -567,6 +569,62 @@ export interface VaultItem {
 export type VaultListing =
   | { readonly status: 'ok'; readonly items: readonly VaultItem[] }
   | { readonly status: 'declined' | 'unavailable'; readonly account: string | null }
+
+/** A credential an adapter declares (secrets v2): Valet's own sentence for it, and its targets. */
+export interface CredentialRequestInfo {
+  readonly name: string
+  /** The manifest author's words: shown as the adapter's, never as a headline. */
+  readonly description: string
+  /** describeCredentialUse: who holds it and where it may go. */
+  readonly sentence: string
+  readonly kind: 'password' | 'token' | 'ssh-key'
+  readonly custody: 'kept' | 'entrusted'
+  readonly targets: readonly string[]
+}
+
+/** A credential grant (secrets v2) as the window shows it. Never the item's reference or contents. */
+export interface CredentialGrantInfo {
+  readonly adapterId: string
+  readonly adapterHash: string
+  readonly credential: string
+  readonly kind: 'password' | 'token' | 'ssh-key'
+  readonly custody: 'kept' | 'entrusted'
+  readonly provider: CredentialGrantProvider
+  readonly itemTitle: string
+  readonly targets: readonly string[]
+  readonly grantedAt: string
+  /** A Valet-made key's public half, for the server's authorized_keys. */
+  readonly publicKey: string | null
+  readonly fingerprint: string | null
+  /** False when its signature no longer counts (another version is installed, or it was revoked). */
+  readonly signed: boolean
+}
+
+export type CredentialGrantProvider =
+  | 'keychain-copy'
+  | 'onepassword-service-account'
+  | 'onepassword-desktop'
+  | 'valet-key'
+
+export interface CredentialGrantRequest {
+  readonly adapterId: string
+  /** The exact hash the person is granting for. */
+  readonly adapterHash: string
+  readonly credential: string
+  readonly provider: CredentialGrantProvider
+  /** A VaultItem id, or a Valet-made key's reference from generateKey. */
+  readonly itemId: string
+  /** Within the declaration's; all of them when left out. */
+  readonly targets?: readonly string[]
+}
+
+/** A Valet-made SSH key: what anyone may know about it, never its private half. */
+export interface ValetKeyView {
+  readonly itemRef: string
+  readonly publicKey: string
+  readonly fingerprint: string
+  readonly createdAt: string
+}
 
 export interface GrantRequest {
   readonly adapterId: string
@@ -1504,6 +1562,15 @@ export interface ValetApi {
     revoke(adapterId: string, secret: string): Promise<void>
     /** Re-copies a keychain-copy grant's item from 1Password (D6); the person approves there. */
     resync(adapterId: string, secret: string): Promise<void>
+  }
+  /** Credentials adapters use outside a browser login (secrets v2). */
+  readonly credentials: {
+    list(): Promise<readonly CredentialGrantInfo[]>
+    /** Signed with Touch ID at the Mac before it is stored. */
+    make(request: CredentialGrantRequest): Promise<CredentialGrantInfo>
+    revoke(adapterId: string, credential: string): Promise<void>
+    /** Makes a Valet SSH key for a declared ssh-key credential; grant it with make. */
+    generateKey(adapterId: string, credential: string): Promise<ValetKeyView>
   }
   readonly runs: {
     list(query?: { readonly adapterId?: string; readonly limit?: number }): Promise<readonly RunSummary[]>

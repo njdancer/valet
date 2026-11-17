@@ -84,6 +84,37 @@ export const ledgerSchema = z
       .max(500)
       .optional(),
     /**
+     * Credential grants (secrets v2) an approved update kept, as `carried` is for logins: written by
+     * the Mac only, straight after it applies a signed `adapter-install` that inherits the session,
+     * for grants that update didn't widen (credentialCarriesOver). Each counts only while that
+     * install's evidence does (CredentialKeeper).
+     */
+    carriedCredentials: z
+      .array(
+        z
+          .object({
+            adapterId: ADAPTER_ID,
+            fromHash: HASH,
+            toHash: HASH,
+            credential: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/),
+            provider: z.enum([
+              'keychain-copy',
+              'onepassword-service-account',
+              'onepassword-desktop',
+              'valet-key',
+            ]),
+            itemFingerprint: z.string().regex(/^[0-9a-f]{16}$/),
+            targets: z
+              .array(z.string().regex(/^[a-z0-9.:-]{1,106}$/))
+              .min(1)
+              .max(20),
+            at: z.iso.datetime(),
+          })
+          .strict(),
+      )
+      .max(500)
+      .optional(),
+    /**
      * The account's device list this Mac pinned (approvals/roster-keeper.ts): its first change,
      * which this Mac signed, and the latest it saw, so a hub can't swap the list or roll it back.
      * Absent while the Mac is on no account, or on one whose list it didn't start.

@@ -635,6 +635,7 @@ export class AdminWriterImpl implements AdminWriter {
 const TITLE_BY_KIND: Readonly<Record<ApprovalKind, string>> = {
   'adapter-install': 'Install or update a site',
   'secret-grant': 'Let a site use a login',
+  'credential-grant': 'Let an adapter use a credential',
   'tool-enable': 'Turn on a tool',
   'remote-client': 'Let a remote agent connect',
   setting: 'Change a setting',

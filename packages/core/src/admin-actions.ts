@@ -54,6 +54,11 @@ export const ADMIN_ACTION_TIERS = {
   // Secrets. An agent can ask for a grant; it can never see or choose the item's contents.
   'secret.request-grant': approve('secret-grant'),
   'secret.revoke': notify,
+  // Credentials outside a browser login (secrets v2): the same rule. Making a Valet SSH key only
+  // makes a key no adapter can use until a grant names it.
+  'credential.request-grant': approve('credential-grant'),
+  'credential.revoke': notify,
+  'credential.generate-key': notify,
   // Settings. The Mac classifies each change; an adapter's own settings (D69, the store) only
   // choose between values the adapter already declared, so they are tightening-neutral.
   'setting.tighten': notify,
