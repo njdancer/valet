@@ -143,17 +143,37 @@ The host script patches two things:
   `zod` and `@valet/core` come from the library prelude, as for every adapter. Node's built-ins
   stay as `require` calls. The output is capped at 16 MB.
 
+## Shipping the binary
+
+The runtime's Node is not Electron run as Node. It is the official Node release, shipped as
+`Contents/MacOS/valet-node`. `apps/desktop/scripts/node-runtime.mjs` builds it:
+
+- `apps/desktop/build/node-runtime.json` pins the version, the same one `mise.toml` builds with. It
+  also pins the SHA-256 of the official `darwin-arm64` and `darwin-x64` archives, taken from
+  nodejs.org's `SHASUMS256.txt` and checked against a download.
+- Each archive is checked against its pin before it is used or kept. A cached archive that no longer
+  matches is downloaded again.
+- `lipo` joins the two `bin/node` binaries into one universal binary.
+- It is signed on its own, with the identifier `me.dncr.valet.node-runtime`, the hardened runtime,
+  and `build/entitlements.node.plist`. That file holds the JIT entitlement only, not the official
+  build's library-validation, dyld-variable or executable-memory exceptions. The release signs with
+  its Developer ID, and the dry run signs ad hoc.
+- electron-builder copies it in and never re-signs it (`signIgnore`).
+
+The release refuses to build without it. The release check confirms that it ships, that it is
+universal, and that it has its own identifier, the hardened runtime and exactly those entitlements.
+It also runs a loop long enough for V8's optimising compiler under that signature: natively, and as
+x64 under Rosetta when Rosetta is there. A binary signed without the JIT entitlement dies there.
+
+To build it for a development package, run `node apps/desktop/scripts/node-runtime.mjs`. A
+development build without it packages without it.
+
 ## What is not built here
 
-- **Shipping the binary.** Packaging the separately signed Node binary into the app is a follow-up
-  in this workstream. It needs:
-  - the official Node release for both architectures, checked against hashes pinned in the
-    repository;
-  - its own signing identifier;
-  - only the JIT entitlement;
-  - a check in the release dry run.
-- **Wiring into adapters** is workstream F: `raw` in the manifest, `endpoints`, read paths, and
-  `ctx.secrets`.
+- **Wiring into adapters** is workstream F:
+  - `raw` in the manifest, `endpoints`, read paths and `ctx.secrets`;
+  - the binary's path, `Contents/MacOS/valet-node` beside the app's executable;
+  - registering each call's tunnel ports as Valet's own.
 - **The broker's side of the tunnels** is workstream A.
 
 ## Testing
