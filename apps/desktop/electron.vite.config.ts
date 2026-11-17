@@ -29,6 +29,7 @@ import { defineConfig } from 'electron-vite'
 import { sandboxPreload } from './sandbox-preload'
 import { feedDefines } from './src/main/core/feed-defines'
 import { toolLibrary } from './tool-library'
+import { protocolHost } from './protocol-host-plugin'
 import { contentSecurityPolicy } from './vite.config'
 
 const here = import.meta.dirname
@@ -39,7 +40,7 @@ export default defineConfig(({ command, mode }) => {
   const feed = feedDefines(process.env, plainBuild)
   return {
     main: {
-      plugins: [toolLibrary()],
+      plugins: [toolLibrary(), protocolHost()],
       define: {
         __VALET_DEMO_BUILD__: JSON.stringify(command === 'serve' || mode === 'demo' || showcase),
         __VALET_SHOWCASE_BUILD__: JSON.stringify(showcase),

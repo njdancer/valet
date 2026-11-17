@@ -119,6 +119,9 @@ importers:
       '@valet/node-runtime':
         specifier: workspace:*
         version: link:../../packages/node-runtime
+      '@valet/protocols':
+        specifier: workspace:*
+        version: link:../../packages/protocols
       '@valet/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
