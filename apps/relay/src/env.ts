@@ -19,6 +19,8 @@ export interface Env {
    * hub-status `off` and the host serves nothing.
    */
   readonly HUB_HOST?: string
+  /** The commit deployed (scripts/live-config.mjs), which /api/version answers from the Hub object. */
+  readonly GIT_SHA?: string
   /**
    * The hub's origin when it isn't https://<HUB_HOST>: only for trying the hub locally, at
    * http://localhost:<port>, where browsers allow passkeys without a certificate.

@@ -1,0 +1,14 @@
+// The live deploy's own settings (no secrets), laid over wrangler.jsonc by scripts/live-config.mjs.
+// The deploy-hub workflow deploys with them after CI passes on main (docs/relay-hub.md, "Deploying").
+// Secrets stay in Cloudflare, set once with `wrangler secret put`: WAIT_SECRET, HUB_SETUP_SECRET
+// (its value is in Nick's 1Password item "Valet hub setup secret").
+{
+  "account_id": "01a118752330d91e08371f43d5403f0f",
+  "workers_dev": true,
+  "routes": [{ "pattern": "valet.dncr.me", "custom_domain": true }],
+  "vars": {
+    "RELAY_HOST": "valet-relay.nick-01a.workers.dev",
+    "RELAY_ORIGIN": "https://valet-relay.nick-01a.workers.dev",
+    "HUB_HOST": "valet.dncr.me"
+  }
+}

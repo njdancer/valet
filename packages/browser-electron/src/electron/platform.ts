@@ -354,7 +354,9 @@ class ElectronSurface implements BrowserSurface {
     const first = await once().finally(() =>
       this.contents.removeListener('did-redirect-navigation', redirected),
     )
-    const failedUrl = first.ok ? undefined : first.failedUrl
+    // Only a refusal: an ERR_ABORTED is already waited out by PageCore.load, and loading again then
+    // would reload a page the step may already be using.
+    const failedUrl = first.ok || first.code !== 'ERR_BLOCKED_BY_CLIENT' ? undefined : first.failedUrl
     if (failedUrl === undefined || ours.some((u) => sameUrl(u, failedUrl))) return strip(first)
     if (this.isLoading()) await this.nextStopLoading()
     return strip(await once())

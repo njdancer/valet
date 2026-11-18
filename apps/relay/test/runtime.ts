@@ -67,6 +67,7 @@ export async function startRelay(
       RELAY_HOST,
       RELAY_ORIGIN,
       WAIT_SECRET: 'test-wait-secret',
+      GIT_SHA: 'abc1234',
       ...(options.hub === false
         ? {}
         : {

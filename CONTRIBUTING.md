@@ -49,7 +49,8 @@ conventional-style subjects (`feat(runtime): …`, `test(core): …`, `docs: …
   No test talks to a real site, 1Password, or the Messages database.
 - Anything that crosses parts (the app, the relay, the hub, a browser, an agent) gets an end-to-end
   test that runs those real parts together, before anyone is asked to try it by hand. The hub's is
-  `apps/desktop/e2e/hub.spec.ts`; don't deploy the relay or hub unless it passed on that commit.
+  `apps/desktop/e2e/hub.spec.ts`; the relay and hub deploy only from main, by
+  `.github/workflows/deploy-hub.yml`, after that commit's CI passed with it. Don't deploy by hand.
 
 ## Changes that come from agent feedback
 

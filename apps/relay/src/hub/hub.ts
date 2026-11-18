@@ -620,6 +620,10 @@ export class Hub extends DurableObject<Env> {
     if (!path.startsWith('/api/')) throw new Refusal(405, 'method_not_allowed', 'Not allowed.')
 
     if (request.method === 'GET') {
+      // Answered by this object, so a deploy can tell when the Hub itself runs the new code: the
+      // Worker in front can be new while this object is still the old one.
+      if (path === '/api/version')
+        return Response.json({ sha: this.env.GIT_SHA ?? null }, { headers: { 'cache-control': 'no-store' } })
       if (path === '/api/me') return this.me(this.need(session), now)
       if (path === '/api/nodes')
         return Response.json({
