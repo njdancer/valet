@@ -22,6 +22,7 @@ import {
   type FetchResult,
   homeUnreachable,
   type LocalAccess,
+  type MailMessage,
   NeedsUserError,
   OPERATION_PURPOSE,
   type Operation,
@@ -45,6 +46,7 @@ import {
   GuardedHttp,
   GuardedImap,
   GuardedSftp,
+  GuardedSmtp,
   GuardedToolPage,
   type HttpEgress,
   NO_HTTP_ACCESS,
@@ -143,6 +145,35 @@ interface ProtocolStep {
   readonly error?: { readonly stage: string; readonly errorClass: string } | undefined
 }
 
+/**
+ * One message a case's tool sends through ctx.smtp (a protocol adapter with protocols.smtp), in
+ * order: the message as Valet checked it (matched like an output, so list only what the case
+ * checks), how the person answers its confirmation (approved unless the case says otherwise), and
+ * what the server answers once approved: how many recipients it accepted, or an error. The
+ * runtime's own checks (only an irreversible tool sends, the recipients list, the message rules,
+ * the request ceiling) come first, as on a live call; a send they refuse never reaches the script.
+ */
+const smtpStepSchema = z
+  .object({
+    message: z.unknown().optional(),
+    confirm: z.enum(['approved', 'declined', 'timed-out']).default('approved'),
+    answer: z
+      .object({ accepted: z.number().int().min(0).max(50) })
+      .strict()
+      .optional(),
+    error: z.object({ stage, errorClass: stage }).strict().optional(),
+  })
+  .strict()
+  .refine(
+    (s) => s.answer === undefined || s.error === undefined,
+    'a step has an answer or an error, not both',
+  )
+  .refine(
+    (s) => s.confirm === 'approved' || (s.answer === undefined && s.error === undefined),
+    'a send the person doesn’t approve never reaches the server: no answer or error',
+  )
+type SmtpStep = z.output<typeof smtpStepSchema>
+
 export const caseSchema = z
   .object({
     name: z.string().min(1).max(120),
@@ -160,6 +191,7 @@ export const caseSchema = z
       .array(protocolStep(Object.keys(SFTP_OPERATION_PURPOSE) as [SftpOperation, ...SftpOperation[]]))
       .max(50)
       .default([]),
+    smtp: z.array(smtpStepSchema).max(20).default([]),
     session: z.enum(['ok', 'needs-user', 'failed']).default('ok'),
     /**
      * A repair's reproduction (docs/authoring-tools.md#repairs-pr-3): the ticket this case
@@ -347,6 +379,8 @@ export async function runCase(
       )
     if (options.rawStart === undefined) return fail('This build of Valet can’t run raw adapters.')
   }
+  const scriptMismatch = protocolScriptMismatch(draft.manifest, c)
+  if (scriptMismatch !== null) return fail(scriptMismatch)
 
   const controller = new AbortController()
   const state = new CallState(
@@ -395,6 +429,8 @@ export async function runCase(
   const sftpProtocol = protocols?.sftp
   const imapScript = scripted<Operation>('IMAP', c.imap)
   const sftpScript = scripted<SftpOperation>('SFTP', c.sftp)
+  const smtpProtocol = protocols?.smtp
+  const smtpScript = scriptedSmtp(c.smtp, smtpProtocol?.endpoint ?? 'smtp.invalid:587')
   const scriptRun = (): RunContext => ({
     meter: new RunMeter(uploadBudget(draft.manifest, declared.sideEffect)),
     signal: controller.signal,
@@ -419,6 +455,29 @@ export async function runCase(
               roots: sftpProtocol.roots,
               connect: sftpScript.connect,
             },
+            signIn: noCredential,
+            run: scriptRun(),
+          }),
+        }),
+    ...(smtpProtocol === undefined
+      ? {}
+      : {
+          smtp: new GuardedSmtp({
+            adapterId: draft.manifest.id,
+            manifest: draft.manifest,
+            sideEffect: declared.sideEffect,
+            site: OPEN_SITE,
+            state,
+            audit: async () => {},
+            backend: {
+              endpoint: smtpProtocol.endpoint,
+              recipients: smtpProtocol.recipients ?? null,
+              connect: smtpScript.connect,
+            },
+            // The case's script answers for the person: nothing is ever sent from a case.
+            confirm: smtpScript.confirm,
+            messageId: smtpScript.messageId,
+            now: () => CASE_MAIL_DATE,
             signIn: noCredential,
             run: scriptRun(),
           }),
@@ -502,7 +561,10 @@ export async function runCase(
   if (outcome === 'timeout') return fail(`Ran over ${Math.round(timeoutMs / 1000)} seconds.`)
   if (fixtures.problem !== null) return fail(fixtures.problem)
   // Steps the tool never reached matter only when it was meant to finish.
-  const scriptProblem = imapScript.problem('output' in c.expect) ?? sftpScript.problem('output' in c.expect)
+  const scriptProblem =
+    imapScript.problem('output' in c.expect) ??
+    sftpScript.problem('output' in c.expect) ??
+    smtpScript.problem('output' in c.expect)
   if (scriptProblem !== null) return fail(scriptProblem)
   if (domUse.name !== null)
     return fail(
@@ -1066,6 +1128,93 @@ function scripted<Op extends string>(
       problem ??
       (finished && next < steps.length
         ? `The tool made ${next} of the case's ${steps.length} ${label} steps.`
+        : null),
+  }
+}
+
+/** The Date a case's sends carry: fixed, so a case's output never depends on the clock. */
+const CASE_MAIL_DATE = Date.UTC(2026, 0, 1)
+
+/**
+ * Why a case's protocol scripts don't fit the draft, or null: a protocol adapter's cases answer
+ * only through the scripts of the protocols it declares (it has no page and no ctx.http), and no
+ * other adapter's case has any.
+ */
+function protocolScriptMismatch(manifest: AdapterManifest, c: DraftCase): string | null {
+  const scripts = { imap: c.imap.length, smtp: c.smtp.length, sftp: c.sftp.length } as const
+  if (runtimeOf(manifest) !== 'protocol') {
+    const listed = (Object.keys(scripts) as (keyof typeof scripts)[]).find((k) => scripts[k] > 0)
+    return listed === undefined
+      ? null
+      : `The case lists "${listed}" steps, which only a protocol adapter (runtime "protocol") makes.`
+  }
+  if (Object.keys(c.pages).length > 0 || c.fetch.length > 0 || c.sockets.length > 0)
+    return 'A protocol adapter has no page and no ctx.http, so its cases have no "pages", "fetch" or "sockets": script its protocol with "imap", "smtp" or "sftp" steps.'
+  for (const key of Object.keys(scripts) as (keyof typeof scripts)[])
+    if (scripts[key] > 0 && manifest.protocols?.[key] === undefined)
+      return `The case lists "${key}" steps, but manifest.json has no protocols.${key}.`
+  return null
+}
+
+/**
+ * The protocol host and the person, for a case's SMTP script: each confirmation must be for the
+ * next message the case lists (and match what it lists), and answers as the step says; an approved
+ * one is "sent" with the step's answer (every recipient accepted by default) or its error. A
+ * message the case doesn't expect fails the case, and so does a listed send the tool never made
+ * when the case expects output. Message-IDs are numbered, `<case-1@host>`, so outputs are stable.
+ */
+function scriptedSmtp(
+  steps: readonly SmtpStep[],
+  endpoint: string,
+): {
+  readonly confirm: (message: MailMessage) => Promise<'approved' | 'declined' | 'timed-out'>
+  readonly connect: () => Promise<{
+    send(value: { readonly message: MailMessage }): Promise<{ readonly accepted: number }>
+    end(): Promise<void>
+  }>
+  readonly messageId: () => string
+  readonly problem: (finished: boolean) => string | null
+} {
+  const host = endpoint.slice(0, endpoint.lastIndexOf(':'))
+  let next = 0
+  let ids = 0
+  let problem: string | null = null
+  /** The step whose confirmation was approved last, which the next send answers. */
+  let approved: SmtpStep | null = null
+  return {
+    confirm: async (message) => {
+      const step = steps[next]
+      if (step === undefined) {
+        problem ??= `The tool sent a message the case doesn't list (after ${next} sends): to ${message.to.join(', ').slice(0, 120)}.`
+        throw new ValetError('egress', 'unavailable')
+      }
+      next++
+      if (step.message !== undefined) {
+        const mismatch = outputMismatch(step.message, message, 'message')
+        if (mismatch !== null) {
+          problem ??= `SMTP send ${next}'s message differs at ${mismatch.at}: expected ${jsonText(mismatch.expected)}, got ${mismatch.missing ? 'nothing' : jsonText(mismatch.actual)}.`
+          throw new ValetError('egress', 'unavailable')
+        }
+      }
+      approved = step.confirm === 'approved' ? step : null
+      return step.confirm
+    },
+    connect: async () => ({
+      send: async ({ message }) => {
+        const step = approved
+        approved = null
+        if (step === null) throw new ValetError('egress', 'unavailable')
+        if (step.error !== undefined)
+          throw new ValetError(step.error.stage as Stage, step.error.errorClass as ErrorClass)
+        return step.answer ?? { accepted: message.to.length + message.cc.length + message.bcc.length }
+      },
+      end: async () => {},
+    }),
+    messageId: () => `<case-${++ids}@${host}>`,
+    problem: (finished) =>
+      problem ??
+      (finished && next < steps.length
+        ? `The tool sent ${next} of the case's ${steps.length} SMTP messages.`
         : null),
   }
 }

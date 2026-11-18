@@ -12,6 +12,11 @@ const SAFETY_WORDS = /\b(safe|safely|harmless|read[- ]only|verified|approved|tru
 export const MAX_TITLE = 40
 /** The starter template's placeholder description (template.ts), which the lint asks to replace. */
 export const STARTER_DESCRIPTION = 'Replace this with what the adapter does.'
+/**
+ * The host key a blank SFTP draft names until the agent writes the server's own (template.ts): well
+ * formed, so the starter checks, and a lint caution until it's replaced. No server has it.
+ */
+export const PLACEHOLDER_HOST_KEY = 'SHA256:REPLACEwithYOURserversKEYfromSshKeygenLf00A'
 
 export interface Finding {
   readonly level: 'error' | 'caution'
@@ -102,6 +107,12 @@ export function lint(manifest: AdapterManifest, files: PackageFiles): Finding[] 
       level: 'caution',
       check: 'lint',
       text: 'manifest.json’s description is still the starter’s placeholder. Say what the adapter does: the person reads it on the approval card.',
+    })
+  if (manifest.protocols?.sftp?.hostKeySha256 === PLACEHOLDER_HOST_KEY)
+    out.push({
+      level: 'caution',
+      check: 'lint',
+      text: 'protocols.sftp.hostKeySha256 is still the starter’s placeholder, which no server has. Ask the person for their server’s host key fingerprint (`ssh-keyscan -t ed25519 <host> | ssh-keygen -lf -`, on a network they trust).',
     })
   const home = new URL(manifest.home).hostname
   const domain = siteDomain(home)
