@@ -781,6 +781,25 @@ cards use the same wording source (`display-text`).
   calls. A trial without a granted credential fails with `needsUser`, naming the credential.
 - `valet_add_dependency` (`raw` only), as described in F3.
 
+#### As built (protocol authoring, 2026-11-18)
+
+- `valet_create_draft` takes `protocol: "imap" | "smtp" | "sftp"` (with `runtime: "protocol"`, or
+  alone) for a blank protocol draft. Each starter is a small working package with a case for every
+  tool (`apps/desktop/src/main/core/drafts/template.ts`): IMAP finds mail in two folders and flags a
+  message; SMTP sends a confirmed plain-text note to one domain; SFTP lists and reads files under a
+  read root and adds new files under a write root.
+- Cases script the server: `imap` and `sftp` steps (from workstreams D, E and I) and now `smtp`
+  steps, one per message, each with the person's answer (`approved`, `declined` or `timed-out`) and
+  the server's (`{ accepted }` or an error). Every send still passes GuardedSmtp's own checks first,
+  so a case can't approve a recipient off the list or a send from a tool that isn't irreversible.
+  A protocol adapter's case may not have `pages`, `fetch` or `sockets`, nor steps for a protocol its
+  manifest lacks; another kind's case may not have protocol steps.
+- The authoring guide has a section for protocol adapters: the manifest, `ctx.imap`, `ctx.smtp`,
+  `ctx.sftp`, their errors, and how cases script them.
+- Tests: `apps/desktop/test/main/protocol-drafts.test.ts` (the starters, the scripts and what they
+  refuse) and `protocol-drafts.e2e.test.ts` (each starter as installed, through the real protocol
+  hosts, broker and credential gate, against fake IMAP, SMTP and SFTP servers).
+
 ## Testing and red team
 
 - **Fakes only. No test touches a real account.** The fakes are a local HTTPS and WebSocket server,
@@ -830,6 +849,40 @@ and the profile generator. D, E and G own their own `protocols.*` entries. Each 
 Nick was away while these were built and asked each thread to take its own recommendation and
 note it here. Each one can be reversed.
 
+**Protocol authoring (2026-11-18, [Authoring](#authoring)):**
+
+- **`protocol` sits beside `runtime`.** `valet_create_draft` takes `protocol: "imap" | "smtp" |
+  "sftp"`, which implies `runtime: "protocol"`, rather than new runtime values. It mirrors the
+  manifest, where the runtime is `protocol` and `protocols` names the protocol.
+- **Protocol drafts have no live trials**, not even a draft update of an installed adapter whose
+  credential is granted. Every operation signs in with the person's password or key, and lending it
+  to unapproved code would let an agent read the mailbox or server before the person approved
+  anything. Cases are the test, and the installed adapter is the live check. A lent, read-only
+  trial against the installed version's grant could follow, like signed-in browser trials.
+- **SMTP cases script the person's yes.** Nothing is ever sent from a case. A send that goes
+  through answers with every recipient accepted, as a live one always does, so a case can't show a
+  partial send no server produces. When a step lists the message, its To, Cc and Bcc are checked in
+  full (the red team showed a hidden Bcc could otherwise pass). Message-IDs are `<case-N@host>` and
+  the date is fixed, so outputs are stable.
+- **The starters are deliberately narrow.** IMAP: two named folders, a read tool and a write tool
+  that flags. SMTP: one irreversible tool, recipients limited to `@example.com`, one send a call.
+  SFTP: a read root and a write root, no irreversible tool. An agent widens them on purpose, and
+  the person sees it on the card.
+- **The SFTP starter's host key is a placeholder** that is well formed but matches no server, with
+  a lint caution until it's replaced, rather than an error that would stop the starter checking.
+- **A protocol case with `pages`, `fetch` or `sockets`, or a script for a protocol its manifest
+  lacks, fails** with a reason, rather than being ignored. Another kind's case with protocol
+  steps fails the same way.
+- **`setFlags` answers how many ids it was given, not how many changed.** The guide says so and the
+  IMAP starter looks a message up first. Found by running the starter against the fake server.
+- **Red team (2026-11-18).** No way found to reach a real server, use a credential or send mail
+  from a case or trial, nor to confuse the SMTP script's order. Fixed: impossible `accepted` counts
+  and the hidden Bcc above, the guide's IMAP endpoint wording, invisible characters from the server
+  in the starters' output, and the SMTP starter's address pattern. Residuals: `protocols.imap`
+  accepts an IP address and any port although its comment says a host name and TLS (workstream D's
+  contract, left to it); IMAP and SFTP case answers aren't checked against what a real server
+  could return (a name with a line break, say), as before.
+
 **Credential messages (2026-11-18):** eight decisions and four residual risks, under
 [Credential messages](#decisions-for-nicks-review-credential-messages).
 
@@ -860,8 +913,8 @@ note it here. Each one can be reversed.
   root a Requests line, risk by its access. New areas would need an iOS app change.
 - **The broker's tunnel turns off Nagle's algorithm** on the sockets it accepts (workstream A's
   code). SSH sends small writes one at a time; without it each operation took about a second.
-- **No authoring support yet.** `valet_create_draft` makes `browser` and `http` drafts only, as for
-  IMAP, so the guide doesn't describe `ctx.sftp` until drafts can be `protocol` ones.
+- **Authoring support** came later (2026-11-18, see [Authoring](#authoring)): `valet_create_draft`
+  makes IMAP, SMTP and SFTP drafts, and the guide describes `ctx.sftp`.
 - **The app ships the SFTP host as its own file** (`out/main/sftp-host.cjs`, unpacked beside
   app.asar like the IMAP host) and runs it on the raw runtime's Node binary. Without either, SFTP
   tools answer not-granted. ssh2's `child_process`, `dns` and `fs` are replaced in the bundle by
