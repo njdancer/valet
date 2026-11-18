@@ -17,6 +17,7 @@ import {
   relayAuthPayload,
   relayToMacSchema,
 } from '@valet/core'
+import type { z } from 'zod'
 import type { RelayConsentView } from './oauth-server'
 
 /** The transport key: signs `valet/relay-auth/v1\n<payload>` without user presence. */
@@ -83,6 +84,8 @@ export interface RelayClientOptions {
   readonly consent: (id: string, query: string, source: string | null) => RelayConsentView
   readonly onEvent?: (event: RelayEvent) => void
   readonly onStatus?: (status: RelayClientStatus) => void
+  /** A frame from the relay that this Mac refused (it then drops the connection): what was wrong. */
+  readonly onBadFrame?: (why: string) => void
   /**
    * The base of this Mac's public host, when the relay gives Macs names under another domain
    * (its RELAY_MAC_HOST): `<macId>.<macHost>`. Unset, `<macId>.<relay host>`.
@@ -205,7 +208,10 @@ export class RelayClient {
     let parsed: RelayToMac
     try {
       const result = relayToMacSchema.safeParse(JSON.parse(data))
-      if (!result.success) return socket.close(CLOSE_BAD_FRAME, 'bad frame')
+      if (!result.success) {
+        this.options.onBadFrame?.(badFrameSummary(data, result.error))
+        return socket.close(CLOSE_BAD_FRAME, 'bad frame')
+      }
       parsed = result.data
     } catch {
       return socket.close(CLOSE_BAD_FRAME, 'bad frame')
@@ -427,4 +433,21 @@ function takeChunk(text: string, max: number): string {
   if (text.length <= max) return text
   const code = text.charCodeAt(max - 1)
   return text.slice(0, code >= 0xd800 && code <= 0xdbff ? max - 1 : max)
+}
+
+/** Which message and which fields failed, never their values: frames can carry payloads. */
+function badFrameSummary(data: string, error: z.ZodError): string {
+  let type = 'unknown'
+  try {
+    const value: unknown = JSON.parse(data)
+    if (typeof value === 'object' && value !== null && 'type' in value && typeof value.type === 'string')
+      type = value.type.slice(0, 40)
+  } catch {
+    // Not JSON: the type stays unknown.
+  }
+  const paths = error.issues
+    .slice(0, 5)
+    .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.code}`)
+    .join('; ')
+  return `${type}: ${paths}`
 }

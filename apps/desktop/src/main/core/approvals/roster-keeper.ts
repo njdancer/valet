@@ -406,6 +406,7 @@ export class RosterKeeper {
 
   private set(state: RosterState, count: number): void {
     if (state === this.state && count === this.count) return
+    if (state !== this.state) this.options.log?.(`[roster] ${state}, ${count} devices`)
     this.state = state
     this.count = count
     this.options.onChange()

@@ -179,6 +179,19 @@ describe('connecting', () => {
     expect(socket.closed?.code).toBe(4400)
   })
 
+  it('says which message and fields it refused, without their values', async () => {
+    const bad: string[] = []
+    const { relay } = client({ onBadFrame: (why) => bad.push(why) })
+    relay.start()
+    const socket = FakeSocket.last as FakeSocket
+    await online(socket)
+    socket.deliver({ type: 'hub-roster', changes: [], passkeys: [{ passkeyId: 'secret-value' }] })
+    expect(socket.closed?.code).toBe(4400)
+    expect(bad).toHaveLength(1)
+    expect(bad[0]).toMatch(/^hub-roster: .*passkeys\.0/)
+    expect(bad[0]).not.toContain('secret-value')
+  })
+
   it('closes when the key can’t sign', async () => {
     const { relay } = client({
       signer: { publicKey: SPKI, sign: async () => Promise.reject(new Error('locked')) },
