@@ -61,7 +61,8 @@ final class SignInJourneyTests: JourneyTestCase {
   /// hub's page (the fake hub's, here), and the Mac's requests arrive.
   func testSignsInWithThePasskeyAndNoPairing() {
     launch("sign-in")
-    XCTAssertFalse(element("pair.scan").isHittable, "pairing with a code is tucked away")
+    XCTAssertFalse(element("pair.scan").exists, "pairing with a code is tucked away")
+    XCTAssertTrue(element("pair.instead").exists)
     waitFor("signin.start").tap()
     XCTAssertTrue(app.tabBars.buttons["Needs you"].waitForExistence(timeout: 10))
     XCTAssertTrue(element("needs.empty").exists)

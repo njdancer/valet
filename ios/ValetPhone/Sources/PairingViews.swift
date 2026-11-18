@@ -12,8 +12,25 @@ struct PairStartView: View {
   let notice: String?
   @State private var scanning = false
   @State private var name = "iPhone"
-  @State private var hubAddress = PhoneModel.defaultHub
-  @State private var showPairing = false
+  @State private var hubAddress: String
+  @State private var showAddress = false
+  @State private var showPairing: Bool
+
+  init(model: PhoneModel, host: AppHost, notice: String?) {
+    self.model = model
+    self.host = host
+    self.notice = notice
+    var hub = PhoneModel.defaultHub
+    var pairing = false
+    #if VALET_FAKES
+      // The fake hub stands in for valet.dncr.me; the pairing journeys and the walkthrough start
+      // from a Mac's code.
+      if let world = host.world { hub = world.hub.origin }
+      pairing = host.pairFrom != nil || host.world?.scenario == .pair
+    #endif
+    _hubAddress = State(initialValue: hub)
+    _showPairing = State(initialValue: pairing)
+  }
   @Environment(\.webAuthenticationSession) private var webAuthenticationSession
 
   private func signIn() async {
@@ -77,27 +94,26 @@ struct PairStartView: View {
           case .idle:
             EmptyView()
           }
-          DisclosureGroup("Account address") {
+          if showAddress {
             TextField("Account address", text: $hubAddress)
               .textFieldStyle(.roundedBorder)
               .keyboardType(.URL)
               .textInputAutocapitalization(.never)
               .autocorrectionDisabled()
               .accessibilityIdentifier("signin.hub")
+          } else {
+            Button("Use another account address") { showAddress = true }
+              .accessibilityIdentifier("signin.showHub")
           }
           Divider()
-          DisclosureGroup("Pair with one Mac\u{2019}s code instead", isExpanded: $showPairing) {
+          if showPairing {
             pairing
+          } else {
+            Button("Pair with one Mac\u{2019}s code instead") { showPairing = true }
+              .accessibilityIdentifier("pair.instead")
           }
-          .accessibilityIdentifier("pair.instead")
         }
         .padding()
-      }
-      .onAppear {
-        #if VALET_FAKES
-          // The pairing journeys and the walkthrough start from a Mac's code.
-          if host.pairFrom != nil || host.world?.scenario == .pair { showPairing = true }
-        #endif
       }
       .sheet(isPresented: $scanning) {
         QRScanner { text in
