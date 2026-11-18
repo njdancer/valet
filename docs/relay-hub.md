@@ -340,7 +340,8 @@ valet.dncr.me custom domain, the hosts), plus `GIT_SHA`. Then it runs `wrangler 
 
 `GET /api/version` is answered by the Hub object itself. On 2026-11-18 the Worker in front was new
 while the Hub object kept running the old code, so the workflow waits until `/api/version` names
-the new commit. If it doesn't, it deploys once more, then checks `/phone`, `/sign-in`, `/mcp` and
+the new commit, for up to five minutes (the first CI deploy took about four). If it doesn't, it
+deploys once more, then checks `/phone`, `/sign-in`, `/mcp` and
 `/api/phone/prepare`.
 
 To deploy main again without a change, run Actions › Deploy hub with "force". Secrets

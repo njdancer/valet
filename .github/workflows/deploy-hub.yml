@@ -37,7 +37,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: which commit, and did its CI run the hub's end-to-end test
         id: gate
@@ -112,7 +112,8 @@ jobs:
           node scripts/live-config.mjs "$SHA"
           deploy() { pnpm exec wrangler deploy -c wrangler.live.generated.json --tag "${SHA:0:12}" --message "main $SHA"; }
           serving() {
-            for _ in $(seq 1 18); do
+            # Up to five minutes: on 2026-11-18 the Hub object took between 1.5 and 4 minutes.
+            for _ in $(seq 1 60); do
               [ "$(curl -fsS --max-time 10 "$HUB_URL/api/version?t=$RANDOM" | jq -r '.sha // empty' || true)" = "$SHA" ] && return 0
               sleep 5
             done
