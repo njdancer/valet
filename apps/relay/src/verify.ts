@@ -77,3 +77,20 @@ export function verifyDeviceRecordSignature(
 ): Promise<boolean> {
   return verifyDomain(publicKey, SIGNING_DOMAINS.deviceRecord, payload, signature)
 }
+
+/** A passkey's raw r||s signature over the bytes core's passkeySignedData gives (roster.ts). */
+export async function verifyPasskeySignature(
+  publicKey: string,
+  data: Uint8Array,
+  signature: string,
+): Promise<boolean> {
+  const der = fromBase64url(publicKey)
+  const raw = fromBase64url(signature)
+  if (der === null || raw === null || raw.length !== 64) return false
+  try {
+    const key = await crypto.subtle.importKey('spki', der, ECDSA_P256, false, ['verify'])
+    return await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, raw, data)
+  } catch {
+    return false
+  }
+}

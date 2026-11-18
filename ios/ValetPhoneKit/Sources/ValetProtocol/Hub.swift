@@ -71,7 +71,7 @@ public enum HubPhone {
       return Account(
         account: try f.string("account", pattern: Patterns.accountId),
         relay: try f.httpsURL("relay", max: 200),
-        changes: try f.array("changes", max: 512) { try signed($0, $1) },
+        changes: try f.array("changes", max: 512) { try signed($0, $1, allowWebAuthn: true) },
         refused: try f.has("refused") ? f.oneOf("refused", ["conflict", "invalid"]) : nil,
         joining: try f.array("joining", max: 16) { value, at in
           let j = try Fields(value, path: at, required: ["macId", "record", "at"])
@@ -96,8 +96,8 @@ public enum HubPhone {
     }
 
     /// `signedRosterChangeSchema` and `signedJoinRecordSchema`: a signed text of at most 4096 characters.
-    static func signed(_ value: JSONValue, _ path: String) throws -> SignedText {
-      let signed = try SignedText.parse(value, path)
+    static func signed(_ value: JSONValue, _ path: String, allowWebAuthn: Bool = false) throws -> SignedText {
+      let signed = try SignedText.parse(value, path, allowWebAuthn: allowWebAuthn)
       if signed.payload.utf16.count > 4096 { throw SchemaError("\(path).payload", "too long") }
       return signed
     }

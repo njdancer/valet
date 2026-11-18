@@ -22,9 +22,11 @@
 
 import {
   nextRosterChange,
+  ROSTER_MAX_PASSKEYS,
   type Roster,
   type RosterChange,
   type RosterDevice,
+  type RosterPasskey,
   rosterChangeHash,
   rosterChangeSchema,
   SIGNING_DOMAINS,
@@ -89,6 +91,8 @@ const REASONS = {
   join: 'join your Valet account',
   add: 'add an iPhone to your Valet account',
   remove: 'remove a device from your Valet account',
+  addPasskey: 'let your passkey sign iPhones in to your Valet account',
+  removePasskey: 'stop a passkey signing iPhones in to your Valet account',
 } as const
 
 export class RosterKeeper {
@@ -107,6 +111,8 @@ export class RosterKeeper {
   private joinRecord: SignedText | null = null
   /** The phones last handed to `onPhones`, by id, so an unchanged list says nothing. */
   private phonesKey = ''
+  /** The account's passkeys as the hub last listed them; undefined from a hub that doesn't. */
+  private hubPasskeys: readonly RosterPasskey[] | undefined
 
   constructor(private readonly options: RosterKeeperOptions) {}
 
@@ -159,9 +165,14 @@ export class RosterKeeper {
   }
 
   /** The account's whole list, from the hub. `refused`: the Mac's last change wasn't kept. */
-  received(changes: readonly SignedText[], refused?: 'not-linked' | 'conflict' | 'invalid'): Promise<void> {
+  received(
+    changes: readonly SignedText[],
+    refused?: 'not-linked' | 'conflict' | 'invalid',
+    passkeys?: readonly RosterPasskey[],
+  ): Promise<void> {
     return this.queue(async () => {
       if (this.account === null) return
+      this.hubPasskeys = passkeys
       if (refused === 'invalid') {
         this.stuck = true
         this.options.log?.('[roster] the hub refused a change as invalid')
@@ -252,8 +263,7 @@ export class RosterKeeper {
 
     const changes = this.pending(roster, removedBy)
     if (changes.length === 0) return this.set('on', roster.devices.size)
-    const removing = changes.some((c) => c.op === 'remove')
-    await this.sign(this.after(roster, changes), removing ? REASONS.remove : REASONS.add)
+    await this.sign(this.after(roster, changes), reasonFor(changes))
   }
 
   /**
@@ -313,6 +323,19 @@ export class RosterKeeper {
     for (const phone of devices.allPhones())
       if (devices.revokedAt(phone.deviceId) !== null && roster.devices.get(phone.deviceId)?.role === 'phone')
         changes.push({ op: 'remove', deviceId: phone.deviceId })
+    // The account's passkeys, so its iPhones can sign in with them (step 4d), and no others.
+    if (this.hubPasskeys !== undefined) {
+      const atHub = new Set(this.hubPasskeys.map((p) => p.passkeyId))
+      for (const passkey of roster.passkeys.values())
+        if (!atHub.has(passkey.passkeyId))
+          changes.push({ op: 'remove-passkey', passkeyId: passkey.passkeyId })
+      let room = ROSTER_MAX_PASSKEYS - roster.passkeys.size
+      for (const passkey of this.hubPasskeys)
+        if (room > 0 && !roster.passkeys.has(passkey.passkeyId) && !roster.devices.has(passkey.passkeyId)) {
+          changes.push({ op: 'add-passkey', passkey })
+          room--
+        }
+    }
     // The hub takes at most this Mac's own phone limit in one go; the rest follow next time.
     return changes.slice(0, 5)
   }
@@ -325,7 +348,11 @@ export class RosterKeeper {
       .activePhones()
       .slice(0, 5)
       .map((p) => ({ op: 'add' as const, device: rosterDevice(p) }))
-    return this.payloads(null, account, [{ op: 'add', device: self }, ...phones])
+    // The hub takes six changes in one go: passkeys that don't fit follow with the next list.
+    const passkeys = (this.hubPasskeys ?? [])
+      .slice(0, Math.max(0, 5 - phones.length))
+      .map((passkey) => ({ op: 'add-passkey' as const, passkey }))
+    return this.payloads(null, account, [{ op: 'add', device: self }, ...phones, ...passkeys])
   }
 
   private after(roster: Roster, changes: RosterChange['change'][]): string[] {
@@ -347,6 +374,7 @@ export class RosterKeeper {
         head: rosterChangeHash({ payload, signature: '' }),
         seq: current === null ? 0 : current.seq + 1,
         devices: new Map(),
+        passkeys: new Map(),
       }
     }
     return out
@@ -382,6 +410,13 @@ export class RosterKeeper {
     this.count = count
     this.options.onChange()
   }
+}
+
+function reasonFor(changes: readonly RosterChange['change'][]): string {
+  if (changes.some((c) => c.op === 'remove')) return REASONS.remove
+  if (changes.some((c) => c.op === 'add')) return REASONS.add
+  if (changes.some((c) => c.op === 'add-passkey')) return REASONS.addPasskey
+  return REASONS.removePasskey
 }
 
 async function signEach(channel: ChannelKeys, payloads: string[], reason: string): Promise<string[] | null> {
@@ -429,7 +464,7 @@ function lastRemovals(chain: readonly SignedText[]): Map<string, string> {
     const change = parse(signed)
     if (change === null) continue
     if (change.change.op === 'remove') removed.set(change.change.deviceId, change.by)
-    else removed.delete(change.change.device.deviceId)
+    else if (change.change.op === 'add') removed.delete(change.change.device.deviceId)
   }
   return removed
 }

@@ -83,8 +83,13 @@ export function DevicesSection() {
           {s !== null && !s.available && s.unavailableReason !== null ? (
             <Text tone="muted">{UNAVAILABLE[s.unavailableReason]}</Text>
           ) : null}
+          <Text tone="muted">
+            To add an iPhone, open Valet on it and sign in with the passkey for your Valet account. Nothing to
+            do here. Pairing with a code is for an iPhone that can’t use the passkey.
+          </Text>
           <div>
             <Button
+              variant="secondary"
               disabled={s === null || !s.available || !relayOnline}
               disabledReason={
                 s !== null && s.available && !relayOnline

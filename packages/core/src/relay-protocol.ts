@@ -19,7 +19,7 @@ import { displayText } from './display-text'
 import { sha256Hex } from './hash'
 import { hubClientIdSchema, hubConsentIdSchema, signedHubGrantSchema } from './hub-grant'
 import { sealedSchema } from './pairing'
-import { ROSTER_MAX_CHANGES, signedRosterChangeSchema } from './roster'
+import { ROSTER_MAX_CHANGES, rosterPasskeySchema, signedRosterChangeSchema } from './roster'
 import {
   keyId,
   p256PublicKeySchema,
@@ -632,6 +632,12 @@ export const relayToMacSchema = z.discriminatedUnion('type', [
       type: z.literal('hub-roster'),
       changes: z.array(signedRosterChangeSchema).max(ROSTER_MAX_CHANGES),
       refused: z.enum(['not-linked', 'conflict', 'invalid']).optional(),
+      /**
+       * The account's passkeys at the hub that can sign (P-256 ones), for the Mac to put on the
+       * list so the account's iPhones can sign in with them (step 4d). The hub's word: the Mac
+       * shows each one in Settings › Devices, and only a device's signature puts it on the list.
+       */
+      passkeys: z.array(rosterPasskeySchema).max(20).optional(),
     })
     .strict(),
   /**

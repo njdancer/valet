@@ -3,6 +3,10 @@
 // already on the list, so the hub stores and hands it out but can't add a device by itself. The
 // phone checks the whole chain itself before it trusts any device on it, and only signs a change
 // on top of a chain that checked.
+//
+// Passkeys (step 4d): a device can put one of the account's passkeys on the list; that passkey can
+// then sign one kind of change, adding an iPhone, as a WebAuthn assertion whose challenge is the
+// change. That is how this phone signs in to the account with no Mac nearby.
 
 import CryptoKit
 import Foundation
@@ -43,7 +47,7 @@ public struct RosterDevice: Equatable, Sendable {
   }
 
   /// `rosterDeviceSchema`: the shape, valid P-256 keys, and the id is its approval key's.
-  static func parse(_ value: JSONValue, _ path: String) throws -> RosterDevice {
+  public static func parse(_ value: JSONValue, _ path: String) throws -> RosterDevice {
     let f = try Fields(value, path: path, required: [
       "deviceId", "role", "platform", "name", "approvalKey", "transportKey", "agreementKey",
     ])
@@ -66,14 +70,55 @@ public struct RosterDevice: Equatable, Sendable {
   }
 }
 
+/// One of the account's passkeys, as a device put it on the list (`rosterPasskeySchema`).
+public struct RosterPasskey: Equatable, Sendable {
+  public let passkeyId, credentialId, publicKey, rpId, name: String
+
+  public init(passkeyId: String, credentialId: String, publicKey: String, rpId: String, name: String) {
+    self.passkeyId = passkeyId
+    self.credentialId = credentialId
+    self.publicKey = publicKey
+    self.rpId = rpId
+    self.name = name
+  }
+
+  public var json: JSONValue {
+    .object([
+      ("passkeyId", .string(passkeyId)), ("credentialId", .string(credentialId)), ("publicKey", .string(publicKey)),
+      ("rpId", .string(rpId)), ("name", .string(name)),
+    ])
+  }
+
+  static let rpIdPattern = "(?=.{1,253}\\z)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*"
+
+  static func parse(_ value: JSONValue, _ path: String) throws -> RosterPasskey {
+    let f = try Fields(value, path: path, required: ["passkeyId", "credentialId", "publicKey", "rpId", "name"])
+    let passkey = RosterPasskey(
+      passkeyId: try f.string("passkeyId", pattern: Patterns.keyId),
+      credentialId: try f.string("credentialId", pattern: Patterns.base64url, min: 16, max: 512),
+      publicKey: try Roster.publicKey(f, "publicKey"),
+      rpId: try f.string("rpId", pattern: rpIdPattern),
+      name: try f.display("name", max: 60)
+    )
+    guard Signing.keyId(passkey.publicKey) == passkey.passkeyId else {
+      throw SchemaError(path, "passkeyId must be keyId(publicKey)")
+    }
+    return passkey
+  }
+}
+
 public enum RosterOp: Equatable, Sendable {
   case add(RosterDevice)
   case remove(String)
+  case addPasskey(RosterPasskey)
+  case removePasskey(String)
 
   var json: JSONValue {
     switch self {
     case let .add(device): return .object([("op", .string("add")), ("device", device.json)])
     case let .remove(deviceId): return .object([("op", .string("remove")), ("deviceId", .string(deviceId))])
+    case let .addPasskey(passkey): return .object([("op", .string("add-passkey")), ("passkey", passkey.json)])
+    case let .removePasskey(id): return .object([("op", .string("remove-passkey")), ("passkeyId", .string(id))])
     }
   }
 }
@@ -93,22 +138,32 @@ public struct RosterChange: Equatable, Sendable {
     let at = try f.string("at", pattern: Patterns.isoDateTime)
     guard ISOTime.parse(at) != nil else { throw SchemaError("change.at", "not an ISO date-time") }
     let op = try f.raw("change")
-    let opFields = try Fields(op, path: "change.change", required: ["op"], optional: ["device", "deviceId"])
+    let opFields = try Fields(
+      op, path: "change.change", required: ["op"], optional: ["device", "deviceId", "passkey", "passkeyId"]
+    )
     let change: RosterOp
-    switch try opFields.oneOf("op", ["add", "remove"]) {
+    switch try opFields.oneOf("op", ["add", "remove", "add-passkey", "remove-passkey"]) {
     case "add":
       let add = try Fields(op, path: "change.change", required: ["op", "device"])
       change = .add(try RosterDevice.parse(try add.raw("device"), "change.change.device"))
-    default:
+    case "remove":
       let remove = try Fields(op, path: "change.change", required: ["op", "deviceId"])
       change = .remove(try remove.string("deviceId", pattern: Patterns.keyId))
+    case "add-passkey":
+      let add = try Fields(op, path: "change.change", required: ["op", "passkey"])
+      change = .addPasskey(try RosterPasskey.parse(try add.raw("passkey"), "change.change.passkey"))
+    default:
+      let remove = try Fields(op, path: "change.change", required: ["op", "passkeyId"])
+      change = .removePasskey(try remove.string("passkeyId", pattern: Patterns.keyId))
     }
+    let by = try f.string("by")
+    guard by == Roster.passkeySigner || matches(by, Patterns.keyId) else { throw SchemaError("change.by", "not a signer") }
     return RosterChange(
       account: try f.string("account", pattern: Patterns.accountId),
       seq: try f.int("seq", min: 0, max: Roster.maxChanges),
       prev: try f.nullableString("prev", pattern: Patterns.hash),
       at: at,
-      by: try f.string("by", pattern: Patterns.keyId),
+      by: by,
       change: change
     )
   }
@@ -121,6 +176,10 @@ public struct Roster: Equatable, Sendable {
   public static let maxChanges = 512
   /// `signedRosterChangeSchema` and `signedJoinRecordSchema`'s payload limit.
   public static let maxPayload = 4096
+  /// Passkeys a list may hold at once.
+  public static let maxPasskeys = 8
+  /// What `by` says when a passkey signed the change.
+  public static let passkeySigner = "passkey"
 
   public let account: String
   /// rosterChangeHash of the first change.
@@ -131,12 +190,14 @@ public struct Roster: Equatable, Sendable {
   public let devices: [String: RosterDevice]
   /// The devices' ids in the order they were added, for a stable list on screen.
   public let order: [String]
+  /// Passkeys on the list, by passkeyId: each may sign an iPhone in.
+  public let passkeys: [String: RosterPasskey]
 
   public enum Failure: String, Error, Sendable {
     case empty, tooLong = "too-long", malformed, badSignature = "bad-signature", notAMember = "not-a-member"
     case brokenChain = "broken-chain", wrongGenesis = "wrong-genesis", wrongAccount = "wrong-account"
     case duplicate, unknownDevice = "unknown-device", lastDevice = "last-device"
-    case tooManyDevices = "too-many-devices", stale
+    case tooManyDevices = "too-many-devices", notAllowed = "not-allowed", stale
   }
 
   public struct CheckError: Error, Equatable, Sendable {
@@ -165,6 +226,7 @@ public struct Roster: Equatable, Sendable {
     if chain.count > maxChanges { return .failure(CheckError(at: -1, reason: .tooLong)) }
     var devices: [String: RosterDevice] = [:]
     var order: [String] = []
+    var passkeys: [String: RosterPasskey] = [:]
     var account = ""
     var genesis = ""
     var head = ""
@@ -174,6 +236,7 @@ public struct Roster: Equatable, Sendable {
         matches(signed.signature, Patterns.base64url), Base64URL.decode(signed.signature)?.count == 64,
         let change = try? RosterChange.parse(signed.payload)
       else { return fail(.malformed) }
+      let webauthn = signed.webauthn
       if change.seq != index { return fail(.brokenChain) }
       let signer: RosterDevice?
       if index == 0 {
@@ -188,12 +251,29 @@ public struct Roster: Equatable, Sendable {
         if change.account != account { return fail(.wrongAccount) }
         signer = devices[change.by]
       }
-      guard let signer else { return fail(.notAMember) }
-      guard Signing.verify(publicKey: signer.approvalKey, domain: .rosterChange, payload: signed.payload, signature: signed.signature)
-      else { return fail(.badSignature) }
+      if let signer {
+        if webauthn != nil { return fail(.malformed) }
+        guard Signing.verify(publicKey: signer.approvalKey, domain: .rosterChange, payload: signed.payload, signature: signed.signature)
+        else { return fail(.badSignature) }
+      } else if change.by == passkeySigner, let webauthn {
+        guard let passkey = passkeys.values.first(where: { $0.credentialId == webauthn.credentialId }) else {
+          return fail(.notAMember)
+        }
+        // A passkey only ever signs an iPhone in.
+        guard case let .add(device) = change.change, device.role == "phone", device.platform == "ios" else {
+          return fail(.notAllowed)
+        }
+        guard verifyPasskey(passkey, payload: signed.payload, webauthn: webauthn, signature: signed.signature) else {
+          return fail(.badSignature)
+        }
+      } else if change.by == passkeySigner {
+        return fail(.malformed)
+      } else {
+        return fail(.notAMember)
+      }
       switch change.change {
       case let .add(device):
-        if devices[device.deviceId] != nil { return fail(.duplicate) }
+        if devices[device.deviceId] != nil || passkeys[device.deviceId] != nil { return fail(.duplicate) }
         if devices.count >= maxDevices { return fail(.tooManyDevices) }
         devices[device.deviceId] = device
         order.append(device.deviceId)
@@ -203,6 +283,13 @@ public struct Roster: Equatable, Sendable {
         if devices.count == 1 { return fail(.lastDevice) }
         devices[deviceId] = nil
         order.removeAll { $0 == deviceId }
+      case let .addPasskey(passkey):
+        if passkeys[passkey.passkeyId] != nil || devices[passkey.passkeyId] != nil { return fail(.duplicate) }
+        if passkeys.count >= maxPasskeys { return fail(.tooManyDevices) }
+        passkeys[passkey.passkeyId] = passkey
+      case let .removePasskey(id):
+        if passkeys[id] == nil { return fail(.unknownDevice) }
+        passkeys[id] = nil
       }
       head = hash(signed)
       if index == 0 { genesis = head }
@@ -210,7 +297,40 @@ public struct Roster: Equatable, Sendable {
     }
     if let pinned, pinned != genesis { return .failure(CheckError(at: 0, reason: .wrongGenesis)) }
     if let known, chain.count - 1 < known.seq { return .failure(CheckError(at: -1, reason: .stale)) }
-    return .success(Roster(account: account, genesis: genesis, head: head, seq: chain.count - 1, devices: devices, order: order))
+    return .success(Roster(
+      account: account, genesis: genesis, head: head, seq: chain.count - 1, devices: devices, order: order,
+      passkeys: passkeys
+    ))
+  }
+
+  /// `passkeyChallenge`: SHA-256 of the change under the roster-change domain.
+  public static func passkeyChallenge(_ payload: String) -> Data {
+    Data(SHA256.hash(data: Signing.input(.rosterChange, payload)))
+  }
+
+  /// `passkeySignedData` and its signature check: a `webauthn.get` at https://<rpId> (or a local
+  /// test hub on localhost) whose challenge is this change, with the person present and verified,
+  /// signed by this passkey over authenticatorData and the SHA-256 of clientDataJSON.
+  static func verifyPasskey(_ passkey: RosterPasskey, payload: String, webauthn: WebAuthnAssertion, signature: String) -> Bool {
+    guard let authenticatorData = Base64URL.decode(webauthn.authenticatorData),
+      let clientDataJSON = Base64URL.decode(webauthn.clientDataJSON),
+      let client = try? JSONSerialization.jsonObject(with: clientDataJSON) as? [String: Any],
+      client["type"] as? String == "webauthn.get",
+      client["challenge"] as? String == Base64URL.encode(passkeyChallenge(payload)),
+      let origin = client["origin"] as? String, passkeyOrigin(passkey.rpId, origin),
+      (client["crossOrigin"] as? Bool) != true,
+      authenticatorData.count >= 37,
+      Data(authenticatorData.prefix(32)) == Data(SHA256.hash(data: Data(passkey.rpId.utf8))),
+      authenticatorData[authenticatorData.startIndex + 32] & 0x05 == 0x05,
+      let key = Signing.signingKey(passkey.publicKey), let raw = Base64URL.decode(signature), raw.count == 64,
+      let sig = try? P256.Signing.ECDSASignature(rawRepresentation: raw)
+    else { return false }
+    return key.isValidSignature(sig, for: authenticatorData + Data(SHA256.hash(data: clientDataJSON)))
+  }
+
+  static func passkeyOrigin(_ rpId: String, _ origin: String) -> Bool {
+    if origin == "https://\(rpId)" { return true }
+    return rpId == "localhost" && matches(origin, "http://localhost(?::[0-9]{1,5})?")
   }
 
   /// `nextRosterChange`: the payload of the change after `roster` (or the first, with nil), for

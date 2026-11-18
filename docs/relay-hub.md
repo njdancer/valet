@@ -469,6 +469,44 @@ an agent's request on it, loses the Mac's keys, has the phone add the new Mac, a
 phone's approvals and the agents' grants survive. The iPhone journeys then cover the same steps on
 the simulator.
 
+## Step 4d as built: the iPhone signs in with the account's passkey
+
+Nick (2026-11-18): the phone should log in to Valet, not pair with a Mac. Signing in through a Mac's
+QR code (4c) was still pairing. Now:
+
+- **The passkey goes on the list.** The hub hands each linked Mac the account's P-256 passkeys
+  (`passkeys` on `hub-roster`). The Mac adds each one to the account's device list as an
+  `add-passkey` change it signs (one Touch ID prompt, "let your passkey sign iPhones in to your
+  Valet account"), and removes one the account no longer has. A new list gets them in its first
+  batch.
+- **The passkey signs the phone in.** The iPhone app makes its keys and opens
+  `https://<hub>/phone#device=<its device record>&return=valet` in Safari's sign-in sheet. The
+  page asks the hub for the change adding that phone (`/api/phone/prepare`; one-account hub, so no
+  session is needed), the person uses their passkey (Face ID), and the page sends the WebAuthn
+  assertion (`/api/phone/finish`). The change's `by` is `passkey`; it carries the assertion
+  (`webauthn`: credential id, authenticator data, client data). Every verifier (hub, each Mac, each
+  phone) checks the assertion against the passkey's key on the list: a `webauthn.get` at
+  `https://<rpId>` whose challenge is SHA-256 of the change under the roster-change domain, with the
+  person present and verified.
+- **A passkey only adds an iPhone.** It can't add a Mac, remove anything, or add a passkey.
+- **The phone pins the list.** Back from the page, the phone reads the account at the hub and takes
+  the list only if it holds this phone, with exactly its keys, added by a passkey change. It then
+  talks first to a Mac on the list (one online at the hub, if any), and reaches every other Mac on
+  it as in 4c. If the list later drops that Mac (key loss, removal), another Mac on the list takes
+  its place: nobody signs in again.
+- **Pairing with a code stays** on the phone, tucked under "Pair with one Mac's code instead", and
+  on the Mac in Settings › Devices.
+
+What it trusts: the hub's word that a passkey is the account's, once, when a Mac puts it on the list
+(the Mac shows the change and signs it). A hub serving a bad sign-in page could have the person's
+passkey sign a different phone in during a sign-in; the phone checks that its own keys were added,
+and every device on the list shows up in Settings › Devices. This fits the threat model Nick set
+(2026-11-12): approvals guard against what agents do, not a compromised service.
+
+Tested: core `roster-passkey.test.ts` (and vectors the Swift port checks), the helper's signing
+rules, `SignInTests.swift`, the `sign-in` UI journey, and `hub.spec.ts` step 7 (the built app, the
+real hub and Chromium's virtual passkey: a new phone signs in, and its approval reaches the Mac).
+
 ## Open, for the building agent to propose (not for Nick unless it changes his goal)
 
 - Storage: D1 vs a Durable Object per account.

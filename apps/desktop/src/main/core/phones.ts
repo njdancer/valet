@@ -210,7 +210,7 @@ export class Phones implements PhoneOutbox {
         }
         if (event.type === 'hub-roster') {
           void roster
-            .received(event.changes, event.refused)
+            .received(event.changes, event.refused, event.passkeys)
             .catch((error) => this.options.log?.(`[roster] ${String(error)}`))
           return
         }

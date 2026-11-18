@@ -9,6 +9,11 @@
 // - Every later list must start with the pinned change and still hold the last head the phone
 //   saw, so a hub can't swap the list or roll it back.
 // - A Mac waiting to join is added with the keys in its own signed record, never the hub's word.
+//
+// Signing in with a passkey (step 4d): the phone opens the hub's page with keys it just made, the
+// person uses the account's passkey, and the passkey signs the change adding this phone. The first
+// list the phone then reads must have this phone on it, with exactly its keys, added by a passkey
+// the list already held; the phone pins that list as above.
 
 import Foundation
 import Observation
@@ -46,7 +51,7 @@ public struct AccountPin: Codable, Equatable, Sendable {
 
 public enum AccountProblem: String, Error, Equatable, Sendable {
   case unreachable = "Valet can\u{2019}t reach your account right now. It tries again when you come back."
-  case notOnList = "This iPhone isn\u{2019}t on your Valet account. Pair it again at your Mac."
+  case notOnList = "This iPhone isn\u{2019}t on your Valet account. Sign in again."
   case doesntCheck = "Your account\u{2019}s device list didn\u{2019}t check out, so this iPhone isn\u{2019}t using it."
 }
 
@@ -190,6 +195,14 @@ public final class AccountModel {
   }
 
   private func signIn(append: [SignedText]) async -> Result<HubPhone.Account, AccountProblem> {
+    await Self.read(hub: hub, transport: transport, keys: keys, append: append)
+  }
+
+  /// The account as the hub has it, signed in with this phone's transport key.
+  static func read(
+    hub: String, transport: HubTransport, keys: DeviceKeys, append: [SignedText] = []
+  ) async -> Result<HubPhone.Account, AccountProblem> {
+    let me = keys.publicKeys.deviceId
     do {
       let challengeAnswer = try await transport.post("\(hub)/phone/challenge", body: "{}")
       guard challengeAnswer.status == 200, let challenge = try? HubPhone.Challenge.parse(challengeAnswer.body) else {
@@ -207,6 +220,29 @@ public final class AccountModel {
       return .success(account)
     } catch {
       return .failure(.unreachable)
+    }
+  }
+
+  /// After the person signed this phone in with a passkey on the hub's page: the account, if the
+  /// list checks, has this phone with exactly its keys, and a passkey on the list added it.
+  public static func signedIn(
+    hub: String, transport: HubTransport, keys: DeviceKeys
+  ) async -> Result<(account: HubPhone.Account, roster: Roster), AccountProblem> {
+    switch await read(hub: hub, transport: transport, keys: keys) {
+    case let .failure(problem): return .failure(problem)
+    case let .success(account):
+      let mine = keys.publicKeys
+      guard case let .success(roster) = Roster.verify(account.changes), roster.account == account.account,
+        let device = roster.devices[mine.deviceId], device.approvalKey == mine.approval,
+        device.transportKey == mine.transport, device.agreementKey == mine.agreement,
+        account.changes.contains(where: { signed in
+          guard signed.webauthn != nil, let change = try? RosterChange.parse(signed.payload),
+            change.by == Roster.passkeySigner, case let .add(added) = change.change
+          else { return false }
+          return added == device
+        })
+      else { return .failure(.doesntCheck) }
+      return .success((account, roster))
     }
   }
 

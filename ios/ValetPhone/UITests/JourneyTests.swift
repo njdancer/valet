@@ -9,6 +9,18 @@ import XCTest
 class JourneyTestCase: XCTestCase {
   var app: XCUIApplication!
 
+  /// Taps a text field until it has keyboard focus. A field near the bottom of
+  /// the screen can sit under the tab bar, where a single tap doesn't focus it.
+  func focus(_ field: XCUIElement) {
+    for _ in 0..<3 {
+      if !field.isHittable { app.swipeUp() }
+      field.tap()
+      let focused = NSPredicate(format: "hasKeyboardFocus == true")
+      let wait = XCTNSPredicateExpectation(predicate: focused, object: field)
+      if XCTWaiter().wait(for: [wait], timeout: 3) == .completed { return }
+    }
+  }
+
   override func setUp() {
     continueAfterFailure = false
   }
@@ -54,6 +66,19 @@ class JourneyTestCase: XCTestCase {
     Thread.sleep(forTimeInterval: 1.2)
   }
 
+}
+
+final class SignInJourneyTests: JourneyTestCase {
+  /// Step 4d: no code to scan and nothing on the Mac. The passkey signs this phone in on the
+  /// hub's page (the fake hub's, here), and the Mac's requests arrive.
+  func testSignsInWithThePasskeyAndNoPairing() {
+    launch("sign-in")
+    XCTAssertFalse(element("pair.scan").exists, "pairing with a code is tucked away")
+    XCTAssertTrue(element("pair.instead").exists)
+    waitFor("signin.start").tap()
+    XCTAssertTrue(app.tabBars.buttons["Needs you"].waitForExistence(timeout: 10))
+    XCTAssertTrue(element("needs.empty").exists)
+  }
 }
 
 final class PairingJourneyTests: JourneyTestCase {
@@ -119,7 +144,7 @@ final class ConnectJourneyTests: JourneyTestCase {
     let approve = waitFor("card.approve")
     XCTAssertFalse(approve.isEnabled, "Approve before a code is typed")
     let field = waitFor("card.code")
-    field.tap()
+    focus(field)
     field.typeText("kqxm rpdt")
     if element("card.readTick").exists { element("card.readTick").switches.firstMatch.tap() }
     XCTAssertTrue(approve.isEnabled)
