@@ -131,6 +131,7 @@ export const BOOTSTRAP = `(function (send) {
         const id = opened && opened.id
         return Object.freeze({
           send: (data, o) => call('http.ws.send', id, data, o).then(() => undefined),
+          sendCredential: (name) => call('http.ws.sendCredential', id, name).then(() => undefined),
           receive: (o) => call('http.ws.receive', id, o),
           close: () => call('http.ws.close', id).then(() => undefined),
         })

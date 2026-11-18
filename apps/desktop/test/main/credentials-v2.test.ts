@@ -221,6 +221,86 @@ describe('credentialCarriesOver', () => {
   })
 })
 
+describe('a credential message (a kept token in a WebSocket sign-in)', () => {
+  const hub: CredentialDeclaration = {
+    description: 'Hub token',
+    kind: 'token',
+    custody: 'kept',
+    use: {
+      header: { name: 'authorization', format: 'Bearer {value}' },
+      message: { json: { type: 'auth', access_token: '{value}' } },
+      hosts: ['192.168.1.20'],
+    },
+  }
+  const g: CredentialGrant = {
+    adapterId: base.id,
+    adapterHash: 'a'.repeat(64),
+    credential: 'hub',
+    kind: 'token',
+    custody: 'kept',
+    provider: 'keychain-copy',
+    itemRef: 'keychain:hub',
+    targets: ['192.168.1.20'],
+    grantedAt: '2026-11-18T00:00:00Z',
+  }
+  const withMessage = (json: Record<string, unknown> | undefined) =>
+    withCredentials({
+      hub: {
+        ...hub,
+        use: {
+          header: { name: 'authorization', format: 'Bearer {value}' },
+          ...(json === undefined ? {} : { message: { json } }),
+          hosts: ['192.168.1.20'],
+        },
+      } as CredentialDeclaration,
+    })
+
+  it('shows the whole message on the card, at high risk', () => {
+    const lines = permissionChanges(base, withCredentials({ hub }), false).filter(
+      (l) => l.area === 'credential',
+    )
+    expect(lines).toEqual([
+      {
+        area: 'credential',
+        change: 'added',
+        items: [
+          'Valet sends your token "hub" to 192.168.1.20 in a header and in a WebSocket message. The adapter never sees it.',
+          'The header: authorization: Bearer {value}',
+          'The message: {"type":"auth","access_token":"{value}"}',
+        ],
+        risk: 'high',
+      },
+    ])
+    for (const line of lines) expect(manifestPermissionChangeSchema.safeParse(line).success).toBe(true)
+    const entry = permissionDiff(base, withCredentials({ hub })).credentials.added[0]
+    expect(entry).toMatchObject({
+      use: 'header',
+      format: 'Bearer {value}',
+      message: '{"type":"auth","access_token":"{value}"}',
+    })
+  })
+
+  it('counts a new or changed message as a new permission, and never carries a grant over to it', () => {
+    const before = withMessage({ type: 'auth', access_token: '{value}' })
+    expect(credentialCarriesOver(g, before, withMessage({ type: 'auth', access_token: '{value}' }))).toBe(
+      true,
+    )
+    for (const after of [
+      withMessage({ type: 'login', access_token: '{value}' }),
+      withMessage({ type: 'auth', token: '{value}' }),
+      withMessage({ type: 'auth', access_token: '{value}', v: 2 }),
+    ]) {
+      expect(addsPermissions(permissionDiff(before, after))).toBe(true)
+      expect(credentialCarriesOver(g, before, after)).toBe(false)
+    }
+    // A header-only grant doesn't stretch to a message added later, and back.
+    const headerOnly = withMessage(undefined)
+    expect(addsPermissions(permissionDiff(headerOnly, before))).toBe(true)
+    expect(credentialCarriesOver(g, headerOnly, before)).toBe(false)
+    expect(credentialCarriesOver(g, before, headerOnly)).toBe(false)
+  })
+})
+
 describe('a credential from grant to tool output, end to end', () => {
   let dir: string
   beforeEach(async () => {

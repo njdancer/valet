@@ -273,10 +273,7 @@ describe('CardDAV', () => {
 })
 
 describe('the hub', () => {
-  const open = (
-    headers: Record<string, string> = { authorization: `Bearer ${HUB_TOKEN}` },
-    path = '/api/websocket',
-  ) =>
+  const open = (headers: Record<string, string> = {}, path = '/api/websocket') =>
     new WebSocket(`wss://127.0.0.1:${services.hubPort}${path}`, {
       headers,
       // The hub's certificate is pinned, not named, so this client doesn't check its name.
@@ -304,9 +301,48 @@ describe('the hub', () => {
       ws.on('unexpected-response', (_req, res) => resolve(res.statusCode ?? 0)),
     )
 
-  it('needs the token on the upgrade', async () => {
-    expect(await refused(open({}))).toBe(401)
-    expect(await refused(open(undefined, '/elsewhere'))).toBe(404)
+  /** Opens a socket and signs in as Home Assistant's clients do. */
+  const signedIn = async () => {
+    const ws = open()
+    const next = messages(ws)
+    expect(await next()).toMatchObject({ type: 'auth_required' })
+    ws.send(JSON.stringify({ type: 'auth', access_token: HUB_TOKEN }))
+    expect(await next()).toMatchObject({ type: 'auth_ok' })
+    return { ws, next }
+  }
+
+  it('wants the token in the first message, not on the upgrade', async () => {
+    expect(await refused(open({}, '/elsewhere'))).toBe(404)
+    // A token on the upgrade signs nothing in: the hub still asks for it.
+    const ws = open({ authorization: `Bearer ${HUB_TOKEN}` })
+    const next = messages(ws)
+    expect(await next()).toMatchObject({ type: 'auth_required' })
+    ws.close()
+    for (const first of [
+      { type: 'auth', access_token: 'wrong' },
+      { type: 'get_states', id: 1 },
+      { type: 'auth', token: HUB_TOKEN },
+    ]) {
+      const bad = open()
+      const said = messages(bad)
+      expect(await said()).toMatchObject({ type: 'auth_required' })
+      const closed = new Promise<number>((resolve) => bad.on('close', (c) => resolve(c)))
+      bad.send(JSON.stringify(first))
+      expect(await said()).toMatchObject({ type: 'auth_invalid' })
+      expect(await closed).toBe(4001)
+    }
+    const { ws: good } = await signedIn()
+    good.close()
+  })
+
+  it('echoes what it was sent, the sign-in included, for the red-team tests', async () => {
+    const { ws, next } = await signedIn()
+    ws.send(JSON.stringify({ id: 1, type: 'echo' }))
+    const echoed = (await next()) as { result: { received: string[]; base64: string[]; upper: string[] } }
+    expect(echoed.result.received[0]).toBe(JSON.stringify({ type: 'auth', access_token: HUB_TOKEN }))
+    expect(echoed.result.base64[0]).toBe(Buffer.from(echoed.result.received[0] as string).toString('base64'))
+    expect(echoed.result.upper[0]).toContain(HUB_TOKEN.toUpperCase())
+    ws.close()
   })
 
   it('serves states over REST with the same token', async () => {
@@ -323,9 +359,8 @@ describe('the hub', () => {
   })
 
   it('lists states and changes them', async () => {
-    const ws = open()
-    const next = messages(ws)
-    expect(await next()).toMatchObject({ type: 'auth_ok' })
+    const before = services.hubMessages.length
+    const { ws, next } = await signedIn()
     ws.send(JSON.stringify({ id: 1, type: 'get_states' }))
     expect(await next()).toMatchObject({ id: 1, success: true, result: expect.arrayContaining([]) })
     ws.send(
@@ -383,19 +418,26 @@ describe('the hub', () => {
     expect(await next()).toMatchObject({ id: 6, success: false, error: { code: 'invalid_format' } })
     ws.send(JSON.stringify({ id: 7, type: 'subscribe_everything' }))
     expect(await next()).toMatchObject({ id: 7, error: { code: 'unknown_command' } })
-    expect(services.hubMessages).toHaveLength(7)
+    expect(services.hubMessages).toHaveLength(before + 8)
     ws.close()
   })
 
   it('closes on garbage', async () => {
     for (const text of ['not json', '{"type":"get_states"}']) {
-      const ws = open()
+      const { ws } = await signedIn()
       const code = await new Promise<number>((resolve) => {
-        ws.on('message', () => ws.send(text))
         ws.on('close', (c) => resolve(c))
+        ws.send(text)
       })
       expect(code).toBe(1003)
     }
+    // Garbage before signing in is just a failed sign-in.
+    const ws = open()
+    const code = await new Promise<number>((resolve) => {
+      ws.once('message', () => ws.send('not json'))
+      ws.on('close', (c) => resolve(c))
+    })
+    expect(code).toBe(1003)
   })
 })
 

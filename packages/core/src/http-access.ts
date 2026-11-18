@@ -45,6 +45,13 @@ export type HttpSocketMessage =
 export interface HttpSocket {
   /** Text, or bytes as base64 with `binary`. Spent from the run's upload budget before it goes. */
   send(data: string, options?: { readonly binary?: boolean }): Promise<void>
+  /**
+   * Sends a kept credential's declared message (its `use.message`) as a text message, for a server
+   * that wants the sign-in in a message rather than on the upgrade. The credential goes in
+   * Valet's own message, never one tool code wrote, so tool code never sees it. It must be the
+   * first thing sent on the socket, once; what comes back has it redacted.
+   */
+  sendCredential(credential: string): Promise<void>
   /** The next message, waiting up to `waitMs` (at most 30 s, default 5 s); null if none came. */
   receive(options?: { readonly waitMs?: number }): Promise<HttpSocketMessage | null>
   close(): Promise<void>

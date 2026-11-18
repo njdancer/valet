@@ -77,7 +77,8 @@ export class CredentialGate {
     if (!isCredentialHost(host)) throw new ValetError('credential', 'origin-mismatch')
     const target = host
     const { declaration, grant } = await this.#check(credential, 'header', target)
-    if (!('header' in declaration.use)) throw new ValetError('credential', 'invalid')
+    if (!('hosts' in declaration.use) || declaration.use.header === undefined)
+      throw new ValetError('credential', 'invalid')
     const { name, format } = declaration.use.header
     const usesBasic = format.includes('{basic}')
     const username = usesBasic ? await this.#field(grant, 'username') : null
@@ -96,6 +97,32 @@ export class CredentialGate {
     } finally {
       secret?.dispose()
       username?.dispose()
+    }
+  }
+
+  /**
+   * The declared WebSocket message to send to `host`, with the credential in its one "{value}"
+   * field (docs/adapter-kinds.md#credential-messages), and the credential's value itself, for the
+   * caller's redaction of what comes back. The caller sends the message once and disposes both.
+   */
+  async messageFor(credential: string, host: string): Promise<{ message: SecretValue; value: SecretValue }> {
+    if (!isCredentialHost(host)) throw new ValetError('credential', 'origin-mismatch')
+    const { declaration, grant } = await this.#check(credential, 'header', host)
+    if (!('hosts' in declaration.use) || declaration.use.message === undefined)
+      throw new ValetError('credential', 'invalid')
+    const { json } = declaration.use.message
+    const secret = await this.#field(grant, secretField(declaration))
+    let message: SecretValue | null = null
+    try {
+      message = buildMessage(json, secret)
+      // Only the value is kept for redaction (in #hand): the message's own declared text isn't
+      // secret, and remembering it would redact it wherever it appears (red team RT-4).
+      await this.#hand(declaration, credential, [secret], host)
+      return { message, value: secret }
+    } catch (error) {
+      message?.dispose()
+      secret.dispose()
+      throw error
     }
   }
 
@@ -256,6 +283,29 @@ function secretField(declaration: CredentialDeclaration): ItemField {
 const C0 = /[\u0000-\u001f\u007f]/
 /** Anything but printable ASCII: a header value carries nothing else (red team B9). */
 const CONTROL = /[^\x20-\x7e]/
+
+/** The shortest credential a message may carry: redaction looks for pieces of 12. */
+export const MIN_MESSAGE_VALUE = 12
+
+/**
+ * A credential message: the declared JSON object, its "{value}" field holding the credential as a
+ * JSON string, written in the manifest's field order. The credential may hold any text but a
+ * control character (JSON would escape it, but nothing a sign-in takes has one).
+ */
+function buildMessage(json: Readonly<Record<string, unknown>>, secret: SecretValue): SecretValue {
+  return secret.reveal((value) => {
+    // Short values can't be redacted reliably from what comes back (red team RT-2).
+    if (value.length < MIN_MESSAGE_VALUE || C0.test(value)) throw new ValetError('credential', 'invalid')
+    const out: Record<string, unknown> = Object.create(null)
+    let filled = 0
+    for (const [key, field] of Object.entries(json)) {
+      if (field === '{value}') filled++
+      out[key] = field === '{value}' ? value : field
+    }
+    if (filled !== 1) throw new ValetError('credential', 'invalid')
+    return SecretValue.fromString(JSON.stringify(out))
+  })
+}
 
 /** The header value: the format with its one placeholder filled. Built inside reveal(). */
 function buildHeader(format: string, secret: SecretValue, username: SecretValue | null): SecretValue {

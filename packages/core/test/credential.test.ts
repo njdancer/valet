@@ -377,3 +377,176 @@ describe('the manifest’s credentials field', () => {
     expect(result.success).toBe(false)
   })
 })
+
+describe('credential messages (a kept token in a WebSocket sign-in)', () => {
+  const hubMessage: CredentialDeclaration = {
+    description: 'A long-lived token from the hub',
+    kind: 'token',
+    custody: 'kept',
+    use: { message: { json: { type: 'auth', access_token: '{value}' } }, hosts: ['192.168.1.20'] },
+  }
+  const both: CredentialDeclaration = {
+    ...hubMessage,
+    use: {
+      header: { name: 'authorization', format: 'Bearer {value}' },
+      message: { json: { type: 'auth', access_token: '{value}' } },
+      hosts: ['192.168.1.20'],
+    },
+  }
+  const withJson = (json: unknown, kind = 'token') => ({
+    ...hubMessage,
+    kind,
+    use: { message: { json }, hosts: ['192.168.1.20'] },
+  })
+
+  it('accepts a message alone, or beside a header, on an http adapter only', () => {
+    expect(messages(hubMessage)).toEqual([])
+    expect(messages(both)).toEqual([])
+    expect(
+      messages(withJson({ action: 'login', password: '{value}', v: 2, debug: false, x: null }, 'password')),
+    ).toEqual([])
+    expect(credentialIssues({ hub: hubMessage }, 'http')).toEqual([])
+    for (const runtime of ['browser', 'protocol', 'raw'] as const)
+      expect(credentialIssues({ hub: hubMessage }, runtime)).toHaveLength(1)
+  })
+
+  it('needs a header, a message or both', () => {
+    expect(messages({ ...hubMessage, use: { hosts: ['192.168.1.20'] } })).toContain(
+      'a credential sent to hosts needs a header, a message, or both',
+    )
+  })
+
+  it('has "{value}" as exactly one field’s whole value', () => {
+    expect(messages(withJson({ type: 'auth' })).join()).toMatch(/exactly one/)
+    expect(messages(withJson({ token: '{value}', key: '{value}' })).join()).toMatch(/exactly one/)
+    // Inside a longer string, the placeholder isn't a placeholder: and braces are refused anyway.
+    expect(messages(withJson({ token: 'Bearer {value}' }))).not.toEqual([])
+    expect(messages(withJson({ token: '{basic}' }))).not.toEqual([])
+    expect(messages(withJson({ token: '{VALUE}' }))).not.toEqual([])
+  })
+
+  it('names the field holding it like a credential, so the message reads as a sign-in', () => {
+    for (const key of [
+      'access_token',
+      'token',
+      'apiKey',
+      'auth',
+      'password',
+      'passphrase',
+      'secret',
+      'credential',
+    ])
+      expect(messages(withJson({ type: 'auth', [key]: '{value}' })), key).toEqual([])
+    // A message that would hand the token to something else the server does.
+    for (const json of [
+      { type: 'persistent_notification/create', message: '{value}' },
+      { type: 'call_service', domain: 'notify', service: 'email', service_data: '{value}' },
+      { type: 'input_text/set_value', value: '{value}' },
+      { cmd: 'echo', text: '{value}' },
+    ])
+      expect(messages(withJson(json)).join(), JSON.stringify(json)).toMatch(/named like one/)
+  })
+
+  it('is flat: no objects or arrays, so nothing nests a command around it', () => {
+    expect(messages(withJson({ type: 'auth', data: { token: '{value}' } }))).not.toEqual([])
+    expect(messages(withJson({ type: 'auth', token: '{value}', list: ['a'] }))).not.toEqual([])
+    expect(messages(withJson(['{value}']))).not.toEqual([])
+    expect(messages(withJson('{value}'))).not.toEqual([])
+  })
+
+  it('keeps every other string short and plain: no spaces, so a card can’t carry a sentence', () => {
+    expect(messages(withJson({ type: 'auth', note: 'Valet checked this', token: '{value}' }))).not.toEqual([])
+    expect(messages(withJson({ type: 'a'.repeat(41), token: '{value}' }))).not.toEqual([])
+    expect(messages(withJson({ type: 'auth\n', token: '{value}' }))).not.toEqual([])
+    expect(messages(withJson({ type: 'auth"', token: '{value}' }))).not.toEqual([])
+    expect(messages(withJson({ type: 'v1.2/auth:x_y-z', token: '{value}' }))).toEqual([])
+    expect(messages(withJson({ type: 'auth', token: '{value}', n: Number.POSITIVE_INFINITY }))).not.toEqual(
+      [],
+    )
+  })
+
+  it('names fields plainly: a letter first, at most 32, and at most 8 fields', () => {
+    for (const key of ['__proto__', '_token', '1token', 'tok en', 'tok"en', `${'t'.repeat(28)}token`])
+      expect(messages(withJson({ type: 'auth', [key]: '{value}' })), key).not.toEqual([])
+    const nine = Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`f${i}`, 'x']))
+    expect(messages(withJson({ ...nine, token: '{value}' })).join()).toMatch(/1 to 8 fields/)
+  })
+
+  it('is at most 160 characters as written', () => {
+    const json = {
+      token: '{value}',
+      a: 'x'.repeat(40),
+      b: 'x'.repeat(40),
+      c: 'x'.repeat(40),
+      d: 'x'.repeat(10),
+    }
+    expect(messages(withJson(json)).join()).toMatch(/at most 160/)
+  })
+
+  it('never sends an SSH key in a message', () => {
+    expect(messages(withJson({ token: '{value}' }, 'ssh-key')).join()).toMatch(/never sent in a message/)
+  })
+
+  it('is strict inside', () => {
+    expect(
+      messages({
+        ...hubMessage,
+        use: { message: { json: { token: '{value}' }, extra: 1 }, hosts: ['a.example'] },
+      }),
+    ).not.toEqual([])
+  })
+
+  it('goes only to its hosts, which are its grant’s targets; it fills no header', () => {
+    expect(credentialTargets(parse(hubMessage).data as CredentialDeclaration)).toEqual(['192.168.1.20'])
+    expect([...credentialHeaderNames({ credentials: { hub: hubMessage } })]).toEqual([])
+    expect([...credentialHeaderNames({ credentials: { hub: both } })]).toEqual(['authorization'])
+  })
+
+  it('says on the card where it goes and shows the whole message', () => {
+    expect(credentialCardItems('hub', hubMessage)).toEqual([
+      'Valet sends your token "hub" to 192.168.1.20 in a WebSocket message\'s access_token field. The adapter never sees it.',
+      'The message: {"type":"auth","access_token":"{value}"}',
+    ])
+    expect(credentialCardItems('hub', both)).toEqual([
+      'Valet sends your token "hub" to 192.168.1.20 in a header and in a WebSocket message. The adapter never sees it.',
+      'The header: authorization: Bearer {value}',
+      'The message: {"type":"auth","access_token":"{value}"}',
+    ])
+  })
+
+  it('fits every item in 200 characters of display text at the limits', () => {
+    const name = 'n'.repeat(40)
+    const host = `${'h'.repeat(63)}.${'i'.repeat(28)}.example`
+    const hosts = Array.from({ length: 10 }, (_, i) => `${i}${host.slice(1)}`)
+    const json = {
+      [`${'k'.repeat(27)}token`]: '{value}',
+      a: 'x'.repeat(30),
+      b: 'x'.repeat(30),
+      c: 'x'.repeat(20),
+    }
+    const header = { name: `x-${'v'.repeat(55)}-token`, format: 'Bearer {value}' }
+    for (const use of [
+      { message: { json }, hosts: [host] },
+      { message: { json }, hosts },
+      { header, message: { json }, hosts: [host] },
+      { header, message: { json }, hosts },
+    ]) {
+      const d = { ...hubMessage, kind: 'password' as const, use }
+      expect(messages(d), JSON.stringify(use)).toEqual([])
+      for (const item of credentialCardItems(name, d)) {
+        expect(item.length, item).toBeLessThanOrEqual(200)
+        expect(isDisplayText(item)).toBe(true)
+      }
+    }
+  })
+
+  it('is part of the manifest hash: changing the message changes the adapter', () => {
+    const manifest = (json: Record<string, unknown>) =>
+      canonicalJson({
+        credentials: { hub: { ...hubMessage, use: { message: { json }, hosts: ['192.168.1.20'] } } },
+      })
+    expect(manifest({ type: 'auth', access_token: '{value}' })).not.toBe(
+      manifest({ type: 'login', access_token: '{value}' }),
+    )
+  })
+})

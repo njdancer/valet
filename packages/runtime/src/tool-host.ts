@@ -1822,7 +1822,12 @@ export class ToolHost {
   private credentialsFor(entry: Entry, state: CallState): { credentials?: HttpCredentials } {
     if (entry.credentialGrants !== undefined) {
       const gate = this.gateFor(entry, entry.credentialGrants, state)
-      return { credentials: { headerFor: (credential, host) => gate.headerFor(credential, host) } }
+      return {
+        credentials: {
+          headerFor: (credential, host) => gate.headerFor(credential, host),
+          messageFor: (credential, host) => gate.messageFor(credential, host),
+        },
+      }
     }
     return entry.credentials === undefined ? {} : { credentials: entry.credentials }
   }
