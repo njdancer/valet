@@ -4020,6 +4020,145 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     }
   }, 60_000)
 
+  it('asks with a raw confirmation before a raw adapter’s irreversible tool runs, and runs nothing on a no', async () => {
+    const api = await startFakeApi()
+    try {
+      const mac = process.platform === 'darwin'
+      const rawProcess = (endpoints: readonly string[], openTunnels: OpenTunnels) =>
+        nodeRuntimeProcess({
+          nodeBinary: process.execPath,
+          endpoints,
+          openTunnels,
+          home: homedir(),
+          withoutSeatbelt: !mac,
+        })
+      const egress: ServiceDeps['egress'] = (manifest) =>
+        new EgressBroker(
+          {
+            egress: manifest.egress,
+            privateHosts: manifest.privateHosts ?? [],
+            endpoints: manifest.endpoints ?? [],
+          },
+          {
+            lookup: (_name, cb) => cb(null, [{ address: '127.0.0.1', family: 4 }]),
+            testing: {
+              allowAddresses: ['127.0.0.1'],
+              route: () => ({ address: '127.0.0.1', port: api.port }),
+            },
+          },
+        )
+      const rawManifest: ManifestInput = {
+        schemaVersion: 1,
+        id: 'status',
+        name: 'Status',
+        version: '1.0.0',
+        description: 'Deletes items over its own TLS connection.',
+        runtime: 'raw',
+        endpoints: ['api.example.test:443'],
+        tools: [
+          { name: 'remove', title: 'Remove', description: 'Deletes an item.', sideEffect: 'irreversible' },
+        ],
+      }
+      const tools = [
+        "import { z } from 'zod'",
+        'declare const require: (id: string) => any',
+        'export const tools = {',
+        '  remove: { input: z.object({ ca: z.string(), id: z.string() }), output: z.object({ status: z.number() }), run: (ctx, a) =>',
+        '    new Promise((resolve, reject) => {',
+        "      const req = require('node:https').request({ host: 'api.example.test', method: 'POST', path: '/v1/echo', ca: a.ca, agent: false }, (res) => {",
+        "        res.on('data', () => {})",
+        "        res.on('end', () => resolve({ status: res.statusCode }))",
+        '      })',
+        "      req.on('error', reject)",
+        "      req.end('delete ' + a.id)",
+        '    }) },',
+        '}',
+      ].join('\n')
+      const files = packageOf(parseManifest(rawManifest), { 'src/tools.ts': tools })
+      const s = await withPackages(files, undefined, 'answers', undefined, undefined, egress, undefined, {
+        runtime: {
+          dependencies: (lock) => loadDependencies(lock, memoryTarballStore()),
+          start: rawProcess([], async () => ({
+            ports: new Map(),
+            close: () => undefined,
+            restrict: () => undefined,
+          })),
+        },
+        deps: { start: (manifest, openTunnels) => rawProcess(manifest.endpoints ?? [], openTunnels) },
+      })
+      expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true, adapterId: 'status' })
+      const review = (await s.api.approvals.pending()).find((r) => r.adapterId === 'status')
+      await s.api.approvals.approve('status', review?.to.hash ?? '')
+      let n = 0
+      const remove = (id: string) =>
+        (s.endpoint.caller as ToolCaller).call({
+          adapterId: 'status',
+          tool: 'remove',
+          input: { ca: api.cert, id },
+          client: 'Claude Code',
+          callId: `call_rm_${++n}`,
+          transport: 'http',
+        })
+      const broker = (s.service as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+      const signed = () =>
+        broker.list().find((p) => p.request.kind === 'irreversible-call')?.request as
+          | { subject: { preview: string[]; raw?: unknown } }
+          | undefined
+      const confirmation = async () =>
+        (await s.api.attention.list()).find((i): i is ConfirmationItem => i.kind === 'confirmation')
+
+      // Declined: the panel showed the input and the reach, and nothing reached the server.
+      const before = api.seen.length
+      const declined = remove('item-7')
+      await expect.poll(async () => (await confirmation())?.ref ?? null).not.toBeNull()
+      const item = await confirmation()
+      expect(item).toMatchObject({
+        trigger: 'raw-tool',
+        sideEffect: 'irreversible',
+        unlocks: [],
+        raw: { endpoints: ['api.example.test:443'], credentials: [] },
+      })
+      expect(JSON.stringify(item?.input)).toContain('item-7')
+      // The signed request carries the reach for the phone's card. The CA in the input is too long
+      // for one of the phone's lines, so only the Mac may approve this one.
+      expect(signed()?.subject.raw).toEqual({
+        endpoints: ['api.example.test:443'],
+        credentials: [],
+        readFolders: [],
+        writeFolders: [],
+        inputComplete: false,
+      })
+      expect(signed()?.subject.preview.join('\n')).toContain('item-7')
+      await s.api.answerConfirmation(item?.id as string, false, { role: 'tray', shows: null })
+      expect(await declined).toEqual({ status: 'declined' })
+      expect(api.seen.length).toBe(before)
+
+      // Approved with Touch ID from its own panel: the one run goes ahead.
+      const approved = remove('item-8')
+      await expect.poll(async () => (await confirmation())?.ref ?? null).not.toBeNull()
+      const next = await confirmation()
+      expect(JSON.stringify(next?.input)).toContain('item-8')
+      await expect(
+        s.api.answerConfirmation(next?.id as string, true, {
+          role: 'confirmation',
+          shows: next?.id as string,
+        }),
+      ).resolves.toBe(true)
+      expect(await approved).toMatchObject({ status: 'ok', output: { status: 200 } })
+      expect(api.seen.at(-1)).toMatchObject({ method: 'POST', url: '/v1/echo', body: 'delete item-8' })
+      expect(readAudit(s.paths.audit)).toContainEqual(
+        expect.objectContaining({
+          type: 'confirmation',
+          adapterId: 'status',
+          tool: 'remove',
+          answer: 'approved',
+        }),
+      )
+    } finally {
+      await api.close()
+    }
+  }, 60_000)
+
   it('doesn’t load a raw adapter in a build without the Node runtime', async () => {
     const rawManifest: ManifestInput = {
       schemaVersion: 1,

@@ -55,12 +55,16 @@ const MANIFEST: ManifestInput = {
     'secret',
     'others',
     'page',
-  ].map((name) => ({
-    name,
-    title: name,
-    description: `The ${name} test tool.`,
-    sideEffect: 'read' as const,
-  })),
+  ]
+    .map((name) => ({
+      name,
+      title: name,
+      description: `The ${name} test tool.`,
+      sideEffect: 'read' as 'read' | 'irreversible',
+    }))
+    .concat([
+      { name: 'remove', title: 'Remove', description: 'Deletes an item.', sideEffect: 'irreversible' },
+    ]),
 }
 const manifest = parseManifest(MANIFEST)
 
@@ -92,10 +96,11 @@ const grant = (over: Partial<CredentialGrant> = {}): CredentialGrant => ({
 function setup(options: { grants?: CredentialGrantSource | null; raw?: boolean } = {}) {
   const audit = new MemoryAudit()
   const clock = new FakeClock()
+  const prompt = new FakePrompt()
   const host = new ToolHost({
     approvals: { isApproved: async (id, hash) => id === 'raw-notes' && hash === HASH },
     audit,
-    prompt: new FakePrompt(),
+    prompt,
     authRunner: vi.fn(async () => ({ status: 'ok' as const })),
     markers: new MemoryMarkers(() => clock.now()),
     breakerStore: new MemoryJsonStore(),
@@ -164,11 +169,61 @@ function setup(options: { grants?: CredentialGrantSource | null; raw?: boolean }
       client: 'claude-code',
       callId: `c-${++n}`,
     })
-  return { call, audit, stderr }
+  return { call, audit, stderr, prompt }
 }
 
 const connections = (events: readonly AuditEvent[]) =>
   events.filter((e) => e.type === 'egress-connection') as Extract<AuditEvent, { type: 'egress-connection' }>[]
+
+describe('a raw adapter’s irreversible tool (the raw confirmation)', () => {
+  it('asks first with the tool, its input and everything the run reaches, and runs nothing on a no', async () => {
+    const { call, audit, prompt } = setup()
+    prompt.answer = 'declined'
+    const before = api.seen.length
+    expect(await call('remove', { id: 'note-7' })).toEqual({ status: 'declined' })
+    expect(prompt.requests).toEqual([
+      expect.objectContaining({
+        adapterId: 'raw-notes',
+        tool: 'remove',
+        kind: 'raw-tool',
+        input: { ca: api.cert, id: 'note-7' },
+        endpoints: ['api.example.test:443', 'feeds.example.test:443'],
+        credentials: ['api'],
+        readFolders: [],
+        writeFolders: [],
+      }),
+    ])
+    // No process, no connection, no secret: its code never ran.
+    expect(api.seen.length).toBe(before)
+    expect(connections(audit.events)).toEqual([])
+    expect(audit.events.filter((e) => e.type === 'secret-used')).toEqual([])
+    expect(audit.events).toContainEqual(expect.objectContaining({ type: 'confirmation', answer: 'declined' }))
+  })
+
+  it('runs once on a yes', async () => {
+    const { call, prompt } = setup()
+    expect(await call('remove', { id: 'note-8' })).toEqual({ status: 'ok', output: { status: 200 } })
+    expect(prompt.requests.map((r) => r.kind)).toEqual(['raw-tool'])
+    expect(api.seen.at(-1)).toMatchObject({ method: 'POST', url: '/v1/echo', body: 'delete note-8' })
+  })
+
+  it('treats an unanswered or cancelled confirmation as a no', async () => {
+    for (const answer of ['timed-out', 'cancelled'] as const) {
+      const { call, prompt } = setup()
+      prompt.answer = answer
+      const before = api.seen.length
+      const result = await call('remove', { id: 'note-9' })
+      expect(result.status === 'declined' || result.status === 'failed').toBe(true)
+      expect(api.seen.length).toBe(before)
+    }
+  })
+
+  it('asks nothing for its read tools', async () => {
+    const { call, prompt } = setup()
+    expect(await call('items')).toMatchObject({ status: 'ok' })
+    expect(prompt.requests).toEqual([])
+  })
+})
 
 describe('a raw adapter through the tool host', () => {
   it('reaches its endpoint through the broker’s tunnel, and the connection is audited', async () => {

@@ -960,8 +960,10 @@ export interface ConfirmationItem {
   /**
    * irreversible-tool: the runtime asks before an irreversible tool runs. tool-request: ctx.confirm().
    * mail-send: tool code is sending mail; `input` is the whole message, as Valet will send it.
+   * raw-tool: the runtime asks before a `raw` adapter's irreversible tool runs (the raw
+   * confirmation); `raw` says what its run can reach, since Valet can't see what it sends.
    */
-  readonly trigger: 'irreversible-tool' | 'tool-request' | 'mail-send'
+  readonly trigger: 'irreversible-tool' | 'tool-request' | 'mail-send' | 'raw-tool'
   /** The name the client reported in MCP initialize. A claim: any process with the token can send any name. */
   readonly client: string
   /**
@@ -985,6 +987,17 @@ export interface ConfirmationItem {
   /** The validated tool input, redacted. */
   readonly input: readonly PreviewPart[]
   readonly adapterNote: string | null
+  /**
+   * raw-tool only, else null: every `host:port` the run's tunnels reach, the entrusted credentials
+   * its code may be handed (by the manifest's names) and its folders. Valet's own knowledge.
+   */
+  readonly raw: {
+    readonly endpoints: readonly string[]
+    readonly credentials: readonly string[]
+    /** Folders its code may read, and read and write, as the manifest writes them. */
+    readonly readFolders: readonly string[]
+    readonly writeFolders: readonly string[]
+  } | null
   /**
    * The signed request's reference, as the Touch ID prompt names it ("request 7B3F"); null until
    * the request is made, and Approve waits for it.

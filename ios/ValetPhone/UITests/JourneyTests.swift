@@ -161,6 +161,45 @@ final class ConnectJourneyTests: JourneyTestCase {
 
 }
 
+final class RawConfirmJourneyTests: JourneyTestCase {
+  /// The raw confirmation: a raw adapter's irreversible tool. The card shows its input and every
+  /// server and credential the run can reach, says Valet can't see what it sends, and is confirmed
+  /// with the read tick and Face ID.
+  func testConfirmsARawAdaptersCallAfterSeeingWhatItReaches() {
+    launch("raw")
+    openCard("8F21")
+    XCTAssertTrue(element("card.title").label.hasSuffix("Confirm: delete_folder (nas-files)"), element("card.title").label)
+    XCTAssertTrue(waitFor("card.risk").label.contains("Valet can't see what this adapter sends"), element("card.risk").label)
+    let reach = waitFor("card.row.Can reach")
+    XCTAssertTrue(reach.label.contains("nas.example.com:443"), reach.label)
+    XCTAssertTrue(reach.label.contains("192.168.1.20:5001"), reach.label)
+    XCTAssertTrue(element("card.row.May get").label.contains("nas_token"))
+    XCTAssertTrue(element("card.row.Input").exists)
+    XCTAssertFalse(element("card.macOnly").exists)
+    let approve = waitFor("card.approve")
+    XCTAssertFalse(approve.isEnabled, "a strong card waits for the read tick")
+    waitFor("card.readTick").switches.firstMatch.tap()
+    XCTAssertTrue(approve.isEnabled)
+    approve.tap()
+    if element("card.problem").waitForExistence(timeout: 2) {
+      XCTFail("confirm refused: \(element("card.problem").label)")
+    }
+    XCTAssertTrue(waitFor("card.state").label.contains("Approved"), element("card.state").label)
+  }
+
+  /// When the phone can't show the input whole, only the Mac may confirm it: no Approve, but Decline.
+  func testARawCallThePhoneCantShowWholeIsMacOnly() {
+    launch("raw")
+    openCard("8F22")
+    XCTAssertTrue(waitFor("card.macOnly").label.contains("Only your Mac can show this input whole"))
+    XCTAssertFalse(element("card.approve").exists)
+    XCTAssertTrue(element("card.row.Not shown").exists)
+    waitFor("card.decline").tap()
+    waitFor("decline.confirm").tap()
+    XCTAssertTrue(waitFor("card.state").label.contains("Declined"))
+  }
+}
+
 final class SafetyJourneyTests: JourneyTestCase {
   // MARK: J7
 

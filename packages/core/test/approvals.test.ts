@@ -533,3 +533,100 @@ describe('display text and revocation', () => {
     expect(parsePhoneToMac(command(phoneId), macId)).not.toBeNull()
   })
 })
+
+describe('a raw adapter’s irreversible call (raw confirmation)', () => {
+  const rawCall = (raw: unknown, preview: string[] = ['{"path":"/photos/2024"}']) =>
+    grantRequest({
+      kind: 'irreversible-call',
+      tier: 'approve-each-use',
+      agentNote: null,
+      subject: {
+        adapterId: 'nas-files',
+        adapterHash: 'b'.repeat(64),
+        tool: 'delete_folder',
+        callId: 'call-1',
+        confirmationId: 'cf_1',
+        preview,
+        raw,
+      },
+    } as Partial<ApprovalRequest>)
+  const parses = (raw: unknown) => {
+    const request = rawCall(raw)
+    // Core refuses to serialise it, and refuses the same text from anyone else.
+    if (!approvalRequestSchema.safeParse(request).success) {
+      expect(() => serializeRequest(request)).toThrow()
+      return false
+    }
+    return parseRequestText(serializeRequest(request).text) !== null
+  }
+
+  const block = (over: Record<string, unknown> = {}) => ({
+    endpoints: ['a.example.com:443'],
+    credentials: [],
+    readFolders: [],
+    writeFolders: [],
+    inputComplete: true,
+    ...over,
+  })
+
+  it('parses with its endpoints, credentials, folders and whether the input is whole', () => {
+    expect(
+      parses(
+        block({
+          endpoints: ['api.example.com:443', '192.168.1.20:8123'],
+          credentials: ['token'],
+          readFolders: ['~/Documents/NAS'],
+          writeFolders: ['/Volumes/Backup/photos'],
+        }),
+      ),
+    ).toBe(true)
+    expect(parses(block({ endpoints: ['fd00::5:22'], inputComplete: false }))).toBe(true)
+  })
+
+  it('refuses a raw block with no endpoint, a repeat, an unknown key or a bad name', () => {
+    expect(parses(block({ endpoints: [] }))).toBe(false)
+    expect(parses(block({ endpoints: ['a.example.com:443', 'a.example.com:443'] }))).toBe(false)
+    expect(parses(block({ credentials: ['t', 't'] }))).toBe(false)
+    expect(parses(block({ extra: 1 }))).toBe(false)
+    expect(parses(block({ endpoints: ['A.example.com:443'] }))).toBe(false)
+    expect(parses(block({ credentials: ['Token'] }))).toBe(false)
+    expect(parses(block({ endpoints: ['a.example.com:443\u202e'] }))).toBe(false)
+    expect(parses(block({ readFolders: ['~/x\u200b'] }))).toBe(false)
+    const { inputComplete: _a, ...noComplete } = block()
+    expect(parses(noComplete)).toBe(false)
+    const { writeFolders: _b, ...noFolders } = block()
+    expect(parses(noFolders)).toBe(false)
+  })
+
+  it('is approvable on the phone only when the phone’s card shows the whole input', () => {
+    const whole = rawCall(block())
+    const cut = rawCall(block({ inputComplete: false }))
+    expect(approvableOn(whole.kind, whole.subject)).toEqual(['mac', 'phone'])
+    expect(approvableOn(cut.kind, cut.subject)).toEqual(['mac'])
+    const serialized = serializeRequest(cut)
+    expect(verifyDecision(decide(phone.approval, phoneId, serialized), serialized, live())).toEqual({
+      ok: false,
+      reason: 'not-allowed-on-device',
+    })
+    expect(verifyDecision(decide(mac.approval, macId, serialized), serialized, live())).toMatchObject({
+      ok: true,
+    })
+  })
+
+  it('leaves every other irreversible call as it was: no raw block, approvable on the phone', () => {
+    const plain = grantRequest({
+      kind: 'irreversible-call',
+      tier: 'approve-each-use',
+      subject: {
+        adapterId: 'woolworths',
+        adapterHash: 'a'.repeat(64),
+        tool: 'checkout',
+        callId: 'c1',
+        confirmationId: 'cf_1',
+        preview: ['Place order'],
+      },
+    } as Partial<ApprovalRequest>)
+    expect(parseRequestText(serializeRequest(plain).text)).not.toBeNull()
+    expect(approvableOn(plain.kind, plain.subject)).toEqual(['mac', 'phone'])
+  })
+})

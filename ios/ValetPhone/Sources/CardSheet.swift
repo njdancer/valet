@@ -76,6 +76,7 @@ struct CardSheet: View {
                 Text(verbatim: row.text).italic(row.isClaim)
               }
               .accessibilityElement(children: .combine)
+              .accessibilityIdentifier("card.row.\(row.marker)")
             }
           }
         }

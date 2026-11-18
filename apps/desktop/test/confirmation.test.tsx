@@ -78,6 +78,7 @@ const CHECKOUT: ConfirmationItem = {
     { kind: 'text', text: ' }' },
   ],
   adapterNote: null,
+  raw: null,
   ref: '7B3F',
 }
 
@@ -307,6 +308,65 @@ describe('the confirmation window', () => {
     )
     expect(screen.getByText(/Every recipient, Bcc included, is listed above/)).toBeTruthy()
     expect(screen.queryByText('Input from the client')).toBeNull()
+  })
+
+  it('shows a raw adapter’s call with what it can reach, and claims no check it can’t make', async () => {
+    const user = userEvent.setup()
+    const DELETE: ConfirmationItem = {
+      ...CHECKOUT,
+      id: 'cf_raw',
+      adapterId: 'nas-files',
+      adapterName: 'NAS files',
+      tool: 'delete_folder',
+      toolTitle: 'Delete folder',
+      trigger: 'raw-tool',
+      unlocks: [],
+      input: [{ kind: 'text', text: '{\n  "path": "/photos/2024"\n}' }],
+      raw: {
+        endpoints: ['nas.example.com:443', '192.168.1.20:8123'],
+        credentials: ['nas_token'],
+        readFolders: ['~/Documents/NAS'],
+        writeFolders: ['~/Downloads/NAS'],
+      },
+    }
+    const fake = withAttention(createFakeApi({ now: NOW }), [DELETE])
+    renderWindow('cf_raw', fake)
+    const approve = await armed('Approve Delete folder')
+    expect(approve.className).toContain('bg-danger-solid')
+    expect(screen.getByText(/Valet can’t see what this adapter sends/)).toBeTruthy()
+    expect(screen.getByText(/what the tool is given to act on/)).toBeTruthy()
+    expect(screen.getByTitle('Input from the client').textContent).toContain('/photos/2024')
+    const endpoints = screen.getByTestId('raw-endpoints').textContent ?? ''
+    expect(endpoints).toContain('nas.example.com:443')
+    expect(endpoints).toContain('192.168.1.20:8123')
+    expect(screen.getByTestId('raw-credentials').textContent).toContain('nas_token')
+    expect(screen.getByTestId('raw-folders').textContent).toBe(
+      'It can change or delete files in ~/Downloads/NAS. It can read files in ~/Documents/NAS.',
+    )
+    expect(screen.getByText(/None of its code has run yet/)).toBeTruthy()
+    // Nothing a raw adapter sends is held to declared paths, so the panel never says it is.
+    expect(screen.queryByText(/stay within the paths the adapter declared/)).toBeNull()
+    expect(screen.queryByText(/Approving unlocks/)).toBeNull()
+    await user.click(approve)
+    expect(answers(fake)).toEqual([['cf_raw', true]])
+  })
+
+  it('says a raw adapter’s call can be given no credential when it declares none', async () => {
+    const DELETE: ConfirmationItem = {
+      ...CHECKOUT,
+      id: 'cf_raw2',
+      tool: 'delete_folder',
+      toolTitle: 'Delete folder',
+      trigger: 'raw-tool',
+      unlocks: [],
+      raw: { endpoints: ['nas.example.com:443'], credentials: [], readFolders: [], writeFolders: [] },
+    }
+    renderWindow('cf_raw2', withAttention(createFakeApi({ now: NOW }), [DELETE]))
+    await armed('Approve Delete folder')
+    expect(screen.getByTestId('raw-credentials').textContent).toBe(
+      'It can’t be given any of your credentials.',
+    )
+    expect(screen.getByTestId('raw-folders').textContent).toBe('It can’t open any of your files.')
   })
 
   it('can’t be answered once it has timed out, and says it was missed', async () => {

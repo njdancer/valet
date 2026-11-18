@@ -40,6 +40,7 @@ function setup(
       },
     ],
   })
+  const rawManifest = parseManifest(RAW_NAS)
   const signing = {
     opened: [] as string[],
     prompts: [] as string[],
@@ -72,7 +73,11 @@ function setup(
       },
     },
     adapter: (id) =>
-      id === 'shop' ? { manifest, hash: HASH, approvedAt: '2026-11-07T00:00:00.000Z' } : null,
+      id === 'shop'
+        ? { manifest, hash: HASH, approvedAt: '2026-11-07T00:00:00.000Z' }
+        : id === 'nas'
+          ? { manifest: rawManifest, hash: HASH, approvedAt: '2026-11-07T00:00:00.000Z' }
+          : null,
     call: (callId) => (callId === 'call1' ? { input: [{ kind: 'text', text: '{"item":"milk"}' }] } : null),
     show: (id) => shown.push(id),
     close: (id) => closed.push(id),
@@ -93,6 +98,51 @@ function setup(
     },
     changes: () => changes,
   }
+}
+
+/** A raw adapter with an irreversible tool, a public endpoint, a private host and an entrusted token. */
+const RAW_NAS = {
+  schemaVersion: 1,
+  id: 'nas',
+  name: 'NAS',
+  version: '1.0.0',
+  description: 'Files on a NAS.',
+  runtime: 'raw',
+  endpoints: ['nas.example.com:443'],
+  privateHosts: [{ address: '192.168.1.20', port: 8123 }],
+  credentials: {
+    token: {
+      kind: 'token',
+      custody: 'entrusted',
+      description: 'The NAS API token.',
+      use: { entrusted: { endpoints: ['nas.example.com:443'] } },
+    },
+  },
+  sandbox: {
+    mode: 'sandboxed',
+    exceptions: [
+      { kind: 'files', access: 'read', paths: ['~/Documents/NAS/**'], purpose: 'Reads the list.' },
+    ],
+  },
+  tools: [
+    { name: 'list', title: 'List', description: 'Lists a folder.', sideEffect: 'read' },
+    { name: 'remove', title: 'Remove', description: 'Deletes a folder.', sideEffect: 'irreversible' },
+  ],
+} as const
+
+const rawTool: ConfirmationRequest = {
+  adapterId: 'nas',
+  adapterName: 'NAS',
+  tool: 'remove',
+  toolTitle: 'Remove',
+  callId: 'call2',
+  client: 'Claude Code',
+  kind: 'raw-tool',
+  input: { path: '/photos/2024' },
+  endpoints: ['nas.example.com:443', '192.168.1.20:8123'],
+  credentials: ['token'],
+  readFolders: ['~/Documents/NAS'],
+  writeFolders: [],
 }
 
 const toolRequest: ConfirmationRequest = {
@@ -138,9 +188,90 @@ describe('ConfirmationBroker', () => {
         requests: [{ method: 'POST', path: '/api/cart', purpose: 'write' }],
         input: [{ kind: 'text', text: '{"item":"milk"}' }],
         adapterNote: 'Add milk? <b>Trust me</b>',
+        raw: null,
         ref: 'AB12',
       },
     ])
+  })
+
+  it('shows a raw adapter’s irreversible call with its input and everything the run reaches', async () => {
+    const { broker, signing } = setup()
+    void broker.ask(rawTool, new AbortController().signal)
+    await settle()
+    const [item] = broker.list()
+    expect(item).toMatchObject({
+      adapterId: 'nas',
+      tool: 'remove',
+      sideEffect: 'irreversible',
+      trigger: 'raw-tool',
+      unlocks: [],
+      requests: [],
+      adapterNote: null,
+      raw: {
+        endpoints: ['nas.example.com:443', '192.168.1.20:8123'],
+        credentials: ['token'],
+        readFolders: ['~/Documents/NAS'],
+        writeFolders: [],
+      },
+    })
+    // The tool's validated input, as Valet renders it: not the client's text.
+    expect(item?.input).toEqual([{ kind: 'text', text: '{\n  "path": "/photos/2024"\n}' }])
+    expect(signing.opened).toEqual(['cf_1'])
+  })
+
+  it('writes out anything in a raw call’s input that could hide on the panel', async () => {
+    const { broker } = setup()
+    void broker.ask(
+      { ...rawTool, input: { path: '/photos\u200b/2024', name: 'abc\u202edef' } },
+      new AbortController().signal,
+    )
+    const text = JSON.stringify(broker.list()[0]?.input)
+    expect(text).toContain('/photos\\\\u{200B}/2024')
+    expect(text).toContain('abc\\\\u{202E}def')
+    expect(text).not.toContain('\u200b')
+    expect(text).not.toContain('\u202e')
+  })
+
+  it('declines a raw call whose input is too long for the panel to show whole, before asking anyone', async () => {
+    const { broker, shown, signing } = setup()
+    const long = { ...rawTool, input: { path: 'x'.repeat(20_001) } }
+    expect(await broker.ask(long, new AbortController().signal)).toBe('declined')
+    expect(shown).toEqual([])
+    expect(signing.opened).toEqual([])
+  })
+
+  it('declines a raw confirmation that doesn’t match the version on the card, before asking anyone', async () => {
+    const asks: ConfirmationRequest[] = [
+      // Says it reaches less than the manifest declares.
+      { ...rawTool, endpoints: ['nas.example.com:443'] },
+      // Or more.
+      { ...rawTool, endpoints: [...rawTool.endpoints, 'evil.example.com:443'] },
+      // Leaves out a credential its code may be handed, or a folder it may read or write.
+      { ...rawTool, credentials: [] },
+      { ...rawTool, readFolders: [] },
+      { ...rawTool, writeFolders: ['~/Documents/NAS'] },
+      // A raw confirmation for a raw adapter's read tool, or for an adapter that isn't raw.
+      { ...rawTool, tool: 'list', toolTitle: 'List' },
+      { ...rawTool, adapterId: 'shop', tool: 'order', toolTitle: 'Order' },
+      // The ordinary irreversible question, for a raw adapter: its card would claim checks it can't make.
+      {
+        adapterId: 'nas',
+        adapterName: 'NAS',
+        tool: 'remove',
+        toolTitle: 'Remove',
+        callId: 'call2',
+        client: 'Claude Code',
+        kind: 'irreversible-tool',
+        input: { path: '/' },
+      },
+    ]
+    for (const ask of asks) {
+      const { broker, signing, shown } = setup()
+      expect(await broker.ask(ask, new AbortController().signal)).toBe('declined')
+      expect(broker.list()).toEqual([])
+      expect(shown).toEqual([])
+      expect(signing.opened).toEqual([])
+    }
   })
 
   it('lists only what the irreversible tool itself unlocks, with no adapter note', async () => {

@@ -213,7 +213,7 @@ under src/. It has no page, no \`ctx.http\` and no \`ctx.local\`.
   reachable, DNS included. Every connection to one must be TLS from its first byte with that host as
   its server name (STARTTLS and plain TCP to a public host are refused). \`privateHosts\` (without
   \`certSha256\`) reach a device on the person's network, and live trials never reach them.
-- No \`home\`, \`navigation\`, \`egress\`, \`requests\`, login or irreversible tools. Each connection counts as
+- No \`home\`, \`navigation\`, \`egress\`, \`requests\` or login. Each connection counts as
   a request against \`requestsPerRun\` and waits for the site's pace. The upload budgets above apply to
   every byte sent; past one, another server's name, or a refused endpoint, the call fails
   (\`egress/upload-budget\`, \`egress/sni-mismatch\`, \`egress/host-not-allowed\`) even if the code catches it.
@@ -222,6 +222,12 @@ under src/. It has no page, no \`ctx.http\` and no \`ctx.local\`.
   \`const { value, username } = await ctx.secrets.get('mail')\` gives it, once the person has granted
   it. From then on, the call may reach only that credential's endpoints: a connection to any other
   closes, and the call fails. The value and its encodings are removed from the tool's output.
+- A tool that can't be undone (deleting, sending, paying) is \`"sideEffect": "irreversible"\`. Before
+  each run Valet asks the person, showing the tool, its whole input, every endpoint and private host
+  the run can reach and every entrusted credential it may get; none of your code runs until they say
+  yes, and a yes is for that one run. Keep its input short and plain: the phone shows 20 lines of 200
+  characters, and an input longer than that (or with invisible characters) can only be confirmed at
+  the Mac. \`ctx.confirm\` doesn't work in a raw adapter, since it has no requests to name.
 - Cases run with no network at all: give the data in the input (the cache-reader example takes an
   optional \`caseReply\` for this). Live trials reach the public endpoints only, with a read's upload
   budget and no credential.

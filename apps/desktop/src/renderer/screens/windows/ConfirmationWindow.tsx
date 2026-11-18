@@ -164,6 +164,7 @@ function Confirm({
   const expired = answered === null && until <= now
   const irreversible = item.sideEffect === 'irreversible'
   const mail = item.trigger === 'mail-send'
+  const raw = item.trigger === 'raw-tool'
   const allowLabel = mail ? 'Send this email' : irreversible ? `Approve ${item.toolTitle}` : item.toolTitle
   // Approve waits for the signed request the Touch ID prompt will name.
   const canApprove = armed && item.ref !== null && !action.busy && !expired && answered === null
@@ -215,11 +216,13 @@ function Confirm({
           <strong className="font-semibold text-fg">{item.toolTitle}</strong> on {item.adapterName}.{' '}
           {mail
             ? 'It wants to send the email below. Once sent, it can’t be taken back.'
-            : irreversible
-              ? 'This can’t be undone.'
-              : item.trigger === 'tool-request'
-                ? 'The tool stopped to ask you before it goes on.'
-                : 'It changes your account.'}
+            : raw
+              ? 'This can’t be undone, and Valet can’t see what this adapter sends: a yes lets this one run do anything the servers below allow.'
+              : irreversible
+                ? 'This can’t be undone.'
+                : item.trigger === 'tool-request'
+                  ? 'The tool stopped to ask you before it goes on.'
+                  : 'It changes your account.'}
         </>
       }
       fromSite={
@@ -284,7 +287,11 @@ function Confirm({
             <>
               <Stack gap={1.5}>
                 <Text size="sm" tone="muted" weight="medium">
-                  {mail ? 'The email, exactly as Valet will send it' : 'Input from the client'}
+                  {mail
+                    ? 'The email, exactly as Valet will send it'
+                    : raw
+                      ? 'Input from the client, all of it: what the tool is given to act on'
+                      : 'Input from the client'}
                 </Text>
                 <InputPreview
                   parts={item.input}
@@ -378,6 +385,7 @@ function FromSite({
 /** What Valet checked itself, from the runtime's own knowledge (never the adapter's words). */
 function Checked({ item }: { readonly item: ConfirmationItem }) {
   const irreversible = item.sideEffect === 'irreversible'
+  if (item.trigger === 'raw-tool' && item.raw !== null) return <RawChecked item={item} raw={item.raw} />
   return (
     <CheckList label="Valet checked the request itself">
       <CheckItem
@@ -440,6 +448,113 @@ function Checked({ item }: { readonly item: ConfirmationItem }) {
               ))}
             </span>
           )
+        }
+      />
+    </CheckList>
+  )
+}
+
+/**
+ * A raw adapter's confirmation (docs/adapter-kinds.md#raw-confirmation). Valet can't see inside its
+ * connections, so nothing here says what it will send: only where it can connect, what it may be
+ * given, and that no code has run yet.
+ */
+function RawChecked({
+  item,
+  raw,
+}: {
+  readonly item: ConfirmationItem
+  readonly raw: NonNullable<ConfirmationItem['raw']>
+}) {
+  return (
+    <CheckList label="Valet checked the request itself">
+      <CheckItem
+        state="pass"
+        title={
+          <>
+            {item.adapterName} {item.adapterVersion}
+            {item.approvedAt !== null ? `, the version you approved on ${formatDay(item.approvedAt)}` : ''}
+          </>
+        }
+      />
+      <CheckItem
+        state="pass"
+        title={
+          <span className="inline-flex flex-wrap items-center gap-1.5">
+            The tool declared it
+            <RiskBadge purpose={item.sideEffect} />
+            so only you can approve it, once, with the input above
+          </span>
+        }
+      />
+      <CheckItem state="pass" title="None of its code has run yet. Decline, and none will." />
+      <CheckItem
+        state="info"
+        title={
+          <span data-testid="raw-endpoints">
+            Its code runs on its own and Valet can’t see what it sends. It can connect only to{' '}
+            {raw.endpoints.map((e) => (
+              <Code key={e} className="mr-1">
+                {e}
+              </Code>
+            ))}
+            , at most {item.requestCeiling} connections this run.
+          </span>
+        }
+      />
+      <CheckItem
+        state="info"
+        title={
+          <span data-testid="raw-folders">
+            {raw.writeFolders.length === 0 && raw.readFolders.length === 0 ? (
+              'It can’t open any of your files.'
+            ) : (
+              <>
+                {raw.writeFolders.length > 0 ? (
+                  <>
+                    It can change or delete files in{' '}
+                    {raw.writeFolders.map((f) => (
+                      <Code key={f} className="mr-1">
+                        {f}
+                      </Code>
+                    ))}
+                    .{' '}
+                  </>
+                ) : null}
+                {raw.readFolders.length > 0 ? (
+                  <>
+                    It can read files in{' '}
+                    {raw.readFolders.map((f) => (
+                      <Code key={f} className="mr-1">
+                        {f}
+                      </Code>
+                    ))}
+                    .
+                  </>
+                ) : null}
+              </>
+            )}
+          </span>
+        }
+      />
+      <CheckItem
+        state="info"
+        title={
+          <span data-testid="raw-credentials">
+            {raw.credentials.length === 0 ? (
+              'It can’t be given any of your credentials.'
+            ) : (
+              <>
+                Its code may be given{' '}
+                {raw.credentials.map((c) => (
+                  <Code key={c} className="mr-1">
+                    {c}
+                  </Code>
+                ))}
+                . Once it has one, Valet closes its connections to every server that credential isn’t for.
+              </>
+            )}
+          </span>
         }
       />
     </CheckList>

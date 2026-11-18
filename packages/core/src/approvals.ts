@@ -235,6 +235,35 @@ const subjects = {
       confirmationId: z.string().regex(/^cf_[A-Za-z0-9_-]{1,60}$/),
       /** The input as the runtime rendered it, one line per part. */
       preview: z.array(displayText(200)).max(20),
+      /**
+       * Only for a `raw` adapter's tool (docs/adapter-kinds.md#raw-confirmation). Valet can't see
+       * inside a raw adapter's connections, so a yes lets this one run do whatever these endpoints
+       * accept: the card says so, and lists them and the credentials the run may be handed. All of
+       * it is the Mac's own knowledge, from the approved manifest of `adapterHash`.
+       */
+      raw: z
+        .object({
+          /** Every `host:port` this run's tunnels reach: the endpoints, then the private hosts. */
+          endpoints: z
+            .array(z.string().regex(/^[a-z0-9._:-]{1,260}$/))
+            .min(1)
+            .max(30),
+          /** The entrusted credentials the run's code may be handed, by the manifest's names. */
+          credentials: z.array(name).max(8),
+          /** Folders its code may read, and read and write, as the manifest writes them. */
+          readFolders: z.array(displayText(200)).max(200),
+          writeFolders: z.array(displayText(200)).max(200),
+          /**
+           * False when `preview` doesn't show the whole input (a line cut, or more lines than fit).
+           * The input is everything a person has to judge a raw call by, so then only the Mac,
+           * which shows it whole, may approve it.
+           */
+          inputComplete: z.boolean(),
+        })
+        .strict()
+        .refine((r) => new Set(r.endpoints).size === r.endpoints.length, 'endpoints repeat')
+        .refine((r) => new Set(r.credentials).size === r.credentials.length, 'credentials repeat')
+        .optional(),
     })
     .strict(),
   /** Take Valet out of pause or lockdown. */
@@ -266,6 +295,11 @@ export function approvableOn(kind: ApprovalKind, subject: ApprovalSubject): read
     const install = subject as ApprovalSubject<'adapter-install'>
     // Anything critical (unsandboxed, a command exception) is as good as unsandboxed: Mac only.
     if (install.unsandboxed || install.changes.some((c) => c.risk === 'critical')) return ['mac']
+  }
+  // A raw call whose input the phone's card can't show whole: only the Mac shows all of it.
+  if (kind === 'irreversible-call') {
+    const call = subject as ApprovalSubject<'irreversible-call'>
+    if (call.raw !== undefined && !call.raw.inputComplete) return ['mac']
   }
   return ['mac', 'phone']
 }

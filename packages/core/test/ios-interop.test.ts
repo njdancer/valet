@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest'
 import {
   APPROVAL_KINDS,
   type ApprovalRequest,
+  approvableOn,
   canonicalJson,
   type DeviceLookup,
   decisionPayload,
@@ -227,6 +228,27 @@ function requests(macId: string): ApprovalRequest[] {
       },
     },
     {
+      // The raw confirmation: a raw adapter's irreversible tool, with what its run reaches.
+      ...base('8F21', '2026-11-12T08:42:00.000Z'),
+      kind: 'irreversible-call',
+      tier: 'approve-each-use',
+      subject: {
+        adapterId: 'nas-files',
+        adapterHash: HASH_A,
+        tool: 'delete_folder',
+        callId: 'call-9c41',
+        confirmationId: 'cf_delete',
+        preview: ['{', '"path": "/photos/2024"', '}'],
+        raw: {
+          endpoints: ['nas.example.com:443', '192.168.1.20:5001', 'fd00::5:22'],
+          credentials: ['nas_token'],
+          readFolders: ['~/Documents/NAS'],
+          writeFolders: ['~/Downloads/NAS'],
+          inputComplete: false,
+        },
+      },
+    },
+    {
       ...base('5R00', '2026-11-12T08:50:00.000Z'),
       requester: { kind: 'person' },
       agentNote: null,
@@ -329,6 +351,8 @@ function writeVectors(path: string): void {
   const serialized = requests(macId).map((r) => serializeRequest(r))
   const valid = serialized[0]
   if (valid === undefined) throw new Error('no requests')
+  const raw = serialized.find((r) => r.text.includes('"raw":'))
+  if (raw === undefined) throw new Error('no raw confirmation')
   const record = canonicalJson({
     v: 1,
     deviceId: phoneId,
@@ -402,6 +426,16 @@ function writeVectors(path: string): void {
         why: 'expires before created',
         text: valid.text.replace('2026-11-13T08:40:00.000Z', '2026-11-12T08:39:00.000Z'),
       },
+      { why: 'raw: no endpoint', text: raw.text.replace(/"endpoints":\[[^\]]*\]/, '"endpoints":[]') },
+      {
+        why: 'raw: unknown key',
+        text: raw.text.replace('"inputComplete":false', '"inputComplete":false,"more":1'),
+      },
+      {
+        why: 'raw: endpoint repeats',
+        text: raw.text.replace('"nas.example.com:443"', '"nas.example.com:443","nas.example.com:443"'),
+      },
+      { why: 'raw: inputComplete missing', text: raw.text.replace(',"inputComplete":false', '') },
       {
         why: 'unsandboxed refinement',
         text: valid.text
@@ -479,6 +513,15 @@ describe('iOS vectors', () => {
     // unreadable on the phone, so every key must appear in at least one vector.
     const used = new Set(vectors.requests.flatMap((r) => Object.keys(JSON.parse(r.text).display ?? {})))
     for (const key of Object.keys(requestDisplaySchema.shape)) expect(used, key).toContain(key)
+  })
+
+  it('has a raw confirmation, which only the Mac may approve when its input isn’t whole', () => {
+    const raw = vectors.requests.find((r) => r.text.includes('"raw":'))
+    const parsed = raw === undefined ? null : parseRequestText(raw.text)
+    expect(parsed?.request.kind).toBe('irreversible-call')
+    expect(parsed === null ? null : approvableOn(parsed.request.kind, parsed.request.subject)).toEqual([
+      'mac',
+    ])
   })
 
   it('has invalid requests that core refuses', () => {

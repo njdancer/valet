@@ -1,7 +1,7 @@
 # Adapter kinds beyond the browser
 
-Status: **Agreed direction, partly built** (A `http`, B secrets v2, C the Node runtime and F `raw`; see each
-"As built"). Nick agreed this on 2026-11-17, after discussing it from
+Status: **Agreed direction, partly built** (A `http`, B secrets v2, C the Node runtime, F `raw` and the
+[raw confirmation](#raw-confirmation); see each "As built"). Nick agreed this on 2026-11-17, after discussing it from
 2026-11-14 to 2026-11-17 (it started as valet-feedback #6). It replaces the earlier HTTP-only design,
 which was merged too early. Each workstream below is built in its own thread. Each one has tests
 against fakes and a red-team pass before it merges. None of it is on the path to the first
@@ -392,8 +392,8 @@ sign-in mail too.
 
 - `runtime: "raw"` is in `AVAILABLE_RUNTIMES`. Its manifest (`rawIssues` in `packages/core/src/manifest.ts`)
   has `endpoints` and/or `privateHosts` (without `certSha256`), and no `home` (derived from the first
-  endpoint, for pacing only), `navigation`, `cartUrl`, `egress`, `requests`, login or irreversible
-  tools. Its only sandbox exceptions are `files`, which become the profile's read and read-write
+  endpoint, for pacing only), `navigation`, `cartUrl`, `egress`, `requests` or login. (It had no
+  irreversible tools either, until the [raw confirmation](#raw-confirmation).) Its only sandbox exceptions are `files`, which become the profile's read and read-write
   paths (`apps/desktop/src/main/core/raw-runtime.ts`). An entrusted credential's endpoints must be
   among its endpoints or private hosts.
 - **A call** (`ToolHost.rawFor` in `packages/runtime/src/tool-host.ts`): the Node runtime starts a
@@ -434,7 +434,8 @@ Taken while Nick was away, each the recommendation. Any can be changed.
 
 1. **Raw is high risk on the card, not critical.** Workstream C's diff rated it critical, which would
    have made it Mac-only. Nick said raw adapters get the same approval as everything else.
-2. **No irreversible tools in a raw adapter, for now.** `confirm()` names declared requests, and a
+2. **No irreversible tools in a raw adapter, for now.** _Superseded by the
+   [raw confirmation](#raw-confirmation) (2026-11-18): they are allowed now._ `confirm()` names declared requests, and a
    raw adapter has none, so nothing could ask the person before an action that can't be undone. A
    raw confirmation (the tool and its input on the card) is a follow-up; it needs a new card kind
    on the phone.
@@ -486,7 +487,8 @@ Residual risks, accepted for now:
 
 - **Side effects in a raw adapter are claims.** The broker can't see inside TLS, so a tool declared
   `read` can make any request its endpoint accepts (a `DELETE`, say) within a read's upload
-  budget. "No irreversible tools" only changes the label.
+  budget. Marking a tool irreversible (the [raw confirmation](#raw-confirmation)) only adds a
+  confirmation before it runs; it doesn't stop a `read` or `write` tool doing the same.
 - **Transforms redaction doesn't list.** Shifting each character code, a cipher, or similar still
   gets an entrusted value into tool output (as workstream B noted). The endpoints and the budget
   are the boundary.
@@ -496,6 +498,96 @@ Residual risks, accepted for now:
 - **Unverified on macOS:** the profile lets the adapter read `kern.hostname` (the Mac's name, often
   the person's). (`(remote ip "localhost:PORT")` matching `::1` and UDP is closed: the rule is now
   `remote tcp4`, workstream I.)
+
+### Raw confirmation
+
+A raw adapter may have irreversible tools (deleting, sending, paying) since 2026-11-18. Nick asked
+for it ("go for it"), after workstream F left them out because `confirm()` names declared requests and
+a raw adapter has none.
+
+#### As built
+
+- **Manifest.** `rawIssues` no longer refuses `sideEffect: "irreversible"`. `unlocks` still can't be
+  set: a raw adapter has no requests to name.
+- **The question** (`packages/runtime/src/tool-host.ts`). Before a raw adapter's irreversible tool
+  runs, the runtime asks a `raw-tool` question instead of `irreversible-tool`: the tool's validated
+  input and everything the run can reach, from core's `rawReach(manifest)`: the endpoints and private
+  hosts, the entrusted credentials its code may be handed, and the folders it may read, or read and
+  write. No process is started until the person says yes, and a yes is for that one run. Anything but
+  a yes is a no. `ctx.confirm` still doesn't work in a raw adapter (it needs requests).
+- **The Mac** (`apps/desktop/src/main/core/confirmations.ts`). The confirmation item has
+  `trigger: "raw-tool"` and a `raw` block. It is declined before anyone is asked when its reach isn't
+  what the version on the card declares, when the plain irreversible question is asked for a raw
+  adapter (or the raw one for anything else), or when the input is too long for the panel to show
+  whole (20,000 characters). Invisible and formatting characters in the input are written out as
+  codes on the panel, since the input is all the person has to go on.
+- **The panel** (`ConfirmationWindow.tsx`, `RawChecked`). It says the action can't be undone and that
+  Valet can't see what the adapter sends, shows the whole input, and lists the servers, credentials
+  and folders. It drops the two checks a raw adapter can't pass ("requests stay within the declared
+  paths", "approving unlocks…").
+- **The signed request.** It's still an `irreversible-call`, with an optional `raw` block:
+  `endpoints`, `credentials`, `readFolders`, `writeFolders` and `inputComplete`. `inputComplete` is
+  false when the phone's lines (20 of 200 characters, `confirmationPreview` in `service.ts`) aren't
+  the whole input: a line cut, too many lines, or a line the card can only show changed. Then
+  `approvableOn` says Mac only, and `verifyDecision` refuses a phone's signature.
+- **The phone** (`CardModel.swift`). A raw call is its own card ("Confirm · own code"). Its risk line
+  says Valet can't see what it sends; its rows are the input (marked as the agent's), "Can reach",
+  "May get", "Can change" and "Can read". A call it can't show whole says "Do this on your Mac", and
+  only Decline is offered.
+- **Tests.** Core: `approvals.test.ts`, `manifest-raw.test.ts` and the iOS vectors (a raw
+  confirmation and four malformed ones). Runtime: `raw-adapter.e2e.test.ts` (asked first, nothing
+  runs on a no). Desktop: `confirmations.test.ts`, `confirmation-preview.test.ts`,
+  `confirmation.test.tsx` and a service test with the real Node runtime and broker. iOS:
+  `PhoneModelTests` and the `RawConfirmJourneyTests` UI tests (scenario `raw`).
+
+#### Decisions for Nick's review (raw confirmation)
+
+Taken while Nick was away, each the recommendation. Any can be changed.
+
+1. **The same approval kind, not a new one.** It's an `irreversible-call` with an optional `raw`
+   block, so the broker, its limits and the ledger treat it like every other confirmation. The card
+   is new on both the Mac and the phone. A phone app older than this can't read a raw call (its
+   parser is strict), so that phone shows nothing for it and it is answered at the Mac.
+2. **One confirmation, before any code runs.** There's no second, mid-run question as SMTP has.
+   Tool code can't say what it will send in a way Valet can check, so the card shows only what Valet
+   knows: the input and the reach.
+3. **The card lists everything the run reaches**: servers, credentials and folders. That covers
+   files it could delete, not only servers.
+4. **The phone may confirm only when it shows the whole input.** Otherwise only the Mac may.
+5. **An input too long for the Mac panel is declined**, without asking. An agent sees `declined`,
+   the same as a no.
+6. **A raw adapter's irreversible tool gets the same budgets as a write.** The upload budget and
+   requests per run don't change, so marking a tool irreversible gives it nothing extra.
+
+#### Red team (raw confirmation, 2026-11-18)
+
+An adversarial pass on the confirmation, by the thread that built it, as a hostile agent and a
+hostile adapter. Fixed before merge:
+
+- **Folders weren't on the card (medium).** A raw tool with a read-write folder could delete files
+  there, and the first design listed only servers and credentials. It now lists folders too
+  (decision 3).
+- **Hidden characters on the Mac panel (medium).** The panel showed the input as JSON text, and
+  `JSON.stringify` leaves zero-width and direction-override characters as they are, so part of a path
+  could hide. They are now written out as codes. The phone already did this, and now also marks such
+  input incomplete (Mac only).
+- **An input cut on the Mac (low).** The panel keeps 20,000 characters of an input, so part of a
+  longer one was never shown anywhere. Such a call is now declined (decision 5).
+- **The wrong card for a raw adapter (low).** The plain irreversible card for a raw adapter would
+  claim checks Valet can't make. The Mac declines that mismatch, and a raw question whose reach
+  differs from the version on the card.
+
+Held: no tool code runs before the yes (no process, no connection, no secret, all tested). A phone
+signature on a Mac-only raw call is refused by `verifyDecision`, whatever the phone does. A raw tool
+can't raise a raw confirmation itself: only the runtime asks it, before the run.
+
+Residual risks, accepted for now:
+
+- **The input is the agent's, and the code is the adapter's.** A yes means "run this tool with this
+  input". What the code does with it can't be checked. The person approved the code when they
+  approved the adapter, and the card says so.
+- **Readable JSON isn't plain language.** An input like `{"id": 48213}` says little about what is
+  deleted. A tool's own read (listing what it would delete) is the author's job.
 
 ## H. Example adapters
 
@@ -676,6 +768,11 @@ and the profile generator. D, E and G own their own `protocols.*` entries. Each 
 
 Nick was away while these were built and asked each thread to take its own recommendation and
 note it here. Each one can be reversed.
+
+**Raw confirmation (2026-11-18):** six decisions, listed with what was built in
+[Raw confirmation](#decisions-for-nicks-review-raw-confirmation). The one worth a look: a raw
+adapter's irreversible call is confirmed once, before any of its code runs, and the phone may
+confirm it only when it can show the whole input.
 
 **Workstream E (SFTP, [sftp.md](sftp.md)):**
 

@@ -910,11 +910,8 @@ function rawIssues(manifest: Parameters<typeof runtimeIssues>[0]): string[] {
   if (manifest.requests.length > 0)
     issues.push('a raw adapter has no requests: Valet can’t see inside its connections')
   if (manifest.session.probe.kind !== 'none') issues.push('a raw adapter has no login: its probe is none')
-  // confirm() names declared requests, and a raw adapter has none, so nothing could ask the person
-  // before an action that can't be undone. Until a raw confirmation exists, it has no such tools.
-  for (const tool of manifest.tools)
-    if (tool.sideEffect === 'irreversible')
-      issues.push(`tool ${tool.name}: a raw adapter's tools are read or write, not irreversible`)
+  // An irreversible tool is allowed: the runtime asks before each run with a raw confirmation (the
+  // tool, its input and everything the run can reach), since Valet can't see what it sends.
   const endpoints = manifest.endpoints ?? []
   const privateHosts = manifest.privateHosts ?? []
   if (endpoints.length === 0 && privateHosts.length === 0)
@@ -974,6 +971,45 @@ export function rawEndpoints(manifest: {
     ...(manifest.endpoints ?? []),
     ...(manifest.privateHosts ?? []).map((h) => rawEndpointKey(h.address, h.port)),
   ]
+}
+
+/**
+ * Everything one run of a raw adapter's code can reach (the raw confirmation,
+ * docs/adapter-kinds.md#raw-confirmation): the endpoints its tunnels serve, the entrusted
+ * credentials it may be handed, and the folders its profile may read, or read and write, as the
+ * manifest writes them with any trailing `/*` or `/**` dropped (the profile allows the whole folder).
+ */
+export function rawReach(manifest: {
+  readonly endpoints?: readonly string[] | undefined
+  readonly privateHosts?: readonly PrivateHost[] | undefined
+  readonly credentials?: Readonly<Record<string, { readonly use: object }>> | undefined
+  readonly sandbox?: SandboxDeclaration | undefined
+}): {
+  readonly endpoints: string[]
+  readonly credentials: string[]
+  readonly readFolders: string[]
+  readonly writeFolders: string[]
+} {
+  const readFolders: string[] = []
+  const writeFolders: string[] = []
+  const sandbox = manifest.sandbox
+  if (sandbox !== undefined && sandbox.mode === 'sandboxed')
+    for (const exception of sandbox.exceptions) {
+      if (exception.kind !== 'files') continue
+      const into = exception.access === 'read-write' ? writeFolders : readFolders
+      for (const path of exception.paths) {
+        const folder = path.replace(/\/\*\*?$/, '')
+        if (!into.includes(folder)) into.push(folder)
+      }
+    }
+  return {
+    endpoints: rawEndpoints(manifest),
+    credentials: Object.entries(manifest.credentials ?? {})
+      .filter(([, c]) => 'entrusted' in c.use)
+      .map(([name]) => name),
+    readFolders: readFolders.filter((f) => !writeFolders.includes(f)),
+    writeFolders,
+  }
 }
 
 /** The default upload budgets (docs/adapter-kinds.md#f1-the-egress-broker), in bytes. */

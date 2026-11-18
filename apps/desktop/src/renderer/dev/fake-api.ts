@@ -645,6 +645,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       requests: [{ method: 'POST', path: '/api/v3/ui/trolley/update', purpose: 'write' }],
       input: [{ kind: 'text', text: '{ "stockcode": 133211 }' }],
       adapterNote: 'Remove Cavendish Bananas (2 × $0.79) from the trolley?',
+      raw: null,
     },
     {
       kind: 'review',

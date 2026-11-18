@@ -64,6 +64,19 @@ const tool = (run: (args: Args, ctx: any) => unknown) => ({
 })
 
 export const tools = {
+  /** An irreversible tool: deletes `id` with the token. Asked about with a raw confirmation first. */
+  remove: tool(async (a, ctx) => {
+    const { value } = await ctx.secrets.get('api')
+    const r = await request({
+      host: 'api.example.test',
+      path: '/v1/echo',
+      method: 'POST',
+      body: `delete ${a.id}`,
+      headers: { authorization: `Bearer ${value}` },
+      ca: a.ca,
+    })
+    return { status: r.status }
+  }),
   items: tool(async (a) => {
     const r = await request({ host: 'api.example.test', path: '/v1/items', ca: a.ca })
     return { status: r.status, items: JSON.parse(r.body) }
