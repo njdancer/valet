@@ -177,6 +177,7 @@ export class Phones implements PhoneOutbox {
           : null,
       ...(relay.connectUrl === undefined ? {} : { connectUrl: relay.connectUrl }),
       ...(relay.macHost === undefined ? {} : { macHost: relay.macHost }),
+      onBadFrame: (why) => this.options.log?.(`[relay] refused a frame from the relay (${why})`),
       onStatus: (status) => {
         // A local relay (VALET_RELAY_CONNECT, dev builds only): say what it does, for the walkthrough.
         if (relay.connectUrl !== undefined) console.log(`[relay] ${status.state}`)
@@ -192,6 +193,7 @@ export class Phones implements PhoneOutbox {
         if (event.type === 'hub-status') {
           // Linking, then linked: the person just added this Mac with the code it showed.
           const fresh = this.hub?.state === 'linking' && event.hub.state === 'linked'
+          if (this.hub?.state !== event.hub.state) this.options.log?.(`[hub] ${event.hub.state}`)
           this.hub = event.hub
           void roster
             .linked(event.hub.state === 'linked' ? event.hub.accountId : null, fresh)
@@ -209,6 +211,9 @@ export class Phones implements PhoneOutbox {
           return
         }
         if (event.type === 'hub-roster') {
+          this.options.log?.(
+            `[roster] the hub's list: ${event.changes.length} changes, ${event.passkeys?.length ?? 'no'} passkeys${event.refused === undefined ? '' : `, refused ${event.refused}`}`,
+          )
           void roster
             .received(event.changes, event.refused, event.passkeys)
             .catch((error) => this.options.log?.(`[roster] ${String(error)}`))

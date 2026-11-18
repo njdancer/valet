@@ -329,14 +329,35 @@ class ElectronSurface implements BrowserSurface {
     })
   }
 
-  load(url: string): Promise<LoadResult> {
-    return this.contents.loadURL(url).then(
-      (): LoadResult => ({ ok: true }),
-      (error: unknown): LoadResult => {
-        const code = (error as { code?: unknown }).code
-        return { ok: false, code: typeof code === 'string' ? code : 'ERR_FAILED' }
-      },
+  async load(url: string): Promise<LoadResult> {
+    const once = () =>
+      this.contents.loadURL(url).then(
+        (): LoadResult & { failedUrl?: string } => ({ ok: true }),
+        (error: unknown): LoadResult & { failedUrl?: string } => {
+          const { code, url: failedUrl } = error as { code?: unknown; url?: unknown }
+          return {
+            ok: false,
+            code: typeof code === 'string' ? code : 'ERR_FAILED',
+            ...(typeof failedUrl === 'string' ? { failedUrl } : {}),
+          }
+        },
+      )
+    // Electron settles loadURL on the main frame's next failure, whichever navigation it was: one
+    // the page started just before (a cancelled location= or form POST) can fail in our place and
+    // hand us its ERR_BLOCKED_BY_CLIENT. Such a failure names neither our URL nor a redirect of
+    // ours: wait for that navigation to settle and load ours again, once.
+    const ours = [url]
+    const redirected = (event: { url: string; isMainFrame: boolean }) => {
+      if (event.isMainFrame) ours.push(event.url)
+    }
+    this.contents.on('did-redirect-navigation', redirected)
+    const first = await once().finally(() =>
+      this.contents.removeListener('did-redirect-navigation', redirected),
     )
+    const failedUrl = first.ok ? undefined : first.failedUrl
+    if (failedUrl === undefined || ours.some((u) => sameUrl(u, failedUrl))) return strip(first)
+    if (this.isLoading()) await this.nextStopLoading()
+    return strip(await once())
   }
 
   isLoading(): boolean {
@@ -673,4 +694,16 @@ function storageOrigin(storageId: Record<string, unknown>): string | null {
   } catch {
     return null
   }
+}
+
+function sameUrl(a: string, b: string): boolean {
+  try {
+    return new URL(a).href === new URL(b).href
+  } catch {
+    return a === b
+  }
+}
+
+function strip(result: LoadResult & { failedUrl?: string }): LoadResult {
+  return result.ok ? { ok: true } : { ok: false, code: result.code }
 }

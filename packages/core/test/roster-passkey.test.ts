@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
+  coseP256Spki,
   keyId,
   nextRosterChange,
   PASSKEY_SIGNER,
@@ -218,6 +219,13 @@ describe('passkeys on the account’s list', () => {
     // RS256 (alg -257) or Ed25519 keys don't qualify.
     expect(spkiFromCoseP256(Buffer.from([0xa2, 0x01, 0x03, 0x03, 0x39, 0x01, 0x00]))).toBeNull()
     expect(spkiFromCoseP256(Buffer.from([0x00]))).toBeNull()
+    expect(coseP256Spki(cose)).toEqual({ spki: key.record.publicKey })
+    expect(coseP256Spki(Buffer.from([0xa2, 0x01, 0x03, 0x03, 0x39, 0x01, 0x00]))).toEqual({
+      why: 'kty 3, alg -257, crv undefined',
+    })
+    expect(coseP256Spki(Buffer.from([0x00]))).toEqual({
+      why: 'not a COSE map this reads (1 bytes, first 0x0)',
+    })
     expect(rawFromDerSignature(Buffer.from([0x30, 0x02, 0x00, 0x00]))).toBeNull()
   })
 })

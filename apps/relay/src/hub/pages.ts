@@ -276,7 +276,8 @@ if (page === 'security') {
     const me = await api('/api/me')
     const list = $('passkeys'); list.textContent = ''
     for (const p of me.passkeys)
-      row(list, p.name, 'Added ' + when(p.createdAt) + ', last used ' + when(p.lastUsedAt),
+      row(list, p.name, 'Added ' + when(p.createdAt) + ', last used ' + when(p.lastUsedAt) +
+        (p.forPhones === true ? '. Signs your iPhones in.' : '. Can\u2019t sign iPhones in: ' + p.forPhones + '.'),
         removeButton('this passkey', async () => { await recent(() => api('/api/passkeys/remove', { id: p.id })); await load() }))
     $('app-state').textContent = me.app ? 'On.' : 'Off.'
     $('app-start').hidden = me.app; $('app-confirm').hidden = true; $('app-remove').hidden = !me.app
