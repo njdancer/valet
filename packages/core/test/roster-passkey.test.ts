@@ -234,9 +234,12 @@ if (process.env['VALET_WRITE_PASSKEY_VECTORS'] === '1') {
   const phone = device('phone')
   chain.push(key.assert(next(chain, PASSKEY_SIGNER, { op: 'add', device: phone.record })))
   const checked = roster(chain)
-  const evil = key.assert(next(chain.slice(0, 2), PASSKEY_SIGNER, { op: 'add', device: device('phone').record }), {
-    origin: 'https://evil.example',
-  })
+  const evil = key.assert(
+    next(chain.slice(0, 2), PASSKEY_SIGNER, { op: 'add', device: device('phone').record }),
+    {
+      origin: 'https://evil.example',
+    },
+  )
   writeFileSync(
     PASSKEY_VECTORS,
     `${JSON.stringify(
