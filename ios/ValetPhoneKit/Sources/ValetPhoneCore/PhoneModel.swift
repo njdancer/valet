@@ -643,9 +643,12 @@ public final class PhoneModel {
   /// list drops is forgotten here.
   private func syncMacs() {
     guard let account, let relay = account.relay, var persisted, keys != nil else { return }
-    // Signed in with the account, not paired: when the list drops the Mac this phone talks to
-    // first (it lost its keys, or was removed), another Mac on the list takes its place.
-    if persisted.viaAccount == true, !account.devices.contains(where: { $0.deviceId == persisted.macId }),
+    // On the account, by its passkey or by scanning a Mac's QR code (then the phone pinned the
+    // account's list): when the list drops the Mac this phone talks to first (it lost its keys, or
+    // was removed), another Mac on the list takes its place. The QR code is a shortcut for signing
+    // in, not a tie to one Mac (Nick, 2026-11-18).
+    if persisted.viaAccount == true || persisted.account != nil,
+      !account.devices.contains(where: { $0.deviceId == persisted.macId }),
       let next = account.devices.first(where: { $0.role == "mac" })
     {
       connection?.close()

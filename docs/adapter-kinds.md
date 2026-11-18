@@ -169,6 +169,8 @@ The manifest gets `credentials`, next to the existing `secrets`, which keep mean
     "custody": "kept",                   // kept | entrusted
     "use": { "protocol": "imap", "endpoint": "imap.mail.me.com:993" }
     // or { "header": { "name": "authorization", "format": "Bearer {value}" }, "hosts": ["api.example.com"] }
+    // or { "message": { "json": { "type": "auth", "access_token": "{value}" } }, "hosts": [ … ] }
+    //    (a WebSocket sign-in message, alone or beside "header": see Credential messages)
     // or { "entrusted": { "endpoints": ["host:port", …] } }      (raw only)
   }
 }
@@ -319,12 +321,161 @@ B's follow-up. Where each part lives, for the workstreams that use it:
   path marked `websocket: true`. Opening it counts against the run's ceiling and takes a pacing
   slot; each message sent is spent from the upload budget. Messages are capped at 1 MB, at most
   four sockets are open per call, and they close when the call ends.
+- `socket.sendCredential(name)` signs in to a server that wants the token in a message rather than
+  on the upgrade (Home Assistant): Valet sends the credential's declared message with the token
+  filled in. See [Credential messages](#credential-messages).
 - `parseFeed(text)` (imported from `@valet/core` in tool code) parses RSS, Atom and JSON Feed into
   one shape, and `parseXml(text)` reads CalDAV and CardDAV answers with namespaces resolved. Both
   are pure JS in the tool library the sandbox loads, so parsing never happens in the main
   process, and neither takes a DOCTYPE, so no entity tricks.
 - The authoring guide's API-as-home workaround (#111, #112) is kept for browser adapters that
   also call an API, and dropped as the advice for pure APIs.
+
+### Credential messages
+
+Some WebSocket servers take no credential on the upgrade: they wait for it in the first message.
+Home Assistant says `auth_required`, then wants `{"type":"auth","access_token":"…"}`. A header
+credential can't reach them, and before this only a `raw` adapter, holding an entrusted token,
+could. A **credential message** lets an `http` adapter sign in to them with a kept token that tool
+code never sees (workstream H, decision 4; built 2026-11-18).
+
+```jsonc
+"hub": {
+  "description": "A long-lived access token from your hub's profile page",
+  "kind": "token",
+  "custody": "kept",
+  "use": {
+    "header": { "name": "authorization", "format": "Bearer {value}" },   // optional: REST beside it
+    "message": { "json": { "type": "auth", "access_token": "{value}" } },
+    "hosts": ["192.168.1.20"]
+  }
+}
+```
+
+```ts
+const socket = await ctx.http.websocket('https://192.168.1.20:8123/api/websocket') // no credential on the upgrade
+await socket.receive() // auth_required
+await socket.sendCredential('hub') // Valet sends {"type":"auth","access_token":"<the token>"}
+await socket.receive() // auth_ok, or auth_invalid
+```
+
+#### As built
+
+- **The declaration.** `use.message.json` is a flat JSON object: 1 to 8 fields, each value a
+  string, number, boolean or null. Exactly one field's whole value is `"{value}"`, and its name must
+  say what it holds (`token`, `key`, `auth`, `pass`, `secret` or `credential` in it). Other strings
+  are at most 40 characters of letters, digits and `_ . : / -`: no spaces, so the message on a card
+  reads as data and can't carry a sentence. Field names start with a letter, at most 32 characters.
+  The message as written, with `"{value}"` in it, is at most 160 characters. Only `token` and
+  `password` credentials, only on `http` adapters. `message` sits beside `header` in the same `use`
+  (either or both, one set of `hosts`), so one grant covers a hub's REST header and its socket's
+  sign-in. Its use kind is still `header`: Valet itself puts it into traffic to these hosts.
+- **The gate** (`CredentialGate.messageFor(credential, host)`) checks the declaration, the host and
+  the grant as for a header, builds the message in the manifest's field order with the value
+  JSON-escaped (a value shorter than 12 characters, or with a control character, is refused),
+  registers the value for redaction, audits `secret-used` with the host, and only then hands both over.
+- **The socket** (`GuardedHttp`, `socket.sendCredential(name)`): only over https, only for a
+  credential this manifest declares with a message, for this socket's host, with a grant. It must
+  be **the first thing sent on the socket, and only once**: tool code can't first tell the server
+  to treat the next message as data (store it, forward it, echo it), and can't send the credential
+  twice, even with calls made at once. Either is a sticky `request-surface/undeclared-request` refusal; a missing grant or
+  declaration is a sticky `tool-run/not-granted`. The message is spent from the run's upload budget
+  like any other.
+- **Read-back.** Once a socket has carried a credential message, every message it receives is
+  redacted for the token, as a header credential's responses are: the whole value and its encodings
+  are replaced, and a text message still holding any 12-character piece of the token, in any case,
+  is refused (`tool-run/unexpected-shape`), also once escapes such as `\/` are undone, as is a
+  binary one holding the token in any form. The
+  token and its forms are kept for the call's output and audit redaction too, so pieces the tool
+  joins together are caught at the end.
+- **Cards.** The sentence says where it goes ("Valet sends your token "hub" to 192.168.1.20 in a
+  WebSocket message's access_token field. The adapter never sees it."), and the card lists the
+  whole message as an item, so the person sees everything sent with the token. Beside a header the
+  sentence says "in a header and in a WebSocket message" and lists both. The Mac's review shows the
+  message as code. Any change to the message is a new permission, and a grant never carries over
+  to a changed message (nor to one newly added beside a header).
+- **Cases** fill it like a header, with `case-token-value` or `case-password`, through the real gate, so a
+  case's `client` step can check the sign-in: `{ "client": { "type": "auth", "access_token":
+  "case-token-value" } }`.
+- **The home hub example** now signs in this way, as Home Assistant does, and its fake hub asks
+  for the token in the first message (`auth_required`, `auth`, then `auth_ok` or `auth_invalid`).
+  The fake also has an `echo` command that hands back everything it was sent, plain, base64 and
+  upper-cased, which the end-to-end red-team test uses through the sandbox and the real broker.
+- **Two hardenings to shared redaction** (header credentials get them too): forms are now replaced
+  longest first whatever their case rule (a 16-character window of a long token replaced before the
+  whole token left the rest showing, which turned a clean redaction into a refusal), and the
+  12-character pieces are matched in any case (an upper-cased echo got past them).
+
+#### Decisions for Nick's review (credential messages)
+
+Taken while Nick was away, each the recommendation. Any can be changed.
+
+1. **The message is fixed in the manifest; tool code adds nothing to it.** A placeholder tool code
+   could put anywhere in its own message would let it send the token in a field the server stores
+   or forwards. A fixed message is shown whole on the card.
+2. **Flat JSON only, and the field holding the token must be named like a credential.** This keeps
+   out messages that wrap the token in a command (`{"type":"call_service", … "service_data":
+   {"message": "{value}"}}`). JSON covers Home Assistant and the hubs like it; text or binary
+   sign-in messages aren't built.
+3. **First message, once per socket.** Every sign-in-by-message protocol we know sends it first.
+   Server messages may be read before it (Home Assistant's `auth_required`).
+4. **`{value}` only.** No `{username}` or `{basic}` in a message yet; a protocol that wants a user
+   name beside the password in a message would need it.
+5. **One credential may be both a header and a message**, under one set of hosts and one grant, as
+   a hub's REST API and its socket use the same token. Dropping the message from a later version
+   still asks for the grant again (cautious, simpler rule).
+6. **The token is resolved when sendCredential is called**, not when the socket opens, so a socket
+   that never signs in uses nothing and audits nothing.
+7. **A credential sent in a message is at least 12 characters.** Redaction of what comes back looks
+   for 12-character pieces, so a shorter value could come back unrecognised (red team RT-2). Hub
+   tokens are far longer; a short password needs a header or a protocol sign-in instead.
+8. **Case placeholders for tokens are now `case-token-value`** (was `case-token`), long enough for
+   a message. Header cases don't check the value, so nothing else changes.
+
+Residual risks, accepted for now:
+
+- **A message the server treats as more than a sign-in.** The rules keep the token in a field named
+  like a credential in a flat message, but they can't know what a given server does with
+  `{"type":"something_else","token":"{value}"}`. The card shows the whole message for the person to
+  judge, and the token goes only to the hosts it names.
+- **A server that transforms what it's sent** (hashes, interleaves, encrypts) can hand the token
+  back in a form redaction doesn't know, as with header credentials. The fixed, first-only message
+  is what keeps tool code from asking a sane server to do that.
+- **A server that keeps what it's sent and shows it later.** Redaction of what comes back is per
+  call: a socket in a later call that never signs in isn't redacted for the token, so a server that
+  logs sign-in messages somewhere a later call can read would hand it back. A hub doesn't; ordering
+  is what stops tool code asking it to (RT-1). Redacting kept credentials for the adapter's whole
+  session would close it; not built.
+- **A hostile server already holding the token can send it in pieces of 11 characters or fewer**,
+  which tool code can re-spell. As with header credentials, redaction is the backstop, not the
+  boundary.
+
+#### Red team (credential messages, 2026-11-18)
+
+A fresh agent attacked the commit as the author of the manifest and the code, and as a hostile or
+careless server. Fixed before merge, each proof of concept kept as a test
+(`packages/runtime/test/http-credential-message-round2.redteam.test.ts`, beside the first round in
+`http-credential-message.redteam.test.ts` and the end-to-end one in `examples.e2e.test.ts`):
+
+- **RT-1 (high): a race broke "first, and once".** `sendCredential` checked that nothing had been
+  sent, then awaited the grant before marking the socket. A `send()` made at the same moment
+  reached the server first ("store the next message as a note"), and two `sendCredential` calls at
+  once sent the token twice. It is now marked before the first await, and a `send()` while a sign-in
+  is on its way is a sticky refusal.
+- **RT-2 (medium): a short value wasn't redacted from what comes back.** Values under 8 characters
+  had no forms. Message credentials now need 12 or more (decision 7).
+- **RT-3 (medium): an echo escaping `/` as `\/`** (PHP's `json_encode`) split every 12-character
+  piece of a token with a `/` every 11 characters. Received text is now also checked with escapes
+  undone (`\/`, `\u`, percent and entities, the views output redaction uses), and refused if any
+  view holds the token or a piece of it. Header credentials get this too.
+- **RT-4 (low): the message's own declared text was remembered for redaction**, so ordinary output
+  holding `{"type":"auth","` came back redacted. Only the value is remembered now.
+
+Held: plain http, other hosts and hosts outside the grant, header-only and inherited names
+(`__proto__`, `constructor`), sending after another message or twice in sequence, redirects (the
+upgrade follows none), host spellings, the card matching what is sent, grant carry-over, binary
+frames, and the drafts' case runner, which only ever has placeholders. The header path didn't
+regress from the shared redaction changes.
 
 ### `protocol`
 
@@ -528,7 +679,7 @@ goes through the same check and approval as any other.
   registry serving their real npm tarballs (vendored under `apps/desktop/test/fixtures/npm`).
 - **What building them changed in Valet:**
   - **Cases can use kept credentials.** A case fills each kept header credential with a
-    placeholder (`case-username`, `case-password`, `case-token`), through the real gate, so a tool
+    placeholder (`case-username`, `case-password`, `case-token-value`), through the real gate, so a tool
     that names a credential runs in a case as it would installed. Before, it failed as not granted,
     so no credentialed http adapter could pass its check.
   - **Cases can script a WebSocket** (`sockets`: server messages, the client messages the tool must
@@ -564,6 +715,8 @@ Taken while Nick was away, each the recommendation. Any can be changed.
 4. **The hub's token goes on the socket's upgrade**, as a kept credential. Hubs that want it in the
    first message (Home Assistant) can't be reached with a kept credential; that needs an entrusted
    one, which only `raw` may hold, or a "credential in a message" placeholder, which isn't built.
+   **Superseded 2026-11-18:** [credential messages](#credential-messages) are built, and the home
+   hub example now signs in to its socket with one, as Home Assistant does.
 5. **A raw example takes an optional `caseReply` input for its cases.** Raw cases have no network, and
    the check needs a passing case that checks each tool's output, so the tool decodes a given
    answer instead of asking the cache. It's a read and only decodes what it is given. Scripted
@@ -729,6 +882,9 @@ note it here. Each one can be reversed.
   accepts an IP address and any port although its comment says a host name and TLS (workstream D's
   contract, left to it); IMAP and SFTP case answers aren't checked against what a real server
   could return (a name with a line break, say), as before.
+
+**Credential messages (2026-11-18):** eight decisions and four residual risks, under
+[Credential messages](#decisions-for-nicks-review-credential-messages).
 
 **Workstream E (SFTP, [sftp.md](sftp.md)):**
 

@@ -157,7 +157,18 @@ no page: tool code reaches the network only through \`ctx.http\`, and \`ctx.page
   "Basic {basic}" }, "hosts": ["caldav.icloud.com"] } }\` (\`{basic}\` is the username and password;
   \`"Bearer {value}"\` with \`"kind": "token"\`), and name it per request:
   \`ctx.http.fetch(url, { credential: 'icloud' })\`, or \`ctx.http.websocket(url, { credential: 'hub' })\`
-  for the socket's upgrade. It goes only to the hosts it names, only over https. The person grants it
+  for the socket's upgrade. It goes only to the hosts it names, only over https.
+- A server that wants the token in a WebSocket message (Home Assistant: \`auth_required\`, then
+  \`{"type":"auth","access_token":…}\`) gets it from a **credential message**: add
+  \`"message": { "json": { "type": "auth", "access_token": "{value}" } }\` to the credential's \`use\`
+  (beside or instead of \`header\`), and call \`await socket.sendCredential('hub')\`. Valet sends that
+  exact message with the credential filled in; tool code adds nothing to it. The JSON is flat (up to 8
+  fields, other strings letters, digits and \`_ . : / -\` only, at most 40), "{value}" is exactly one
+  field's whole value, and that field's name says what it is (token, key, auth, pass, secret or
+  credential in it). It must be the first thing sent on the socket, once; anything the server sends
+  back holding the credential has it redacted, or is refused. The person's card shows the whole
+  message. In cases it is sent with \`case-token-value\` (or \`case-password\`) in place of the value, so a
+  case's \`client\` step can check it: \`{ "client": { "type": "auth", "access_token": "case-token-value" } }\`. The person grants it
   once they approve the adapter; until then, and in live trials, the call fails \`tool-run/not-granted\`.
   A credential's hosts belong to the same provider: when a server's answer names another host
   (CalDAV discovery does), check it against that provider's pattern before reporting or using it.
@@ -203,7 +214,7 @@ await socket.close()
   (the iCloud examples' \`splitHref\`).
 - In cases, \`fetch\` entries answer \`ctx.http\` the same way they answer \`page.fetch\`; give absolute
   URLs. \`sockets\` script a WebSocket (below). A kept credential is filled with a placeholder
-  (\`case-username\`, \`case-password\`, \`case-token\`) through the same checks, so a case names it as
+  (\`case-username\`, \`case-password\`, \`case-token-value\`) through the same checks, so a case names it as
   the real call does.
 
 ## Adapters that speak a protocol (runtime "protocol")

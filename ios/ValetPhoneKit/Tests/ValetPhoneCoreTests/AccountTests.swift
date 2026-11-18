@@ -224,6 +224,21 @@ final class AccountTests: XCTestCase {
     XCTAssertEqual(account.state, .failed(.doesntCheck))
   }
 
+  /// The QR code is a shortcut for signing in: once the phone pinned the account's list, it stays
+  /// on the account when the Mac whose code it scanned leaves, like a phone signed in by passkey.
+  func testAPhoneSignedInByQRMovesToAnotherMacWhenItsMacLeaves() async throws {
+    _ = try await ready()
+    let mini = FakeMac(name: "Nick\u{2019}s Mac mini")
+    hub.append(by: world.mac, .add(mini.rosterDevice))
+    hub.append(by: mini, .remove(world.mac.macId))
+    hub.nodes = [HubPhone.Node(macId: mini.macId, slug: "mini", name: mini.name, online: true)]
+    await model.account?.refresh()
+    XCTAssertEqual(model.macId, mini.macId)
+    XCTAssertEqual(model.phase, .paired)
+    XCTAssertEqual(store.state?.viaAccount, true)
+    XCTAssertEqual(store.state?.account?.genesis, hub.roster?.genesis)
+  }
+
   func testForgetsTheAccountWhenUnpaired() async throws {
     _ = try await ready()
     model.unpair()

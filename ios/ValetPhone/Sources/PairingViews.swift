@@ -109,7 +109,7 @@ struct PairStartView: View {
           if showPairing {
             pairing
           } else {
-            Button("Pair with one Mac\u{2019}s code instead") { showPairing = true }
+            Button("Or scan a sign-in code from your Mac") { showPairing = true }
               .accessibilityIdentifier("pair.instead")
           }
         }
@@ -128,7 +128,7 @@ struct PairStartView: View {
   @ViewBuilder private var pairing: some View {
     VStack(alignment: .leading, spacing: 16) {
           Text(
-            "On your Mac, open Valet and choose Settings, then Devices, then Pair an iPhone. A code appears. Scan it with this phone."
+            "On your Mac, open Valet and choose Settings, then Devices, then Show a sign-in code. Scan it with this phone, and it signs in to your Valet account."
           )
           Button {
             scanning = true

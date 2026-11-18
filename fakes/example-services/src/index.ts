@@ -141,10 +141,8 @@ export async function startExampleServices(): Promise<ExampleServices> {
       socket.end('HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n')
       return
     }
-    if (req.headers.authorization !== `Bearer ${HUB_TOKEN}`) {
-      socket.end('HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n')
-      return
-    }
+    // The socket itself takes no token on the upgrade: like Home Assistant's, it asks for one in the
+    // first message (auth_required, then auth with access_token), so only a credential message signs in.
     wss.handleUpgrade(req, socket, head, (ws) => hubSession(ws, entities, hubMessages))
   })
 
@@ -250,20 +248,49 @@ function github(req: IncomingMessage, res: ServerResponse): true {
  * numbered requests (get_states, call_service) each answered by a result with the same id.
  */
 function hubSession(ws: WebSocket, entities: HubEntity[], messages: string[]): void {
-  ws.send(JSON.stringify({ type: 'auth_ok', ha_version: '2026.11.0' }))
+  let authed = false
+  /** What this session received, for `echo`: a careless server's debug command, to attack redaction. */
+  const received: string[] = []
+  ws.send(JSON.stringify({ type: 'auth_required', ha_version: '2026.11.0' }))
   ws.on('message', (data) => {
     const text = String(data)
     messages.push(text)
-    let message: { id?: unknown; type?: unknown; domain?: unknown; service?: unknown; target?: unknown }
+    received.push(text)
+    let message: {
+      id?: unknown
+      type?: unknown
+      domain?: unknown
+      service?: unknown
+      target?: unknown
+      access_token?: unknown
+    }
     try {
       message = JSON.parse(text)
     } catch {
       return ws.close(1003, 'not json')
     }
+    if (!authed) {
+      if (message.type === 'auth' && message.access_token === HUB_TOKEN) {
+        authed = true
+        return ws.send(JSON.stringify({ type: 'auth_ok', ha_version: '2026.11.0' }))
+      }
+      ws.send(JSON.stringify({ type: 'auth_invalid', message: 'Invalid access token or password' }))
+      return ws.close(4001, 'auth')
+    }
     const id = message.id
     const reply = (value: object) => ws.send(JSON.stringify({ id, type: 'result', ...value }))
     if (typeof id !== 'number') return ws.close(1003, 'no id')
     if (message.type === 'get_states') return reply({ success: true, result: entities })
+    // Hands back everything the session received, the sign-in included, in several encodings.
+    if (message.type === 'echo')
+      return reply({
+        success: true,
+        result: {
+          received,
+          base64: received.map((r) => Buffer.from(r).toString('base64')),
+          upper: received.map((r) => r.toUpperCase()),
+        },
+      })
     if (message.type === 'call_service') {
       const target = message.target as { entity_id?: unknown } | undefined
       const entity = entities.find((e) => e.entity_id === target?.entity_id)

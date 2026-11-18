@@ -290,6 +290,6 @@ export function credentialCarriesOver(
 function withoutTargets(credential: CredentialDeclaration): unknown {
   const { use } = credential
   if ('protocol' in use) return { protocol: use.protocol }
-  if ('header' in use) return { header: use.header }
+  if ('hosts' in use) return { header: use.header ?? null, message: use.message ?? null }
   return { entrusted: true }
 }
