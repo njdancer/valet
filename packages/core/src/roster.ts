@@ -229,21 +229,32 @@ export function rawFromDerSignature(der: Uint8Array): string | null {
 }
 
 /**
- * A P-256 COSE key (what WebAuthn stores for a passkey) as base64url SPKI DER, or null for any
- * other kind of key. Only EC2 keys on P-256 for ES256 qualify.
+ * A P-256 COSE key (what WebAuthn stores for a passkey) as base64url SPKI DER, or why it isn't
+ * one. Only EC2 keys on P-256 for ES256 qualify. Shape only, with no crypto library: the hub runs
+ * this in a Worker, and every device that takes the key checks it with its own (rosterPasskeySchema).
  */
-export function spkiFromCoseP256(cose: Uint8Array): string | null {
+export function coseP256Spki(cose: Uint8Array): { readonly spki: string } | { readonly why: string } {
   const map = readCoseMap(cose)
-  if (map === null) return null
+  if (map === null)
+    return { why: `not a COSE map this reads (${cose.length} bytes, first 0x${(cose[0] ?? 0).toString(16)})` }
   // 1 kty: 2 (EC2); 3 alg: -7 (ES256); -1 crv: 1 (P-256); -2 x; -3 y.
-  if (map.get(1) !== 2 || map.get(3) !== -7 || map.get(-1) !== 1) return null
+  if (map.get(1) !== 2 || map.get(3) !== -7 || map.get(-1) !== 1)
+    return { why: `kty ${String(map.get(1))}, alg ${String(map.get(3))}, crv ${String(map.get(-1))}` }
   const x = map.get(-2)
   const y = map.get(-3)
   if (!(x instanceof Uint8Array) || !(y instanceof Uint8Array) || x.length !== 32 || y.length !== 32)
-    return null
+    return { why: 'x or y isn’t 32 bytes' }
   const prefix = Buffer.from('3059301306072a8648ce3d020106082a8648ce3d030107034200', 'hex')
-  const spki = Buffer.concat([prefix, Buffer.from([4]), Buffer.from(x), Buffer.from(y)]).toString('base64url')
-  return p256PublicKey(spki) === null ? null : spki
+  return {
+    spki: Buffer.concat([prefix, Buffer.from([4]), Buffer.from(x), Buffer.from(y)]).toString('base64url'),
+  }
+}
+
+/** coseP256Spki, also checked as a point on P-256; null for anything else. */
+export function spkiFromCoseP256(cose: Uint8Array): string | null {
+  const found = coseP256Spki(cose)
+  if (!('spki' in found)) return null
+  return p256PublicKey(found.spki) === null ? null : found.spki
 }
 
 /** Just enough CBOR for a COSE key: one map of small integer keys to integers or byte strings. */

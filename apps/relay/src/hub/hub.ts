@@ -25,6 +25,7 @@ import {
   relayAuthPayload,
 } from '@valet/core/relay-protocol'
 import {
+  coseP256Spki,
   joinRecordDevice,
   nextRosterChange,
   PASSKEY_SIGNER,
@@ -39,10 +40,9 @@ import {
   type SignedRosterChange,
   signedJoinRecordSchema,
   signedRosterChangeSchema,
-  spkiFromCoseP256,
   verifyRoster,
 } from '@valet/core/roster'
-import { keyId } from '@valet/core/signing'
+import { keyId, p256PublicKey } from '@valet/core/signing'
 import { z } from 'zod'
 import type { HubAnswer } from '../core'
 import { fromBase64url, toBase64url } from '../encoding'
@@ -758,12 +758,17 @@ export class Hub extends DurableObject<Env> {
     const passkeys = this.all<PasskeyRow>(
       'SELECT * FROM passkeys WHERE account_id = ? ORDER BY created_at',
       session.account.id,
-    ).map((p) => ({
-      id: p.id,
-      name: p.name,
-      createdAt: iso(p.created_at),
-      lastUsedAt: isoOrNull(p.last_used_at),
-    }))
+    ).map((p) => {
+      const usable = rosterPasskeyKey(p)
+      return {
+        id: p.id,
+        name: p.name,
+        // Whether it can sign this account's iPhones in (step 4d), and if not, why.
+        forPhones: 'publicKey' in usable ? true : usable.why,
+        createdAt: iso(p.created_at),
+        lastUsedAt: isoOrNull(p.last_used_at),
+      }
+    })
     return Response.json(
       {
         email: session.account.email,
@@ -1236,9 +1241,10 @@ export class Hub extends DurableObject<Env> {
       'SELECT * FROM passkeys WHERE account_id = ? ORDER BY created_at',
       accountId,
     )) {
-      const cose = fromBase64url(row.public_key)
-      const publicKey = cose === null ? null : spkiFromCoseP256(cose)
-      if (publicKey === null || row.id.length < 16 || row.id.length > 512) continue
+      const usable = rosterPasskeyKey(row)
+      // /api/me says why, on the passkeys page.
+      if (!('publicKey' in usable)) continue
+      const publicKey = usable.publicKey
       out.push({
         passkeyId: keyId(publicKey),
         credentialId: row.id,
@@ -1571,4 +1577,16 @@ function iso(ms: number): string {
 
 function isoOrNull(ms: number | null): string | null {
   return ms === null ? null : iso(ms)
+}
+
+/** A passkey's key as the device list takes it (P-256, base64url SPKI), or why it can't be. */
+function rosterPasskeyKey(row: PasskeyRow): { readonly publicKey: string } | { readonly why: string } {
+  if (row.id.length < 16 || row.id.length > 512)
+    return { why: `credential id is ${row.id.length} characters` }
+  const cose = fromBase64url(row.public_key)
+  if (cose === null) return { why: 'stored key isn’t base64url' }
+  const found = coseP256Spki(cose)
+  if (!('spki' in found)) return found
+  if (p256PublicKey(found.spki) === null) return { why: 'not a point on P-256' }
+  return { publicKey: found.spki }
 }
