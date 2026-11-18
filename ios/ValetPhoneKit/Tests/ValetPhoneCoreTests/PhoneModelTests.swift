@@ -208,7 +208,9 @@ final class PhoneModelTests: XCTestCase {
     XCTAssertEqual(c.title, "Confirm: delete_folder (nas-files)")
     XCTAssertEqual(c.tone, .strong)
     XCTAssertEqual(c.riskLine, "This can't be undone, and Valet can't see what this adapter sends.")
-    XCTAssertEqual(c.moreRisks, 1, "the credential it may be given is a risk of its own")
+    // The credential it may be given, and (an agent's call with no context) "not linked to anything".
+    XCTAssertEqual(c.moreRisks, 2)
+    XCTAssertTrue(c.becauseIsCaution)
     // The input is the agent's, so it is shown as a claim; what the run reaches is the Mac's own.
     XCTAssertEqual(c.rows.filter { $0.marker == "Input" }.map(\.text), ["{", "\"path\": \"/photos/2024\"", "}"])
     XCTAssertTrue(c.rows.filter { $0.marker == "Input" }.allSatisfy(\.isClaim))
