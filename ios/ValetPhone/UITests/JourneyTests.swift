@@ -56,6 +56,18 @@ class JourneyTestCase: XCTestCase {
 
 }
 
+final class SignInJourneyTests: JourneyTestCase {
+  /// Step 4d: no code to scan and nothing on the Mac. The passkey signs this phone in on the
+  /// hub's page (the fake hub's, here), and the Mac's requests arrive.
+  func testSignsInWithThePasskeyAndNoPairing() {
+    launch("sign-in")
+    XCTAssertFalse(element("pair.scan").isHittable, "pairing with a code is tucked away")
+    waitFor("signin.start").tap()
+    XCTAssertTrue(app.tabBars.buttons["Needs you"].waitForExistence(timeout: 10))
+    XCTAssertTrue(element("needs.empty").exists)
+  }
+}
+
 final class PairingJourneyTests: JourneyTestCase {
   // MARK: J1
 

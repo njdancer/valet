@@ -511,22 +511,64 @@ public struct ApprovalDecision: Equatable, Sendable {
   }
 }
 
-/// Text someone signed, with the signature over `<domain>\n<payload>` (`signedTextSchema`).
+/// What a passkey's signature covers besides a change to the account's list (core's
+/// `rosterWebAuthnSchema`, step 4d): which passkey, and WebAuthn's two byte strings, base64url.
+public struct WebAuthnAssertion: Equatable, Sendable {
+  public let credentialId: String
+  public let authenticatorData: String
+  public let clientDataJSON: String
+
+  public init(credentialId: String, authenticatorData: String, clientDataJSON: String) {
+    self.credentialId = credentialId
+    self.authenticatorData = authenticatorData
+    self.clientDataJSON = clientDataJSON
+  }
+
+  public var json: JSONValue {
+    .object([
+      ("credentialId", .string(credentialId)), ("authenticatorData", .string(authenticatorData)),
+      ("clientDataJSON", .string(clientDataJSON)),
+    ])
+  }
+
+  public static func parse(_ value: JSONValue, _ path: String) throws -> WebAuthnAssertion {
+    let f = try Fields(value, path: path, required: ["credentialId", "authenticatorData", "clientDataJSON"])
+    return WebAuthnAssertion(
+      credentialId: try f.string("credentialId", pattern: Patterns.base64url, min: 16, max: 512),
+      authenticatorData: try f.string("authenticatorData", pattern: Patterns.base64url, min: 50, max: 1024),
+      clientDataJSON: try f.string("clientDataJSON", pattern: Patterns.base64url, min: 16, max: 2048)
+    )
+  }
+}
+
+/// Text someone signed, with the signature over `<domain>\n<payload>` (`signedTextSchema`). A
+/// change to the account's list that a passkey signed also carries the passkey's assertion.
 public struct SignedText: Equatable, Sendable {
   public let payload: String
   public let signature: String
+  public let webauthn: WebAuthnAssertion?
 
-  public init(payload: String, signature: String) {
+  public init(payload: String, signature: String, webauthn: WebAuthnAssertion? = nil) {
     self.payload = payload
     self.signature = signature
+    self.webauthn = webauthn
   }
 
-  public var json: JSONValue { .object([("payload", .string(payload)), ("signature", .string(signature))]) }
+  public var json: JSONValue {
+    var fields: [(String, JSONValue)] = [("payload", .string(payload)), ("signature", .string(signature))]
+    if let webauthn { fields.append(("webauthn", webauthn.json)) }
+    return .object(fields)
+  }
 
-  public static func parse(_ value: JSONValue, _ path: String) throws -> SignedText {
-    let f = try Fields(value, path: path, required: ["payload", "signature"])
+  /// `signedTextSchema`, strict. `webauthn` only where the schema allows it: a change to the
+  /// account's list (`signedRosterChangeSchema`).
+  public static func parse(_ value: JSONValue, _ path: String, allowWebAuthn: Bool = false) throws -> SignedText {
+    let f = try Fields(
+      value, path: path, required: ["payload", "signature"], optional: allowWebAuthn ? ["webauthn"] : []
+    )
     let signature = try f.string("signature", pattern: Patterns.base64url, max: 100)
     guard Base64URL.decode(signature)?.count == 64 else { throw SchemaError("\(path).signature", "must be 64 bytes") }
-    return SignedText(payload: try f.string("payload", min: 2, max: 64 * 1024), signature: signature)
+    let webauthn = f.has("webauthn") ? try WebAuthnAssertion.parse(try f.raw("webauthn"), "\(path).webauthn") : nil
+    return SignedText(payload: try f.string("payload", min: 2, max: 64 * 1024), signature: signature, webauthn: webauthn)
   }
 }

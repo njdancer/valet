@@ -2,7 +2,7 @@
 // a fixed shell and one script that talks to the hub's own JSON API. Nothing a Mac or a client sent
 // is ever written into HTML; the script sets text with textContent only.
 
-export type HubPageName = 'home' | 'sign-in' | 'sign-up' | 'link' | 'security' | 'not-found'
+export type HubPageName = 'home' | 'sign-in' | 'sign-up' | 'link' | 'security' | 'phone' | 'not-found'
 
 const TITLES: Readonly<Record<HubPageName, string>> = {
   home: 'Your Macs',
@@ -10,6 +10,7 @@ const TITLES: Readonly<Record<HubPageName, string>> = {
   'sign-up': 'Set up your Valet account',
   link: 'Add a Mac',
   security: 'Passkeys and sign-in',
+  phone: 'Sign in to Valet',
   'not-found': 'Nothing here',
 }
 
@@ -110,6 +111,11 @@ const BODIES: Readonly<Record<HubPageName, string>> = {
     <button class="danger" id="app-remove" hidden>Turn off the authenticator app</button>
     <p class="error" id="error" role="alert"></p>
     <nav><a href="/">Your Macs</a></nav>`,
+  phone: `
+    <p id="what">Use the passkey you set up for Valet to add this iPhone to your account.</p>
+    <button id="go">Continue with your passkey</button>
+    <p id="done" hidden>This iPhone is on your Valet account. Going back to Valet…</p>
+    <p class="error" id="error" role="alert"></p>`,
   'not-found': '<p>Nothing here.</p><nav><a href="/">Your Macs</a></nav>',
 }
 
@@ -243,6 +249,26 @@ if (page === 'link') {
   $('confirm').onsubmit = guard(async () => {
     await recent(() => api('/api/nodes/link', { code, slug: $('slug').value }))
     location.href = '/'
+  })
+}
+if (page === 'phone') {
+  // The Valet app opens this page with its device (the keys it made) in the fragment, which never
+  // reaches the server except as the JSON this script sends.
+  const params = new URLSearchParams(location.hash.slice(1))
+  let device = null
+  try { device = JSON.parse(new TextDecoder().decode(unb64(params.get('device') || ''))) } catch {}
+  const back = () => { $('go').hidden = true; $('done').hidden = false; if (params.get('return') === 'valet') location.href = 'valet://signed-in' }
+  if (!device || typeof device.name !== 'string') { $('go').hidden = true; say('Open this page from the Valet app on your iPhone.') }
+  else $('what').textContent = 'Use the passkey you set up for Valet to add ' + device.name + ' to your account.'
+  $('go').onclick = guard(async () => {
+    const prepared = await api('/api/phone/prepare', { device })
+    if (prepared.already) return back()
+    const credential = await navigator.credentials.get({ publicKey: requestOptions(prepared.options) })
+    const json = credentialJson(credential)
+    await api('/api/phone/finish', { payload: prepared.payload, credentialId: json.rawId || json.id,
+      authenticatorData: json.response.authenticatorData, clientDataJSON: json.response.clientDataJSON,
+      signature: json.response.signature })
+    back()
   })
 }
 if (page === 'security') {

@@ -71,7 +71,13 @@ public func channelApprovalToSign(domain: String, payloads: [String], own: OwnKe
     reason =
       kinds.contains(.start)
       ? "put this Mac and its iPhones on your Valet account"
-      : kinds.contains(.remove) ? "remove a device from your Valet account" : "add an iPhone to your Valet account"
+      : kinds.contains(.remove)
+        ? "remove a device from your Valet account"
+        : kinds.contains(.addPhone)
+          ? "add an iPhone to your Valet account"
+          : kinds.contains(.addPasskey)
+            ? "let your passkey sign iPhones in to your Valet account"
+            : "stop a passkey signing iPhones in to your Valet account"
   case hubGrantDomain:
     guard payloads.count == 1, let host = hubGrantHost(payloads[0], own: own) else { return nil }
     reason = "let an agent at \(host) use your Valet tools through your Valet account"
@@ -121,7 +127,7 @@ func deviceRecordRole(_ payload: String, own: OwnKeys) -> String? {
   }
 }
 
-enum RosterChangeKind { case start, addPhone, remove }
+enum RosterChangeKind { case start, addPhone, remove, addPasskey, removePasskey }
 
 /// What each change does, if every payload is a change to the account's device list that this Mac
 /// may sign (core's roster.ts): made by this Mac, numbered one after another, each naming the hash
@@ -166,12 +172,35 @@ func rosterChangeKinds(_ payloads: [String], own: OwnKeys) -> [RosterChangeKind]
         id != own.macId
       else { return nil }
       kinds.append(.remove)
+    case "add-passkey":
+      // One of the account's passkeys, which may then sign iPhones in (core's rosterPasskeySchema).
+      guard Set(change.keys) == ["op", "passkey"], let passkey = change["passkey"] as? [String: Any],
+        isRosterPasskey(passkey)
+      else { return nil }
+      kinds.append(.addPasskey)
+    case "remove-passkey":
+      guard Set(change.keys) == ["op", "passkeyId"], let id = change["passkeyId"] as? String, id.utf8.count == 32,
+        isLowerHex(id)
+      else { return nil }
+      kinds.append(.removePasskey)
     default:
       return nil
     }
     previous = (seq, SHA256.hash(data: Data(payload.utf8)).map { String(format: "%02x", $0) }.joined())
   }
   return kinds
+}
+
+/// A passkey as core's rosterPasskeySchema has it. The key itself is checked by every verifier.
+func isRosterPasskey(_ passkey: [String: Any]) -> Bool {
+  guard Set(passkey.keys) == ["passkeyId", "credentialId", "publicKey", "rpId", "name"],
+    let id = passkey["passkeyId"] as? String, id.utf8.count == 32, isLowerHex(id),
+    let credential = passkey["credentialId"] as? String, isBase64url(credential, max: 512),
+    let key = passkey["publicKey"] as? String, isBase64url(key, max: 200),
+    let rpId = passkey["rpId"] as? String, !rpId.isEmpty, rpId.utf8.count <= 253,
+    let name = passkey["name"] as? String, !name.isEmpty, name.utf8.count <= 240
+  else { return false }
+  return true
 }
 
 /// "mac" for this Mac with its own keys, "phone" for an iPhone that isn't this Mac; nil otherwise.

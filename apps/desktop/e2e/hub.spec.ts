@@ -13,6 +13,9 @@
 //      reads the account at the hub. The Mac loses its keys again; the phone adds the new Mac, and
 //      nobody pairs again: the phone's approvals reach the new Mac, and the agent's sign-in, which
 //      the old Mac approved, still works.
+//   7. A new iPhone signs in to the account with the passkey (step 4d): no QR code, no pairing and
+//      nothing on the Mac. The Mac put the account's passkey on the list by itself; the passkey
+//      signs the phone in on the hub's page; the Mac then trusts the phone and its approvals.
 //
 // Nothing here is mocked between the parts: every bug the first live sign-in found sat between them.
 
@@ -548,7 +551,8 @@ test('the Mac loses its keys again: the phone adds the new Mac, and nobody pairs
   await old.getByRole('button', { name: 'Remove' }).click()
   await old.getByRole('button', { name: `Remove ${MAC_NAME}?` }).click()
   await expect(old).toHaveCount(0)
-  expect((await hubPhone.account()).changes).toHaveLength(2)
+  // The Mac's own first change, the account's passkey it put on the list, and the phone it paired.
+  expect((await hubPhone.account()).changes).toHaveLength(3)
 
   // The new Mac is added with its code, and asks to join; the phone sees it waiting, and adds it.
   await linkMac()
@@ -603,4 +607,72 @@ test('the Mac loses its keys again: the phone adds the new Mac, and nobody pairs
       timeout: 30_000,
     })
     .toEqual(['test-mac__woolworths_search_products'])
+})
+
+test('a new iPhone signs in with the account’s passkey: no QR code, no pairing, nothing on the Mac', async () => {
+  // The Mac put the account's passkey on the list by itself, from the hub's word and its own signature.
+  const before = HubPhone.roster(await hubPhone.account())
+  expect(before.passkeys.size).toBe(1)
+  const macs = [...before.devices.values()].filter((d) => d.role === 'mac')
+  const newMac = macs.at(-1)
+  if (newMac === undefined) throw new Error('no Mac on the list')
+
+  // The iPhone app opens the hub's page with the keys it made; the person uses their passkey.
+  const fresh = new Phone(RELAY_CONNECT, newMac.deviceId, newMac.agreementKey, RELAY_ORIGIN, (c) =>
+    closers.push(c),
+  )
+  const signInPhone = new HubPhone(fresh, HUB, (path, body) =>
+    fetch(`${HUB}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  )
+  await expect(signInPhone.account()).rejects.toThrow(/401/)
+  const device = signInPhone.device('Second iPhone')
+  // The person's browser tab, with the virtual authenticator that holds the passkey.
+  const page = hubPage
+  await page.goto(`${HUB}/phone#device=${Buffer.from(JSON.stringify(device)).toString('base64url')}`)
+  await expect(page.locator('#what')).toHaveText(
+    'Use the passkey you set up for Valet to add Second iPhone to your account.',
+  )
+  await page.click('#go')
+  await expect(page.locator('#done')).toBeVisible()
+  await expect(page.locator('#error')).toHaveText('')
+
+  // The phone is on the account now: the hub lets it in, and the list says the passkey added it.
+  const account = await signInPhone.account()
+  const roster = HubPhone.roster(account)
+  expect(roster.devices.get(fresh.deviceId)).toEqual(device)
+  expect(JSON.parse(account.changes.at(-1)?.payload ?? '{}')).toMatchObject({ by: 'passkey' })
+  expect(account.nodes).toMatchObject([{ slug: 'test-mac', online: true }])
+  await expect(control.getByText('Second iPhone', { exact: true })).toBeVisible({ timeout: 20_000 })
+
+  // The Mac trusts it, without ever having paired it: it signs in, and an approval it sends counts.
+  await fresh.dial((nonce) => fresh.hello(nonce))
+  await until(() => fresh.frames.find((f) => f['type'] === 'ready'))
+  await until(() => fresh.messages.find((m) => m['type'] === 'status'))
+  const local = await connectMcp(control, userData, 'Claude Code')
+  const set = await callToolOnce(local, 'valet_set_setting', { setting: 'traceRetentionDays', value: 7 })
+  expect(set.isError, set.text).toBe(false)
+  const card = await until(() => fresh.messages.find((m) => m['type'] === 'approval-request'))
+  await fresh.send({ type: 'ack', ackSeq: card['seq'] })
+  await fresh.send({
+    type: 'approval-decision',
+    decision: fresh.approve(String(card['requestText']), newMac.deviceId),
+  })
+  await expect
+    .poll(async () => (await control.evaluate(() => window.valet?.settings.get()))?.traceRetentionDays, {
+      timeout: 20_000,
+    })
+    .toBe(7)
+  await local.close()
+
+  // Signing in again is harmless: the page says it's done, and nothing changes.
+  const again = hubPage
+  await again.goto(`${HUB}/sign-in`)
+  await again.goto(`${HUB}/phone#device=${Buffer.from(JSON.stringify(device)).toString('base64url')}`)
+  await again.click('#go')
+  await expect(again.locator('#done')).toBeVisible()
+  expect((await signInPhone.account()).changes).toHaveLength(account.changes.length)
 })

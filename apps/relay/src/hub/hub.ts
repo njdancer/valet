@@ -26,11 +26,23 @@ import {
 } from '@valet/core/relay-protocol'
 import {
   joinRecordDevice,
+  nextRosterChange,
+  PASSKEY_SIGNER,
+  passkeyChallenge,
+  ROSTER_MAX_PASSKEYS,
   type Roster,
+  type RosterPasskey,
+  rawFromDerSignature,
+  rosterChangeSchema,
+  rosterDeviceSchema,
+  rosterWebAuthnSchema,
+  type SignedRosterChange,
   signedJoinRecordSchema,
   signedRosterChangeSchema,
+  spkiFromCoseP256,
   verifyRoster,
 } from '@valet/core/roster'
+import { keyId } from '@valet/core/signing'
 import { z } from 'zod'
 import type { HubAnswer } from '../core'
 import { fromBase64url, toBase64url } from '../encoding'
@@ -39,6 +51,7 @@ import { logFailure } from '../log'
 import {
   verifyDeviceRecordSignature,
   verifyHubGrantSignature,
+  verifyPasskeySignature,
   verifyRelayAuth,
   verifyRosterSignature,
 } from '../verify'
@@ -175,6 +188,21 @@ const BODIES = {
     .object({ macId: z.string().regex(KEY_ID), grantId: z.string().regex(/^[0-9a-f]{64}$/) })
     .strict(),
   internalJoin: z.object({ macId: z.string().regex(KEY_ID), record: signedJoinRecordSchema }).strict(),
+  phonePrepare: z.object({ device: rosterDeviceSchema }).strict(),
+  phoneFinish: z
+    .object({
+      payload: z.string().min(2).max(4096),
+      credentialId: rosterWebAuthnSchema.shape.credentialId,
+      authenticatorData: rosterWebAuthnSchema.shape.authenticatorData,
+      clientDataJSON: rosterWebAuthnSchema.shape.clientDataJSON,
+      /** The assertion's signature as WebAuthn gives it, ASN.1 DER, base64url. */
+      signature: z
+        .string()
+        .min(8)
+        .max(200)
+        .regex(/^[A-Za-z0-9_-]+$/),
+    })
+    .strict(),
 } as const
 
 export class Hub extends DurableObject<Env> {
@@ -257,6 +285,10 @@ export class Hub extends DurableObject<Env> {
         at INTEGER NOT NULL
       );
     `)
+    // Step 4d: a change a passkey signed keeps its WebAuthn assertion, as JSON.
+    const columns = this.all<{ name: string }>("SELECT name FROM pragma_table_info('roster')")
+    if (!columns.some((c) => c.name === 'webauthn'))
+      this.sql.exec('ALTER TABLE roster ADD COLUMN webauthn TEXT')
   }
 
   // ---------- SQL ----------
@@ -365,7 +397,14 @@ export class Hub extends DurableObject<Env> {
           return { ...this.answer(macId, false), roster: { changes: [], refused: 'not-linked' } }
         const refused = await this.appendRoster(node.account_id, changes)
         if (refused !== null)
-          return { ...this.answer(macId, true), roster: { changes: this.chain(node.account_id), refused } }
+          return {
+            ...this.answer(macId, true),
+            roster: {
+              changes: this.chain(node.account_id),
+              passkeys: this.rosterPasskeys(node.account_id),
+              refused,
+            },
+          }
         await this.rosterChanged(node.account_id)
         await this.tellNodes(node.account_id, macId)
         return this.answer(macId, true)
@@ -495,15 +534,8 @@ export class Hub extends DurableObject<Env> {
   private async verifiedRoster(accountId: string): Promise<Roster | null> {
     const chain = this.chain(accountId)
     if (chain.length === 0) return null
-    const signatures: { key: string; payload: string; signature: string }[] = []
-    const check = verifyRoster(chain, {
-      verify: (key, payload, signature) => {
-        signatures.push({ key, payload, signature })
-        return true
-      },
-    })
+    const check = await this.checkChain(chain)
     if (!check.ok || check.roster.account !== accountId) return null
-    for (const s of signatures) if (!(await verifyRosterSignature(s.key, s.payload, s.signature))) return null
     return check.roster
   }
 
@@ -532,7 +564,7 @@ export class Hub extends DurableObject<Env> {
     }))
     return {
       status,
-      roster: { changes: this.chain(node.account_id) },
+      roster: { changes: this.chain(node.account_id), passkeys: this.rosterPasskeys(node.account_id) },
       consents: consents.slice(0, HUB_MAX_OPEN_CONSENTS),
       grants: this.grantsOf(node.account_id).map((g) => ({ payload: g.payload, signature: g.signature })),
     }
@@ -636,6 +668,12 @@ export class Hub extends DurableObject<Env> {
         return this.link(this.recent(session, now), BODIES.link.parse(body), now)
       case '/api/nodes/remove':
         return this.removeNode(this.recent(session, now), BODIES.macId.parse(body).macId)
+      // An iPhone signing in to the account with a passkey on its list (step 4d). No session: the
+      // passkey's signature over the change adding the phone is the sign-in.
+      case '/api/phone/prepare':
+        return this.phonePrepare(BODIES.phonePrepare.parse(body).device, now)
+      case '/api/phone/finish':
+        return this.phoneFinish(BODIES.phoneFinish.parse(body))
       default:
         throw new Refusal(404, 'not_found', 'Nothing here.')
     }
@@ -648,10 +686,11 @@ export class Hub extends DurableObject<Env> {
       '/sign-up': 'sign-up',
       '/link': 'link',
       '/security': 'security',
+      '/phone': 'phone',
     }
     const name = pages[path]
     if (name === undefined) return hubPage('not-found', 404)
-    const open = name === 'sign-in' || name === 'sign-up'
+    const open = name === 'sign-in' || name === 'sign-up' || name === 'phone'
     if (!open && session === null) {
       const next = path === '/' ? '' : `?next=${encodeURIComponent(path)}`
       return redirect(`/sign-in${next}`)
@@ -948,15 +987,19 @@ export class Hub extends DurableObject<Env> {
     const { challenge } = this.takeChallenge(body.challengeId, 'passkey', session.account.id, now)
     const credential = await this.verifyNewPasskey(body.response, challenge)
     this.savePasskey(session.account.id, credential, body.name ?? 'Passkey', now)
+    // Its Macs put it on the account's list, so it can sign iPhones in.
+    await this.tellNodes(session.account.id, '')
     return Response.json({ ok: true })
   }
 
-  private passkeyRemove(session: Session, id: string): Response {
+  private async passkeyRemove(session: Session, id: string): Promise<Response> {
     const passkeys = this.all<PasskeyRow>('SELECT * FROM passkeys WHERE account_id = ?', session.account.id)
     if (!passkeys.some((p) => p.id === id)) throw new Refusal(404, 'not_found', 'No such passkey.')
     if (passkeys.length === 1 && session.account.totp_secret === null)
       throw new Refusal(409, 'last_way_in', 'This is your only way to sign in. Add another first.')
     this.run('DELETE FROM passkeys WHERE id = ? AND account_id = ?', id, session.account.id)
+    // Its Macs take it off the account's list.
+    await this.tellNodes(session.account.id, '')
     return Response.json({ ok: true })
   }
 
@@ -1145,11 +1188,66 @@ export class Hub extends DurableObject<Env> {
 
   // ---------- The account's device list (roster.ts) ----------
 
-  private chain(accountId: string): { payload: string; signature: string }[] {
-    return this.all<{ payload: string; signature: string }>(
-      'SELECT payload, signature FROM roster WHERE account_id = ? ORDER BY seq',
+  private chain(accountId: string): SignedRosterChange[] {
+    return this.all<{ payload: string; signature: string; webauthn: string | null }>(
+      'SELECT payload, signature, webauthn FROM roster WHERE account_id = ? ORDER BY seq',
       accountId,
-    ).map((r) => ({ payload: r.payload, signature: r.signature }))
+    ).map((r) => ({
+      payload: r.payload,
+      signature: r.signature,
+      ...(r.webauthn === null ? {} : { webauthn: JSON.parse(r.webauthn) }),
+    }))
+  }
+
+  /**
+   * Checks a chain's shape with core and collects its signatures, then checks each with
+   * WebCrypto (core's checks use node:crypto, which the Workers runtime doesn't fully have).
+   */
+  private async checkChain(chain: readonly SignedRosterChange[]): Promise<ReturnType<typeof verifyRoster>> {
+    const signatures: { key: string; payload: string; signature: string }[] = []
+    const passkeySignatures: { key: string; data: Uint8Array; signature: string }[] = []
+    const check = verifyRoster(chain, {
+      verify: (key, payload, signature) => {
+        signatures.push({ key, payload, signature })
+        return true
+      },
+      verifyPasskey: (key, data, signature) => {
+        passkeySignatures.push({ key, data, signature })
+        return true
+      },
+    })
+    if (!check.ok) return check
+    for (const s of signatures)
+      if (!(await verifyRosterSignature(s.key, s.payload, s.signature)))
+        return { ok: false, at: -1, reason: 'bad-signature' }
+    for (const s of passkeySignatures)
+      if (!(await verifyPasskeySignature(s.key, s.data, s.signature)))
+        return { ok: false, at: -1, reason: 'bad-signature' }
+    return check
+  }
+
+  /**
+   * The account's passkeys that can sign changes (P-256 ones), as a device puts them on the list
+   * (step 4d). A Mac adds these, and removes from the list any passkey no longer here.
+   */
+  private rosterPasskeys(accountId: string): RosterPasskey[] {
+    const out: RosterPasskey[] = []
+    for (const row of this.all<PasskeyRow>(
+      'SELECT * FROM passkeys WHERE account_id = ? ORDER BY created_at',
+      accountId,
+    )) {
+      const cose = fromBase64url(row.public_key)
+      const publicKey = cose === null ? null : spkiFromCoseP256(cose)
+      if (publicKey === null || row.id.length < 16 || row.id.length > 512) continue
+      out.push({
+        passkeyId: keyId(publicKey),
+        credentialId: row.id,
+        publicKey,
+        rpId: this.host,
+        name: (row.name.trim() || 'Passkey').slice(0, 60),
+      })
+    }
+    return out.slice(0, ROSTER_MAX_PASSKEYS)
   }
 
   /**
@@ -1160,21 +1258,13 @@ export class Hub extends DurableObject<Env> {
    */
   private async appendRoster(
     accountId: string,
-    changes: readonly { payload: string; signature: string }[],
+    changes: readonly SignedRosterChange[],
   ): Promise<'conflict' | 'invalid' | null> {
     const kept = this.chain(accountId)
     const chain = [...kept, ...changes]
-    const signatures: { key: string; payload: string; signature: string }[] = []
-    const check = verifyRoster(chain, {
-      verify: (key, payload, signature) => {
-        signatures.push({ key, payload, signature })
-        return true
-      },
-    })
+    const check = await this.checkChain(chain)
     if (!check.ok) return check.reason === 'broken-chain' && check.at === kept.length ? 'conflict' : 'invalid'
     if (check.roster.account !== accountId) return 'invalid'
-    for (const s of signatures)
-      if (!(await verifyRosterSignature(s.key, s.payload, s.signature))) return 'invalid'
     // Another change may have landed while the signatures were checked.
     if (
       (this.one<{ n: number }>('SELECT COUNT(*) AS n FROM roster WHERE account_id = ?', accountId)?.n ??
@@ -1184,11 +1274,12 @@ export class Hub extends DurableObject<Env> {
     // One synchronous run of inserts: nothing else runs in the object between them.
     for (const [i, change] of changes.entries())
       this.run(
-        'INSERT INTO roster (account_id, seq, payload, signature) VALUES (?, ?, ?, ?)',
+        'INSERT INTO roster (account_id, seq, payload, signature, webauthn) VALUES (?, ?, ?, ?, ?)',
         accountId,
         kept.length + i,
         change.payload,
         change.signature,
+        change.webauthn === undefined ? null : JSON.stringify(change.webauthn),
       )
     return null
   }
@@ -1323,6 +1414,87 @@ export class Hub extends DurableObject<Env> {
       ),
     }
     return Response.json(answer, { headers })
+  }
+
+  /**
+   * The change adding this iPhone to the account's list, for one of the list's passkeys to sign.
+   * This hub holds one account (H5), so the phone needn't say which.
+   */
+  private async phonePrepare(device: z.infer<typeof rosterDeviceSchema>, now: number): Promise<Response> {
+    if (device.role !== 'phone' || device.platform !== 'ios')
+      throw new Refusal(400, 'not_a_phone', 'Only an iPhone signs in here.')
+    const account = this.one<{ id: string }>('SELECT id FROM accounts ORDER BY created_at LIMIT 1')
+    if (account === null) throw new Refusal(404, 'no_account', 'This hub has no Valet account yet.')
+    const roster = await this.verifiedRoster(account.id)
+    if (roster === null)
+      throw new Refusal(
+        409,
+        'no_list',
+        'Your account has no devices yet. In Valet on your Mac, open Settings, Devices, and connect to your Valet account first.',
+      )
+    if (roster.devices.has(device.deviceId)) return Response.json({ already: true })
+    if (roster.passkeys.size === 0)
+      throw new Refusal(
+        409,
+        'no_passkey',
+        'Valet on your Mac hasn’t put your passkey on your account yet. Open Valet on your Mac, then try again.',
+      )
+    const payload = nextRosterChange(roster, account.id, PASSKEY_SIGNER, { op: 'add', device }, iso(now))
+    return Response.json(
+      {
+        payload,
+        options: {
+          challenge: passkeyChallenge(payload).toString('base64url'),
+          rpId: this.host,
+          allowCredentials: [...roster.passkeys.values()].map((p) => ({
+            type: 'public-key',
+            id: p.credentialId,
+          })),
+          userVerification: 'required',
+          timeout: 120_000,
+        },
+      },
+      { headers: { 'cache-control': 'no-store' } },
+    )
+  }
+
+  /** Keeps the change if the whole list still checks with it: the passkey's signature included. */
+  private async phoneFinish(body: z.infer<typeof BODIES.phoneFinish>): Promise<Response> {
+    const der = fromBase64url(body.signature)
+    const signature = der === null ? null : rawFromDerSignature(der)
+    let parsed: unknown = null
+    try {
+      parsed = JSON.parse(body.payload)
+    } catch {}
+    const change = rosterChangeSchema.safeParse(parsed)
+    if (signature === null || !change.success)
+      throw new Refusal(400, 'passkey_refused', 'That passkey couldn’t be checked. Try again.')
+    const accountId = change.data.account
+    if (this.one('SELECT 1 FROM accounts WHERE id = ?', accountId) === null)
+      throw new Refusal(400, 'passkey_refused', 'That passkey couldn’t be checked. Try again.')
+    const result = await this.appendRoster(accountId, [
+      {
+        payload: body.payload,
+        signature,
+        webauthn: {
+          credentialId: body.credentialId,
+          authenticatorData: body.authenticatorData,
+          clientDataJSON: body.clientDataJSON,
+        },
+      },
+    ])
+    if (result === 'conflict')
+      throw new Refusal(409, 'conflict', 'Your account changed while you were signing in. Try again.')
+    if (result === 'invalid')
+      throw new Refusal(
+        400,
+        'passkey_refused',
+        'That passkey couldn’t add this iPhone. Use the passkey you set up for your Valet account.',
+      )
+    this.run('UPDATE passkeys SET last_used_at = ? WHERE id = ?', Date.now(), body.credentialId)
+    await this.rosterChanged(accountId)
+    await this.tellNodes(accountId, '')
+    return Response.json({ ok: true })
   }
 
   /** The account whose verified list has this phone, and the transport key it lists for it. */

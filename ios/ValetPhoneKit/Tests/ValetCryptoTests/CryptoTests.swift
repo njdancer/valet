@@ -410,3 +410,54 @@ final class SealTests: XCTestCase {
     XCTAssertEqual(Base64URL.decode(spki)?.count, 91)
   }
 }
+
+/// core's passkey vectors (packages/core/test/roster-passkey.test.ts): a list a Mac started and
+/// put a passkey on, and the passkey's WebAuthn assertion adding a phone (step 4d).
+final class PasskeyRosterTests: XCTestCase {
+  struct Vectors: Decodable {
+    struct Change: Decodable {
+      struct Assertion: Decodable { let credentialId, authenticatorData, clientDataJSON: String }
+      let payload, signature: String
+      let webauthn: Assertion?
+      var signed: SignedText {
+        SignedText(payload: payload, signature: signature, webauthn: webauthn.map {
+          WebAuthnAssertion(credentialId: $0.credentialId, authenticatorData: $0.authenticatorData, clientDataJSON: $0.clientDataJSON)
+        })
+      }
+    }
+    let chain: [Change]
+    let passkeyId, phoneId, head: String
+    let wrongOrigin: [Change]
+  }
+
+  func vectors() throws -> Vectors {
+    let url = try XCTUnwrap(Bundle.module.url(forResource: "passkey-vectors", withExtension: "json", subdirectory: "Vectors"))
+    return try JSONDecoder().decode(Vectors.self, from: Data(contentsOf: url))
+  }
+
+  func testChecksAPhoneThePasskeyAddedAsCoreDoes() throws {
+    let v = try vectors()
+    let checked = try Roster.verify(v.chain.map(\.signed)).get()
+    XCTAssertEqual(checked.head, v.head)
+    XCTAssertNotNil(checked.passkeys[v.passkeyId])
+    XCTAssertEqual(checked.devices[v.phoneId]?.role, "phone")
+    guard case let .failure(error) = Roster.verify(v.wrongOrigin.map(\.signed)) else { return XCTFail("took another site's assertion") }
+    XCTAssertEqual(error, Roster.CheckError(at: 2, reason: .badSignature))
+    // Without its assertion, the passkey's change doesn't parse as signed by anyone.
+    var bare = v.chain.map(\.signed)
+    bare[2] = SignedText(payload: bare[2].payload, signature: bare[2].signature)
+    guard case let .failure(missing) = Roster.verify(bare) else { return XCTFail("took a bare passkey change") }
+    XCTAssertEqual(missing.reason, .malformed)
+  }
+
+  func testReadsTheChangesFromTheHubsAnswer() throws {
+    let v = try vectors()
+    let body = JSON.serialize(.object([
+      ("account", .string("acct_0123456789abcdef")), ("relay", .string("https://relay.valet.test")),
+      ("changes", .array(v.chain.map(\.signed.json))), ("joining", .array([])), ("nodes", .array([])),
+    ]))
+    let account = try HubPhone.Account.parse(body)
+    XCTAssertEqual(account.changes, v.chain.map(\.signed))
+    XCTAssertNotNil(account.changes[2].webauthn)
+  }
+}

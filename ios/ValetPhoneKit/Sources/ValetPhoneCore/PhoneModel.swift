@@ -24,6 +24,16 @@ public enum PairingStep: Equatable, Sendable {
   case failed(PairingFailure)
 }
 
+/// Signing this phone in to the Valet account with a passkey (step 4d).
+public enum SignInState: Equatable, Sendable {
+  case idle
+  /// The hub's page is open, for the person's passkey.
+  case inBrowser
+  /// Back from the page: reading the account.
+  case checking
+  case failed(String)
+}
+
 public enum PairingFailure: String, Equatable, Sendable {
   case notACode = "That isn't a Valet pairing code. Scan the code on your Mac."
   case expired = "That code has run out. Show a new code on your Mac."
@@ -175,6 +185,9 @@ public final class PhoneModel {
   private var pendingReply: String?
   private var held: [Int: MacToPhone] = [:]
   private var alertCounter = 0
+  /// Signing in with a passkey: where, the keys made for it, and the name the person gave.
+  public private(set) var signIn: SignInState = .idle
+  private var pendingSignIn: (hub: String, keys: DeviceKeys, name: String)?
 
   /// How the model makes and loads keys. Tests pass their own, so they hold the software keys.
   public struct Keys {
@@ -275,6 +288,84 @@ public final class PhoneModel {
     })
     pairingConnection = conn
     conn.send(PhoneToRelay.pairingReply(macId: offer.macId, offerId: offerId, sealed: sealed).text)
+  }
+
+  // MARK: Signing in to the account
+
+  /// The account's hub, unless the person names another.
+  public static let defaultHub = "https://valet.dncr.me"
+
+  /// Makes this phone's keys and gives the hub page to open for the person's passkey, with the
+  /// keys in its fragment (which the page sends on as JSON). Nil, with a reason in `signIn`, if
+  /// this phone can't make keys or the address isn't a hub.
+  public func startSignIn(hub: String = PhoneModel.defaultHub, name: String) -> URL? {
+    guard case .unpaired = phase else { return nil }
+    let origin = hub.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    guard matches(origin, Patterns.hubOrigin) else {
+      signIn = .failed("That isn\u{2019}t a Valet account address.")
+      return nil
+    }
+    let newKeys: DeviceKeys
+    do { newKeys = try keyFactory.make() } catch {
+      signIn = .failed(PairingFailure.noSecureEnclave.rawValue)
+      return nil
+    }
+    let cleanName = DisplayText.isValid(name, max: 60) ? name : "iPhone"
+    pendingSignIn = (origin, newKeys, cleanName)
+    let device = RosterDevice(keys: newKeys.publicKeys, name: cleanName)
+    let fragment = "device=\(Base64URL.encode(Data(JSON.serialize(device.json).utf8)))&return=valet"
+    signIn = .inBrowser
+    touch()
+    return URL(string: "\(origin)/phone#\(fragment)")
+  }
+
+  /// Back from the hub's page: reads the account and, if this phone is on it, reaches its Macs.
+  public func finishSignIn() async {
+    guard let pending = pendingSignIn, let hub else { return }
+    signIn = .checking
+    touch()
+    switch await AccountModel.signedIn(hub: pending.hub, transport: hub, keys: pending.keys) {
+    case let .failure(problem):
+      signIn = .failed(
+        problem == .notOnList
+          ? "This iPhone isn\u{2019}t on your Valet account yet. Try signing in again." : problem.rawValue
+      )
+    case let .success((account, roster)):
+      let macs = roster.order.compactMap { roster.devices[$0] }.filter { $0.role == "mac" }
+      // The Mac this phone talks to first: one online at the hub if there is one.
+      let online = Set(account.nodes.filter(\.online).map(\.macId))
+      guard let mac = macs.first(where: { online.contains($0.deviceId) }) ?? macs.first else {
+        signIn = .failed("Your Valet account has no Mac on it yet. Connect Valet on your Mac to your account first.")
+        touch()
+        return
+      }
+      pendingSignIn = nil
+      keys = pending.keys
+      hardwareKeys = pending.keys.hardwareBacked
+      persisted = PersistedPhone(
+        macId: mac.deviceId, macApprovalKey: mac.approvalKey, macAgreementKey: mac.agreementKey, relay: account.relay,
+        keys: pending.keys.stored, name: pending.name, macName: account.nodes.first { $0.macId == mac.deviceId }?.name ?? mac.name,
+        recordPayload: nil, recordSignature: nil, lastInbound: 0, nextOutbound: 1, outbox: [:], requests: [],
+        account: AccountPin(
+          hub: pending.hub, accountId: account.account, genesis: roster.genesis, seq: roster.seq, head: roster.head
+        ),
+        viaAccount: true
+      )
+      signIn = .idle
+      phase = .paired
+      save()
+      openAccount(hub: pending.hub, accountId: account.account)
+      connect()
+      Task { await self.account?.refresh() }
+    }
+    touch()
+  }
+
+  /// The person closed the hub's page, or chose to start over.
+  public func cancelSignIn() {
+    pendingSignIn = nil
+    signIn = .idle
+    touch()
   }
 
   public func cancelPairing() {
@@ -551,7 +642,31 @@ public final class PhoneModel {
   /// own keys. The Mac knows this phone from the same list, so there's nothing to pair. A Mac the
   /// list drops is forgotten here.
   private func syncMacs() {
-    guard let account, let relay = account.relay, let persisted, keys != nil else { return }
+    guard let account, let relay = account.relay, var persisted, keys != nil else { return }
+    // Signed in with the account, not paired: when the list drops the Mac this phone talks to
+    // first (it lost its keys, or was removed), another Mac on the list takes its place.
+    if persisted.viaAccount == true, !account.devices.contains(where: { $0.deviceId == persisted.macId }),
+      let next = account.devices.first(where: { $0.role == "mac" })
+    {
+      connection?.close()
+      connection = nil
+      connected = false
+      macOnline = false
+      cards = []
+      status = nil
+      held = [:]
+      otherMacs.first { $0.macId == next.deviceId }?.unpair()
+      otherMacs.removeAll { $0.macId == next.deviceId }
+      persisted = PersistedPhone(
+        macId: next.deviceId, macApprovalKey: next.approvalKey, macAgreementKey: next.agreementKey, relay: relay,
+        keys: persisted.keys, name: persisted.name, macName: account.name(next.deviceId), recordPayload: nil,
+        recordSignature: nil, lastInbound: 0, nextOutbound: 1, outbox: [:], requests: [], account: persisted.account,
+        viaAccount: true
+      )
+      self.persisted = persisted
+      save()
+      connect()
+    }
     let macs = account.devices.filter { $0.role == "mac" && $0.deviceId != persisted.macId }
     let wanted = Set(macs.map(\.deviceId))
     for mac in otherMacs where !wanted.contains(mac.macId ?? "") { mac.unpair() }

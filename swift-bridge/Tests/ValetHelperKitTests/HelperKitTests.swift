@@ -257,6 +257,28 @@ final class ChannelSigningTests: XCTestCase {
                    "remove a device from your Valet account")
   }
 
+  func testRosterPutsAPasskeyOnTheListAndTakesItOff() {
+    let prev = String(repeating: "0", count: 64)
+    let passkey: [String: Any] = [
+      "passkeyId": String(repeating: "d", count: 32), "credentialId": "Y3JlZGVudGlhbC1pZC0xMjM0",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE", "rpId": "valet.dncr.me", "name": "iCloud Keychain",
+    ]
+    let add = rosterChain([["op": "add-passkey", "passkey": passkey]], from: 3, prev: prev)
+    XCTAssertEqual(channelApprovalToSign(domain: rosterChangeDomain, payloads: add, own: own)?.reason,
+                   "let your passkey sign iPhones in to your Valet account")
+    let remove = rosterChain([["op": "remove-passkey", "passkeyId": String(repeating: "d", count: 32)]], from: 3, prev: prev)
+    XCTAssertEqual(channelApprovalToSign(domain: rosterChangeDomain, payloads: remove, own: own)?.reason,
+                   "stop a passkey signing iPhones in to your Valet account")
+    var extra = passkey
+    extra["role"] = "mac"
+    XCTAssertNil(channelApprovalToSign(domain: rosterChangeDomain,
+                                       payloads: rosterChain([["op": "add-passkey", "passkey": extra]], from: 3, prev: prev),
+                                       own: own))
+    XCTAssertNil(channelApprovalToSign(domain: rosterChangeDomain,
+                                       payloads: rosterChain([["op": "remove-passkey", "passkeyId": "XYZ"]], from: 3, prev: prev),
+                                       own: own))
+  }
+
   func testRosterRefusesWhatThisMacMustNotSign() {
     let prev = String(repeating: "0", count: 64)
     func refused(_ payloads: [String], _ line: UInt = #line) {

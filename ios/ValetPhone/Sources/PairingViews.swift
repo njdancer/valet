@@ -1,14 +1,41 @@
+import AuthenticationServices
 import SwiftUI
 import ValetPhoneCore
 import VisionKit
 
-/// J1: scan the code on the Mac, check that the six digits match, done.
+/// Sign in to the Valet account with its passkey (step 4d): the hub's page opens in Safari's
+/// sheet, the passkey adds this phone, and the phone reaches every Mac on the account. Pairing
+/// with one Mac's code (J1) stays, below it, for an account without a passkey.
 struct PairStartView: View {
   let model: PhoneModel
   let host: AppHost
   let notice: String?
   @State private var scanning = false
   @State private var name = "iPhone"
+  @State private var hubAddress = PhoneModel.defaultHub
+  @State private var showPairing = false
+  @Environment(\.webAuthenticationSession) private var webAuthenticationSession
+
+  private func signIn() async {
+    guard let url = model.startSignIn(hub: hubAddress, name: name) else { return }
+    #if VALET_FAKES
+      if host.world != nil {
+        _ = host.signInAtFakeHub(url)
+        await model.finishSignIn()
+        return
+      }
+    #endif
+    do {
+      _ = try await webAuthenticationSession.authenticate(
+        using: url, callbackURLScheme: "valet", preferredBrowserSession: .shared
+      )
+      await model.finishSignIn()
+    } catch {
+      // Closed the sheet: nothing changed. If the passkey had already added this phone, the
+      // next sign-in finds it on the list.
+      model.cancelSignIn()
+    }
+  }
 
   var body: some View {
     NavigationStack {
@@ -21,14 +48,72 @@ struct PairStartView: View {
               .background(.orange.opacity(0.15), in: .rect(cornerRadius: 12))
               .accessibilityIdentifier("pair.notice")
           }
-          Text("Pair with your Mac").font(.largeTitle.bold())
+          Text("Sign in to Valet").font(.largeTitle.bold())
           Text(
-            "Valet asks you here before an agent can do something that matters. On your Mac, open Valet and choose Settings, then Devices, then Pair an iPhone. A code appears. Scan it with this phone."
+            "Valet asks you here before an agent can do something that matters. Sign in with the passkey you set up for your Valet account, and this iPhone reaches every Mac on it."
           )
           TextField("Name for this iPhone", text: $name)
             .textFieldStyle(.roundedBorder)
             .textContentType(.name)
             .accessibilityIdentifier("pair.name")
+          Button {
+            Task { await signIn() }
+          } label: {
+            Label("Sign in with your passkey", systemImage: "person.badge.key").frame(maxWidth: .infinity)
+          }
+          .buttonStyle(.borderedProminent)
+          .controlSize(.large)
+          .disabled(model.signIn == .checking || model.signIn == .inBrowser)
+          .accessibilityIdentifier("signin.start")
+          switch model.signIn {
+          case .checking, .inBrowser:
+            ProgressView("Signing in\u{2026}").accessibilityIdentifier("signin.progress")
+          case let .failed(reason):
+            Text(verbatim: reason)
+              .padding()
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .background(.orange.opacity(0.15), in: .rect(cornerRadius: 12))
+              .accessibilityIdentifier("signin.failed")
+          case .idle:
+            EmptyView()
+          }
+          DisclosureGroup("Account address") {
+            TextField("Account address", text: $hubAddress)
+              .textFieldStyle(.roundedBorder)
+              .keyboardType(.URL)
+              .textInputAutocapitalization(.never)
+              .autocorrectionDisabled()
+              .accessibilityIdentifier("signin.hub")
+          }
+          Divider()
+          DisclosureGroup("Pair with one Mac\u{2019}s code instead", isExpanded: $showPairing) {
+            pairing
+          }
+          .accessibilityIdentifier("pair.instead")
+        }
+        .padding()
+      }
+      .onAppear {
+        #if VALET_FAKES
+          // The pairing journeys and the walkthrough start from a Mac's code.
+          if host.pairFrom != nil || host.world?.scenario == .pair { showPairing = true }
+        #endif
+      }
+      .sheet(isPresented: $scanning) {
+        QRScanner { text in
+          scanning = false
+          model.pair(qr: text, name: name)
+        }
+        .ignoresSafeArea()
+      }
+    }
+  }
+
+  @ViewBuilder private var pairing: some View {
+    VStack(alignment: .leading, spacing: 16) {
+          Text(
+            "On your Mac, open Valet and choose Settings, then Devices, then Pair an iPhone. A code appears. Scan it with this phone."
+          )
           Button {
             scanning = true
           } label: {
@@ -60,17 +145,8 @@ struct PairStartView: View {
               .accessibilityIdentifier("pair.fake")
             }
           #endif
-        }
-        .padding()
-      }
-      .sheet(isPresented: $scanning) {
-        QRScanner { text in
-          scanning = false
-          model.pair(qr: text, name: name)
-        }
-        .ignoresSafeArea()
-      }
     }
+    .padding(.top, 8)
   }
 }
 

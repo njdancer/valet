@@ -3,6 +3,7 @@
 // against the account's verified list, appends kept only if the whole chain still checks.
 // Tests reach in to fork, roll back or rewrite the list, as a hostile hub would.
 
+import CryptoKit
 import Foundation
 import ValetCrypto
 import ValetPhoneCore
@@ -60,6 +61,53 @@ public final class FakeHub: HubTransport {
 
   public var roster: Roster? { try? Roster.verify(chain).get() }
 
+  // MARK: The person's passkey (step 4d)
+
+  /// The account's passkey, as the person's iPhone holds it for the hub's site.
+  public let passkeyKey = P256.Signing.PrivateKey()
+  public static let passkeyCredential = "ZmFrZS1wYXNza2V5LWNyZWRlbnRpYWw"
+
+  public var rpId: String { URL(string: origin)?.host ?? "hub.valet.test" }
+
+  public var passkey: RosterPasskey {
+    let spki = Signing.spki(passkeyKey.publicKey)
+    return RosterPasskey(
+      passkeyId: Signing.keyId(spki) ?? "", credentialId: Self.passkeyCredential, publicKey: spki, rpId: rpId,
+      name: "iCloud Keychain"
+    )
+  }
+
+  /// What the person does on the hub's page: their passkey signs the change adding this phone.
+  /// False if the list has no passkey on it, or the change isn't kept.
+  @discardableResult
+  public func signInWithPasskey(_ device: RosterDevice, at: Date = Date()) -> Bool {
+    guard let roster, roster.passkeys[passkey.passkeyId] != nil else { return false }
+    if roster.devices[device.deviceId] != nil { return true }
+    let payload = Roster.next(roster, account: accountId, by: Roster.passkeySigner, change: .add(device), at: at)
+    let signed = passkeyAssertion(payload)
+    guard case .success = Roster.verify(chain + [signed]) else { return false }
+    chain.append(signed)
+    return true
+  }
+
+  /// A WebAuthn assertion over a change, as a browser's authenticator makes one.
+  public func passkeyAssertion(_ payload: String, origin override: String? = nil) -> SignedText {
+    let client = JSON.serialize(.object([
+      ("type", .string("webauthn.get")), ("challenge", .string(Base64URL.encode(Roster.passkeyChallenge(payload)))),
+      ("origin", .string(override ?? origin)), ("crossOrigin", .bool(false)),
+    ]))
+    let clientData = Data(client.utf8)
+    let authenticatorData = Data(SHA256.hash(data: Data(rpId.utf8))) + Data([0x05, 0, 0, 0, 1])
+    let signature = try! passkeyKey.signature(for: authenticatorData + Data(SHA256.hash(data: clientData)))
+    return SignedText(
+      payload: payload, signature: Base64URL.encode(signature.rawRepresentation),
+      webauthn: WebAuthnAssertion(
+        credentialId: Self.passkeyCredential, authenticatorData: Base64URL.encode(authenticatorData),
+        clientDataJSON: Base64URL.encode(clientData)
+      )
+    )
+  }
+
   public func post(_ url: String, body: String) async throws -> HubResponse {
     guard reachable else { throw URLError(.cannotConnectToHost) }
     guard url.hasPrefix(origin) else { return HubResponse(status: 404, body: "") }
@@ -85,7 +133,7 @@ public final class FakeHub: HubTransport {
       let deviceId = try? f.string("deviceId", pattern: Patterns.keyId), let nonce = try? f.string("nonce"),
       let signature = try? f.string("signature")
     else { return bad }
-    let append = f.has("append") ? (try? f.array("append", min: 1, max: 8) { try SignedText.parse($0, $1) }) : []
+    let append = f.has("append") ? (try? f.array("append", min: 1, max: 8) { try SignedText.parse($0, $1, allowWebAuthn: true) }) : []
     guard let append else { return bad }
     // Each nonce works once.
     let known = nonces.remove(nonce) != nil

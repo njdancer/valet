@@ -1,4 +1,5 @@
 import Foundation
+import ValetCrypto
 import ValetPhoneCore
 import ValetProtocol
 
@@ -19,16 +20,26 @@ public final class FakeWorld {
     case admin
     /// Paired, nothing waiting.
     case quiet
+    /// Nothing paired: the phone signs in to the account with its passkey (step 4d).
+    case signIn = "sign-in"
   }
 
   public let mac: FakeMac
   public let relay: FakeRelay
   public let scenario: Scenario
+  /// The Valet account's hub. In `signIn`, its list has the Mac and the account's passkey.
+  public let hub: FakeHub
 
   public init(_ scenario: Scenario, autoDeliver: Bool = true) {
     self.scenario = scenario
     mac = FakeMac()
     relay = FakeRelay(mac: mac, autoDeliver: autoDeliver)
+    hub = FakeHub(relay: relay.origin)
+    if scenario == .signIn {
+      hub.start(by: mac)
+      hub.append(by: mac, .addPasskey(hub.passkey))
+      mac.account = hub.account
+    }
     mac.agents = [
       FakeMac.Agent(clientId: FakeRequest.claudeCode, label: "Claude Code", remote: false),
       FakeMac.Agent(clientId: FakeRequest.claudeApp, label: "Claude app", remote: true),
@@ -55,10 +66,23 @@ public final class FakeWorld {
     model.pair(qr: qr(), name: name)
   }
 
+  /// What the person does on the hub's page the app opened: their passkey adds the phone the
+  /// page's fragment names, and the Mac trusts it from the list. False if that didn't happen.
+  @discardableResult
+  public func signInWithPasskey(_ url: URL) -> Bool {
+    let items = URLComponents(string: "x:?\(url.fragment ?? "")")?.queryItems ?? []
+    guard let encoded = items.first(where: { $0.name == "device" })?.value, let data = Base64URL.decode(encoded),
+      let value = try? JSON.parse(String(decoding: data, as: UTF8.self)),
+      let device = try? RosterDevice.parse(value, "device"), hub.signInWithPasskey(device)
+    else { return false }
+    mac.trust(phone: device)
+    return true
+  }
+
   /// The requests a scenario starts with, once the phone is paired.
   public func post() {
     switch scenario {
-    case .pair, .quiet:
+    case .pair, .quiet, .signIn:
       break
     case .install:
       mac.ask(.install(id: "7B3Fxxxxxxxxxxxxxxxxxx"))

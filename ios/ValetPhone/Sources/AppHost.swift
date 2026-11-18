@@ -35,11 +35,14 @@ final class AppHost {
               return keys
             },
             load: { try SoftwareDeviceKeys(stored: $0) }
-          )
+          ),
+          hub: world.hub
         )
         self.world = world
         self.model = model
-        if scenario == .pair {
+        if scenario == .signIn {
+          // The person signs in with the account's passkey: the fake hub's page stands in for Safari's.
+        } else if scenario == .pair {
           // The person confirms the code at the Mac: in the simulator, a button stands in for it.
           world.mac.autoConfirmPairing = false
         } else {
@@ -114,6 +117,9 @@ final class AppHost {
 
     /// The person confirms at the Mac that the codes match.
     func confirmAtFakeMac() { world?.mac.confirmPairingAtMac() }
+
+    /// The person's passkey on the fake hub's page, in place of Safari's sheet.
+    func signInAtFakeHub(_ url: URL) -> Bool { world?.signInWithPasskey(url) ?? false }
     func rejectAtFakeMac() { world?.mac.rejectPairingAtMac() }
   #endif
 }
