@@ -130,7 +130,7 @@
             {
               "client": {
                 "type": "auth",
-                "access_token": "case-token"
+                "access_token": "case-token-value"
               }
             },
             {
@@ -266,7 +266,7 @@
             {
               "client": {
                 "type": "auth",
-                "access_token": "case-token"
+                "access_token": "case-token-value"
               }
             },
             {
@@ -325,7 +325,7 @@
             {
               "client": {
                 "type": "auth",
-                "access_token": "case-token"
+                "access_token": "case-token-value"
               }
             },
             {
@@ -367,7 +367,7 @@
             {
               "client": {
                 "type": "auth",
-                "access_token": "case-token"
+                "access_token": "case-token-value"
               }
             },
             {

@@ -64,7 +64,7 @@ import { z } from 'zod'
 export const CASE_CREDENTIAL_VALUES: Readonly<Record<string, string>> = {
   username: 'case-username',
   password: 'case-password',
-  token: 'case-token',
+  token: 'case-token-value',
   'ssh-key': 'case-ssh-key',
 }
 

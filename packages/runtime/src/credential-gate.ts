@@ -115,7 +115,8 @@ export class CredentialGate {
     let message: SecretValue | null = null
     try {
       message = buildMessage(json, secret)
-      this.#remember(message)
+      // Only the value is kept for redaction (in #hand): the message's own declared text isn't
+      // secret, and remembering it would redact it wherever it appears (red team RT-4).
       await this.#hand(declaration, credential, [secret], host)
       return { message, value: secret }
     } catch (error) {
@@ -283,6 +284,9 @@ const C0 = /[\u0000-\u001f\u007f]/
 /** Anything but printable ASCII: a header value carries nothing else (red team B9). */
 const CONTROL = /[^\x20-\x7e]/
 
+/** The shortest credential a message may carry: redaction looks for pieces of 12. */
+export const MIN_MESSAGE_VALUE = 12
+
 /**
  * A credential message: the declared JSON object, its "{value}" field holding the credential as a
  * JSON string, written in the manifest's field order. The credential may hold any text but a
@@ -290,7 +294,8 @@ const CONTROL = /[^\x20-\x7e]/
  */
 function buildMessage(json: Readonly<Record<string, unknown>>, secret: SecretValue): SecretValue {
   return secret.reveal((value) => {
-    if (value.length === 0 || C0.test(value)) throw new ValetError('credential', 'invalid')
+    // Short values can't be redacted reliably from what comes back (red team RT-2).
+    if (value.length < MIN_MESSAGE_VALUE || C0.test(value)) throw new ValetError('credential', 'invalid')
     const out: Record<string, unknown> = Object.create(null)
     let filled = 0
     for (const [key, field] of Object.entries(json)) {

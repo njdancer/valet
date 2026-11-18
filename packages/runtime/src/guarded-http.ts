@@ -30,7 +30,7 @@ import {
 } from '@valet/core'
 import type { BrokerRequest, ExchangeResult, RunContext } from '@valet/egress'
 import { CallGate, type CallGateOptions, isRoutingOverride, SURFACE_CLASS } from './call-gate'
-import { REDACTED } from './redaction'
+import { normalisedViews, REDACTED } from './redaction'
 import { encodedForms } from './secret-forms'
 import { blockCause } from './site-protection'
 
@@ -234,8 +234,10 @@ export class GuardedHttp implements HttpAccess {
   private handle(socket: EgressSocket, target: URL, url: string, credential: CredentialUse): HttpSocket {
     const { state } = this.options
     let closed = false
-    /** Whether anything has been sent: a credential message must go first. */
+    /** Whether anything has been sent, or begun: a credential message must go first. */
     let sent = false
+    /** A credential message on its way: nothing else may be sent until it has gone. */
+    let signingIn = false
     /** What comes back is redacted for each credential this socket has carried. */
     const uses: CredentialUse[] = [credential]
     const transmit = async (bytes: Buffer, binary: boolean): Promise<void> => {
@@ -259,6 +261,8 @@ export class GuardedHttp implements HttpAccess {
         if (typeof data !== 'string' || binary === null) throw new ValetError('tool-run', 'invalid')
         const bytes = binary ? decodeBase64(data) : Buffer.from(data, 'utf8')
         if (bytes === null) throw new ValetError('tool-run', 'invalid')
+        // Sent beside a pending sign-in, it could reach the server first (red team RT-1).
+        if (signingIn) return this.gate.deny('request-surface', 'undeclared-request', 'GET', target, url)
         await transmit(bytes, binary)
       },
       sendCredential: async (name: string): Promise<void> => {
@@ -268,13 +272,21 @@ export class GuardedHttp implements HttpAccess {
           throw new ValetError('tool-run', 'invalid')
         // First and once: tool code can't first ask the server to treat the next message as
         // something to store, forward or echo, nor send the credential twice (docs/adapter-kinds.md).
+        // Checked and set before the first await, so two calls made at once can't both pass
+        // (red team RT-1).
         if (sent) return this.gate.deny('request-surface', 'undeclared-request', 'GET', target, url)
-        const use = await this.messageCredential(name, target, url)
-        uses.push(use.redaction)
+        sent = true
+        signingIn = true
         try {
-          await transmit(use.message, false)
+          const use = await this.messageCredential(name, target, url)
+          uses.push(use.redaction)
+          try {
+            await transmit(use.message, false)
+          } finally {
+            use.message.fill(0)
+          }
         } finally {
-          use.message.fill(0)
+          signingIn = false
         }
       },
       receive: async (options?: { readonly waitMs?: number }): Promise<HttpSocketMessage | null> => {
@@ -583,6 +595,18 @@ class CredentialUse {
     }
     const text = this.replaceForms(body.toString('utf8'))
     if (this.holdsPiece(text)) throw new ValetError('tool-run', 'unexpected-shape')
+    // Escapes a server may add when echoing (`\/` from PHP's json_encode, `\u`, percent and
+    // entities) can split every piece of the token: with them undone, it must still hold none.
+    for (const view of normalisedViews(text)) {
+      if (view === text) continue
+      const lower = view.toLowerCase()
+      if (
+        this.forms.some((f) => view.includes(f)) ||
+        this.caseless.some((f) => lower.includes(f.toLowerCase())) ||
+        this.holdsPiece(view)
+      )
+        throw new ValetError('tool-run', 'unexpected-shape')
+    }
     return text
   }
 

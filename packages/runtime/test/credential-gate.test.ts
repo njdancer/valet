@@ -426,7 +426,7 @@ describe('red team fixes', () => {
 })
 
 describe('messageFor', () => {
-  it('fills the declared message for a declared host, audits it, and registers both for redaction', async () => {
+  it('fills the declared message for a declared host, audits it, and registers the value for redaction', async () => {
     const w = world()
     const { message, value } = await w.gate.messageFor('hub', '192.168.1.20')
     expect(reveal(message)).toBe('{"type":"auth","access_token":"hub\\"tok\\\\en_9f8e7d6c5b4a","v":1}')

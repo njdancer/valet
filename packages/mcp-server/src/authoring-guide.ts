@@ -163,8 +163,8 @@ no page: tool code reaches the network only through \`ctx.http\`, and \`ctx.page
   field's whole value, and that field's name says what it is (token, key, auth, pass, secret or
   credential in it). It must be the first thing sent on the socket, once; anything the server sends
   back holding the credential has it redacted, or is refused. The person's card shows the whole
-  message. In cases it is sent with \`case-token\` (or \`case-password\`) in place of the value, so a
-  case's \`client\` step can check it: \`{ "client": { "type": "auth", "access_token": "case-token" } }\`. The person grants it
+  message. In cases it is sent with \`case-token-value\` (or \`case-password\`) in place of the value, so a
+  case's \`client\` step can check it: \`{ "client": { "type": "auth", "access_token": "case-token-value" } }\`. The person grants it
   once they approve the adapter; until then, and in live trials, the call fails \`tool-run/not-granted\`.
   A credential's hosts belong to the same provider: when a server's answer names another host
   (CalDAV discovery does), check it against that provider's pattern before reporting or using it.
@@ -210,7 +210,7 @@ await socket.close()
   (the iCloud examples' \`splitHref\`).
 - In cases, \`fetch\` entries answer \`ctx.http\` the same way they answer \`page.fetch\`; give absolute
   URLs. \`sockets\` script a WebSocket (below). A kept credential is filled with a placeholder
-  (\`case-username\`, \`case-password\`, \`case-token\`) through the same checks, so a case names it as
+  (\`case-username\`, \`case-password\`, \`case-token-value\`) through the same checks, so a case names it as
   the real call does.
 
 ## Adapters that run their own code (runtime "raw")

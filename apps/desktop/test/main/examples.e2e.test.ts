@@ -706,8 +706,9 @@ describe('the http examples as installed, with their credentials', () => {
     const result = await call('switch_light', { light: 'light.kitchen', on: true })
     const text = JSON.stringify(result)
     expect(result).toMatchObject({ status: 'ok' })
-    // The echo held the token in base64 too, so it was refused whole rather than passed on.
-    expect(text).toContain('refused:unexpected-shape')
+    // The echo came back with the token, its base64 at that alignment and its upper case redacted.
+    expect(text).toContain('[redacted]')
+    expect(text).toContain('echo')
     for (const form of [
       HUB_TOKEN,
       HUB_TOKEN.toUpperCase(),
