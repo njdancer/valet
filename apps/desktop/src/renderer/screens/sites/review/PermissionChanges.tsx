@@ -454,6 +454,12 @@ export function PermissionChanges({ review }: { readonly review: PendingReview }
                   <Muted>header format</Muted> <Code>{c.format}</Code>
                 </>
               )}
+              {c.message === null ? null : (
+                <>
+                  {' '}
+                  <Muted>socket message</Muted> <Code>{c.message}</Code>
+                </>
+              )}
             </Added>
           ))}
           {diff.credentials.removed

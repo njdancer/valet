@@ -747,7 +747,7 @@ function withPages(fixtures: FixturePage, browser: ToolPage, c: DraftCase): Tool
 }
 
 /**
- * A case's kept credentials: the real gate over a grant of every kept header credential the draft
+ * A case's kept credentials: the real gate over a grant of every kept credential (header or message) the draft
  * declares, for all its hosts, whose fields are CASE_CREDENTIAL_VALUES. Nothing is audited.
  */
 function caseCredentials(manifest: AdapterManifest) {
@@ -778,7 +778,10 @@ function caseCredentials(manifest: AdapterManifest) {
     remember: () => undefined,
     callId: null,
   })
-  return { headerFor: (credential: string, host: string) => gate.headerFor(credential, host) }
+  return {
+    headerFor: (credential: string, host: string) => gate.headerFor(credential, host),
+    messageFor: (credential: string, host: string) => gate.messageFor(credential, host),
+  }
 }
 
 /**

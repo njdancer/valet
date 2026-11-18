@@ -44,6 +44,7 @@ export const CAPABILITIES = [
   'http.fetch',
   'http.ws.open',
   'http.ws.send',
+  'http.ws.sendCredential',
   'http.ws.receive',
   'http.ws.close',
   // Entrusted credentials (docs/adapter-kinds.md#raw): not-granted unless the runtime is raw.

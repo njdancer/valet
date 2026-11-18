@@ -3,7 +3,7 @@
   "id": "home-hub",
   "name": "Home hub",
   "version": "0.1.0",
-  "description": "Your lights, locks and sensors from a home hub on your own network: list them over its REST API, and switch a light on or off over its WebSocket API. An example of an http adapter with a private host pinned by its certificate, a WebSocket, and a kept token.",
+  "description": "Your lights, locks and sensors from a home hub on your own network: list them over its REST API, and switch a light on or off over its WebSocket API. An example of an http adapter with a private host pinned by its certificate, a WebSocket, and a kept token that Valet sends both as a header and as the socket's sign-in message.",
   "runtime": "http",
   "egress": [],
   "privateHosts": [
@@ -24,6 +24,12 @@
         "header": {
           "name": "authorization",
           "format": "Bearer {value}"
+        },
+        "message": {
+          "json": {
+            "type": "auth",
+            "access_token": "{value}"
+          }
         },
         "hosts": ["192.168.1.20"]
       }

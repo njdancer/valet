@@ -41,6 +41,22 @@ const credentials: Record<string, CredentialDeclaration> = {
     custody: 'entrusted',
     use: { entrusted: { endpoints: ['192.168.1.20:8123', '192.168.1.21:8123'] } },
   },
+  hub: {
+    description: 'Hub token, in a sign-in message',
+    kind: 'token',
+    custody: 'kept',
+    use: { message: { json: { type: 'auth', access_token: '{value}', v: 1 } }, hosts: ['192.168.1.20'] },
+  },
+  both: {
+    description: 'Hub token, as a header and in a message',
+    kind: 'token',
+    custody: 'kept',
+    use: {
+      header: { name: 'authorization', format: 'Bearer {value}' },
+      message: { json: { type: 'auth', access_token: '{value}' } },
+      hosts: ['192.168.1.20'],
+    },
+  },
   nas: {
     description: 'NAS key',
     kind: 'ssh-key',
@@ -54,6 +70,8 @@ const ITEMS: Record<string, Partial<Record<ItemField, string>>> = {
   'op://v/api': { token: 'tok_live_9f8e7d6c5b4a' },
   'op://v/dav': { username: 'nick@icloud.example', password: 'qrst-uvwx-yzab-cdef' },
   'op://v/ha': { token: 'eyJhbGciOiJIUzI1NiJ9.ha-token-value' },
+  'op://v/hub': { token: 'hub"tok\\en_9f8e7d6c5b4a' },
+  'op://v/both': { token: 'both_tok_9f8e7d6c5b4a' },
   'op://v/nas': {
     'ssh-key':
       '-----BEGIN OPENSSH PRIVATE KEY-----\nAAAAB3NzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ\n-----END OPENSSH PRIVATE KEY-----\n',
@@ -63,7 +81,7 @@ const ITEMS: Record<string, Partial<Record<ItemField, string>>> = {
 function grantFor(name: string, overrides: Partial<CredentialGrant> = {}): CredentialGrant {
   const d = credentials[name] as CredentialDeclaration
   const targets =
-    'protocol' in d.use ? [d.use.endpoint] : 'header' in d.use ? d.use.hosts : d.use.entrusted.endpoints
+    'protocol' in d.use ? [d.use.endpoint] : 'hosts' in d.use ? d.use.hosts : d.use.entrusted.endpoints
   return {
     adapterId: 'mail-reader',
     adapterHash: HASH,
@@ -404,5 +422,82 @@ describe('red team fixes', () => {
       errorClass: 'not-granted',
     })
     expect(w.resolved).toEqual([])
+  })
+})
+
+describe('messageFor', () => {
+  it('fills the declared message for a declared host, audits it, and registers both for redaction', async () => {
+    const w = world()
+    const { message, value } = await w.gate.messageFor('hub', '192.168.1.20')
+    expect(reveal(message)).toBe('{"type":"auth","access_token":"hub\\"tok\\\\en_9f8e7d6c5b4a","v":1}')
+    expect(JSON.parse(reveal(message))).toEqual({
+      type: 'auth',
+      access_token: 'hub"tok\\en_9f8e7d6c5b4a',
+      v: 1,
+    })
+    expect(reveal(value)).toBe('hub"tok\\en_9f8e7d6c5b4a')
+    expect(w.audit).toEqual([
+      expect.objectContaining({ type: 'secret-used', secret: 'hub', field: 'token', origin: '192.168.1.20' }),
+    ])
+    const sensitive = sensitiveMatcher([], w.set)
+    expect(sensitive('hub"tok\\en_9f8e7d6c5b4a')).toBe(true)
+  })
+
+  it('serves a credential declared both ways, either way', async () => {
+    const w = world()
+    expect(reveal((await w.gate.messageFor('both', '192.168.1.20')).message)).toBe(
+      '{"type":"auth","access_token":"both_tok_9f8e7d6c5b4a"}',
+    )
+    expect(reveal((await w.gate.headerFor('both', '192.168.1.20')).value)).toBe(
+      'Bearer both_tok_9f8e7d6c5b4a',
+    )
+  })
+
+  it('refuses a header-only credential, and headerFor refuses a message-only one', async () => {
+    const w = world()
+    await expect(w.gate.messageFor('api', 'api.example.com')).rejects.toMatchObject({ errorClass: 'invalid' })
+    await expect(w.gate.headerFor('hub', '192.168.1.20')).rejects.toMatchObject({ errorClass: 'invalid' })
+    await expect(w.gate.messageFor('mail', 'imap.mail.me.com')).rejects.toMatchObject({
+      errorClass: 'invalid',
+    })
+    expect(w.audit).toEqual([])
+    expect(w.resolved).toEqual([])
+  })
+
+  it('refuses another host, a host in another spelling, and no grant', async () => {
+    const w = world()
+    await expect(w.gate.messageFor('hub', '192.168.1.21')).rejects.toMatchObject({
+      errorClass: 'origin-mismatch',
+    })
+    await expect(w.gate.messageFor('hub', '192.168.1.20:8123')).rejects.toMatchObject({
+      errorClass: 'origin-mismatch',
+    })
+    await expect(w.gate.messageFor('hub', '192.168.001.020')).rejects.toMatchObject({
+      errorClass: 'origin-mismatch',
+    })
+    const none = world({}, { hub: null })
+    await expect(none.gate.messageFor('hub', '192.168.1.20')).rejects.toMatchObject({
+      errorClass: 'not-granted',
+    })
+    expect([...w.audit, ...none.audit]).toEqual([])
+  })
+
+  it('refuses a value with a control character, and hands nothing over', async () => {
+    const w = world({
+      resolve: async () => SecretValue.fromString('tok\nen_9f8e7d6c5b4a'),
+    })
+    await expect(w.gate.messageFor('hub', '192.168.1.20')).rejects.toMatchObject({ errorClass: 'invalid' })
+    expect(w.audit).toEqual([])
+  })
+
+  it('hands nothing over when the use cannot be audited', async () => {
+    const w = world({
+      audit: {
+        append: async () => {
+          throw new Error('disk full')
+        },
+      },
+    })
+    await expect(w.gate.messageFor('hub', '192.168.1.20')).rejects.toMatchObject({ errorClass: 'internal' })
   })
 })

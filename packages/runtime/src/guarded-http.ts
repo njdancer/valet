@@ -63,6 +63,14 @@ export interface EgressSocket {
  */
 export interface HttpCredentials {
   headerFor(credential: string, host: string): Promise<{ readonly name: string; readonly value: SecretValue }>
+  /**
+   * A kept credential's declared WebSocket message for `host`, filled, and the credential's value
+   * for redaction. Absent where messages aren't wired: sendCredential is then not granted.
+   */
+  messageFor?(
+    credential: string,
+    host: string,
+  ): Promise<{ readonly message: SecretValue; readonly value: SecretValue }>
 }
 
 export interface GuardedHttpOptions extends CallGateOptions {
@@ -226,6 +234,23 @@ export class GuardedHttp implements HttpAccess {
   private handle(socket: EgressSocket, target: URL, url: string, credential: CredentialUse): HttpSocket {
     const { state } = this.options
     let closed = false
+    /** Whether anything has been sent: a credential message must go first. */
+    let sent = false
+    /** What comes back is redacted for each credential this socket has carried. */
+    const uses: CredentialUse[] = [credential]
+    const transmit = async (bytes: Buffer, binary: boolean): Promise<void> => {
+      sent = true
+      try {
+        await state.track(socket.send(bytes, binary))
+      } catch (error) {
+        if (error instanceof ValetError && error.errorClass === 'upload-budget') {
+          this.sockets.delete(socket)
+          closed = true
+          return this.gate.deny('egress', 'upload-budget', 'GET', target, url)
+        }
+        throw error
+      }
+    }
     return Object.freeze({
       send: async (data: string, options?: { readonly binary?: boolean }): Promise<void> => {
         state.assertLive()
@@ -234,15 +259,22 @@ export class GuardedHttp implements HttpAccess {
         if (typeof data !== 'string' || binary === null) throw new ValetError('tool-run', 'invalid')
         const bytes = binary ? decodeBase64(data) : Buffer.from(data, 'utf8')
         if (bytes === null) throw new ValetError('tool-run', 'invalid')
+        await transmit(bytes, binary)
+      },
+      sendCredential: async (name: string): Promise<void> => {
+        state.assertLive()
+        if (closed) throw new ValetError('egress', 'unavailable')
+        if (typeof name !== 'string' || name.length === 0 || name.length > 64)
+          throw new ValetError('tool-run', 'invalid')
+        // First and once: tool code can't first ask the server to treat the next message as
+        // something to store, forward or echo, nor send the credential twice (docs/adapter-kinds.md).
+        if (sent) return this.gate.deny('request-surface', 'undeclared-request', 'GET', target, url)
+        const use = await this.messageCredential(name, target, url)
+        uses.push(use.redaction)
         try {
-          await state.track(socket.send(bytes, binary))
-        } catch (error) {
-          if (error instanceof ValetError && error.errorClass === 'upload-budget') {
-            this.sockets.delete(socket)
-            closed = true
-            return this.gate.deny('egress', 'upload-budget', 'GET', target, url)
-          }
-          throw error
+          await transmit(use.message, false)
+        } finally {
+          use.message.fill(0)
         }
       },
       receive: async (options?: { readonly waitMs?: number }): Promise<HttpSocketMessage | null> => {
@@ -256,11 +288,10 @@ export class GuardedHttp implements HttpAccess {
           closed = true
           return { kind: 'closed', code: message.code }
         }
-        return {
-          kind: 'message',
-          binary: message.binary,
-          data: credential.redactBody(message.data, message.binary ? 'base64' : 'utf8'),
-        }
+        const encoding = message.binary ? 'base64' : 'utf8'
+        let data = message.data
+        for (const use of uses.slice(1)) data = Buffer.from(use.redactBody(data, encoding), encoding)
+        return { kind: 'message', binary: message.binary, data: credential.redactBody(data, encoding) }
       },
       close: async (): Promise<void> => {
         closed = true
@@ -394,6 +425,49 @@ export class GuardedHttp implements HttpAccess {
     return use
   }
 
+  /**
+   * A kept credential's declared message for this socket's host, as bytes, and what to redact for
+   * it. Only over https, only where the manifest declares the message, and only with a grant.
+   */
+  private async messageCredential(
+    name: string,
+    target: URL,
+    raw: string,
+  ): Promise<{ readonly message: Buffer; readonly redaction: CredentialUse }> {
+    const { credentials, state, manifest } = this.options
+    const declared = manifest.credentials
+    const declaration = declared !== undefined && Object.hasOwn(declared, name) ? declared[name] : undefined
+    if (
+      credentials?.messageFor === undefined ||
+      target.protocol !== 'https:' ||
+      declaration === undefined ||
+      !('hosts' in declaration.use) ||
+      declaration.use.message === undefined
+    ) {
+      return this.gate.deny('tool-run', 'not-granted', 'GET', target, raw)
+    }
+    let filled: { readonly message: SecretValue; readonly value: SecretValue }
+    try {
+      filled = await state.track(credentials.messageFor(name, target.hostname))
+    } catch {
+      return this.gate.deny('tool-run', 'not-granted', 'GET', target, raw)
+    }
+    try {
+      const value = filled.value.reveal((v) => v)
+      const redaction = new CredentialUse({}, value, true)
+      // The output and audit targets are redacted for it too, as for a header (keepSent).
+      for (const form of redaction.bases) {
+        const secret = SecretValue.fromString(form)
+        state.keepSent(secret)
+        secret.dispose()
+      }
+      return { message: filled.message.reveal((m) => Buffer.from(m, 'utf8')), redaction }
+    } finally {
+      filled.message.dispose()
+      filled.value.dispose()
+    }
+  }
+
   /** A broker refusal that is the tool's doing is sticky and recorded; anything else just fails. */
   private failed(error: unknown, method: string, target: URL, raw: string): never | Promise<never> {
     if (error instanceof ValetError) {
@@ -417,9 +491,14 @@ class CredentialUse {
   /** Pieces of the token: a response holding one is refused, as a credential handed back in parts. */
   private readonly windows: readonly string[]
 
+  /**
+   * `secret` is a header's value, whose scheme word ("Bearer") is taken off for the token, unless
+   * `bare`: then it is the credential itself (a credential message's value), taken whole.
+   */
   constructor(
     readonly values: Readonly<Record<string, string>>,
     secret: string | null,
+    bare = false,
   ) {
     if (secret === null) {
       this.forms = []
@@ -428,7 +507,7 @@ class CredentialUse {
       this.windows = []
       return
     }
-    const token = /^[A-Za-z][A-Za-z0-9-]* +(\S.*)$/.exec(secret)?.[1] ?? secret
+    const token = bare ? secret : (/^[A-Za-z][A-Za-z0-9-]* +(\S.*)$/.exec(secret)?.[1] ?? secret)
     // Basic carries `user:password` in base64: the password, and the pair, are the secret too, and
     // a server's debug or error page may echo them decoded (red team XK-2).
     const basic = /^basic$/i.test(secret.slice(0, secret.length - token.length).trim())
@@ -463,7 +542,8 @@ class CredentialUse {
       for (let at = 0; at + CREDENTIAL_WINDOW <= piece.length; at++)
         windows.add(piece.slice(at, at + CREDENTIAL_WINDOW))
     }
-    this.windows = [...windows]
+    // Matched in any case: a server that upper-cases what it echoes still hands the token back.
+    this.windows = [...windows].map((w) => w.toLowerCase())
   }
 
   /** A response with a credential attached must come back as plain bytes, or not at all. */
@@ -496,7 +576,7 @@ class CredentialUse {
       if (
         this.forms.some((f) => latin.includes(f)) ||
         this.caseless.some((f) => lower.includes(f.toLowerCase())) ||
-        this.windows.some((w) => latin.includes(w))
+        this.windows.some((w) => lower.includes(w))
       )
         throw new ValetError('tool-run', 'unexpected-shape')
       return body.toString('base64')
@@ -506,15 +586,27 @@ class CredentialUse {
     return text
   }
 
+  /**
+   * Every form replaced, longest first whatever its case rule: a shorter form (a 16-character
+   * window of a long value) replaced before the whole value would leave the rest of it showing.
+   */
   private replaceForms(text: string): string {
     let out = text
-    for (const form of this.forms) if (out.includes(form)) out = out.split(form).join(REDACTED)
-    for (const form of this.caseless) out = replaceCaseless(out, form)
+    const all = [
+      ...this.forms.map((form) => ({ form, caseless: false })),
+      ...this.caseless.map((form) => ({ form, caseless: true })),
+    ].sort((a, b) => b.form.length - a.form.length)
+    for (const { form, caseless } of all) {
+      if (caseless) out = replaceCaseless(out, form)
+      else if (out.includes(form)) out = out.split(form).join(REDACTED)
+    }
     return out
   }
 
   private holdsPiece(text: string): boolean {
-    return this.windows.some((w) => text.includes(w))
+    if (this.windows.length === 0) return false
+    const lower = text.toLowerCase()
+    return this.windows.some((w) => lower.includes(w))
   }
 }
 
