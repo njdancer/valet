@@ -322,7 +322,9 @@ export interface Authoring {
       readonly from: 'blank' | 'installed' | 'example'
       readonly name?: string
       /** For a blank draft: what kind of adapter it starts as (docs/adapter-kinds.md). */
-      readonly runtime?: 'browser' | 'http' | 'raw'
+      readonly runtime?: 'browser' | 'http' | 'protocol' | 'raw'
+      /** For a blank protocol draft: the protocol it speaks. */
+      readonly protocol?: 'imap' | 'smtp' | 'sftp'
       /** For from "example": which worked example to copy. */
       readonly example?: string
     },
@@ -472,7 +474,7 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
     description:
       'Starts a draft adapter for one site. from "blank" writes a starter package to edit (manifest.json, ' +
       'src/tools.ts, test/example.json); from "example" copies one of Valet’s worked examples (named in ' +
-      'valet_authoring_guide: an http API, feeds, CalDAV, CardDAV, a WebSocket device, a raw npm client) to adapt; ' +
+      'valet_authoring_guide: an http API, feeds, CalDAV, CardDAV, a WebSocket device, IMAP mail, a raw npm client) to adapt; ' +
       'from "installed" copies the installed adapter with that id, to update or repair it. The person is told a draft was started. Then write files with valet_write_draft_file, run ' +
       'valet_check_draft until it passes, and valet_submit_draft to ask the person to install it. ' +
       'valet_authoring_guide has the manifest, sign-in, tool code and case formats. Look at other ' +
@@ -495,13 +497,21 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
         .optional()
         .describe('The site’s name, for a blank draft or one from an example, e.g. "Yahoo Finance".'),
       runtime: z
-        .enum(['browser', 'http', 'raw'])
+        .enum(['browser', 'http', 'protocol', 'raw'])
         .optional()
         .describe(
           'For a blank draft: "browser" (the default) drives the site in Valet’s browser; "http" opens no page and ' +
-            'calls an API, a feed, CalDAV/CardDAV or a device on the person’s network through ctx.http; "raw" runs ' +
+            'calls an API, a feed, CalDAV/CardDAV or a device on the person’s network through ctx.http; "protocol" ' +
+            'speaks IMAP, SMTP or SFTP through Valet’s own clients (give protocol); "raw" runs ' +
             'Node code and npm packages that open their own connections to exact endpoints, for the rare case ' +
             'nothing else fits. valet_authoring_guide says which fits.',
+        ),
+      protocol: z
+        .enum(['imap', 'smtp', 'sftp'])
+        .optional()
+        .describe(
+          'For a blank protocol draft: "imap" reads or changes mail, "smtp" sends mail (each message confirmed by ' +
+            'the person), "sftp" reads or writes files on a server over SSH. Implies runtime "protocol".',
         ),
       repairId: z
         .string()
@@ -518,8 +528,14 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
         from: (args['from'] as 'blank' | 'installed' | 'example' | undefined) ?? 'blank',
         ...(typeof args['example'] === 'string' ? { example: args['example'] } : {}),
         ...(typeof args['name'] === 'string' ? { name: args['name'] } : {}),
-        ...(args['runtime'] === 'http' || args['runtime'] === 'browser' || args['runtime'] === 'raw'
+        ...(args['runtime'] === 'http' ||
+        args['runtime'] === 'browser' ||
+        args['runtime'] === 'protocol' ||
+        args['runtime'] === 'raw'
           ? { runtime: args['runtime'] }
+          : {}),
+        ...(args['protocol'] === 'imap' || args['protocol'] === 'smtp' || args['protocol'] === 'sftp'
+          ? { protocol: args['protocol'] }
           : {}),
         ...(typeof args['repairId'] === 'string' ? { repairId: args['repairId'] } : {}),
       }),
@@ -618,7 +634,8 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
       'status, contentType, body: "fixtures/<file>" | {inline}}], pages: {"<https URL>": "fixtures/<file>.html"}, ' +
       'expect: {output: {...}} | {error: {stage, errorClass}}}]}: Valet runs each one in its sandbox against ' +
       'those responses only. A tool that uses the page (goto, extract, click...) needs pages: Valet serves them ' +
-      'in a browser of its own with their scripts off.',
+      'in a browser of its own with their scripts off. A protocol adapter’s cases script its server instead, ' +
+      'with "imap", "smtp" or "sftp" steps (valet_authoring_guide).',
     input: z.object({ draftId: draftIdInput, path: pathInput, content: z.string().max(1024 * 1024) }),
     output: writtenSchema,
     needs: 'ask',
@@ -920,7 +937,8 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
     description:
       'Runs one call of a read tool in your draft against the real site, as an installed adapter would: in ' +
       'Valet’s sandbox, held to the manifest’s egress and read requests, but signed out and in a browser that ' +
-      'forgets everything after. Write tools can’t be tried; test them with cases. Calls are paced with the ' +
+      'forgets everything after. Write tools can’t be tried, nor can a protocol adapter’s (it needs the person’s ' +
+      'credential); test those with cases. Calls are paced with the ' +
       'site’s installed adapters, so a trial can take a while, and a few an hour per draft is the most. The ' +
       'output is the site’s data. A trial of the files you submit shows on the person’s card. With signedIn, ' +
       'during a session the person approved (valet_request_session), it runs with the installed adapter’s ' +

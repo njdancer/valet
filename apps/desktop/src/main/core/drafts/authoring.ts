@@ -18,6 +18,7 @@ import {
   type PackageFiles,
   type PermissionChange,
   parseManifest,
+  runtimeOf,
   sha256Hex,
 } from '@valet/core'
 import {
@@ -68,7 +69,7 @@ import {
 } from './research'
 import { siteInputType, siteMethod, siteMime, siteRole, siteTag } from './site-text'
 import { DRAFT_LIMITS, DraftError, type DraftRecord, type DraftStore, type TrialSummary } from './store'
-import { blankDraft, blankHttpDraft, blankRawDraft } from './template'
+import { blankDraft, blankHttpDraft, blankProtocolDraft, blankRawDraft, type DraftProtocol } from './template'
 import { runTrial, type SignedInTrial, TRIAL_LIMITS, type TrialDeps, type TrialResult } from './trial'
 
 /** A whole check's time, so a submit answers inside an MCP client's usual timeout. */
@@ -247,7 +248,9 @@ export class DraftAuthoring implements Authoring {
       readonly from: 'blank' | 'installed' | 'example'
       readonly name?: string
       readonly repairId?: string
-      readonly runtime?: 'browser' | 'http' | 'raw'
+      readonly runtime?: 'browser' | 'http' | 'protocol' | 'raw'
+      /** For a blank protocol draft: which protocol it speaks. */
+      readonly protocol?: DraftProtocol
       /** With from "example": which one (valet_authoring_guide lists them). */
       readonly example?: string
     },
@@ -259,6 +262,16 @@ export class DraftAuthoring implements Authoring {
     if (all.length >= DRAFT_LIMITS.total)
       throw new AuthoringRefusal(
         'Not started: Valet holds as many drafts as it keeps. Ask the person to delete some.',
+      )
+    // A protocol names its kind, so runtime may be left out with it; nothing else takes one.
+    const runtime = request.runtime ?? (request.protocol === undefined ? undefined : 'protocol')
+    if (runtime === 'protocol' && request.protocol === undefined && request.from === 'blank')
+      throw new AuthoringRefusal(
+        'Not started: a protocol draft needs protocol "imap" (read or change mail), "smtp" (send mail) or "sftp" (files on a server).',
+      )
+    if (request.protocol !== undefined && (runtime !== 'protocol' || request.from !== 'blank'))
+      throw new AuthoringRefusal(
+        'Not started: protocol is only for a blank draft whose runtime is "protocol" (or left out).',
       )
     const installed = await this.deps.installed(request.adapterId)
     if (request.repairId !== undefined) {
@@ -294,11 +307,13 @@ export class DraftAuthoring implements Authoring {
       files =
         example !== undefined && request.from === 'example'
           ? draftFromExample(example, request.adapterId, request.name)
-          : request.runtime === 'http'
+          : runtime === 'http'
             ? blankHttpDraft(request.adapterId, name)
-            : request.runtime === 'raw'
+            : runtime === 'raw'
               ? blankRawDraft(request.adapterId, name)
-              : blankDraft(request.adapterId, name)
+              : runtime === 'protocol' && request.protocol !== undefined
+                ? blankProtocolDraft(request.adapterId, name, request.protocol)
+                : blankDraft(request.adapterId, name)
     }
     this.notifyLimit(client)
     const record = await this.wrap(() =>
@@ -1205,6 +1220,12 @@ export class DraftAuthoring implements Authoring {
     if (declared.sideEffect !== 'read')
       throw new AuthoringRefusal(
         `Not tried: ${tool} is a ${declared.sideEffect} tool. Only read tools can be tried live; test the others with cases.`,
+      )
+    // A protocol adapter's every operation signs in with the person's kept credential, which is
+    // granted only to an approved adapter and never lent to a draft (not even an update's).
+    if (runtimeOf(manifest) === 'protocol')
+      throw new AuthoringRefusal(
+        'Not tried: a protocol adapter signs in to its server with a credential the person grants only once they approve the adapter, so it has no live trials. Test it with cases that script ctx.imap, ctx.smtp or ctx.sftp (valet_authoring_guide), then valet_submit_draft.',
       )
     const parsed = schemas.input.safeParse(input)
     if (!parsed.success)
