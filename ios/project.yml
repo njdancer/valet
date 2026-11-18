@@ -22,6 +22,8 @@ settings:
     DEVELOPMENT_TEAM: ""
     TARGETED_DEVICE_FAMILY: "1"
     MARKETING_VERSION: "0.1.0"
+    # The app icon (ValetPhone/Icon/icon.svg, rendered into Sources/Assets.xcassets).
+    ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     CURRENT_PROJECT_VERSION: "1"
 targetTemplates:
   App:
