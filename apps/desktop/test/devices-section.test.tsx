@@ -66,14 +66,16 @@ describe('Settings › Devices', () => {
     expect(await screen.findByText('Checking your Valet account…')).toBeTruthy()
   })
 
-  it('says why the relay is down and holds Pair an iPhone until it’s back', async () => {
+  it('says why the relay is down and holds Show a sign-in code until it’s back', async () => {
     renderPage(withStatus({ relay: 'offline' }), <DevicesSection />)
     expect(
       await screen.findByText(
         'Not connected to the relay (relay.example). Valet keeps trying. Check this Mac is online.',
       ),
     ).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Pair an iPhone' }).getAttribute('aria-disabled')).toBe('true')
+    expect(screen.getByRole('button', { name: 'Show a sign-in code' }).getAttribute('aria-disabled')).toBe(
+      'true',
+    )
     expect(screen.getByTestId('account-line').textContent).toMatch(/not connected to the hub now/)
   })
 

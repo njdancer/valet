@@ -519,8 +519,12 @@ QR code (4c) was still pairing. Now:
   talks first to a Mac on the list (one online at the hub, if any), and reaches every other Mac on
   it as in 4c. If the list later drops that Mac (key loss, removal), another Mac on the list takes
   its place: nobody signs in again.
-- **Pairing with a code stays** on the phone, tucked under "Pair with one Mac's code instead", and
-  on the Mac in Settings › Devices.
+- **The QR code is a shortcut for signing in** (Nick, 2026-11-18). On the Mac, Settings › Devices
+  › Show a sign-in code. On the phone, "Or scan a sign-in code from your Mac". The scan runs the
+  reviewed pairing protocol, so the Mac adds the phone to the account's list with Touch ID. Once
+  the phone has pinned the account's list, it is on the account like a passkey sign-in: if that Mac
+  leaves the list, another Mac on it takes its place (`AccountTests`, "a phone signed in by QR
+  moves to another Mac").
 
 What it trusts: the hub's word that a passkey is the account's, once, when a Mac puts it on the list
 (the Mac shows the change and signs it). A hub serving a bad sign-in page could have the person's

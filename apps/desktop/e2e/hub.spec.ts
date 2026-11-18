@@ -484,7 +484,7 @@ test('a phone paired once goes on the account’s device list, and reads the acc
   await control.evaluate(() => {
     window.location.hash = '#/settings/devices'
   })
-  await control.getByRole('button', { name: 'Pair an iPhone' }).click()
+  await control.getByRole('button', { name: 'Show a sign-in code' }).click()
   const qr = control.locator('svg[data-pairing-qr]')
   await qr.waitFor()
   const text = (await qr.getAttribute('data-pairing-qr')) ?? ''
