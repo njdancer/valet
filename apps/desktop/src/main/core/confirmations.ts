@@ -12,12 +12,13 @@
 //   (the agent cancelled, went away or was revoked; the app quit) withdraws it as cancelled, never
 //   as the person's decline.
 
-import { type AdapterManifest, unlockedBy } from '@valet/core'
+import { type AdapterManifest, rawReach, runtimeOf, unlockedBy } from '@valet/core'
 import type { ConfirmationAnswer, ConfirmationPrompt, ConfirmationRequest, MailPreview } from '@valet/runtime'
 import type { ConfirmationItem, PreviewPart } from '../../shared/api'
+import { writeOutUnshowable } from './approvals/install-subject'
 import { shownTransport } from './clients'
 import type { AppWindow } from './ipc'
-import { previewParts } from './run-memory'
+import { MAX_PREVIEW, previewParts } from './run-memory'
 
 export interface ConfirmationAdapter {
   readonly manifest: AdapterManifest
@@ -106,6 +107,26 @@ export class ConfirmationBroker implements ConfirmationPrompt {
     const now = this.options.now()
     const call = this.options.call(request.callId)
     const irreversible = request.kind === 'irreversible-tool'
+    // A raw confirmation is for a raw adapter's irreversible tool, and that tool is never asked
+    // about any other way: the card's words for one would be wrong for the other. What it says the
+    // run reaches must be what the version on the card (`adapter.hash`) declares, or it is declined.
+    const isRaw = runtimeOf(adapter.manifest) === 'raw'
+    if (irreversible && isRaw) return Promise.resolve('declined')
+    if (request.kind === 'raw-tool') {
+      const reach = rawReach(adapter.manifest)
+      // Its input is everything the person judges a raw call by, so all of it must be on the panel:
+      // one too long to show whole is declined before anyone is asked.
+      if (!(previewLength(request.input) <= MAX_PREVIEW)) return Promise.resolve('declined')
+      if (
+        !isRaw ||
+        declaration.sideEffect !== 'irreversible' ||
+        !sameList(request.endpoints, reach.endpoints) ||
+        !sameList(request.credentials, reach.credentials) ||
+        !sameList(request.readFolders, reach.readFolders) ||
+        !sameList(request.writeFolders, reach.writeFolders)
+      )
+        return Promise.resolve('declined')
+    }
     const item: ConfirmationItem = {
       kind: 'confirmation',
       id,
@@ -134,12 +155,26 @@ export class ConfirmationBroker implements ConfirmationPrompt {
           : [],
       // A send shows the message itself, as Valet will build it, in full.
       input:
-        request.kind === 'irreversible-tool'
-          ? previewParts(request.input ?? {}).parts
-          : request.kind === 'mail-send'
-            ? [{ kind: 'text', text: mailPreviewText(request.mail) }]
-            : (call?.input ?? []),
+        request.kind === 'raw-tool'
+          ? // Nothing in a raw call's input may hide: invisible characters are written out as codes.
+            previewParts(request.input ?? {}).parts.map((p) =>
+              p.kind === 'text' ? { ...p, text: writeOutUnshowable(p.text) } : p,
+            )
+          : request.kind === 'irreversible-tool'
+            ? previewParts(request.input ?? {}).parts
+            : request.kind === 'mail-send'
+              ? [{ kind: 'text', text: mailPreviewText(request.mail) }]
+              : (call?.input ?? []),
       adapterNote: request.kind === 'tool-request' ? request.note : null,
+      raw:
+        request.kind === 'raw-tool'
+          ? {
+              endpoints: [...request.endpoints],
+              credentials: [...request.credentials],
+              readFolders: [...request.readFolders],
+              writeFolders: [...request.writeFolders],
+            }
+          : null,
       ref: null,
     }
     return new Promise<ConfirmationAnswer>((resolve) => {
@@ -306,4 +341,17 @@ export function mailPreviewText(mail: MailPreview): string {
     '',
     mail.text,
   ].join('\n')
+}
+
+function sameList(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i])
+}
+
+/** The input's length as previewParts renders it, or NaN when it can't be rendered at all. */
+function previewLength(input: unknown): number {
+  try {
+    return (JSON.stringify(input ?? {}, null, 2) ?? 'null').length
+  } catch {
+    return Number.NaN
+  }
 }

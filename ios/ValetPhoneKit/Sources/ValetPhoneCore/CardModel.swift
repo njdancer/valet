@@ -269,11 +269,32 @@ public enum CardModel {
     case let .irreversibleCall(s):
       kindWord = "Confirm"
       title = "Confirm: \(toolName(s.tool)) (\(site(s.adapterId)))"
-      faceIDReason = "Confirm \(s.tool) on \(s.adapterId). This can't be undone."
       approveLabel = "Confirm with Face ID"
       toolTitleDetail(s.tool)
-      risks.append((.strong, "This can't be undone."))
-      for line in s.preview { row("Sends", line, .strong, claim: true) }
+      if let raw = s.raw {
+        // The raw confirmation: the adapter's own code does the work, so nothing it sends is held
+        // to declared requests. The person judges by the input and by everything the run reaches.
+        kindWord = "Confirm \u{00B7} own code"
+        faceIDReason = "Confirm \(s.tool) on \(s.adapterId). This can't be undone."
+        risks.append((.strong, "This can't be undone, and Valet can't see what this adapter sends."))
+        if !raw.credentials.isEmpty {
+          risks.append((.strong, "Its code may be given \(raw.credentials.joined(separator: ", "))."))
+        }
+        for line in s.preview { row("Input", line, .strong, claim: true) }
+        row("Can reach", raw.endpoints.joined(separator: ", "), .strong)
+        row("May get", raw.credentials.isEmpty ? "none of your credentials" : raw.credentials.joined(separator: ", "),
+            raw.credentials.isEmpty ? .neutral : .strong)
+        if !raw.writeFolders.isEmpty {
+          risks.append((.strong, "It can change or delete your files in \(raw.writeFolders.joined(separator: ", "))."))
+          row("Can change", raw.writeFolders.joined(separator: ", "), .strong)
+        }
+        if !raw.readFolders.isEmpty { row("Can read", raw.readFolders.joined(separator: ", "), .caution) }
+        if !raw.inputComplete { row("Not shown", "part of the input: it's whole on your Mac", .strong) }
+      } else {
+        faceIDReason = "Confirm \(s.tool) on \(s.adapterId). This can't be undone."
+        risks.append((.strong, "This can't be undone."))
+        for line in s.preview { row("Sends", line, .strong, claim: true) }
+      }
       details.append(CardDetail(label: "Call", value: s.callId, isClaim: false))
     case let .resume(from):
       kindWord = "Unlock"
@@ -289,7 +310,10 @@ public enum CardModel {
       details.append(CardDetail(label: "The device calls itself", value: s.deviceName, isClaim: true))
     }
 
-    let macOnly: String? = request.approvableOnPhone ? nil : "Do this on your Mac. A phone can't approve this."
+    var macOnly: String? = request.approvableOnPhone ? nil : "Do this on your Mac. A phone can't approve this."
+    if case let .irreversibleCall(s) = request.subject, let raw = s.raw, !raw.inputComplete {
+      macOnly = "Do this on your Mac. Only your Mac can show this input whole."
+    }
     let because: String
     var becauseIsCaution = false
     if let text = display.because {

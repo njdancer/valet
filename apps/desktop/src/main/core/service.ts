@@ -2042,7 +2042,7 @@ export class AppService {
             tool: item.tool,
             callId: item.callId,
             confirmationId: item.id,
-            preview: confirmationPreview(item),
+            ...confirmationPreview(item),
           },
           app,
           {
@@ -5295,26 +5295,45 @@ export function sameVaultItem(a: string, b: string): boolean {
 
 /**
  * One line of a signed preview: invisible and unprintable characters written out as codes (never
- * dropped, so nothing in it can hide), at most `max` characters with "…" where it was cut.
+ * dropped, so nothing in it can hide), at most `max` characters with "…" where it was cut. `cut`
+ * says whether anything was left off.
  */
-function shown(text: string, max: number): string | undefined {
+function shownLine(text: string, max: number): { readonly line: string | undefined; readonly cut: boolean } {
   const line = showable(text)
-  if (line === '(blank)' || line === '') return undefined
+  if (line === '(blank)' || line === '') return { line: undefined, cut: false }
   const chars = [...line]
   return chars.length <= max
-    ? line
-    : `${chars
-        .slice(0, max - 1)
-        .join('')
-        .trimEnd()}…`
+    ? { line, cut: false }
+    : {
+        line: `${chars
+          .slice(0, max - 1)
+          .join('')
+          .trimEnd()}…`,
+        cut: true,
+      }
+}
+
+function shown(text: string, max: number): string | undefined {
+  return shownLine(text, max).line
 }
 
 /**
  * What a confirmation's signed request shows, at most 20 lines of 200 characters: what it asks (the
  * requests it would make, the adapter's note as the adapter's words), then the input. Past 20
  * lines, the last one says how many more there are, so a card never looks complete when it isn't.
+ * A raw confirmation adds what the run reaches, and whether the lines show the whole input: when
+ * they don't, only the Mac, which shows all of it, may approve.
  */
-function confirmationPreview(item: ConfirmationItem): string[] {
+export function confirmationPreview(item: ConfirmationItem): {
+  preview: string[]
+  raw?: {
+    endpoints: string[]
+    credentials: string[]
+    readFolders: string[]
+    writeFolders: string[]
+    inputComplete: boolean
+  }
+} {
   const lines: string[] = []
   for (const r of [...item.unlocks, ...item.requests]) {
     const kept = shown(describeDeclaration(r), 200)
@@ -5325,9 +5344,13 @@ function confirmationPreview(item: ConfirmationItem): string[] {
     if (note !== undefined) lines.push(note)
   }
   const text = item.input.map((p) => (p.kind === 'text' ? p.text : `[${p.label}]`)).join('')
+  let cut = false
   for (const line of text.split('\n')) {
-    const kept = shown(line, 200)
-    if (kept !== undefined) lines.push(kept)
+    const kept = shownLine(line, 200)
+    // Cut short, or shown other than as it is (a code for an invisible character, spaces run
+    // together): the phone's card isn't the whole input.
+    cut ||= kept.cut || (kept.line !== undefined && kept.line !== line.trim())
+    if (kept.line !== undefined) lines.push(kept.line)
   }
   const kept =
     lines.length <= 20 ? lines : [...lines.slice(0, 19), `and ${lines.length - 19} more lines not shown`]
@@ -5337,7 +5360,19 @@ function confirmationPreview(item: ConfirmationItem): string[] {
     const recipients = text.split('\n').filter((l) => /^(To|Cc|Bcc): /.test(l))
     if (!recipients.every((l) => kept.includes(l))) throw new ValetError('tool-run', 'unavailable')
   }
-  return kept
+  if (item.trigger !== 'raw-tool') return { preview: kept }
+  // Without its reach, a raw confirmation would read as an ordinary one: nobody is asked.
+  if (item.raw === null || item.raw.endpoints.length === 0) throw new ValetError('tool-run', 'unavailable')
+  return {
+    preview: kept,
+    raw: {
+      endpoints: [...item.raw.endpoints],
+      credentials: [...item.raw.credentials],
+      readFolders: [...item.raw.readFolders],
+      writeFolders: [...item.raw.writeFolders],
+      inputComplete: !cut && lines.length <= 20,
+    },
+  }
 }
 
 /** A remote client's registration id from its `remote:<id>` name, or null for any other. */

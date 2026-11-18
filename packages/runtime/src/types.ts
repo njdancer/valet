@@ -133,6 +133,23 @@ export type ConfirmationQuestion =
     }
   | {
       /**
+       * The runtime asking before a `raw` adapter's irreversible tool runs (the raw confirmation,
+       * docs/adapter-kinds.md#raw-confirmation). Valet can't see inside a raw adapter's
+       * connections, so nothing is unlocked: a yes lets this one run do whatever these endpoints
+       * accept, and the person is shown everything it could reach. No tool code has run yet.
+       */
+      readonly kind: 'raw-tool'
+      readonly input: unknown
+      /** Every `host:port` the run's tunnels reach (core's rawEndpoints). */
+      readonly endpoints: readonly string[]
+      /** The entrusted credentials its code may be handed, by the manifest's names. */
+      readonly credentials: readonly string[]
+      /** Folders its code may read, and read and write (core's rawReach). */
+      readonly readFolders: readonly string[]
+      readonly writeFolders: readonly string[]
+    }
+  | {
+      /**
        * Tool code calling ctx.smtp.send: the exact message, as Valet will build and send it. Asked
        * for every send, on top of the irreversible tool's own confirmation before it ran.
        */

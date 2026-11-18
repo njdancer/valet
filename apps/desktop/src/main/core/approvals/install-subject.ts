@@ -47,6 +47,17 @@ const UNSHOWABLE =
 const code = (c: string) => `\\u{${(c.codePointAt(0) ?? 0).toString(16).toUpperCase()}}`
 
 /**
+ * Text with every character a card can't show as it is (an invisible or formatting character, a
+ * direction override) written out as its code, line breaks kept. For a raw confirmation's input,
+ * which the Mac panel shows as it is: nothing in it may hide there either.
+ */
+export function writeOutUnshowable(text: string): string {
+  let out = ''
+  for (const c of text) out += c !== '\n' && UNSHOWABLE.test(c) ? code(c) : c
+  return out
+}
+
+/**
  * A value as display text, never dropped: anything unprintable or invisible is written out as its
  * code, so a request path with a hidden character still shows (and shows that it has one).
  */

@@ -199,6 +199,89 @@ final class PhoneModelTests: XCTestCase {
     XCTAssertEqual(card("8F20")?.state, .approvedHere)
   }
 
+  func testARawConfirmationShowsTheInputAndEverythingTheRunReaches() async throws {
+    setUp(.raw)
+    let entry = try XCTUnwrap(card("8F21"))
+    let c = entry.card
+    XCTAssertEqual(c.kind, .irreversibleCall)
+    XCTAssertEqual(c.kindWord, "Confirm \u{00B7} own code")
+    XCTAssertEqual(c.title, "Confirm: delete_folder (nas-files)")
+    XCTAssertEqual(c.tone, .strong)
+    XCTAssertEqual(c.riskLine, "This can't be undone, and Valet can't see what this adapter sends.")
+    // The credential it may be given, and (an agent's call with no context) "not linked to anything".
+    XCTAssertEqual(c.moreRisks, 2)
+    XCTAssertTrue(c.becauseIsCaution)
+    // The input is the agent's, so it is shown as a claim; what the run reaches is the Mac's own.
+    XCTAssertEqual(c.rows.filter { $0.marker == "Input" }.map(\.text), ["{", "\"path\": \"/photos/2024\"", "}"])
+    XCTAssertTrue(c.rows.filter { $0.marker == "Input" }.allSatisfy(\.isClaim))
+    let reach = try XCTUnwrap(c.rows.first { $0.marker == "Can reach" })
+    XCTAssertEqual(reach.text, "nas.example.com:443, 192.168.1.20:5001")
+    XCTAssertFalse(reach.isClaim)
+    XCTAssertEqual(c.rows.first { $0.marker == "May get" }?.text, "nas_token")
+    XCTAssertFalse(c.rows.contains { $0.marker == "Sends" }, "nothing says what it sends: Valet can't see it")
+    XCTAssertFalse(c.rows.contains { $0.marker == "Not shown" })
+    XCTAssertEqual(c.rows.first { $0.marker == "Can read" }?.text, "~/Documents/NAS")
+    XCTAssertFalse(c.rows.contains { $0.marker == "Can change" })
+    XCTAssertNil(c.macOnlyReason)
+    XCTAssertFalse(c.faceIDReason.contains("Delete folder"), "the adapter's title for the tool never reaches Face ID")
+    XCTAssertEqual(model.approveBlocker(entry.id, readTicked: false, typedCode: nil), .needsReadTick)
+    try await model.approve(entry.id, readTicked: true)
+    world.relay.drain()
+    XCTAssertEqual(card("8F21")?.state, .approvedHere)
+    XCTAssertEqual(world.mac.events.last, .approved(requestId: entry.id, deviceId: keys.publicKeys.deviceId, choice: nil))
+  }
+
+  func testARawConfirmationThePhoneCantShowWholeIsMacOnly() async throws {
+    setUp(.raw)
+    let entry = try XCTUnwrap(card("8F22"))
+    XCTAssertEqual(entry.card.macOnlyReason, "Do this on your Mac. Only your Mac can show this input whole.")
+    XCTAssertTrue(entry.card.rows.contains { $0.marker == "Not shown" })
+    XCTAssertEqual(model.approveBlocker(entry.id, readTicked: true, typedCode: nil), .macOnly)
+    do {
+      try await model.approve(entry.id, readTicked: true)
+      XCTFail("approved a raw call the phone can't show whole")
+    } catch {
+      XCTAssertEqual(error as? ApproveRefusal, .macOnly)
+    }
+    XCTAssertTrue(keys.reasons.isEmpty)
+    // Declining still works here: it only tightens.
+    model.decline(entry.id, note: nil)
+    world.relay.drain()
+    XCTAssertEqual(card("8F22")?.state, .declinedHere)
+  }
+
+  func testARawConfirmationWithNoCredentialSaysSo() throws {
+    let text = """
+      {"adapterId":"nas-files","adapterHash":"\(String(repeating: "a", count: 64))","callId":"c1","confirmationId":"cf_1","preview":["x"],"raw":{"credentials":[],"endpoints":["nas.example.com:443"],"inputComplete":true,"readFolders":[],"writeFolders":["~/Downloads/NAS"]},"tool":"delete_folder"}
+      """
+    let subject = try ApprovalSubject.parse(kind: .irreversibleCall, try JSON.parse(text), "subject")
+    guard case let .irreversibleCall(call) = subject else { return XCTFail("not a call") }
+    XCTAssertEqual(call.raw, ApprovalSubject.RawReach(
+      endpoints: ["nas.example.com:443"], credentials: [], readFolders: [], writeFolders: ["~/Downloads/NAS"], inputComplete: true
+    ))
+  }
+
+  func testARawBlockTheMacWouldNeverSendIsRefused() throws {
+    let hash = String(repeating: "a", count: 64)
+    let base = #"{"adapterId":"nas-files","adapterHash":"HASH","callId":"c1","confirmationId":"cf_1","preview":["x"],"raw":RAW,"tool":"delete_folder"}"#
+      .replacingOccurrences(of: "HASH", with: hash)
+    for raw in [
+      #"{"credentials":[],"endpoints":[],"inputComplete":true,"readFolders":[],"writeFolders":[]}"#,
+      #"{"credentials":[],"endpoints":["a.example.com:443","a.example.com:443"],"inputComplete":true,"readFolders":[],"writeFolders":[]}"#,
+      #"{"credentials":["t","t"],"endpoints":["a.example.com:443"],"inputComplete":true,"readFolders":[],"writeFolders":[]}"#,
+      #"{"credentials":[],"endpoints":["A.example.com:443"],"inputComplete":true,"readFolders":[],"writeFolders":[]}"#,
+      #"{"credentials":["Token"],"endpoints":["a.example.com:443"],"inputComplete":true,"readFolders":[],"writeFolders":[]}"#,
+      #"{"credentials":[],"endpoints":["a.example.com:443"],"readFolders":[],"writeFolders":[]}"#,
+      #"{"credentials":[],"endpoints":["a.example.com:443"],"inputComplete":true,"readFolders":[]}"#,
+      #"{"credentials":[],"endpoints":["a.example.com:443"],"inputComplete":true,"readFolders":[],"writeFolders":[],"extra":1}"#,
+      #"{"credentials":[],"endpoints":["a.example.com:443"],"inputComplete":"yes","readFolders":[],"writeFolders":[]}"#,
+      #"{"credentials":[],"endpoints":["a.example.com:443"],"inputComplete":true,"readFolders":["~/x\u200b"],"writeFolders":[]}"#,
+    ] {
+      let text = base.replacingOccurrences(of: "RAW", with: raw)
+      XCTAssertThrowsError(try ApprovalSubject.parse(kind: .irreversibleCall, try JSON.parse(text), "subject"), raw)
+    }
+  }
+
   func testConnectNeedsTheTypedCodeAndTheMacChecksIt() async throws {
     setUp(.cards)
     let connect = try XCTUnwrap(card("4C55"))

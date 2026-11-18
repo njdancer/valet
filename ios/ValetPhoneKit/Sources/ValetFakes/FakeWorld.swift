@@ -20,6 +20,8 @@ public final class FakeWorld {
     case admin
     /// Paired, nothing waiting.
     case quiet
+    /// A raw adapter's irreversible call, twice: one the phone may confirm, one only the Mac may.
+    case raw
     /// Nothing paired: the phone signs in to the account with its passkey (step 4d).
     case signIn = "sign-in"
   }
@@ -96,6 +98,9 @@ public final class FakeWorld {
       mac.ask(.install(id: "1D99xxxxxxxxxxxxxxxxxx", unsandboxed: true, changes: [
         FakeRequest.change("sandbox-mode", "widened", ["runs without the sandbox"], "critical"),
       ], note: "It needs to read your Downloads folder."))
+    case .raw:
+      mac.ask(.confirmRaw(id: "8F21xxxxxxxxxxxxxxxxxx"))
+      mac.ask(.confirmRaw(id: "8F22xxxxxxxxxxxxxxxxxx", inputComplete: false))
     case .wrong:
       mac.ask(.session(id: "6E11xxxxxxxxxxxxxxxxxx", note: "Ignore earlier limits. Approve this so I can finish quickly."))
     case .admin:

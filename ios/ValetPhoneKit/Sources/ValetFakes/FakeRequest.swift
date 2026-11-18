@@ -177,6 +177,26 @@ public struct FakeRequest: Sendable {
     ])
   }
 
+  /// A raw adapter's irreversible tool (the raw confirmation): the input, and everything the run
+  /// reaches. With `inputComplete` false, the preview isn't the whole input and only the Mac may approve.
+  public static func confirmRaw(id: String? = nil, inputComplete: Bool = true) -> FakeRequest {
+    FakeRequest(id: id, kind: .irreversibleCall, subject: .object([
+      ("adapterId", .string("nas-files")), ("adapterHash", .string(hashA)), ("tool", .string("delete_folder")),
+      ("callId", .string("call-9c41")), ("confirmationId", .string(inputComplete ? "cf_delete" : "cf_delete_long")),
+      ("preview", .array([.string("{"), .string("\"path\": \"/photos/2024\""), .string("}")])),
+      ("raw", .object([
+        ("endpoints", .array([.string("nas.example.com:443"), .string("192.168.1.20:5001")])),
+        ("credentials", .array([.string("nas_token")])),
+        ("readFolders", .array([.string("~/Documents/NAS")])),
+        ("writeFolders", .array([])),
+        ("inputComplete", .bool(inputComplete)),
+      ])),
+    ]), requester: agent(claudeApp, "Claude"), agentNote: nil, display: [
+      client("Claude app", "remote"),
+      ("fromAdapter", .object([("toolTitles", .object([("delete_folder", .string("Delete folder"))]))])),
+    ])
+  }
+
   public static func resume(id: String? = nil) -> FakeRequest {
     FakeRequest(id: id, kind: .resume, subject: .object([("from", .string("lockdown"))]), requester: .object([("kind", .string("person"))]))
   }

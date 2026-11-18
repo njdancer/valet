@@ -120,6 +120,30 @@ public enum ApprovalSubject: Equatable, Sendable {
     /// Which confirmation in the call this is: two in one call never share a request.
     public let confirmationId: String
     public let preview: [String]
+    /// Only for a raw adapter's tool (the raw confirmation): Valet can't see what it sends.
+    public let raw: RawReach?
+
+    public init(adapterId: String, adapterHash: String, tool: String, callId: String, confirmationId: String, preview: [String], raw: RawReach? = nil) {
+      self.adapterId = adapterId
+      self.adapterHash = adapterHash
+      self.tool = tool
+      self.callId = callId
+      self.confirmationId = confirmationId
+      self.preview = preview
+      self.raw = raw
+    }
+  }
+  /// What a raw adapter's run can reach, from the Mac's copy of its approved manifest.
+  public struct RawReach: Equatable, Sendable {
+    /// Every `host:port` the run's tunnels reach.
+    public let endpoints: [String]
+    /// The entrusted credentials its code may be handed, by the manifest's names.
+    public let credentials: [String]
+    /// Folders its code may read, and read and write, as the manifest writes them.
+    public let readFolders: [String]
+    public let writeFolders: [String]
+    /// False when `preview` isn't the whole input: then only the Mac may approve.
+    public let inputComplete: Bool
   }
   public struct DevicePair: Equatable, Sendable {
     public let deviceId, deviceName, platform, confirmation: String
@@ -270,14 +294,37 @@ public enum ApprovalSubject: Equatable, Sendable {
         minutes: try f.int("minutes", min: 1, max: 60)
       ))
     case .irreversibleCall:
-      let f = try Fields(value, path: path, required: ["adapterId", "adapterHash", "tool", "callId", "confirmationId", "preview"])
+      let f = try Fields(
+        value, path: path, required: ["adapterId", "adapterHash", "tool", "callId", "confirmationId", "preview"],
+        optional: ["raw"]
+      )
+      var raw: RawReach?
+      if f.has("raw") {
+        let r = try Fields(
+          try f.raw("raw"), path: "\(path).raw",
+          required: ["endpoints", "credentials", "readFolders", "writeFolders", "inputComplete"]
+        )
+        let endpoints = try r.strings("endpoints", min: 1, max: 30, pattern: "[a-z0-9._:-]{1,260}")
+        let credentials = try r.strings("credentials", max: 8, pattern: Patterns.name)
+        guard Set(endpoints).count == endpoints.count else { throw SchemaError("\(path).raw.endpoints", "endpoints repeat") }
+        guard Set(credentials).count == credentials.count else {
+          throw SchemaError("\(path).raw.credentials", "credentials repeat")
+        }
+        raw = RawReach(
+          endpoints: endpoints, credentials: credentials,
+          readFolders: try r.displays("readFolders", max: 200, itemMax: 200),
+          writeFolders: try r.displays("writeFolders", max: 200, itemMax: 200),
+          inputComplete: try r.bool("inputComplete")
+        )
+      }
       return .irreversibleCall(IrreversibleCall(
         adapterId: try f.string("adapterId", pattern: Patterns.adapterId),
         adapterHash: try f.string("adapterHash", pattern: Patterns.hash),
         tool: try f.string("tool", pattern: Patterns.name),
         callId: try f.string("callId", pattern: "[A-Za-z0-9_-]{1,80}"),
         confirmationId: try f.string("confirmationId", pattern: "cf_[A-Za-z0-9_-]{1,60}"),
-        preview: try f.displays("preview", max: 20, itemMax: 200)
+        preview: try f.displays("preview", max: 20, itemMax: 200),
+        raw: raw
       ))
     case .resume:
       let f = try Fields(value, path: path, required: ["from"])
@@ -440,13 +487,16 @@ public struct ApprovalRequest: Equatable, Sendable {
     )
   }
 
-  /// `approvableOn` in core: pairing and anything critical in an install are Mac only.
+  /// `approvableOn` in core: pairing, anything critical in an install and a raw call the card can't show whole are Mac only.
   public var approvableOnPhone: Bool {
     switch subject {
     // Pairing, and lifting a pause or lockdown: a stolen phone must not undo the person's own stop.
     case .devicePair, .resume: return false
     case let .adapterInstall(install):
       return !(install.unsandboxed || install.changes.contains { $0.risk == .critical })
+    // A raw call whose input the card can't show whole: only the Mac shows all of it.
+    case let .irreversibleCall(call):
+      return call.raw?.inputComplete ?? true
     default: return true
     }
   }

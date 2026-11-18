@@ -57,6 +57,7 @@ import {
   NeedsUserError,
   type RequestDeclaration,
   rawEndpoints,
+  rawReach,
   runtimeOf,
   type SecretsAccess,
   type SessionDriver,
@@ -793,12 +794,18 @@ export class ToolHost {
       if (due === 'unreadable') return failed('tool-run', 'internal')
       const irreversible = declaration.sideEffect === 'irreversible'
       if (irreversible) {
+        // A raw adapter's tool is asked about with everything its run can reach: nothing it sends
+        // can be held to declared requests, so the person's yes is the whole of the check.
+        const question: ConfirmationQuestion =
+          runtimeOf(manifest) === 'raw'
+            ? { kind: 'raw-tool', input: input.output, ...rawReach(manifest) }
+            : { kind: 'irreversible-tool', input: input.output }
         const answer = await this.ask(
           entry,
           declaration,
           request.callId,
           client,
-          { kind: 'irreversible-tool', input: input.output },
+          question,
           external,
           transport,
         )

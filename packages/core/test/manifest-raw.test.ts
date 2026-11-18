@@ -86,10 +86,25 @@ describe('runtime: raw', () => {
     expect(issues(input)).toContain('a raw adapter has no login: its probe is none')
   })
 
-  it('has no irreversible tools, since nothing could confirm one', () => {
+  it('may have irreversible tools, each confirmed with a raw confirmation', () => {
     const input = copy()
     input.tools = [{ name: 'send', title: 'Send', description: 'Sends mail.', sideEffect: 'irreversible' }]
-    expect(issues(input)).toContain("tool send: a raw adapter's tools are read or write, not irreversible")
+    expect(issues(input)).toEqual([])
+    expect(parseManifest(input).tools[0]?.sideEffect).toBe('irreversible')
+  })
+
+  it('still can’t give an irreversible tool unlocks: it has no requests to name', () => {
+    const input = copy()
+    input.tools = [
+      {
+        name: 'send',
+        title: 'Send',
+        description: 'Sends mail.',
+        sideEffect: 'irreversible',
+        unlocks: [{ method: 'POST', path: '/send' }],
+      },
+    ]
+    expect(issues(input).length).toBeGreaterThan(0)
   })
 
   it('needs somewhere to go, each once', () => {
