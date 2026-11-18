@@ -84,8 +84,8 @@ export function DevicesSection() {
             <Text tone="muted">{UNAVAILABLE[s.unavailableReason]}</Text>
           ) : null}
           <Text tone="muted">
-            To add an iPhone, open Valet on it and sign in with the passkey for your Valet account. Nothing to
-            do here. Pairing with a code is for an iPhone that can’t use the passkey.
+            To add an iPhone, open Valet on it and sign in with the passkey for your Valet account. Or, as a
+            shortcut, show a sign-in code here and scan it with the iPhone: it signs in to the same account.
           </Text>
           <div>
             <Button
@@ -94,11 +94,11 @@ export function DevicesSection() {
               disabledReason={
                 s !== null && s.available && !relayOnline
                   ? 'Valet isn’t connected to its relay right now'
-                  : 'Valet can’t pair a phone right now'
+                  : 'Valet can’t sign a phone in right now'
               }
               onClick={() => setPairing(true)}
             >
-              Pair an iPhone
+              Show a sign-in code
             </Button>
           </div>
           {s !== null && s.worksLocked === false ? <RenewKeys phones={s.phones.length} /> : null}
@@ -503,7 +503,7 @@ function PairSheet({
   return (
     <Dialog open={open} onOpenChange={close}>
       <SheetContent
-        title={view.step === 'paired' ? 'iPhone paired' : 'Pair an iPhone'}
+        title={view.step === 'paired' ? 'iPhone signed in' : 'Sign in an iPhone'}
         description={description(view)}
         footer={
           <>

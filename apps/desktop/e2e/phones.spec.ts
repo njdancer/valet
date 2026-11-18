@@ -78,7 +78,7 @@ test('pairs a phone from Settings › Devices', async () => {
     window.location.hash = '#/settings/devices'
   })
   await expect(control.getByText(/Connected to the relay/)).toBeVisible({ timeout: 30_000 })
-  await control.getByRole('button', { name: 'Pair an iPhone' }).click()
+  await control.getByRole('button', { name: 'Show a sign-in code' }).click()
   const qr = control.locator('svg[data-pairing-qr]')
   await qr.waitFor()
   const text = (await qr.getAttribute('data-pairing-qr')) ?? ''

@@ -392,9 +392,11 @@ test('pairing an iPhone, and approving an agent’s requests on it', async () =>
   )
   await cues.mark('launched')
   await sleep(4000)
-  caption('To pair, open Settings › Devices on the Mac and choose Pair an iPhone.')
+  caption(
+    'To sign an iPhone in with a code, open Settings › Devices on the Mac and choose Show a sign-in code.',
+  )
   await sleep(2500)
-  await control.getByRole('button', { name: 'Pair an iPhone' }).click()
+  await control.getByRole('button', { name: 'Show a sign-in code' }).click()
   const qr = control.locator('svg[data-pairing-qr]')
   await qr.waitFor({ timeout: 30_000 })
   cues.qr = await qr.getAttribute('data-pairing-qr')
