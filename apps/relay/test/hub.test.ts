@@ -304,6 +304,14 @@ describe('the hub account', () => {
     ).toBe(401)
   })
 
+  it('answers its own version from the Hub object, to anyone, uncached', async () => {
+    const runtime = await relay()
+    const response = await new Browser(runtime).get('/api/version')
+    expect(response.status).toBe(200)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(await response.json()).toEqual({ sha: 'abc1234' })
+  })
+
   it('refuses changes from other origins and signs out', async () => {
     const runtime = await relay()
     const browser = new Browser(runtime)

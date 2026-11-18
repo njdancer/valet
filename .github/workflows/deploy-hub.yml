@@ -1,0 +1,135 @@
+name: Deploy hub
+
+# Deploys the relay Worker and its hub (valet.dncr.me) after CI passes on main, so a merge is a
+# deploy and nobody runs wrangler by hand (Nick, 2026-11-18). The gate is the same as the manual one
+# was (CONTRIBUTING.md): the commit's own CI run passed, with e2e (fast), which runs
+# apps/desktop/e2e/hub.spec.ts against the real hub. Only a commit that is still main's tip deploys,
+# so a slow run never puts older code over newer. Needs the CLOUDFLARE_API_TOKEN secret (Workers
+# Scripts edit on the account, and Workers Routes edit on the dncr.me zone for the custom domain).
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Deploy main's tip even if nothing the Worker runs changed
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+# One deploy at a time, in order: never cancel one halfway.
+concurrency:
+  group: deploy-hub
+  cancel-in-progress: false
+
+env:
+  HUB_URL: https://valet.dncr.me
+
+jobs:
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: which commit, and did its CI run the hub's end-to-end test
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          FORCE: ${{ inputs.force }}
+          REPO: ${{ github.repository }}
+        run: |
+          tip=$(gh api "repos/$REPO/commits/main" -q .sha)
+          if [ "$EVENT" = workflow_dispatch ]; then
+            sha="$tip"
+            # Main's tip must have its own green CI run with e2e (fast).
+            RUN_ID=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$sha&event=push&status=success" -q '.workflow_runs[0].id // empty')
+            [ -n "$RUN_ID" ] || { echo "no successful CI run on main's tip $sha yet"; exit 1; }
+          else
+            sha="$RUN_SHA"
+            if [ "$sha" != "$tip" ]; then
+              echo "$sha is no longer main's tip ($tip): that commit's own run deploys"
+              echo "deploy=false" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+          fi
+          e2e=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" -q '.jobs[] | select(.name == "e2e (fast)") | .conclusion')
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          if [ "$e2e" != success ]; then
+            # Skipped: the commit changed no code (docs only), so nothing to deploy.
+            echo "e2e (fast) on $sha: ${e2e:-not run}; not deploying"
+            echo "deploy=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          live=$(curl -fsS --max-time 10 "$HUB_URL/api/version" | jq -r '.sha // empty' || true)
+          echo "live: ${live:-unknown}, main: $sha"
+          echo "live=$live" >> "$GITHUB_OUTPUT"
+          echo "deploy=true" >> "$GITHUB_OUTPUT"
+
+      - if: steps.gate.outputs.deploy == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ steps.gate.outputs.sha }}
+          fetch-depth: 0
+
+      - name: did anything the Worker runs change since the live commit
+        if: steps.gate.outputs.deploy == 'true'
+        id: changed
+        env:
+          LIVE: ${{ steps.gate.outputs.live }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          # A deploy restarts every Durable Object, which drops each Mac's connection for a moment:
+          # only when the Worker's own code, its packages or its config changed.
+          if [ "$FORCE" = true ] || [ -z "$LIVE" ] || ! git cat-file -e "$LIVE^{commit}" 2>/dev/null; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          files=$(git diff --name-only "$LIVE" HEAD -- apps/relay packages/core pnpm-lock.yaml .github/workflows/deploy-hub.yml)
+          echo "$files"
+          [ -n "$files" ] && echo "run=true" >> "$GITHUB_OUTPUT" || echo "run=false" >> "$GITHUB_OUTPUT"
+
+      - if: steps.changed.outputs.run == 'true'
+        uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
+      - if: steps.changed.outputs.run == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: deploy, then wait for the Hub object itself to answer with this commit
+        if: steps.changed.outputs.run == 'true'
+        working-directory: apps/relay
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          SHA: ${{ steps.gate.outputs.sha }}
+        run: |
+          [ -n "$CLOUDFLARE_API_TOKEN" ] || { echo "::error::the CLOUDFLARE_API_TOKEN secret isn't set"; exit 1; }
+          node scripts/live-config.mjs "$SHA"
+          deploy() { pnpm exec wrangler deploy -c wrangler.live.generated.json --tag "${SHA:0:12}" --message "main $SHA"; }
+          serving() {
+            for _ in $(seq 1 18); do
+              [ "$(curl -fsS --max-time 10 "$HUB_URL/api/version?t=$RANDOM" | jq -r '.sha // empty' || true)" = "$SHA" ] && return 0
+              sleep 5
+            done
+            return 1
+          }
+          deploy
+          # The Worker in front can be new while the Hub object still runs the old code (seen
+          # 2026-11-18): deploying the same version again restarted it.
+          serving || { echo "the Hub still runs older code: deploying again"; deploy; serving; }
+          echo "the Hub runs $SHA"
+
+      - name: the live hub answers as it should
+        if: steps.changed.outputs.run == 'true'
+        run: |
+          code() { curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$@"; }
+          [ "$(code "$HUB_URL/phone")" = 200 ]
+          [ "$(code "$HUB_URL/sign-in")" = 200 ]
+          [ "$(code "$HUB_URL/mcp")" = 401 ]
+          [ "$(code -X POST "$HUB_URL/api/phone/prepare" -H "origin: $HUB_URL" -H 'content-type: application/json' -d '{}')" = 400 ]
+          echo "live checks passed"

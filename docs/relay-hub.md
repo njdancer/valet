@@ -322,6 +322,30 @@ deletes that grant and its tokens at once, on every Mac, and tells the other nod
 account may ask, with no signature, since it only takes access away. The Mac stops honouring the
 grant before the hub answers.
 
+## Deploying
+
+A merge to main is a deploy. `.github/workflows/deploy-hub.yml` runs when CI finishes on main.
+It deploys only if all of these hold:
+
+- the run passed;
+- its `e2e (fast)` job (which runs `hub.spec.ts`) passed;
+- the commit is still main's tip;
+- something the Worker runs changed since the live commit (`apps/relay`, `packages/core`, the
+  lockfile).
+
+The deploy writes the live config with `apps/relay/scripts/live-config.mjs`. That is
+`wrangler.jsonc` with `wrangler.live.jsonc` laid over it (the account, `workers_dev`, the
+valet.dncr.me custom domain, the hosts), plus `GIT_SHA`. Then it runs `wrangler deploy` with the
+`CLOUDFLARE_API_TOKEN` secret.
+
+`GET /api/version` is answered by the Hub object itself. On 2026-11-18 the Worker in front was new
+while the Hub object kept running the old code, so the workflow waits until `/api/version` names
+the new commit. If it doesn't, it deploys once more, then checks `/phone`, `/sign-in`, `/mcp` and
+`/api/phone/prepare`.
+
+To deploy main again without a change, run Actions › Deploy hub with "force". Secrets
+(`WAIT_SECRET`, `HUB_SETUP_SECRET`) stay in Cloudflare, set once with `wrangler secret put`.
+
 ## Tested end to end
 
 `apps/desktop/e2e/hub.spec.ts` runs the whole journey on every pull request (macOS CI, the fast

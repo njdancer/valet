@@ -1,3 +1,4 @@
 dist/
 .test-runtime/
 .wrangler/
+wrangler.live.generated.json
