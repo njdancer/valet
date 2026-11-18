@@ -18,6 +18,7 @@ import {
   exceptionKey,
   exceptionRisk,
   messagesSourcesIn,
+  messageText,
   type OtpSource,
   protocolPermissionChanges,
   runtimeOf,
@@ -145,7 +146,11 @@ export function credentialEntries(manifest: AdapterManifest): CredentialDiffEntr
     use: useKind(credential.use),
     targets: [...credentialTargets(credential)],
     items: credentialCardItems(name, credential),
-    format: 'header' in credential.use ? credential.use.header.format : null,
+    format: 'hosts' in credential.use ? (credential.use.header?.format ?? null) : null,
+    message:
+      'hosts' in credential.use && credential.use.message !== undefined
+        ? messageText(credential.use.message.json)
+        : null,
   }))
 }
 

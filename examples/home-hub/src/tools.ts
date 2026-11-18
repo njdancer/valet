@@ -1,7 +1,10 @@
 // The example WebSocket adapter (docs/adapter-kinds.md#h-example-adapters): a home hub on the
 // person's own network. Its address is a private host, pinned by the SHA-256 of the hub's own
-// certificate (a hub's certificate is self-signed, so no CA can vouch for it). Valet adds the kept
-// token to the socket's upgrade request; the tool code never sees it.
+// certificate (a hub's certificate is self-signed, so no CA can vouch for it). The hub wants its
+// token two ways, as Home Assistant does: a Bearer header on REST, and on the WebSocket in the first
+// message ({"type":"auth","access_token":…}) once it says auth_required. Valet does both from the one
+// kept credential: the header on fetch, and the manifest's declared message on sendCredential. The
+// tool code never sees the token.
 //
 // Reading is one REST request (GET /api/states). Acting goes over the hub's WebSocket, which
 // answers numbered requests: call_service acts on one entity, get_states lists everything, and
@@ -27,14 +30,25 @@ interface Message {
   error?: { code?: unknown } | null
 }
 
-/** Opens the hub's socket and waits for its hello. */
+/**
+ * Opens the hub's socket and signs in: the hub asks (auth_required), Valet sends the manifest's
+ * credential message, and the hub answers auth_ok or auth_invalid.
+ */
 async function connect(ctx: ToolContext): Promise<HttpSocket> {
   if (ctx.http === undefined) throw new ValetError('tool-run', 'not-granted')
-  const socket = await ctx.http.websocket(`${HUB}/api/websocket`, { credential: CREDENTIAL })
-  const hello = await next(socket)
-  if (hello.type === 'auth_invalid') throw new ValetError('tool-run', 'auth-failed')
-  if (hello.type !== 'auth_ok') throw new ValetError('tool-run', 'unexpected-shape')
-  return socket
+  const socket = await ctx.http.websocket(`${HUB}/api/websocket`)
+  try {
+    const hello = await next(socket)
+    if (hello.type !== 'auth_required') throw new ValetError('tool-run', 'unexpected-shape')
+    await socket.sendCredential(CREDENTIAL)
+    const answer = await next(socket)
+    if (answer.type === 'auth_invalid') throw new ValetError('tool-run', 'auth-failed')
+    if (answer.type !== 'auth_ok') throw new ValetError('tool-run', 'unexpected-shape')
+    return socket
+  } catch (error) {
+    await socket.close()
+    throw error
+  }
 }
 
 async function next(socket: HttpSocket): Promise<Message> {

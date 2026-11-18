@@ -290,6 +290,8 @@ async function dispatchHttp(
     }
     case 'http.ws.send':
       return sockets.get(args[0]).send(b, c)
+    case 'http.ws.sendCredential':
+      return sockets.get(args[0]).sendCredential(b)
     case 'http.ws.receive': {
       const message = await sockets.get(args[0]).receive(b)
       if (message?.kind === 'closed') sockets.delete(args[0] as number)

@@ -71,6 +71,20 @@ const HEADER_NAME = /^[a-z][a-z0-9-]{0,63}$/
 /** Printable ASCII, so the header can't carry a line break or anything a server would re-read. */
 const HEADER_TEXT = /^[\x20-\x7e]*$/
 
+/** A credential message's field names. */
+const MESSAGE_KEY = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/
+/**
+ * A credential message's other string values: short and plain, with no spaces, so the message on
+ * a card reads as data and can't carry a sentence; or the placeholder itself.
+ */
+const MESSAGE_TEXT = /^(?:[A-Za-z0-9_.:/-]{0,40}|\{value\})$/
+/** The field holding the credential must be named like one, so the message reads as a sign-in. */
+const MESSAGE_CREDENTIAL_KEY = /(token|key|auth|pass|secret|credential)/i
+/** The most fields a credential message has. */
+export const MAX_MESSAGE_FIELDS = 8
+/** The longest a credential message may be as written on a card, with "{value}" in it. */
+export const MAX_MESSAGE_TEXT = 160
+
 /** The placeholders a header format may use, each at most once and only one per format. */
 export const HEADER_PLACEHOLDERS = ['{value}', '{basic}'] as const
 
@@ -127,7 +141,11 @@ const credentialHost = z
 export const credentialUseSchema = z.union([
   /** Valet signs in to a protocol server with it (kept). */
   z.object({ protocol: z.enum(CREDENTIAL_PROTOCOLS), endpoint }).strict(),
-  /** Valet adds it to HTTPS requests to these hosts as one header (kept). */
+  /**
+   * Valet adds it to HTTPS requests to these hosts as one header, or sends it on a WebSocket to
+   * them as one declared message, or both (kept). Its use kind is `header` either way: Valet itself
+   * puts it into traffic to these hosts.
+   */
   z
     .object({
       header: z
@@ -140,7 +158,26 @@ export const credentialUseSchema = z.union([
             .regex(HEADER_TEXT, 'printable ASCII only')
             .regex(HEADER_FORMAT, 'the placeholder alone, or after one scheme word: "Bearer {value}"'),
         })
-        .strict(),
+        .strict()
+        .optional(),
+      message: z
+        .object({
+          /**
+           * The whole message Valet sends, a flat JSON object: one field's value is "{value}",
+           * which Valet fills; tool code adds nothing to it (docs/adapter-kinds.md#credential-messages).
+           */
+          json: z.record(
+            z.string().regex(MESSAGE_KEY, 'a field name: a letter, then letters, digits, _ or -, at most 32'),
+            z.union([
+              z.string().regex(MESSAGE_TEXT, 'letters, digits and _ . : / - only, at most 40, or "{value}"'),
+              z.number().finite(),
+              z.boolean(),
+              z.null(),
+            ]),
+          ),
+        })
+        .strict()
+        .optional(),
       hosts: z.array(credentialHost).min(1).max(10),
     })
     .strict(),
@@ -168,7 +205,7 @@ export type UseKind = 'protocol' | 'header' | 'entrusted'
 
 export function useKind(use: CredentialUse): UseKind {
   if ('protocol' in use) return 'protocol'
-  if ('header' in use) return 'header'
+  if ('hosts' in use) return 'header'
   return 'entrusted'
 }
 
@@ -179,7 +216,21 @@ function declarationIssues(credential: CredentialDeclaration): string[] {
   if ((credential.custody === 'entrusted') !== (kind === 'entrusted')) {
     issues.push('custody entrusted goes with use.entrusted, and only with it')
   }
-  if ('header' in credential.use) {
+  if (
+    'hosts' in credential.use &&
+    credential.use.header === undefined &&
+    credential.use.message === undefined
+  )
+    issues.push('a credential sent to hosts needs a header, a message, or both')
+  if ('hosts' in credential.use && credential.use.message !== undefined) {
+    issues.push(...messageIssues(credential.use.message.json, credential.kind))
+  }
+  if ('hosts' in credential.use && credential.use.header === undefined) {
+    if (credential.kind === 'ssh-key') issues.push('an ssh-key is never sent in a message')
+    if (new Set(credential.use.hosts).size !== credential.use.hosts.length)
+      issues.push('hosts must not repeat')
+  }
+  if ('hosts' in credential.use && credential.use.header !== undefined) {
     const { format } = credential.use.header
     const found = HEADER_PLACEHOLDERS.flatMap((p) =>
       format
@@ -205,6 +256,34 @@ function declarationIssues(credential: CredentialDeclaration): string[] {
     if (new Set(endpoints).size !== endpoints.length) issues.push('entrusted endpoints must not repeat')
   }
   return issues
+}
+
+/** A credential message's own rules. */
+function messageIssues(json: Readonly<Record<string, unknown>>, kind: CredentialKind): string[] {
+  const issues: string[] = []
+  const keys = Object.keys(json)
+  if (keys.length === 0 || keys.length > MAX_MESSAGE_FIELDS)
+    issues.push(`a credential message has 1 to ${MAX_MESSAGE_FIELDS} fields`)
+  const holders = keys.filter((k) => json[k] === '{value}')
+  if (holders.length !== 1)
+    issues.push('a credential message has "{value}" as exactly one field\'s whole value')
+  const holder = holders[0]
+  if (holder !== undefined && !MESSAGE_CREDENTIAL_KEY.test(holder))
+    issues.push(
+      `the field holding the credential must be named like one (token, key, auth, pass, secret or credential in it), not ${holder}`,
+    )
+  if (kind === 'ssh-key') issues.push('an ssh-key is never sent in a message')
+  if (messageText(json).length > MAX_MESSAGE_TEXT)
+    issues.push(`a credential message is at most ${MAX_MESSAGE_TEXT} characters as written`)
+  return issues
+}
+
+/**
+ * A credential message as Valet writes it, with "{value}" where the credential goes: what the card
+ * shows and, filled, what is sent. Fields in the manifest's order.
+ */
+export function messageText(json: Readonly<Record<string, unknown>>): string {
+  return JSON.stringify(json)
 }
 
 /** Which uses each runtime kind may declare. A browser adapter's logins are its `secrets`. */
@@ -252,7 +331,7 @@ export function credentialIssues(
 export function credentialTargets(credential: CredentialDeclaration): readonly string[] {
   const { use } = credential
   if ('protocol' in use) return [use.endpoint]
-  if ('header' in use) return use.hosts
+  if ('hosts' in use) return use.hosts
   return use.entrusted.endpoints
 }
 
@@ -262,7 +341,8 @@ export function credentialHeaderNames(manifest: {
 }): Set<string> {
   const names = new Set<string>()
   for (const credential of Object.values(manifest.credentials ?? {}))
-    if ('header' in credential.use) names.add(credential.use.header.name)
+    if ('hosts' in credential.use && credential.use.header !== undefined)
+      names.add(credential.use.header.name)
   return names
 }
 
@@ -303,7 +383,7 @@ function targetsListed(name: string, credential: CredentialDeclaration): boolean
 
 function listedTargets(credential: CredentialDeclaration): string {
   const count = credentialTargets(credential).length
-  const noun = 'header' in credential.use ? 'host' : 'endpoint'
+  const noun = 'hosts' in credential.use ? 'host' : 'endpoint'
   return count === 1 ? `the ${noun} listed` : `the ${count} ${noun}s listed`
 }
 
@@ -313,8 +393,16 @@ function sentence(name: string, credential: CredentialDeclaration, where: string
   if ('protocol' in use) {
     return `Valet signs in to ${where} for ${PROTOCOL_WORDS[use.protocol]} with ${what}. The adapter never sees it.`
   }
-  if ('header' in use) {
-    return `Valet sends ${what} to ${where} in the ${use.header.name} header. The adapter never sees it.`
+  if ('hosts' in use) {
+    // Both: the sentence says so, and the card lists the header and the message as items of their
+    // own (credentialCardItems), so the sentence still fits in 200 at the limits.
+    const how =
+      use.message === undefined
+        ? `in the ${use.header?.name ?? ''} header`
+        : use.header === undefined
+          ? `in a WebSocket message's ${messageField(use.message.json)} field`
+          : 'in a header and in a WebSocket message'
+    return `Valet sends ${what} to ${where} ${how}. The adapter never sees it.`
   }
   return `The adapter is given ${what} and can use it only with ${where}. Use a token or app password you can revoke.`
 }
@@ -326,5 +414,19 @@ function sentence(name: string, credential: CredentialDeclaration, where: string
  */
 export function credentialCardItems(name: string, credential: CredentialDeclaration): string[] {
   const targets = credentialTargets(credential)
-  return [describeCredentialUse(name, credential), ...(targetsListed(name, credential) ? targets : [])]
+  const { use } = credential
+  return [
+    describeCredentialUse(name, credential),
+    ...(targetsListed(name, credential) ? targets : []),
+    ...('hosts' in use && use.message !== undefined && use.header !== undefined
+      ? [`The header: ${use.header.name}: ${use.header.format}`]
+      : []),
+    // The whole message, so the person sees everything sent with the credential, not just where.
+    ...('hosts' in use && use.message !== undefined ? [`The message: ${messageText(use.message.json)}`] : []),
+  ]
+}
+
+/** The field a credential message puts the credential in. */
+export function messageField(json: Readonly<Record<string, unknown>>): string {
+  return Object.keys(json).find((k) => json[k] === '{value}') ?? 'credential'
 }

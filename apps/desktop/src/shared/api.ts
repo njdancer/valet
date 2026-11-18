@@ -309,6 +309,8 @@ export interface CredentialDiffEntry {
   readonly items: readonly string[]
   /** A header credential's format, e.g. "Bearer {value}"; null otherwise. */
   readonly format: string | null
+  /** A credential message as the card shows it, "{value}" where the credential goes; null otherwise. */
+  readonly message: string | null
 }
 
 /** Which selector an auth step types which secret field into. */

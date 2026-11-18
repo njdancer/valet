@@ -497,7 +497,7 @@ export function subjectFor(
 
 function narrowed(declaration: CredentialDeclaration, targets: readonly string[]): CredentialDeclaration {
   const { use } = declaration
-  if ('header' in use) return { ...declaration, use: { ...use, hosts: [...targets] } }
+  if ('hosts' in use) return { ...declaration, use: { ...use, hosts: [...targets] } }
   if ('entrusted' in use)
     return { ...declaration, use: { entrusted: { ...use.entrusted, endpoints: [...targets] } } }
   return declaration

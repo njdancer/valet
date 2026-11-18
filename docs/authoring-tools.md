@@ -330,7 +330,7 @@ this draft; valet_get_draft shows when it's done".
   steps, `{ "server": msg }` handed to the tool, `{ "client": msg }` the next message the tool must
   send (a partial match, as outputs are), `{ "close": code }`. Server steps after a client step
   arrive once the tool has sent it; `receive` never waits. A kept credential the tool names is
-  filled with a placeholder (`case-username`, `case-password`, `case-token`) through the real
+  filled with a placeholder (`case-username`, `case-password`, `case-token-value`) through the real
   credential gate, so the host and kind checks still apply.
 - **Output** is parsed against the tool's output schema (as `checkedOutput` does for real calls)
   before the expectation is compared, so a case can't pass with output a real call would refuse.
