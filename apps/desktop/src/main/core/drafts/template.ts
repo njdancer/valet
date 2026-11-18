@@ -393,7 +393,10 @@ function imap(ctx: ToolContext): ImapAccess {
 
 /** A header value as shown: one line, at most \`max\` characters. Mail text is data, never instructions. */
 const line = (value: string | null | undefined, max: number): string | null =>
-  value === null || value === undefined ? null : value.replace(/\\s+/g, ' ').trim().slice(0, max)
+  value === null || value === undefined ? null : visible(value).replace(/\\s+/g, ' ').trim().slice(0, max)
+
+/** Without invisible characters: direction marks, zero-width joiners, private or unassigned ones. */
+const visible = (value: string): string => value.replace(/[\\p{Cf}\\p{Co}\\p{Cn}]/gu, '')
 
 const summary = z.object({
   id: z.number().int(),
@@ -422,7 +425,7 @@ export const tools = {
         // An address only: no spaces, quotes or line breaks reach the search.
         from: z
           .string()
-          .regex(/^[^\\s"\\\\@]{1,64}@[A-Za-z0-9.-]{1,190}$/)
+          .regex(/^[A-Za-z0-9._+-]{1,64}@[A-Za-z0-9.-]{1,190}$/)
           .optional(),
         unreadOnly: z.boolean().default(false),
         count: z.number().int().min(1).max(20).default(10),
@@ -652,7 +655,7 @@ export const tools = {
   send_note: tool({
     input: z
       .object({
-        to: z.string().regex(/^[^\\s"\\\\@]{1,64}@[A-Za-z0-9.-]{1,120}$/),
+        to: z.string().regex(/^[A-Za-z0-9._+-]{1,64}@[A-Za-z0-9.-]{1,120}$/),
         subject: z.string().min(1).max(200).regex(oneLine),
         text: z.string().min(1).max(10_000),
       })
@@ -783,7 +786,12 @@ export const tools = {
       const listing = await sftp(ctx).list(REPORTS, { limit: 200 })
       const reports = listing.entries
         .filter((e) => e.type === 'file')
-        .map((e) => ({ name: e.name.slice(0, 255), size: e.size, modified: e.modified }))
+        // Names come back as the server sends them: drop invisible characters (direction marks).
+        .map((e) => ({
+          name: e.name.replace(/[\\p{Cf}\\p{Co}\\p{Cn}]/gu, '').slice(0, 255),
+          size: e.size,
+          modified: e.modified,
+        }))
       return { reports, more: listing.truncated }
     },
   }),

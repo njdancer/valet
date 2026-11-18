@@ -234,8 +234,8 @@ narrowest tools: "the subjects of unread mail in Receipts" is a better tool than
 
 ### ctx.imap (protocols.imap)
 
-\`{ "endpoint": "imap.example.com:993", "credential": "mail", "folders": ["INBOX", "Receipts"] }\`: TLS
-from the first byte, a host name (never an address). \`folders\`, when given, is every folder a tool
+\`{ "endpoint": "imap.example.com:993", "credential": "mail", "folders": ["INBOX", "Receipts"] }\`: the
+server's name and its TLS port, 993 (TLS from the first byte; STARTTLS is never used). \`folders\`, when given, is every folder a tool
 may name, matched exactly (INBOX in any case; \`Receipts\` doesn't cover \`Receipts/2026\`). Leave it out
 only when a tool truly needs every folder. A read tool opens folders read-only and fetches with
 \`BODY.PEEK\`, so it never marks mail read.
@@ -279,9 +279,10 @@ const sent = await ctx.smtp.send({ to: ['ann@example.com'], subject: 'Hello', te
 
 - Only an irreversible tool may send. Each message is shown to the person exactly as Valet will send
   it, and sent only if they say yes: a no fails the send as \`confirm/declined\` (\`confirm/timed-out\`
-  if nobody answers), and nothing is sent. Sends in one call go one at a time.
+  if nobody answers, \`tool-run/aborted\` if the call is cancelled), and nothing is sent. Sends in one
+  call go one at a time.
 - From is always the signed-in account. Plain text only: no headers of your own, no HTML, no
-  attachments. Addresses are plain \`local@domain\` (no names, \`%\` or \`!\`), at most 50 recipients;
+  attachments. Addresses are plain \`local@domain\` (no names, \`%\` or \`!\`), at most 50 recipients, none twice;
   the subject is one line of at most 300 characters, the text at most 100,000. Invisible and control
   characters are refused. \`inReplyTo\` and \`references\` take \`<id@host>\` message ids. A message that
   breaks a rule fails \`tool-run/invalid\`; a recipient off the list ends the call as
@@ -316,7 +317,8 @@ const sent = await ctx.smtp.send({ to: ['ann@example.com'], subject: 'Hello', te
   characters or backslashes. Build them from a fixed root and a checked name; never pass an agent's
   path through. \`type\` is \`file\`, \`directory\`, \`symlink\` or \`other\`.
 - Errors: a missing path is \`egress/not-found\`; one already there, or a folder that isn't empty, is
-  \`egress/invalid\`; the server's own refusal is \`egress/blocked-by-site\`.
+  \`egress/invalid\`; the server's own refusal is \`egress/blocked-by-site\`. A write or rename through a
+  symbolic link is refused like a path outside the roots, and ends the call.
 
 ### Cases for a protocol adapter
 
@@ -328,11 +330,13 @@ the request ceiling), so a case meets a refusal exactly as a live call would:
   \`op\` is the call's name (\`search\`, \`list\`...), \`args\` the arguments the case checks, matched from
   the first like an output (an object matches on what it lists), \`answer\` what the server returns, or
   \`error\`: \`{ stage, errorClass }\`.
-- \`smtp\`: \`[{ message?, confirm?, answer? or error? }]\`, one per message sent, in order. \`message\` is
-  matched like an output against the message as Valet checked it (\`to\`, \`cc\`, \`bcc\`, \`subject\`, \`text\`,
-  \`inReplyTo\`, \`references\`); \`confirm\` is the person's answer, \`approved\` (the default), \`declined\`
-  or \`timed-out\`; \`answer\` is \`{ accepted }\` (every recipient by default). A case's Message-IDs are
-  \`<case-1@host>\`, \`<case-2@host>\`... Nothing is ever sent from a case.
+- \`smtp\`: \`[{ message?, confirm?, error? }]\`, one per message sent, in order. \`message\` is matched
+  like an output against the message as Valet checked it (\`subject\`, \`text\`, \`inReplyTo\`,
+  \`references\`), except that \`to\`, \`cc\` and \`bcc\` are always checked in full (left out, none);
+  \`confirm\` is the person's answer, \`approved\` (the default), \`declined\` or \`timed-out\`; \`error\` is
+  the server refusing an approved send. A send that goes through answers \`{ messageId, accepted }\`
+  with every recipient accepted, and a case's Message-IDs are \`<case-1@host>\`, \`<case-2@host>\`...
+  Nothing is ever sent from a case.
 - An operation the case doesn't list fails the case, and so does a listed one the tool never made
   when the case expects output. A send refused before the person is asked (a recipient off the list,
   a read tool sending) needs no \`smtp\` step.

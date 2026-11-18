@@ -147,9 +147,10 @@ interface ProtocolStep {
 
 /**
  * One message a case's tool sends through ctx.smtp (a protocol adapter with protocols.smtp), in
- * order: the message as Valet checked it (matched like an output, so list only what the case
- * checks), how the person answers its confirmation (approved unless the case says otherwise), and
- * what the server answers once approved: how many recipients it accepted, or an error. The
+ * order: the message as Valet checked it (matched like an output, except that to, cc and bcc are
+ * checked in full when it's given), how the person answers its confirmation (approved unless the
+ * case says otherwise), and, once approved, the server's error if it refuses the send (a send that
+ * goes through has every recipient accepted, as live). The
  * runtime's own checks (only an irreversible tool sends, the recipients list, the message rules,
  * the request ceiling) come first, as on a live call; a send they refuse never reaches the script.
  */
@@ -157,20 +158,12 @@ const smtpStepSchema = z
   .object({
     message: z.unknown().optional(),
     confirm: z.enum(['approved', 'declined', 'timed-out']).default('approved'),
-    answer: z
-      .object({ accepted: z.number().int().min(0).max(50) })
-      .strict()
-      .optional(),
     error: z.object({ stage, errorClass: stage }).strict().optional(),
   })
   .strict()
   .refine(
-    (s) => s.answer === undefined || s.error === undefined,
-    'a step has an answer or an error, not both',
-  )
-  .refine(
-    (s) => s.confirm === 'approved' || (s.answer === undefined && s.error === undefined),
-    'a send the person doesn’t approve never reaches the server: no answer or error',
+    (s) => s.confirm === 'approved' || s.error === undefined,
+    'a send the person doesn’t approve never reaches the server: no error',
   )
 type SmtpStep = z.output<typeof smtpStepSchema>
 
@@ -1159,7 +1152,7 @@ function protocolScriptMismatch(manifest: AdapterManifest, c: DraftCase): string
 /**
  * The protocol host and the person, for a case's SMTP script: each confirmation must be for the
  * next message the case lists (and match what it lists), and answers as the step says; an approved
- * one is "sent" with the step's answer (every recipient accepted by default) or its error. A
+ * one is "sent" (every recipient accepted) or fails with its error. A
  * message the case doesn't expect fails the case, and so does a listed send the tool never made
  * when the case expects output. Message-IDs are numbered, `<case-1@host>`, so outputs are stable.
  */
@@ -1190,7 +1183,9 @@ function scriptedSmtp(
       }
       next++
       if (step.message !== undefined) {
-        const mismatch = outputMismatch(step.message, message, 'message')
+        // Every recipient is checked: a case can't show one recipient while the tool adds a Bcc.
+        const expected = { to: [], cc: [], bcc: [], ...(step.message as Record<string, unknown>) }
+        const mismatch = outputMismatch(expected, message, 'message')
         if (mismatch !== null) {
           problem ??= `SMTP send ${next}'s message differs at ${mismatch.at}: expected ${jsonText(mismatch.expected)}, got ${mismatch.missing ? 'nothing' : jsonText(mismatch.actual)}.`
           throw new ValetError('egress', 'unavailable')
@@ -1206,7 +1201,8 @@ function scriptedSmtp(
         if (step === null) throw new ValetError('egress', 'unavailable')
         if (step.error !== undefined)
           throw new ValetError(step.error.stage as Stage, step.error.errorClass as ErrorClass)
-        return step.answer ?? { accepted: message.to.length + message.cc.length + message.bcc.length }
+        // A live send that goes through has every recipient accepted; a refusal fails it instead.
+        return { accepted: message.to.length + message.cc.length + message.bcc.length }
       },
       end: async () => {},
     }),
