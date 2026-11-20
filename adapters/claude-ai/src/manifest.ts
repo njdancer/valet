@@ -25,8 +25,18 @@ export interface ManifestOptions {
 /** Paths on claude.ai the sign-in shows. Anywhere else, signed in or not, the probe decides. */
 const ON_LOGIN: Condition = { urlRegex: '^/(login|magic-link)([/?#]|$)' }
 
-/** Cloudflare's checks load in a frame from here, on the sign-in page. */
-const CHALLENGE_ORIGIN = 'https://challenges.cloudflare.com'
+/**
+ * Where the sign-in page's bot checks load their frames from. The live page (2026-11-20) loaded
+ * hCaptcha's frame from newassets.hcaptcha.com; refused, the form answered "Couldn't verify your
+ * browser". hCaptcha's other frame hosts and Cloudflare's are listed too, so a change of provider
+ * or host doesn't stop the sign-in again. A challenge that needs solving is solved by the person.
+ */
+const CHALLENGE_ORIGINS = [
+  'https://newassets.hcaptcha.com',
+  'https://assets.hcaptcha.com',
+  'https://hcaptcha.com',
+  'https://challenges.cloudflare.com',
+]
 
 export const NOTES = {
   signIn:
@@ -73,7 +83,7 @@ export function createManifest({ origin = REAL_ORIGIN }: ManifestOptions = {}): 
     schemaVersion: 1,
     id: 'claude-ai',
     name: 'Claude.ai projects',
-    version: '0.1.0',
+    version: '0.1.1',
     description:
       "Talk to the person's Claude Code projects on claude.ai: list projects and threads, read a project chat or thread, and send a message to a project's coordinator or to one thread.",
     // A plain page on the site, so the tool page is same-origin with the API without running the
@@ -93,7 +103,7 @@ export function createManifest({ origin = REAL_ORIGIN }: ManifestOptions = {}): 
         trustSeconds: 60,
       },
     },
-    auth: { steps: authSteps(origin), frameOrigins: origin === REAL_ORIGIN ? [CHALLENGE_ORIGIN] : [] },
+    auth: { steps: authSteps(origin), frameOrigins: origin === REAL_ORIGIN ? CHALLENGE_ORIGINS : [] },
     // Exactly the calls the tools make. Nothing here can archive, leave, change members or settings:
     // the only write is sending a message.
     requests: [

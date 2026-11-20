@@ -530,7 +530,9 @@ describe('the claude.ai manifest', () => {
     expect(manifest.egress).toEqual(['claude.ai'])
     expect(manifest.secrets).toEqual({})
     expect(manifest.session.cookieDomains).toEqual(['claude.ai'])
-    expect(manifest.auth.frameOrigins).toEqual(['https://challenges.cloudflare.com'])
+    // The live sign-in page's check loads its frame from newassets.hcaptcha.com.
+    expect(manifest.auth.frameOrigins).toContain('https://newassets.hcaptcha.com')
+    expect(manifest.auth.frameOrigins).toContain('https://challenges.cloudflare.com')
     expect(manifest.requests.filter((r) => r.method !== 'GET')).toEqual([
       { method: 'POST', path: '/v1/code/channels/:channel/messages', purpose: 'write' },
     ])
