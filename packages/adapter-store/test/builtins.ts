@@ -3,6 +3,7 @@
 
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import { createManifest as claudeAi } from '@valet/adapter-claude-ai'
 import { createManifest as wikipedia } from '@valet/adapter-wikipedia'
 import { createManifest as woolworths } from '@valet/adapter-woolworths'
 import { createManifest as yahooFinance } from '@valet/adapter-yahoo-finance'
@@ -29,6 +30,7 @@ export const MANIFESTS: Readonly<Record<string, () => AdapterManifest>> = {
   woolworths: () => woolworths(),
   'yahoo-finance': () => yahooFinance(),
   wikipedia: () => wikipedia(),
+  'claude-ai': () => claudeAi(),
 }
 
 export function builtinPackage(folder: string): PackageFiles {
