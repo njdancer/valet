@@ -29,6 +29,21 @@ test.afterAll(async () => {
   rmSync(userData, { recursive: true, force: true })
 })
 
+/** Closes the control panel as its close button does, through the window rather than the page. */
+async function closeControl(): Promise<void> {
+  await launched.app.evaluate(({ BrowserWindow }, title) => {
+    for (const w of BrowserWindow.getAllWindows()) if (w.getTitle().includes(title)) w.close()
+  }, CONTROL)
+  await expect
+    .poll(() =>
+      launched.app.evaluate(
+        ({ BrowserWindow }, title) => BrowserWindow.getAllWindows().some((w) => w.getTitle().includes(title)),
+        CONTROL,
+      ),
+    )
+    .toBe(false)
+}
+
 /** Makes Finder the frontmost app, and waits until Valet has no key window. */
 async function activateFinder(): Promise<void> {
   execFileSync('osascript', ['-e', 'tell application "Finder" to activate'])
@@ -80,7 +95,7 @@ test('the control panel has a Dock icon while it is open, and the app has its ow
   const open = await state()
   expect(open.dock).toBe(true)
   expect(open.menus).toEqual([expect.stringMatching(/./), 'Edit', 'View', 'Window'])
-  await control.close()
+  await closeControl()
   await expect.poll(async () => (await state()).dock).toBe(false)
   await launched.app.evaluate(() => {
     const hook = (globalThis as { __valetE2eWindows?: { openControlPanel: (h: string) => void } })
