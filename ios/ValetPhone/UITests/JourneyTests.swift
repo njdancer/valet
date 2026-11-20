@@ -319,6 +319,26 @@ final class ScreensForReviewTests: JourneyTestCase {
   }
 
   func testScreensForReview() {
+    // The account sign-in (step 4d), which replaced pairing as the way in.
+    launch("sign-in")
+    shot("00a sign in")
+    waitFor("pair.instead").tap()
+    shot("00b sign in, pairing shown")
+    waitFor("signin.start").tap()
+    XCTAssertTrue(app.tabBars.buttons["Needs you"].waitForExistence(timeout: 10))
+    shot("00c signed in, nothing waiting")
+    app.tabBars.buttons["Valet"].tap()
+    shot("00d valet tab, account")
+    app.swipeUp()
+    shot("00e valet tab, account lower")
+    launch("raw")
+    for (ref, name) in [("8F21", "11 raw confirm"), ("8F22", "12 raw confirm, Mac only")] {
+      openCard(ref)
+      shot(name)
+      app.swipeUp()
+      shot(name + " lower")
+      waitFor("card.close").tap()
+    }
     launch("pair")
     shot("01 pair start")
     tap("pair.fake", until: "pair.code")
@@ -343,6 +363,8 @@ final class ScreensForReviewTests: JourneyTestCase {
     for tab in ["Activity", "Sites", "Agents", "Valet"] {
       app.tabBars.buttons[tab].tap()
       shot("10 \(tab.lowercased())")
+      app.swipeUp()
+      shot("10 \(tab.lowercased()) lower")
     }
   }
 }

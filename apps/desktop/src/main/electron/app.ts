@@ -32,6 +32,7 @@ import {
 import { createLocalAccess } from '@valet/sandbox'
 import { app, clipboard, dialog, protocol, session, shell } from 'electron'
 import { href } from '../../renderer/lib/routes'
+import type { HashRoute } from '../../shared/api'
 import { builtinPackages } from '../adapters'
 import { APP_SCHEME, APP_SCHEME_PRIVILEGES, createAppSchemeHandler } from '../core/app-scheme'
 import { ANCHOR_SERVICE, macApprovalKeys } from '../core/approvals'
@@ -743,6 +744,11 @@ async function main(): Promise<void> {
   if (mode.e2e)
     Object.defineProperty(globalThis, '__valetE2eTray', {
       value: Object.freeze({ toggle: () => windows.toggleTray({ x: 900, y: 0, width: 24, height: 22 }) }),
+    })
+  // And opens the control panel as a notification's click does, from no window of Valet's.
+  if (mode.e2e)
+    Object.defineProperty(globalThis, '__valetE2eWindows', {
+      value: Object.freeze({ openControlPanel: (route: HashRoute) => windows.openControlPanel(route) }),
     })
 
   if (__VALET_DEMO_BUILD__ && mode.demo && mode.e2e)
