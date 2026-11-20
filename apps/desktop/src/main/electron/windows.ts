@@ -110,7 +110,7 @@ export class AppWindows {
     window.on('closed', () => {
       nativeTheme.off('updated', retheme)
       this.control = null
-      app.dock?.hide()
+      this.hideDock()
     })
     this.control = window
   }
@@ -138,6 +138,17 @@ export class AppWindows {
         ours.focus()
       }
     }
+  }
+
+  /**
+   * Back to the menu bar only. Electron ignores a hide within a second of a show (quick toggles
+   * leave stray Dock icons on macOS), so a panel opened and closed quickly tries again after.
+   */
+  private hideDock(): void {
+    app.dock?.hide()
+    setTimeout(() => {
+      if (this.control === null && app.dock?.isVisible()) app.dock.hide()
+    }, 1_200)
   }
 
   toggleTray(iconBounds: Rectangle): void {
