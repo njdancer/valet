@@ -29,6 +29,21 @@ test.afterAll(async () => {
   rmSync(userData, { recursive: true, force: true })
 })
 
+/** Closes the control panel as its close button does, through the window rather than the page. */
+async function closeControl(): Promise<void> {
+  await launched.app.evaluate(({ BrowserWindow }, title) => {
+    for (const w of BrowserWindow.getAllWindows()) if (w.getTitle().includes(title)) w.close()
+  }, CONTROL)
+  await expect
+    .poll(() =>
+      launched.app.evaluate(
+        ({ BrowserWindow }, title) => BrowserWindow.getAllWindows().some((w) => w.getTitle().includes(title)),
+        CONTROL,
+      ),
+    )
+    .toBe(false)
+}
+
 /** Makes Finder the frontmost app, and waits until Valet has no key window. */
 async function activateFinder(): Promise<void> {
   execFileSync('osascript', ['-e', 'tell application "Finder" to activate'])
@@ -69,4 +84,50 @@ test('a control panel opened afresh comes to the front over another app', async 
   control = await windowWithTitle(launched.app, CONTROL)
   await expect.poll(focusedTitle, { timeout: 10_000 }).toContain(CONTROL)
   await sleep(200)
+})
+
+test('the control panel has a Dock icon while it is open, and the app has its own menu', async () => {
+  const state = () =>
+    launched.app.evaluate(({ app, Menu }) => ({
+      dock: app.dock?.isVisible() ?? null,
+      menus: Menu.getApplicationMenu()?.items.map((item) => item.label) ?? [],
+    }))
+  const open = await state()
+  expect(open.dock).toBe(true)
+  expect(open.menus).toEqual([expect.stringMatching(/./), 'Edit', 'View', 'Window'])
+  await closeControl()
+  await expect.poll(async () => (await state()).dock).toBe(false)
+  await launched.app.evaluate(() => {
+    const hook = (globalThis as { __valetE2eWindows?: { openControlPanel: (h: string) => void } })
+      .__valetE2eWindows
+    hook?.openControlPanel('#/sites')
+  })
+  control = await windowWithTitle(launched.app, CONTROL)
+  await expect.poll(async () => (await state()).dock).toBe(true)
+})
+
+test('the control panel comes back to the front after a Touch ID prompt', async () => {
+  // Valet in front, the person working in the control panel.
+  await activateFinder()
+  await openFromBackground(control, '#/sites')
+  await expect.poll(focusedTitle, { timeout: 10_000 }).toContain(CONTROL)
+  await control.evaluate(() => window.valet?.app.setLockedDown(true))
+  // Unlocking asks for the person at the Mac: a signed decision, Touch ID in a packaged app. Here
+  // Finder comes to the front while the "prompt" is up, as the prompt's own window does, and
+  // macOS doesn't hand the front back to Valet when it closes.
+  await launched.app.evaluate(() => {
+    ;(
+      globalThis as { __valetE2ePrompt?: { stealFocus: (on: boolean) => void } }
+    ).__valetE2ePrompt?.stealFocus(true)
+  })
+  try {
+    await control.evaluate(() => window.valet?.app.setLockedDown(false))
+  } finally {
+    await launched.app.evaluate(() => {
+      ;(
+        globalThis as { __valetE2ePrompt?: { stealFocus: (on: boolean) => void } }
+      ).__valetE2ePrompt?.stealFocus(false)
+    })
+  }
+  await expect.poll(focusedTitle, { timeout: 10_000 }).toContain(CONTROL)
 })

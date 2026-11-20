@@ -1,7 +1,7 @@
 // The Electron main process: decides the launch mode before ready, takes the single-instance lock,
 // builds the service with Electron's ports, and puts the app in the menu bar.
 
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
@@ -30,12 +30,12 @@ import {
   smtpBackend,
 } from '@valet/protocols'
 import { createLocalAccess } from '@valet/sandbox'
-import { app, clipboard, dialog, protocol, session, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, protocol, session, shell } from 'electron'
 import { href } from '../../renderer/lib/routes'
 import type { HashRoute } from '../../shared/api'
 import { builtinPackages } from '../adapters'
 import { APP_SCHEME, APP_SCHEME_PRIVILEGES, createAppSchemeHandler } from '../core/app-scheme'
-import { ANCHOR_SERVICE, macApprovalKeys } from '../core/approvals'
+import { ANCHOR_SERVICE, guardPrompts, macApprovalKeys, type PromptGuard } from '../core/approvals'
 import {
   dataPaths,
   FEEDBACK_KEYCHAIN_ACCOUNT,
@@ -76,6 +76,7 @@ import { nodeRuntimeBinary, rawPaths } from '../core/raw-runtime'
 import { AppService } from '../core/service'
 import { SHOWCASE_BUILD_MARKER } from '../core/showcase'
 import type { BridgeCommand } from '../core/snippets'
+import { setAppMenu } from './app-menu'
 import type { DemoSite } from './demo'
 import { launchRefused } from './guard'
 import { broadcast, registerIpc } from './ipc'
@@ -254,7 +255,9 @@ async function main(): Promise<void> {
   // A menu-bar app: closing every window doesn't quit.
   app.on('window-all-closed', () => {})
   await app.whenReady()
+  // In the menu bar only, until the control panel opens (windows.ts shows the Dock icon then).
   app.dock?.hide()
+  setAppMenu(!app.isPackaged)
 
   const base = rendererBase(
     process.env['ELECTRON_RENDERER_URL'],
@@ -436,7 +439,7 @@ async function main(): Promise<void> {
   // A relay for paired phones (docs/phone-channel.md): the one in Settings › Devices. A dev build
   // can name a local one in the environment instead, and then signs in software.
   const devRelay = strictApprovals ? null : relayFromEnv(process.env)
-  const approvalKeys = await macApprovalKeys({
+  const approverKeys = await macApprovalKeys({
     packaged: strictApprovals,
     approverPath: devRelay === null ? nativeHelper('valet-approver') : null,
     // A demo launch keeps its anchor in its own data folder, never the Keychain.
@@ -461,6 +464,23 @@ async function main(): Promise<void> {
     },
     log,
   })
+  // A Touch ID prompt takes Valet's place in front; the window the person approved from comes back
+  // when it closes. The end-to-end suite can stand another app in for the prompt.
+  const e2ePrompt = { stealFocus: false }
+  const promptGuard: PromptGuard = (prompt) =>
+    windows.throughPrompt(async () => {
+      if (mode.e2e && e2ePrompt.stealFocus) await anotherAppInFront()
+      return prompt()
+    })
+  const approvalKeys = { ...approverKeys, signer: guardPrompts(approverKeys.signer, promptGuard) }
+  if (mode.e2e)
+    Object.defineProperty(globalThis, '__valetE2ePrompt', {
+      value: Object.freeze({
+        stealFocus: (on: boolean) => {
+          e2ePrompt.stealFocus = on
+        },
+      }),
+    })
   log(
     `approvals: signing with ${approvalKeys.kind === 'software' ? 'software keys (dev build)' : 'the Secure Enclave'}`,
   )
@@ -755,6 +775,8 @@ async function main(): Promise<void> {
     Object.defineProperty(globalThis, '__valetE2eRequests', { value: Object.freeze(running.e2eRequests()) })
 
   app.on('second-instance', () => windows.openControlPanel(null))
+  // A click on the Dock icon, which shows while the control panel is open.
+  app.on('activate', () => windows.openControlPanel(null))
   let stopping = false
   app.on('will-quit', (event) => {
     if (stopping) return
@@ -793,6 +815,20 @@ async function main(): Promise<void> {
   if (__VALET_SMOKE_BUILD__) {
     const { smokeSelfCheck } = await import('./smoke')
     await smokeSelfCheck(app.getPath('userData'))
+  }
+}
+
+/**
+ * The end-to-end suite's stand-in for a Touch ID prompt: Finder comes to the front, as the
+ * prompt's own window does, and Valet waits until it is no longer the active app.
+ */
+async function anotherAppInFront(): Promise<void> {
+  await new Promise<void>((done) => {
+    execFile('osascript', ['-e', 'tell application "Finder" to activate'], () => done())
+  })
+  const until = Date.now() + 5_000
+  while (BrowserWindow.getFocusedWindow() !== null && Date.now() < until) {
+    await new Promise((wait) => setTimeout(wait, 50))
   }
 }
 

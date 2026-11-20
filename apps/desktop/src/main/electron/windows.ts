@@ -4,7 +4,7 @@
 // session loads nothing but the renderer's files.
 
 import { partitionName } from '@valet/browser-electron'
-import { BrowserWindow, nativeTheme, type Rectangle, screen, session, type WebContents } from 'electron'
+import { app, BrowserWindow, nativeTheme, type Rectangle, screen, session, type WebContents } from 'electron'
 import { href, panelOnlyRoute, parseRoute } from '../../renderer/lib/routes'
 import type { HashRoute } from '../../shared/api'
 import { onAppOrigin } from '../core/app-scheme'
@@ -82,6 +82,9 @@ export class AppWindows {
       this.control.focus()
       return
     }
+    // A Dock icon while the control panel is open, and with it a place in ⌘-Tab: the window can be
+    // found again once it's behind another app. Valet goes back to the menu bar when it closes.
+    void app.dock?.show()
     const chrome = windowChrome(process.platform, 'control')
     const window = this.create(
       'control',
@@ -107,8 +110,45 @@ export class AppWindows {
     window.on('closed', () => {
       nativeTheme.off('updated', retheme)
       this.control = null
+      this.hideDock()
     })
     this.control = window
+  }
+
+  /**
+   * Runs `prompt`, which may show a system prompt such as Touch ID, and brings back the window of
+   * ours that had focus before it. The prompt is another process's window, and when it closes
+   * macOS activates whichever app was in front before Valet, so without this the window the
+   * person just approved from drops behind their other apps. Nothing is brought back if Valet
+   * wasn't in front to begin with, or if the person has since moved to a window of ours.
+   */
+  async throughPrompt<T>(prompt: () => Promise<T>): Promise<T> {
+    const before = BrowserWindow.getFocusedWindow()
+    const ours = before !== null && this.all().includes(before) ? before : null
+    try {
+      return await prompt()
+    } finally {
+      if (
+        ours !== null &&
+        !ours.isDestroyed() &&
+        ours.isVisible() &&
+        BrowserWindow.getFocusedWindow() === null
+      ) {
+        app.focus({ steal: true })
+        ours.focus()
+      }
+    }
+  }
+
+  /**
+   * Back to the menu bar only. Electron ignores a hide within a second of a show (quick toggles
+   * leave stray Dock icons on macOS), so a panel opened and closed quickly tries again after.
+   */
+  private hideDock(): void {
+    app.dock?.hide()
+    setTimeout(() => {
+      if (this.control === null && app.dock?.isVisible()) app.dock.hide()
+    }, 1_200)
   }
 
   toggleTray(iconBounds: Rectangle): void {
