@@ -302,7 +302,7 @@ describe('the built-in adapters in QuickJS', () => {
   it('describe exactly as they do in the vm worker', async () => {
     const { describeIsolated } = await import('../../runtime/src/isolation/host')
     const { inMemory } = await import('../../runtime/test/isolation/processes')
-    for (const adapter of ['woolworths', 'yahoo-finance', 'wikipedia']) {
+    for (const adapter of ['woolworths', 'yahoo-finance', 'wikipedia', 'claude-ai']) {
       const script = await scriptFor(join(import.meta.dirname, `../../../adapters/${adapter}/src/tools.ts`))
       const inVm = await describeIsolated(inMemory().start, script)
       const inQuick = await describeIsolated(inProcessQuickJS(factory), script)

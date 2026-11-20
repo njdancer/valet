@@ -1,4 +1,5 @@
 import { tmpdir } from 'node:os'
+import { createAdapter as claudeAi } from '@valet/adapter-claude-ai'
 import { createAdapter as wikipedia } from '@valet/adapter-wikipedia'
 import { createAdapter as woolworths } from '@valet/adapter-woolworths'
 import { createAdapter as yahooFinance } from '@valet/adapter-yahoo-finance'
@@ -20,6 +21,7 @@ const OWN: Readonly<Record<string, () => AdapterDefinition>> = {
   woolworths: () => woolworths(),
   'yahoo-finance': () => yahooFinance(),
   wikipedia: () => wikipedia(),
+  'claude-ai': () => claudeAi(),
 }
 
 async function runtime() {

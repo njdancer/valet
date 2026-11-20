@@ -14,6 +14,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@valet/adapter-claude-ai": "workspace:*",
     "@valet/adapter-wikipedia": "workspace:*",
     "@valet/adapter-woolworths": "workspace:*",
     "@valet/adapter-yahoo-finance": "workspace:*"

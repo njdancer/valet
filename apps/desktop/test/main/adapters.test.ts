@@ -5,6 +5,7 @@
 
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { createAdapter as claudeAi } from '@valet/adapter-claude-ai'
 import { createAdapter as wikipedia } from '@valet/adapter-wikipedia'
 import { createAdapter as woolworths } from '@valet/adapter-woolworths'
 import { createAdapter as yahooFinance } from '@valet/adapter-yahoo-finance'
@@ -28,9 +29,14 @@ function onDisk(folder: string): Record<string, string> {
 }
 
 describe('builtinPackages', () => {
-  it('ships Woolworths, Yahoo Finance and Wikipedia, each with its sources and manifest', () => {
+  it('ships Woolworths, Yahoo Finance, Wikipedia and Claude.ai, each with its sources and manifest', () => {
     const packages = builtinPackages().map(checkPackage)
-    expect(packages.map((p) => p.manifest.id)).toEqual(['woolworths', 'yahoo-finance', 'wikipedia'])
+    expect(packages.map((p) => p.manifest.id)).toEqual([
+      'woolworths',
+      'yahoo-finance',
+      'wikipedia',
+      'claude-ai',
+    ])
     for (const p of packages) {
       const sources = Object.fromEntries(Object.entries(p.files).filter(([path]) => path.startsWith('src/')))
       expect(sources).toEqual(onDisk(p.manifest.id))
@@ -38,7 +44,7 @@ describe('builtinPackages', () => {
   })
 
   it('hashes each built-in exactly as before packages', () => {
-    const before = [woolworths(), yahooFinance(), wikipedia()].map(
+    const before = [woolworths(), yahooFinance(), wikipedia(), claudeAi()].map(
       (definition) => builtinAdapter(definition, onDisk(definition.manifest.id)).hash,
     )
     expect(builtinPackages().map((files) => checkPackage(files).adapterHash)).toEqual(before)

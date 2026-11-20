@@ -5,6 +5,7 @@
 // seeds them into its adapter store at launch and runs them exactly as any other installed
 // package: compiled by Valet, from these sources, so the hash covers what runs.
 
+import { createManifest as claudeAi } from '@valet/adapter-claude-ai'
 import { createManifest as wikipedia } from '@valet/adapter-wikipedia'
 import { type ManifestOptions, createManifest as woolworths } from '@valet/adapter-woolworths'
 import { createManifest as yahooFinance } from '@valet/adapter-yahoo-finance'
@@ -23,6 +24,12 @@ const YAHOO_FINANCE_SOURCES = import.meta.glob<string>('../../../../adapters/yah
 })
 
 const WIKIPEDIA_SOURCES = import.meta.glob<string>('../../../../adapters/wikipedia/src/**/*.ts', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+})
+
+const CLAUDE_AI_SOURCES = import.meta.glob<string>('../../../../adapters/claude-ai/src/**/*.ts', {
   query: '?raw',
   import: 'default',
   eager: true,
@@ -53,5 +60,7 @@ export function builtinPackages(woolworthsOptions: ManifestOptions = {}): Packag
     // No login: public data, from the real sites in every build, demo mode included.
     packageOf(yahooFinance(), relativeSources(YAHOO_FINANCE_SOURCES, 'yahoo-finance')),
     packageOf(wikipedia(), relativeSources(WIKIPEDIA_SOURCES, 'wikipedia')),
+    // Signs in with the person's own claude.ai account, in its window, the first time it's used.
+    packageOf(claudeAi(), relativeSources(CLAUDE_AI_SOURCES, 'claude-ai')),
   ]
 }

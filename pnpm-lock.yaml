@@ -30,6 +30,19 @@ importers:
         specifier: ^5.1.0
         version: 5.1.0(@types/node@24.19.2)(@vitest/coverage-v8@5.1.0)(jsdom@31.0.0(@noble/hashes@1.8.0))(vite@8.3.6(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
 
+  adapters/claude-ai:
+    dependencies:
+      '@valet/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@valet/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+
   adapters/wikipedia:
     dependencies:
       '@valet/core':
@@ -86,6 +99,9 @@ importers:
       '@1password/sdk':
         specifier: ^0.5.0
         version: 0.5.0
+      '@valet/adapter-claude-ai':
+        specifier: workspace:*
+        version: link:../../adapters/claude-ai
       '@valet/adapter-store':
         specifier: workspace:*
         version: link:../../packages/adapter-store
@@ -324,6 +340,9 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
+      '@valet/adapter-claude-ai':
+        specifier: workspace:*
+        version: link:../../adapters/claude-ai
       '@valet/adapter-wikipedia':
         specifier: workspace:*
         version: link:../../adapters/wikipedia
