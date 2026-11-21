@@ -37,7 +37,7 @@ env:
   DNS_NAMES: relay.valet.dncr.me *.valet.dncr.me
   # flyctl's version, such as 0.3.200. Empty takes flyctl's latest release, checked against that
   # release's checksums; the step logs which one it used.
-  FLYCTL_VERSION: ''
+  FLYCTL_VERSION: ""
 
 jobs:
   deploy:
