@@ -132,12 +132,29 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
       - run: pnpm install --frozen-lockfile
+      # Pebble, Let's Encrypt's test CA, for the blind relay's certificate test
+      # (apps/blind-relay/test/pebble.test.ts). Pinned by version and checksum.
+      - if: matrix.os != 'macos-latest'
+        name: Pebble
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pebble"
+          cd "$RUNNER_TEMP/pebble"
+          base=https://github.com/letsencrypt/pebble/releases/download/v2.8.0
+          curl -fsSL -o pebble.tgz "$base/pebble-linux-amd64.tar.gz"
+          curl -fsSL -o challtestsrv.tgz "$base/pebble-challtestsrv-linux-amd64.tar.gz"
+          echo "34595d915bbc2fc827affb3f58593034824df57e95353b031c8d5185724485ce  pebble.tgz" | sha256sum -c
+          echo "a817449d1f05ae58bcb7bf073b4cebe5d31512f859ba4b83951bd825d28d2114  challtestsrv.tgz" | sha256sum -c
+          tar xzf pebble.tgz && tar xzf challtestsrv.tgz
+          cp pebble-linux-amd64/linux/amd64/pebble pebble-challtestsrv-linux-amd64/linux/amd64/pebble-challtestsrv .
+          echo "PEBBLE_DIR=$RUNNER_TEMP/pebble" >> "$GITHUB_ENV"
       - if: matrix.os == 'macos-latest'
         run: pnpm check
       - if: matrix.os != 'macos-latest'
         env:
           # Leaves the code only those files cover out of the coverage gate (vitest.config.ts).
           VALET_COVERAGE_WITHOUT_MACOS_ONLY: "1"
+          VALET_REQUIRE_PEBBLE: "1"
         run: |
           pnpm lint
           pnpm typecheck

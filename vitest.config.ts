@@ -51,6 +51,9 @@ export default defineConfig({
         // test/hub.test.ts, which runs them in workerd, as above.
         'apps/relay/src/hub/hub.ts',
         'apps/relay/src/hub/link.ts',
+        // The blind relay's entry point: environment and process wiring, run by its deploy's health
+        // check; the relay and the certificate manager it starts are covered directly.
+        'apps/blind-relay/src/main.ts',
         '**/*.html',
         ...(withoutMacosOnly ? ['apps/desktop/src/main/updater/**'] : []),
       ],

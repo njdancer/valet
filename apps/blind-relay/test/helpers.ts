@@ -189,3 +189,42 @@ export function dial(
     ALPNProtocols: alpn,
   })
 }
+
+/** fetch over HTTPS, trusting `ca` alone, every name resolving to 127.0.0.1. */
+export function httpsFetch(ca: string): typeof fetch {
+  return (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : input.toString())
+    const headers = new Headers(input instanceof Request ? input.headers : undefined)
+    for (const [key, value] of new Headers(init?.headers)) headers.set(key, value)
+    const body = init?.body == null ? undefined : Buffer.from(await new Response(init.body).arrayBuffer())
+    const { request } = await import('node:https')
+    const { Readable } = await import('node:stream')
+    return new Promise<Response>((resolve, reject) => {
+      const req = request(
+        {
+          host: url.hostname,
+          port: url.port === '' ? 443 : Number(url.port),
+          path: `${url.pathname}${url.search}`,
+          method: init?.method ?? 'GET',
+          headers: Object.fromEntries(headers),
+          ca,
+          lookup,
+          agent: false,
+        },
+        (res) => {
+          const out = new Headers()
+          for (const [key, value] of Object.entries(res.headers))
+            if (value !== undefined) out.set(key, Array.isArray(value) ? value.join(', ') : value)
+          const status = res.statusCode ?? 0
+          const empty = status === 204 || status === 304 || init?.method === 'HEAD'
+          if (empty) res.resume()
+          resolve(
+            new Response(empty ? null : (Readable.toWeb(res) as ReadableStream), { status, headers: out }),
+          )
+        },
+      )
+      req.on('error', reject)
+      req.end(body)
+    })
+  }) as typeof fetch
+}
