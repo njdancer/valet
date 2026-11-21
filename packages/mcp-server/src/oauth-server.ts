@@ -87,6 +87,11 @@ export interface RemoteAuthorizationOptions {
   readonly consentRequested?: (request: ConsentRequest) => void
   /** Must not throw; awaited by nothing. */
   readonly audit?: (event: OAuthAuditEvent) => void
+  /**
+   * One line per OAuth request: method, path, status, the OAuth error if any, and the caller's
+   * Origin and User-Agent. Never a query string, body, code, token or secret. Must not throw.
+   */
+  readonly log?: (line: string) => void
 }
 
 interface IssuedCode {
@@ -154,6 +159,7 @@ export class RemoteAuthorization {
   handler(hosts: () => ReadonlySet<string>): (req: IncomingMessage, res: ServerResponse) => Promise<boolean> {
     return async (req, res) => {
       if (!RemoteAuthorization.owns(req.url)) return false
+      if (this.options.log !== undefined) logOutcome(req, res, this.options.log)
       const host = remoteRequestHost(req.headers, hosts())
       if (host === null) {
         sendJson(res, 403, { error: 'forbidden' })
@@ -543,6 +549,45 @@ export function pkceMatches(verifier: string, challenge: string): boolean {
   const computed = Buffer.from(createHash('sha256').update(verifier, 'ascii').digest('base64url'))
   const expected = Buffer.from(challenge)
   return computed.length === expected.length && timingSafeEqual(computed, expected)
+}
+
+/** Writes `log`'s one line when the response is sent, or when the connection goes first. */
+function logOutcome(req: IncomingMessage, res: ServerResponse, log: (line: string) => void): void {
+  let error: string | null = null
+  const end = res.end.bind(res) as (...args: unknown[]) => ServerResponse
+  res.end = ((...args: unknown[]) => {
+    const body = args[0]
+    if (res.statusCode >= 400 && (typeof body === 'string' || Buffer.isBuffer(body))) {
+      try {
+        const parsed = JSON.parse(body.toString()) as { error?: unknown }
+        if (typeof parsed.error === 'string') error = parsed.error.slice(0, 40)
+      } catch {
+        // A page, not JSON: the status says enough.
+      }
+    }
+    return end(...args)
+  }) as ServerResponse['end']
+  const started = Date.now()
+  const write = (outcome: string) => {
+    const origin = req.headers.origin
+    const agent = req.headers['user-agent']
+    const parts = [
+      `[oauth] ${req.method ?? '?'} ${pathOf(req.url)} ${outcome}`,
+      ...(error === null ? [] : [error]),
+      `${Date.now() - started}ms`,
+      ...(origin === undefined ? [] : [`origin=${JSON.stringify(origin.slice(0, 100))}`]),
+      ...(agent === undefined ? [] : [`agent=${JSON.stringify(agent.slice(0, 80))}`]),
+    ]
+    try {
+      log(parts.join(' '))
+    } catch {
+      // A log line is not worth failing a request over.
+    }
+  }
+  res.once('finish', () => write(String(res.statusCode)))
+  res.once('close', () => {
+    if (!res.writableFinished) write('closed-before-answer')
+  })
 }
 
 function pathOf(url: string | undefined): string {

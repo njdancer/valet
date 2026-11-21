@@ -131,7 +131,8 @@ class Agent implements OAuthClientProvider {
       redirect_uris: [REDIRECT],
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
-      token_endpoint_auth_method: 'none',
+      // As claude.ai registers: a confidential client that sends its secret in the token request.
+      token_endpoint_auth_method: 'client_secret_post',
     }
   }
   clientInformation() {
