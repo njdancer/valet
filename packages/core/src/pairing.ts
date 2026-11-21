@@ -75,7 +75,11 @@ export function pairingCode(
 function hkdfSha256(ikm: Buffer, salt: Buffer, info: Buffer, length: number): Buffer {
   if (length > 32) throw new Error('one block only')
   const prk = createHmac('sha256', salt).update(ikm).digest()
-  return createHmac('sha256', prk).update(info).update(Buffer.from([1])).digest().subarray(0, length)
+  return createHmac('sha256', prk)
+    .update(info)
+    .update(Buffer.from([1]))
+    .digest()
+    .subarray(0, length)
 }
 
 /** AES-256-GCM: a 12-byte IV and the ciphertext with its 16-byte tag appended, both base64url. */

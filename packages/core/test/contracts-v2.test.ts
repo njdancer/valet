@@ -102,7 +102,9 @@ describe('pairing', () => {
         Buffer.from(`${Buffer.byteLength(offer)}:${offer}${Buffer.byteLength(reply)}:${reply}`),
         Buffer.from(nonce, 'base64url'),
       ])
-      const okm = Buffer.from(hkdfSync('sha256', Buffer.from(secret, 'base64url'), Buffer.from(macId), info, 4))
+      const okm = Buffer.from(
+        hkdfSync('sha256', Buffer.from(secret, 'base64url'), Buffer.from(macId), info, 4),
+      )
       return String(okm.readUInt32BE(0) % 1_000_000).padStart(6, '0')
     }
     expect(pairingCode(secret, macId, 'offer', 'reply', nonce)).toBe(expected('offer', 'reply'))

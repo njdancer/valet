@@ -158,21 +158,6 @@ test.beforeAll(async () => {
   client = await connectMcp(control, userData, 'Claude Code')
 })
 
-test.afterEach(async ({}, info) => {
-  if (info.status !== info.expectedStatus)
-    console.log(
-      JSON.stringify(phone?.messages.map((m) => m['type'])),
-      JSON.stringify(phone?.frames.map((f) => f['type'])),
-      phone?.socket?.readyState,
-    )
-  console.log(
-    launched?.logs
-      .filter((l) => /phone|relay|pair/i.test(l))
-      .join('')
-      .slice(-6000),
-  )
-})
-
 test.afterAll(async () => {
   for (const close of closers) close()
   await client?.close().catch(() => undefined)
