@@ -19,7 +19,9 @@
     "./request-surface": "./src/request-surface.ts",
     "./imap-policy": "./src/imap-policy.ts",
     "./sftp-policy": "./src/sftp-policy.ts",
-    "./smtp-policy": "./src/smtp-policy.ts"
+    "./smtp-policy": "./src/smtp-policy.ts",
+    "./tunnel-protocol": "./src/tunnel-protocol.ts",
+    "./tunnel-mux": "./src/tunnel-mux.ts"
   },
   "dependencies": {
     "zod": "^4.6.7"

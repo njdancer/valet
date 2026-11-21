@@ -1,0 +1,14 @@
+{
+  "name": "@valet/acme",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "A small ACME client (RFC 8555) with TLS-ALPN-01 (RFC 8737), and the certificates it needs, with no dependencies",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@valet/core": "workspace:*"
+  }
+}

@@ -13,6 +13,7 @@ export default defineConfig({
       'fakes/*',
       'apps/desktop',
       'apps/relay',
+      'apps/blind-relay',
       'spikes/01-woolworths-electron',
     ],
     passWithNoTests: true,
@@ -24,6 +25,7 @@ export default defineConfig({
         'fakes/*/src/**',
         'apps/desktop/src/**',
         'apps/relay/src/**',
+        'apps/blind-relay/src/**',
       ],
       exclude: [
         '**/index.ts',

@@ -37,6 +37,7 @@ function make(file?: unknown) {
       port,
       refresh: () => [],
       sessions: () => ({ total: 0, bridge: 0, http: 0, sessions: [] }),
+      accept: (socket) => socket.destroy(),
       endClient: async () => {},
       reopenClient: async () => {},
       close: async () => {

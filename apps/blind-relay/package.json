@@ -1,0 +1,26 @@
+{
+  "name": "@valet/blind-relay",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "The blind relay: routes TLS connections to Macs by server name and never decrypts them (docs/blind-relay.md)",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@valet/core": "workspace:*",
+    "ws": "8.21.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1",
+    "@valet/acme": "workspace:*",
+    "@valet/mcp-server": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.32.2"
+  }
+}

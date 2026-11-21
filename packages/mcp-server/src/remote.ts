@@ -10,7 +10,7 @@
 // A cloud agent gets Valet's own tools (admin, and authoring with them) only when `ownTools` says
 // the person gave it them with a signature; each tool still checks its access on every call.
 
-import { type HttpServerOptions, type LiveSessions, startHttpServer } from './http'
+import { type HttpServerOptions, type LiveSessions, type RunningHttpServer, startHttpServer } from './http'
 import type { RemoteAuthorization } from './oauth-server'
 import { type RemoteAccessTokens, remoteAuthenticator } from './remote-auth'
 import { type RemotePolicy, RemotePolicyCaller, type RemotePolicyOptions } from './remote-policy'
@@ -44,6 +44,8 @@ export interface RunningRemoteListener {
   /** Re-reads the tools and the policy for every remote session. */
   refresh(): readonly SkippedTool[]
   sessions(): LiveSessions
+  /** Serves a connection the blind relay's tunnel ended on this Mac (RunningHttpServer.accept). */
+  accept: RunningHttpServer['accept']
   /** Revokes one client's access tokens and closes its sessions. */
   endClient(clientId: string): Promise<void>
   /**
@@ -93,6 +95,7 @@ export async function startRemoteListener(options: RemoteListenerOptions): Promi
     port: server.port,
     refresh: () => server.refresh(),
     sessions: () => server.sessions(),
+    accept: (socket, meta) => server.accept(socket, meta),
     async endClient(clientId) {
       tokens.revokeClient(clientId)
       await server.endSessions((identity) => identity.origin === 'remote' && identity.clientId === clientId)

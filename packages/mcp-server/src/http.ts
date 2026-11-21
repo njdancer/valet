@@ -5,7 +5,8 @@
 
 import { randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import type { AddressInfo } from 'node:net'
+import type { AddressInfo, Socket } from 'node:net'
+import type { Duplex } from 'node:stream'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { toReportable, ValetError } from '@valet/core'
 import type { AdminReader } from './admin-tools'
@@ -101,8 +102,25 @@ export interface RunningHttpServer {
   endSessions(match: (identity: ClientIdentity) => boolean): Promise<void>
   /** The sessions open now, and how each one arrived. */
   sessions(): LiveSessions
+  /**
+   * Serves one connection that didn't arrive on the port: a TLS socket the blind relay's tunnel
+   * ended on this Mac (tunnel-client.ts). Headers that only something on this Mac may set are
+   * replaced with what the tunnel says, since the caller wrote everything else in the request.
+   */
+  accept(socket: Duplex, meta: AcceptedConnection): void
   close(): Promise<void>
 }
+
+export interface AcceptedConnection {
+  /** The caller's address as the relay saw it, or '' when unknown. */
+  readonly source: string
+}
+
+/**
+ * Headers a tunnel daemon on this Mac sets for the listener, which a caller through the tunnel
+ * must not be able to set itself.
+ */
+const LOOPBACK_ONLY_HEADERS = ['cf-connecting-ip', TRANSPORT_HEADER] as const
 
 interface Session {
   readonly endpoint: ValetMcpServer
@@ -255,7 +273,13 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
     return session.transport.handleRequest(req, res)
   }
 
+  const accepted = new WeakMap<object, AcceptedConnection>()
   const server = createServer((req, res) => {
+    const meta = accepted.get(req.socket)
+    if (meta !== undefined) {
+      for (const name of LOOPBACK_ONLY_HEADERS) delete req.headers[name]
+      if (meta.source !== '') req.headers['cf-connecting-ip'] = meta.source
+    }
     route(req, res).catch(() => {
       // Never the exception's message: it can carry request or page content.
       if (!res.headersSent) reject(res, 500, 'Internal error')
@@ -303,6 +327,14 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
       await Promise.all(ids.map((id) => closeSession(id, true)))
     },
     sessions: live,
+    accept(socket, meta) {
+      if (!server.listening) {
+        socket.destroy()
+        return
+      }
+      accepted.set(socket, meta)
+      server.emit('connection', socket as Socket)
+    },
     async close() {
       await Promise.all([...sessions.keys()].map((id) => closeSession(id)))
       await new Promise<void>((resolve) => {
