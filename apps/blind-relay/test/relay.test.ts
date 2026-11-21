@@ -169,6 +169,34 @@ describe('the blind relay', () => {
     expect(text).toBe('ok test-1 0\n')
   })
 
+  it('answers a connection with no server name as its control host', async () => {
+    // A Mac dialling the relay by address (a local relay in development) sends no name.
+    rig = await startRig({ version: 'test-2' })
+    const text = await new Promise<string>((resolve, reject) => {
+      const req = httpsRequest(
+        {
+          host: '127.0.0.1',
+          port: rig?.port,
+          path: '/healthz',
+          ca: rig?.controlCert.pem,
+          checkServerIdentity: (_host, cert) =>
+            cert.subjectaltname?.includes(`DNS:${CONTROL_HOST}`) ? undefined : new Error('not control'),
+          agent: false,
+        },
+        (res) => {
+          let body = ''
+          res.on('data', (c) => {
+            body += c
+          })
+          res.on('end', () => resolve(body))
+        },
+      )
+      req.on('error', reject)
+      req.end()
+    })
+    expect(text).toBe('ok test-2 0\n')
+  })
+
   it('refuses a Mac whose signature or binding is wrong', async () => {
     rig = await startRig()
     const keys = macKeys()

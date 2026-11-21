@@ -6,6 +6,7 @@
 import { randomBytes } from 'node:crypto'
 import { copyFile, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { CertificateStore } from '@valet/acme'
 import { AdapterStore, type BuildRecord, type PackageRuntime } from '@valet/adapter-store'
 import type { ScratchRules } from '@valet/browser-electron'
 import {
@@ -170,6 +171,7 @@ import {
   runTrace,
   statsToday,
 } from './audit-view'
+import { type BlindRelaySetup, BlindTunnel } from './blind-tunnel'
 import { BlockedAudit, LoginSecrets } from './blocked'
 import { type AppRefusal, RefusalBudget, RuntimeToolCaller } from './caller'
 import { addToDesktopConfig } from './claude-desktop'
@@ -360,6 +362,11 @@ export interface ServiceDeps {
   /** The relay paired phones reach this Mac through (docs/phone-channel.md); none, no phones. */
   readonly relay?: RelaySetup | null
   /**
+   * The blind relay (docs/blind-relay.md): where this Mac's tunnel dials, and where its
+   * certificate is kept. None: no tunnel.
+   */
+  readonly blindRelay?: { readonly setup: BlindRelaySetup; readonly store: CertificateStore } | null
+  /**
    * Where agents' feedback goes (docs/feedback.md): the repository, and the GitHub token from the
    * Keychain (null when the person hasn't added one). None: agents get no feedback tools.
    */
@@ -548,6 +555,8 @@ export class AppService {
   private deviceStore: DeviceStore | null = null
   /** Paired phones and the relay connection they use (phones.ts). */
   private readonly phones: Phones
+  /** This Mac at the blind relay, when one is set up (docs/blind-relay.md). */
+  private readonly tunnel: BlindTunnel | null
   private phoneStatus: PhoneStatusBody | null = null
   /** The write tools' side (admin-writer.ts): one for the app's life, so it remembers requests. */
   private writer: AdminWriterImpl | null = null
@@ -668,7 +677,20 @@ export class AppService {
   private readonly gaveUp = new Set<string>()
 
   constructor(private readonly deps: ServiceDeps) {
+    this.tunnel =
+      deps.blindRelay === undefined || deps.blindRelay === null
+        ? null
+        : new BlindTunnel({
+            setup: deps.blindRelay.setup,
+            store: deps.blindRelay.store,
+            // Made below; only called once the tunnel runs.
+            accept: () => this.remote.tunnelAccept(),
+            setHost: (host, ready) => this.remote.setTunnelHost(host, ready),
+            changed: () => this.emit('remote-changed'),
+            log: (line) => deps.diagnostics?.({ type: line }),
+          })
     this.phones = new Phones({
+      tunnel: this.tunnel,
       relay: deps.relay ?? null,
       macName: deps.macName ?? 'This Mac',
       statePath: join(deps.paths.dir, 'phone-channel.json'),

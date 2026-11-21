@@ -117,8 +117,9 @@ export async function startBlindRelay(options: BlindRelayOptions): Promise<Runni
     res.end('Not found\n')
   })
   control.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    // Only connections whose TLS ended here reach this server, so the name was already checked.
     const macId = macIdFromPath(req.url ?? '')
-    if (macId === null || req.headers.host?.toLowerCase().replace(/:\d+$/, '') !== controlHost) {
+    if (macId === null) {
       socket.end('HTTP/1.1 404 Not Found\r\nconnection: close\r\n\r\n')
       return
     }
@@ -231,8 +232,10 @@ export async function startBlindRelay(options: BlindRelayOptions): Promise<Runni
       done()
       socket.off('data', onData)
       socket.pause()
-      if (hello.state !== 'complete' || hello.serverName === null) return void socket.destroy()
-      if (hello.serverName === controlHost) return serveControl(socket, first, hello.alpn)
+      if (hello.state !== 'complete') return void socket.destroy()
+      // No name can't be a Mac's: the control host answers it, as for a Mac dialling an address.
+      if (hello.serverName === null || hello.serverName === controlHost)
+        return serveControl(socket, first, hello.alpn)
       const macId = macIdForHost(hello.serverName, options.macDomain)
       const link = macId === null ? undefined : macs.get(macId)
       if (macId === null || link === undefined || denied().has(macId)) return void socket.destroy()

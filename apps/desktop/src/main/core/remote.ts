@@ -24,10 +24,12 @@
 // Mac checked itself, and such a client may call every remote-enabled tool, the same set the
 // person turned on for remote agents, and none of Valet's own.
 
+import type { TLSSocket } from 'node:tls'
 import type { ToolDeclaration } from '@valet/core'
 import { ValetError } from '@valet/core'
 import {
   ACCESS_TOKEN_TTL_MS,
+  type AcceptedConnection,
   type AdminReader,
   type Authoring,
   type ConsentPrompt,
@@ -192,6 +194,12 @@ export class RemoteAccess {
   private queue: Promise<unknown> = Promise.resolve()
   /** This Mac's name at the relay, `<macId>.<relay host>`, while the relay client runs. */
   private relayHost: string | null = null
+  /**
+   * This Mac's name at the blind relay (docs/blind-relay.md), `<macId>.<mac domain>`, while its
+   * tunnel runs, and whether its certificate is ready, so the name is worth showing.
+   */
+  private tunnelHost: string | null = null
+  private tunnelReady = false
   /** Tokens minted for agents through the hub, by grant id. Memory only, like every access token. */
   private readonly hubTokens = new Map<string, { readonly token: string; readonly renewAt: number }>()
 
@@ -405,7 +413,13 @@ export class RemoteAccess {
       tools: tools.sort(),
       clients: this.clients.list().length,
       pendingConsents: this.consents.prompts().length,
-      relayUrl: this.relayHost === null ? null : `https://${this.relayHost}/mcp`,
+      // The blind relay's name once it can serve (TLS ends here); the Worker relay's otherwise.
+      relayUrl:
+        this.tunnelHost !== null && this.tunnelReady
+          ? `https://${this.tunnelHost}/mcp`
+          : this.relayHost === null
+            ? null
+            : `https://${this.relayHost}/mcp`,
     }
   }
 
@@ -417,6 +431,24 @@ export class RemoteAccess {
     if (host === this.relayHost) return
     this.relayHost = host
     this.deps.changed()
+  }
+
+  /**
+   * The blind relay's name for this Mac while its tunnel runs (null when it stops), and whether it
+   * has a certificate yet. The listener answers for the name from now on.
+   */
+  setTunnelHost(host: string | null, ready: boolean): void {
+    if (host === this.tunnelHost && ready === this.tunnelReady) return
+    this.tunnelHost = host
+    this.tunnelReady = host !== null && ready
+    this.deps.changed()
+  }
+
+  /** Where the tunnel hands a connection it ended TLS on: the listener, while remote access is on. */
+  tunnelAccept(): ((socket: TLSSocket, meta: AcceptedConnection) => void) | null {
+    const listener = this.listener
+    if (!this.current.enabled || listener === null) return null
+    return (socket, meta) => listener.accept(socket, meta)
   }
 
   /** Where the relay client forwards: the listener, while remote access is on and listening. */
@@ -543,7 +575,11 @@ export class RemoteAccess {
       tokens: this.tokens,
       authorization: this.authorization,
       hosts: () =>
-        new Set(this.relayHost === null ? this.current.hosts : [...this.current.hosts, this.relayHost]),
+        new Set([
+          ...this.current.hosts,
+          ...(this.relayHost === null ? [] : [this.relayHost]),
+          ...(this.tunnelHost === null ? [] : [this.tunnelHost]),
+        ]),
       info: this.deps.info,
       // A kept port, so the tunnel's configuration stays right. If something else holds it, this
       // fails rather than move: the tunnel would keep forwarding to whatever has it.
