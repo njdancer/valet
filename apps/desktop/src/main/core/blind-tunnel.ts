@@ -194,6 +194,15 @@ export function blindRelaySetup(
   return blindRelayFromEnv(env) ?? (run.test ? null : VALET_RELAY)
 }
 
+/**
+ * Whether a development build should sign in software for this relay: only for one the environment
+ * named (a local relay in an e2e run), never for Valet's own. Valet's relay keeps the Mac's Secure
+ * Enclave keys, or a Mac on it would become a different Mac and lose everything approved before.
+ */
+export function relayWantsSoftwareKeys(setup: BlindRelaySetup | null): boolean {
+  return setup !== null && setup !== VALET_RELAY
+}
+
 /** A blind relay named in the environment (see blindRelaySetup), or null. */
 export function blindRelayFromEnv(env: NodeJS.ProcessEnv): BlindRelaySetup | null {
   const controlHost = env['VALET_BLIND_RELAY']

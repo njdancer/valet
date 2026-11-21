@@ -15,6 +15,7 @@ import {
   blindRelaySetup,
   fileCertificateStore,
   keychainCertificateStore,
+  relayWantsSoftwareKeys,
   VALET_RELAY,
 } from '../../src/main/core/blind-tunnel'
 
@@ -90,6 +91,13 @@ describe('blindRelaySetup', () => {
       macDomain: 'valet.test',
     })
     expect(blindRelaySetup({ VALET_BLIND_RELAY: 'off' }, { release: false, test: false })).toBeNull()
+  })
+
+  it('keeps the Mac’s Secure Enclave keys on Valet’s relay; only a named local relay signs in software', () => {
+    expect(relayWantsSoftwareKeys(blindRelaySetup({}, { release: false, test: false }))).toBe(false)
+    expect(relayWantsSoftwareKeys(blindRelaySetup({}, { release: true, test: false }))).toBe(false)
+    expect(relayWantsSoftwareKeys(null)).toBe(false)
+    expect(relayWantsSoftwareKeys(blindRelaySetup(local, { release: false, test: false }))).toBe(true)
   })
 
   it('demo and e2e runs never reach the real relay unless told to', () => {
