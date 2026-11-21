@@ -388,6 +388,7 @@ export function routeByRequest(
   socket: Duplex,
   phone: ((socket: Duplex) => void) | null,
   other: ((socket: Duplex) => void) | null,
+  waitMs = 10_000,
 ): void {
   if (phone === null) {
     if (other === null) socket.destroy()
@@ -396,23 +397,31 @@ export function routeByRequest(
   }
   const chunks: Buffer[] = []
   let size = 0
-  const timer = setTimeout(() => socket.destroy(), 10_000)
+  let handed = false
+  // A phone sends its request line at once. Anything slower, such as a client that opens a
+  // connection early and sends its first request later, is not a phone: it goes to `other`
+  // as it is, which keeps its own idle limits. Never close it here.
+  const handOn = (target: ((socket: Duplex) => void) | null) => {
+    if (handed) return
+    handed = true
+    clearTimeout(timer)
+    socket.off('data', onData)
+    socket.pause()
+    if (chunks.length > 0) socket.unshift(Buffer.concat(chunks))
+    if (target === null) return socket.destroy()
+    // Whoever takes it attaches its readers now; then the bytes flow again.
+    target(socket)
+    socket.resume()
+  }
+  const timer = setTimeout(() => handOn(other), waitMs)
   const onData = (chunk: Buffer) => {
     chunks.push(chunk)
     size += chunk.length
     const head = Buffer.concat(chunks)
     const line = head.indexOf('\r\n')
     if (line === -1 && size < 8192) return
-    clearTimeout(timer)
-    socket.off('data', onData)
-    socket.pause()
-    socket.unshift(head)
     const first = head.subarray(0, line === -1 ? head.length : line).toString('latin1')
-    const target = isPhoneRequest(first) ? phone : other
-    if (target === null) return socket.destroy()
-    // Whoever takes it attaches its readers now; then the bytes flow again.
-    target(socket)
-    socket.resume()
+    handOn(isPhoneRequest(first) ? phone : other)
   }
   socket.on('data', onData)
   socket.once('close', () => clearTimeout(timer))

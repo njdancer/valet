@@ -414,6 +414,36 @@ describe('routeByRequest', () => {
     expect(got.sort()).toEqual(['other: POST /mcp HTTP/1.1', 'phone: GET /v1/phone/abc HTTP/1.1'])
   })
 
+  it('hands a connection that waits before its first request to the other side, never closing it', async () => {
+    const got: string[] = []
+    let closed = false
+    const take = (who: string) => (socket: import('node:stream').Duplex) => {
+      let text = ''
+      socket.on('data', (c: Buffer) => {
+        text += c.toString()
+        if (text.endsWith('\r\n\r\n')) got.push(`${who}: ${text.split('\r\n')[0]}`)
+      })
+    }
+    const server = await serve((socket) => {
+      socket.once('close', () => {
+        closed = true
+      })
+      routeByRequest(socket, take('phone'), take('other'), 100)
+    })
+    const address = server.address() as { port: number }
+    const client = netConnect({ host: '127.0.0.1', port: address.port })
+    cleanup.push(() => {
+      client.destroy()
+    })
+    await new Promise<void>((resolve) => client.once('connect', () => resolve()))
+    await delay(300)
+    expect(closed).toBe(false)
+    client.write('POST /register HTTP/1.1\r\nhost: x\r\n\r\n')
+    await until(() => got.length === 1)
+    expect(got).toEqual(['other: POST /register HTTP/1.1'])
+    expect(closed).toBe(false)
+  })
+
   it('knows a phone’s request line and nothing else', () => {
     expect(isPhoneRequest('GET /v1/phone/0123 HTTP/1.1')).toBe(true)
     expect(isPhoneRequest('POST /v1/phone/0123 HTTP/1.1')).toBe(false)
