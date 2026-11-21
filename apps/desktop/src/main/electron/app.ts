@@ -36,7 +36,7 @@ import type { HashRoute } from '../../shared/api'
 import { builtinPackages } from '../adapters'
 import { APP_SCHEME, APP_SCHEME_PRIVILEGES, createAppSchemeHandler } from '../core/app-scheme'
 import { ANCHOR_SERVICE, guardPrompts, macApprovalKeys, type PromptGuard } from '../core/approvals'
-import { blindRelayFromEnv, fileCertificateStore, keychainCertificateStore } from '../core/blind-tunnel'
+import { blindRelaySetup, fileCertificateStore, keychainCertificateStore } from '../core/blind-tunnel'
 import { cloudflaredFromEnv, fileTunnelStore, keychainTunnelStore } from '../core/cloudflare-remote'
 import {
   dataPaths,
@@ -441,10 +441,10 @@ async function main(): Promise<void> {
   // A relay for paired phones (docs/phone-channel.md): the one in Settings › Devices. A dev build
   // can name a local one in the environment instead, and then signs in software.
   const devRelay = strictApprovals ? null : relayFromEnv(process.env)
-  // The blind relay (docs/blind-relay.md): only a development build, from the environment, until
-  // the relay is deployed and has its setting. Its certificate's keys go in Valet's own Keychain
+  // The blind relay (docs/blind-relay.md): Valet's own, unless a development build names another
+  // (or a demo or e2e run names one at all). Its certificate's keys go in Valet's own Keychain
   // item, or a file in this data folder when there's no helper (a dev or e2e run).
-  const blindSetup = strictApprovals ? null : blindRelayFromEnv(process.env)
+  const blindSetup = blindRelaySetup(process.env, { release: strictApprovals, test: mode.demo || mode.e2e })
   const blindRelay =
     blindSetup === null
       ? null

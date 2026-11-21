@@ -90,6 +90,7 @@ export interface FakeControls {
   failNext(method: string, times?: number): void
   /** The connector URL through the relay, as the Mac reports it once the relay client runs. */
   setRelayUrl(url: string | null): void
+  setValetRelay(relay: RemoteSetup['valetRelay']): void
   /** Appends a record to the audit log, as the runtime would, and emits audit-appended. */
   appendAudit(event: AuditEvent): AuditRecord
   /** What the next settings.chooseOpPath() dialog picks; null is a cancelled dialog. */
@@ -820,6 +821,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     url: null,
     hosts: [],
     relayUrl: null,
+    valetRelay: null,
     cloudflare: { tunnel: null },
     tools: [
       ...remoteTools.map((t) => ({ ...t, enabled: false })),
@@ -1998,6 +2000,9 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       },
       setRelayUrl(url) {
         remoteSetupChanged({ ...remoteSetup, relayUrl: url })
+      },
+      setValetRelay(relay) {
+        remoteSetupChanged({ ...remoteSetup, valetRelay: relay })
       },
       failNext(method, times = 1) {
         failing.set(method, times)

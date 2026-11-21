@@ -2519,6 +2519,7 @@ describe('remote access', () => {
       url: null,
       hosts: [],
       relayUrl: null,
+      valetRelay: null,
       // No cloudflared in this build: "My Cloudflare account" isn't offered.
       cloudflare: null,
       tools: [],

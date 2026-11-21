@@ -65,9 +65,17 @@ from then on, and offers `https://<macId>.<mac domain>/mcp` as the connector add
 certificate is there. The certificate and its keys stay in Valet's own Keychain item
 (`valet.relay-certificate`), or a 0600 file in a development build without the helper.
 
-For now only a development build turns it on, with `VALET_BLIND_RELAY` (the control host) and
-`VALET_BLIND_MAC_DOMAIN`; `VALET_BLIND_RELAY_CONNECT` (a `wss://` address) and
-`VALET_ACME_DIRECTORY` point it at a local relay and CA. A connection with no server name (one
+Valet's relay (`relay.valet.dncr.me`, Macs under `valet.dncr.me`) is built in and on by default:
+a release always uses it. A development build uses it too, unless `VALET_BLIND_RELAY` names
+another control host with `VALET_BLIND_MAC_DOMAIN`, or is `off`. `VALET_BLIND_RELAY_CONNECT` (a
+`wss://` address) and `VALET_ACME_DIRECTORY` point it at a local relay and CA. Demo and e2e runs
+use a relay only when the environment names one, so tests never reach the real relay or Let's
+Encrypt.
+
+Remote access's "Through Valet's relay" card says how far it has got: connecting, setting up the
+Mac's address (the certificate), or waiting for Let's Encrypt's weekly limit with the time it tries
+again. It shows the Mac's own address to copy once the certificate is there. Remote access can be
+turned on meanwhile. A connection with no server name (one
 dialled by address) is answered as the control host.
 
 ## Deploying

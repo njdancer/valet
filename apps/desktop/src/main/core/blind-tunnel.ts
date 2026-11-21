@@ -176,10 +176,25 @@ export function fileCertificateStore(path: string): CertificateStore {
   }
 }
 
+/** Valet's relay (docs/blind-relay.md#deploying): the Fly app, Macs under valet.dncr.me. */
+export const VALET_RELAY: BlindRelaySetup = { controlHost: 'relay.valet.dncr.me', macDomain: 'valet.dncr.me' }
+
 /**
- * A blind relay a development build was started with: VALET_BLIND_RELAY (control host),
+ * The blind relay this run uses. A release uses Valet's relay. A development build does too,
+ * unless the environment names another: VALET_BLIND_RELAY (control host, or `off`),
  * VALET_BLIND_MAC_DOMAIN, and for a local one VALET_BLIND_RELAY_CONNECT and VALET_ACME_DIRECTORY.
+ * Demo and e2e runs use one only when the environment names it, so tests never reach the real one.
  */
+export function blindRelaySetup(
+  env: NodeJS.ProcessEnv,
+  run: { readonly release: boolean; readonly test: boolean },
+): BlindRelaySetup | null {
+  if (run.release) return VALET_RELAY
+  if (env['VALET_BLIND_RELAY'] === 'off') return null
+  return blindRelayFromEnv(env) ?? (run.test ? null : VALET_RELAY)
+}
+
+/** A blind relay named in the environment (see blindRelaySetup), or null. */
 export function blindRelayFromEnv(env: NodeJS.ProcessEnv): BlindRelaySetup | null {
   const controlHost = env['VALET_BLIND_RELAY']
   const macDomain = env['VALET_BLIND_MAC_DOMAIN']

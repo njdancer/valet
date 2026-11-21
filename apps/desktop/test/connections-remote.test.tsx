@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { createFakeApi } from '../src/renderer/dev/fake-api'
 import { ApproveConnectionSheet } from '../src/renderer/screens/connections/ApproveConnectionSheet'
 import { codeReady, connectorUrl, tunnelTarget } from '../src/renderer/screens/connections/consent'
-import { RemotePage } from '../src/renderer/screens/connections/RemotePage'
+import { RemotePage, valetRelayWords } from '../src/renderer/screens/connections/RemotePage'
 import { called, NOW, renderAt, renderPage } from './connections-helpers'
 
 describe('remote access', () => {
@@ -50,6 +50,45 @@ describe('remote access', () => {
     expect(called(api, 'app.copyText')).toEqual([['https://m1.relay.example/mcp']])
     await user.click(toggle)
     expect(called(api, 'remote.setEnabled')).toEqual([[true]])
+  })
+
+  it('says how far Valet’s relay has got, can be turned on meanwhile, and shows the address once ready', async () => {
+    const api = createFakeApi({ now: NOW })
+    const host = 'abc.valet.dncr.me'
+    api.fake.setValetRelay({ host, relay: 'online', certificate: 'issuing', retryAt: null })
+    renderPage(api, <RemotePage />)
+    const relay = within(await screen.findByRole('region', { name: 'Through Valet’s relay' }))
+    expect(relay.getByTestId('remote-valet-relay-state').textContent).toBe(
+      'Setting up this Mac’s address. This takes a minute or two.',
+    )
+    expect(relay.queryByTestId('remote-relay')).toBeNull()
+    expect(screen.getByRole('switch', { name: 'Remote access on' }).hasAttribute('disabled')).toBe(false)
+    act(() => {
+      api.fake.setValetRelay({ host, relay: 'online', certificate: 'ready', retryAt: null })
+      api.fake.setRelayUrl(`https://${host}/mcp`)
+    })
+    await waitFor(() => expect(relay.queryByTestId('remote-valet-relay-state')).toBeNull())
+    relay.getByText(`https://${host}/mcp`)
+  })
+
+  it('words each stage of Valet’s relay', () => {
+    const view = (relay: string, certificate: string, retryAt: string | null = null) =>
+      valetRelayWords(
+        { host: 'abc.valet.dncr.me', relay, certificate, retryAt } as Parameters<typeof valetRelayWords>[0],
+        new Date('2026-11-21T12:00:00Z'),
+      )
+    expect(view('connecting', 'waiting-for-relay')).toBe('Connecting to Valet’s relay…')
+    expect(view('online', 'waiting-for-relay')).toMatch(/^Setting up this Mac’s address/)
+    expect(view('online', 'queued', '2026-11-28T12:00:00Z')).toMatch(
+      /^Still setting up this Mac’s address\. Trying again \S/,
+    )
+    expect(view('online', 'queued', '2026-11-20T12:00:00Z')).toBe(
+      'Still setting up this Mac’s address. Trying again shortly.',
+    )
+    expect(view('online', 'ready')).toBeNull()
+    expect(view('offline', 'ready')).toBe('Reconnecting to Valet’s relay…')
+    expect(view('refused', 'ready')).toBe('Valet’s relay refused this Mac. Trying again shortly.')
+    expect(view('replaced', 'issuing')).toMatch(/Another copy of Valet/)
   })
 
   it('connects your own Cloudflare account, says plainly Cloudflare can read it, and disconnects', async () => {

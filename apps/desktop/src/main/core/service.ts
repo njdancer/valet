@@ -1165,6 +1165,7 @@ export class AppService {
       url: status.url,
       hosts: status.hosts,
       relayUrl: status.relayUrl,
+      valetRelay: this.tunnel?.view ?? null,
       cloudflare: this.cloudflare === null ? null : { tunnel: this.cloudflare.view },
       tools,
     }
