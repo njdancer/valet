@@ -107,7 +107,7 @@ async function startMac(relay: Runtime) {
     devices,
     keys,
     channel: signer.channel,
-    relayOrigin: RELAY_ORIGIN,
+    relayOrigin: () => RELAY_ORIGIN,
     link: client,
     receive: (from, text) => inbox.receive(from, text),
     approvePairing: async (pair) => {

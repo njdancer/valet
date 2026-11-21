@@ -11,7 +11,13 @@ import type { ApprovalBroker, MacToPhoneBody, PhoneOutbox } from './approvals/br
 import type { DeviceStore } from './approvals/devices'
 import { HubAgents } from './approvals/hub-agents'
 import type { TrustedLedger } from './approvals/ledger'
-import { PhoneChannel, type PhoneChannelOptions } from './approvals/phone-channel'
+import {
+  type ChannelEvent,
+  PhoneChannel,
+  type PhoneChannelOptions,
+  type RelayLink,
+} from './approvals/phone-channel'
+import { PhoneDoor } from './approvals/phone-door'
 import { PhoneInbox, type SafetySwitches } from './approvals/phone-inbox'
 import { RosterKeeper } from './approvals/roster-keeper'
 import type { MacSigner } from './approvals/signer'
@@ -85,6 +91,9 @@ export class Phones implements PhoneOutbox {
   private relayStatus: RelayClientStatus = { state: 'stopped' }
   private hub: HubView | null = null
   private online = new Set<string>()
+  /** Phones connected at this Mac's own address (the blind relay), as opposed to the Worker relay. */
+  private doorOnline = new Set<string>()
+  private door: PhoneDoor | null = null
   private devices: DeviceStore | null = null
   private unavailable: PhonesStatus['unavailableReason'] = 'approvals-unavailable'
   private relay: RelaySetup | null
@@ -140,12 +149,28 @@ export class Phones implements PhoneOutbox {
       { publicKey: keys.transportKey, sign: (payload) => keysOps.signTransport(payload) },
       binding,
     )
-    if (relay === null) {
-      this.unavailable = 'no-relay'
-      return
-    }
     this.unavailable = null
     const inbox = new PhoneInbox(parts.broker, parts.devices, parts.safety)
+    // Phones at this Mac's own address, through the blind relay (docs/blind-relay.md#phones).
+    const door =
+      tunnel === null
+        ? null
+        : new PhoneDoor({
+            devices: parts.devices,
+            origin: () => tunnel.origin,
+            onEvent: (event) => this.doorEvent(event),
+            now: parts.now,
+            ...(this.options.log === undefined ? {} : { log: this.options.log }),
+          })
+    this.door = door
+    // Once the channel is there to hear them.
+    const openDoor = () => tunnel?.setPhoneDoor(door === null ? null : (socket) => door.accept(socket))
+    const link: RelayLink = { send: (frame) => this.route(frame) }
+    if (relay === null) {
+      this.channel = await PhoneChannel.open(this.channelOptions(parts, keys, inbox, link, null))
+      openDoor()
+      return
+    }
     const roster = new RosterKeeper({
       ledger: parts.ledger,
       devices: parts.devices,
@@ -165,6 +190,7 @@ export class Phones implements PhoneOutbox {
       onPhones: (phones) => {
         parts.devices.setAccountPhones(phones)
         this.channel?.devicesChanged()
+        this.door?.devicesChanged()
         this.options.emit()
       },
       ...(this.options.log === undefined ? {} : { log: this.options.log }),
@@ -243,17 +269,38 @@ export class Phones implements PhoneOutbox {
         this.channel?.handle(event)
       },
     })
-    this.channel = await PhoneChannel.open({
+    this.client = client
+    this.channel = await PhoneChannel.open(
+      this.channelOptions(parts, keys, inbox, link, () => {
+        void roster.changed().catch(() => undefined)
+      }),
+    )
+    openDoor()
+    this.roster = roster
+    this.agents = agents
+    this.options.remote?.setRelayHost(client.publicHost)
+    client.start()
+  }
+
+  /** What the phone channel needs, whichever ways phones reach this Mac. */
+  private channelOptions(
+    parts: PhonesParts,
+    keys: Awaited<ReturnType<MacSigner['keys']>>,
+    inbox: PhoneInbox,
+    link: RelayLink,
+    afterPairing: (() => void) | null,
+  ): PhoneChannelOptions {
+    return {
       devices: parts.devices,
       keys,
-      channel: keysOps,
-      relayOrigin: relay.origin,
-      link: client,
+      channel: parts.signer.channel as NonNullable<MacSigner['channel']>,
+      relayOrigin: () => this.pairingOrigin(),
+      link,
       receive: (from, text) => inbox.receive(from, text),
       approvePairing: parts.approvePairing,
       paired: async (record) => {
         await parts.paired(record)
-        void roster.changed().catch(() => undefined)
+        afterPairing?.()
       },
       macName: this.options.macName,
       status: () => {
@@ -264,15 +311,65 @@ export class Phones implements PhoneOutbox {
       statePath: this.options.statePath,
       onChange: () => this.options.emit(),
       ...(this.options.log === undefined ? {} : { log: this.options.log }),
-    })
-    this.client = client
-    this.roster = roster
-    this.agents = agents
-    this.options.remote?.setRelayHost(client.publicHost)
-    client.start()
+    }
+  }
+
+  /**
+   * Where a new phone dials, named in the QR code: this Mac's own address once phones can reach it
+   * there, else the Worker relay while there is one.
+   */
+  private pairingOrigin(): string {
+    const tunnel = this.options.tunnel ?? null
+    const own = tunnel?.origin ?? null
+    if (own !== null && (tunnel?.servingPhones === true || this.relay === null)) return own
+    return this.relay?.origin ?? own ?? ''
+  }
+
+  /**
+   * The phone channel's frames, to whichever way each phone is connected: at this Mac's own
+   * address if it is there, else through the Worker relay.
+   */
+  private route(frame: Parameters<RelayLink['send']>[0]): boolean {
+    const door = this.door
+    const client = this.client
+    switch (frame.type) {
+      case 'envelope':
+        if (door?.send(frame) === true) return true
+        return client?.send(frame) ?? false
+      case 'pairing-challenge':
+      case 'pairing-result':
+        if (door?.pairingHere(frame.offerId) === true) return door.send(frame)
+        return client?.send(frame) ?? false
+      case 'pairing-open': {
+        const here = door?.send(frame) ?? false
+        const there = client?.send(frame) ?? false
+        return here || there
+      }
+      case 'device-register':
+      case 'device-unregister': {
+        const here = door?.send(frame) ?? false
+        // The channel keeps count of what the Worker relay lets in, so its answer is the one.
+        return client === null ? here : client.send(frame)
+      }
+      default:
+        return client?.send(frame) ?? false
+    }
+  }
+
+  private doorEvent(event: ChannelEvent): void {
+    if (event.type === 'device-online') {
+      if (event.online) this.doorOnline.add(event.deviceId)
+      else this.doorOnline.delete(event.deviceId)
+      this.options.emit()
+    }
+    this.channel?.handle(event)
   }
 
   stop(): void {
+    this.door?.stop()
+    this.door = null
+    this.doorOnline.clear()
+    this.options.tunnel?.setPhoneDoor(null)
     this.options.tunnel?.stop()
     this.options.remote?.setRelayHost(null)
     this.client?.stop()
@@ -298,19 +395,30 @@ export class Phones implements PhoneOutbox {
     return {
       available: this.unavailable === null,
       unavailableReason: this.unavailable,
-      relay: this.relayStatus.state === 'replaced' ? 'refused' : this.relayStatus.state,
-      relayOrigin: this.relay?.origin ?? null,
+      relay: this.connection(),
+      relayOrigin: this.relay?.origin ?? this.options.tunnel?.origin ?? null,
       worksLocked: null,
-      hub: this.hub,
+      // Only the blind relay: no hub to hear from, so no account; phones pair here.
+      hub: this.relay === null && this.channel !== null ? { state: 'off' } : this.hub,
       roster: this.roster?.view ?? { state: 'off', devices: 0 },
       phones: phones.map((p) => ({
         deviceId: p.deviceId,
         name: p.name,
         pairedAt: p.pairedAt,
-        online: this.online.has(p.deviceId),
+        online: this.online.has(p.deviceId) || this.doorOnline.has(p.deviceId),
       })),
       pairing: this.channel?.pairing ?? { step: 'idle' },
     }
+  }
+
+  /** How phones reach this Mac: the Worker relay's connection, or else the blind relay's. */
+  private connection(): PhonesStatus['relay'] {
+    if (this.relay === null) {
+      const state = this.options.tunnel?.view?.relay ?? 'stopped'
+      if (state === 'online') return this.options.tunnel?.servingPhones === true ? 'online' : 'connecting'
+      return state === 'replaced' ? 'refused' : state
+    }
+    return this.relayStatus.state === 'replaced' ? 'refused' : this.relayStatus.state
   }
 
   /** The account this Mac is on, for its phones, once the Mac is on the account's list. */
@@ -377,6 +485,7 @@ export class Phones implements PhoneOutbox {
   /** Tells the phone, and stops the relay letting it in. The caller revokes its record. */
   unpair(deviceId: string): void {
     this.channel?.unpair(deviceId)
+    this.door?.devicesChanged()
   }
 
   /**

@@ -173,6 +173,21 @@ public final class PhoneModel {
   public var allMacs: [PhoneModel] { [self] + otherMacs.filter { $0.phase == .paired } }
 
   private let transport: RelayTransport
+  /// Where Macs have their own address at the blind relay (docs/blind-relay.md#phones):
+  /// `<macId>.<macDomain>`. The phone dials it first and falls back to the relay it paired
+  /// through. Nil to dial only that relay.
+  private let macDomain: String?
+  /// The origin the open connection dialled; every challenge must name it.
+  private var dialled: String?
+  /// Dial the Mac's own address next (true) or the relay the phone paired through (false).
+  private var preferOwnAddress = true
+  /// When the open connection to the paired-through relay last saw the Mac go missing.
+  private var macMissingSince: TimeInterval?
+  /// How long the phone waits on the paired-through relay without the Mac before it tries the
+  /// Mac's own address again.
+  public static let retryOwnAddressAfter: TimeInterval = 15
+  /// Valet's blind relay names Macs under this domain (VALET_RELAY in the Mac app's blind-tunnel.ts).
+  public static let valetMacDomain = "valet.dncr.me"
   private let hub: HubTransport?
   private let macStore: @MainActor (String) -> PhoneStore
   private let store: PhoneStore
@@ -209,9 +224,10 @@ public final class PhoneModel {
 
   public init(
     transport: RelayTransport, store: PhoneStore, clock: PhoneClock = .system, keys keyFactory: Keys, hub: HubTransport? = nil,
-    macStore: @escaping @MainActor (String) -> PhoneStore = { _ in MemoryPhoneStore() }
+    macStore: @escaping @MainActor (String) -> PhoneStore = { _ in MemoryPhoneStore() }, macDomain: String? = nil
   ) {
     self.transport = transport
+    self.macDomain = macDomain.flatMap { Self.validDomain($0) ? $0.lowercased() : nil }
     self.hub = hub
     self.macStore = macStore
     self.store = store
@@ -458,16 +474,50 @@ public final class PhoneModel {
 
   // MARK: Connection
 
-  /// Opens the device channel. Called at launch when paired, and after the Mac registered us.
+  /// The Mac's own address at the blind relay, `https://<macId>.<macDomain>`, when there is one
+  /// and it isn't the address the phone paired through already.
+  public var ownAddress: String? {
+    guard let macDomain, let persisted else { return nil }
+    let own = "https://\(persisted.macId).\(macDomain)"
+    return own == persisted.relay ? nil : own
+  }
+
+  /// Where the open connection goes: the Mac's own address, or the relay the phone paired through.
+  public var dialledOwnAddress: Bool { dialled != nil && dialled == ownAddress }
+
+  /// Opens the device channel. Called at launch when paired, after the Mac registered us, and
+  /// every few seconds while the app is open.
   public func connect() {
     for mac in otherMacs { mac.connect() }
-    guard let persisted, connection == nil else { return }
-    let conn = transport.connect(relay: persisted.relay, macId: persisted.macId, path: .phone, onFrame: { [weak self] text in
+    guard let persisted else { return }
+    if connection != nil {
+      // Through the relay the phone paired through, which hasn't seen the Mac for a while: the
+      // Mac may be at its own address only (it moved to the blind relay). Try that again.
+      guard !dialledOwnAddress, ownAddress != nil, let since = macMissingSince,
+        clock.uptime() - since >= Self.retryOwnAddressAfter
+      else { return }
+      connection?.close()
+      connection = nil
+      connected = false
+      macMissingSince = nil
+      preferOwnAddress = true
+    }
+    let origin = (preferOwnAddress ? ownAddress : nil) ?? persisted.relay
+    dialled = origin
+    let conn = transport.connect(relay: origin, macId: persisted.macId, path: .phone, onFrame: { [weak self] text in
       self?.receive(frame: text)
     }, onClose: { [weak self] in
       self?.closed()
     })
     connection = conn
+  }
+
+  static func validDomain(_ domain: String) -> Bool {
+    let labels = domain.split(separator: ".", omittingEmptySubsequences: false)
+    return domain.count <= 200 && labels.count >= 2 && labels.allSatisfy { label in
+      (1...63).contains(label.count) && label.first != "-" && label.last != "-"
+        && label.allSatisfy { ($0.isASCII && ($0.isLetter || $0.isNumber)) || $0 == "-" }
+    }
   }
 
   public func disconnect() {
@@ -478,8 +528,13 @@ public final class PhoneModel {
   }
 
   private func closed() {
+    // Closed before the Mac answered: try the other way next time. A connection that worked is
+    // tried again first.
+    if !connected, ownAddress != nil { preferOwnAddress = !dialledOwnAddress }
+    else if connected, !dialledOwnAddress, ownAddress != nil { preferOwnAddress = true }
     connection = nil
     connected = false
+    macMissingSince = nil
     if macOnline { macLastSeen = clock.now() }
     macOnline = false
     touch()
@@ -490,13 +545,14 @@ public final class PhoneModel {
     guard let frame = try? RelayToPhone.parse(text) else { dropped += 1; return }
     switch frame {
     case let .challenge(nonce, relay):
-      // A challenge for another relay is someone else's; never sign it.
-      guard relay == persisted.relay else { dropped += 1; return }
+      // A challenge for anywhere but where the phone dialled is someone else's; never sign it.
+      guard relay == dialled else { dropped += 1; return }
       let payload = PhoneToRelay.helloPayload(id: keys.publicKeys.deviceId, nonce: nonce, relay: relay)
       guard let signature = try? keys.signTransport(Signing.input(.relayAuth, payload)) else { return }
       connection?.send(PhoneToRelay.hello(id: keys.publicKeys.deviceId, signature: Base64URL.encode(signature)).text)
     case let .ready(online):
       connected = true
+      preferOwnAddress = dialledOwnAddress
       setMacOnline(online)
       flushOutbox()
     case let .macOnline(online):
@@ -513,6 +569,7 @@ public final class PhoneModel {
   }
 
   private func setMacOnline(_ online: Bool) {
+    if online { macMissingSince = nil } else if macMissingSince == nil { macMissingSince = clock.uptime() }
     if macOnline && !online { macLastSeen = clock.now() }
     macOnline = online
     if online { macLastSeen = nil }
@@ -692,7 +749,7 @@ public final class PhoneModel {
       state.relay = relay
       state.macName = account.name(mac.deviceId)
       store.save(state)
-      let model = PhoneModel(transport: transport, store: store, clock: clock, keys: keyFactory)
+      let model = PhoneModel(transport: transport, store: store, clock: clock, keys: keyFactory, macDomain: macDomain)
       guard model.phase == .paired else { continue }
       otherMacs.append(model)
       if connection != nil { model.connect() }

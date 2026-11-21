@@ -7,7 +7,7 @@
 // registration yet, sends `pairing-reply` addressed by mac id and offer id; the relay passes it
 // to the Mac. The Mac answers with `pairing-result`, which the relay passes back.
 
-import { createDecipheriv, hkdfSync } from 'node:crypto'
+import { createDecipheriv, createHmac, hkdfSync } from 'node:crypto'
 import { z } from 'zod'
 import { keyIdSchema } from './devices'
 import { displayText } from './display-text'
@@ -63,8 +63,19 @@ export function pairingCode(
     Buffer.from(replyPlaintext),
     nonce,
   ])
-  const okm = Buffer.from(hkdfSync('sha256', secretBytes(secret), Buffer.from(macId), info, 4))
+  const okm = hkdfSha256(secretBytes(secret), Buffer.from(macId), info, 4)
   return String(okm.readUInt32BE(0) % 1_000_000).padStart(6, '0')
+}
+
+/**
+ * HKDF-SHA256 (RFC 5869) by hand, for one block of output. Node's hkdfSync refuses an `info` over
+ * 1024 bytes, which the code's transcript passes once the offer names a Mac's own address
+ * (docs/blind-relay.md#phones); RFC 5869 and CryptoKit, on the phone, set no such limit.
+ */
+function hkdfSha256(ikm: Buffer, salt: Buffer, info: Buffer, length: number): Buffer {
+  if (length > 32) throw new Error('one block only')
+  const prk = createHmac('sha256', salt).update(ikm).digest()
+  return createHmac('sha256', prk).update(info).update(Buffer.from([1])).digest().subarray(0, length)
 }
 
 /** AES-256-GCM: a 12-byte IV and the ciphertext with its 16-byte tag appended, both base64url. */

@@ -1,4 +1,4 @@
-import { createCipheriv, generateKeyPairSync, type KeyObject, randomBytes, sign } from 'node:crypto'
+import { createCipheriv, generateKeyPairSync, hkdfSync, type KeyObject, randomBytes, sign } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
   type ApprovalDecision,
@@ -92,6 +92,24 @@ describe('pairing', () => {
       pairingCode(secret, 'b'.repeat(32), 'offer', 'reply', nonce),
     ]
     expect(others.filter((c) => c === code).length).toBeLessThan(2)
+  })
+
+  it('derives the code by RFC 5869 HKDF, also for transcripts past Node’s 1024-byte info limit', () => {
+    const nonce = randomBytes(32).toString('base64url')
+    const expected = (offer: string, reply: string) => {
+      const info = Buffer.concat([
+        Buffer.from('valet/pairing/v1 sas\n'),
+        Buffer.from(`${Buffer.byteLength(offer)}:${offer}${Buffer.byteLength(reply)}:${reply}`),
+        Buffer.from(nonce, 'base64url'),
+      ])
+      const okm = Buffer.from(hkdfSync('sha256', Buffer.from(secret, 'base64url'), Buffer.from(macId), info, 4))
+      return String(okm.readUInt32BE(0) % 1_000_000).padStart(6, '0')
+    }
+    expect(pairingCode(secret, macId, 'offer', 'reply', nonce)).toBe(expected('offer', 'reply'))
+    // An offer naming https://<macId>.<mac domain> takes the transcript past 1024 bytes.
+    const long = 'o'.repeat(700)
+    expect(() => expected(long, 'r'.repeat(400))).toThrow()
+    expect(pairingCode(secret, macId, long, 'r'.repeat(400), nonce)).toMatch(/^\d{6}$/)
   })
 
   it('lets a phone send a pairing reply before it has a hello, and nothing else', () => {
