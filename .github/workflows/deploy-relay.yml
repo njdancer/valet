@@ -5,7 +5,10 @@ name: Deploy blind relay
 # CI run passed, including check (ubuntu-latest), which runs the relay's end-to-end tests and its
 # certificate test against Pebble; the commit is still main's tip; and it changed something the
 # relay runs. Needs the FLY_API_TOKEN secret (a deploy token for the valet-relay app); without it
-# the job says so and stops.
+# the job says so and stops. With CLOUDFLARE_DNS_TOKEN (Zone › DNS › Edit on dncr.me) it also points
+# the relay's names at its dedicated Fly addresses after each run (apps/blind-relay/scripts/
+# sync-dns.mjs). That token lives here, never on the relay. GitHub's runners have no IPv6, so the
+# version live is read through flyctl, not from /healthz.
 
 on:
   workflow_run:
@@ -29,6 +32,9 @@ concurrency:
 
 env:
   RELAY_URL: https://relay.valet.dncr.me
+  FLY_APP: valet-relay
+  DNS_ZONE: dncr.me
+  DNS_NAMES: relay.valet.dncr.me *.valet.dncr.me
   # flyctl's version. Bump by hand after reading its changelog.
   FLYCTL_VERSION: 0.3.209
 
@@ -72,10 +78,7 @@ jobs:
             echo "check (ubuntu-latest) on $sha: ${check:-not run}; not deploying"
             echo "deploy=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          live=$(curl -fsS --max-time 10 "$RELAY_URL/healthz" | awk '{print $2}' || true)
-          echo "live: ${live:-unknown}, main: $sha"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "live=$live" >> "$GITHUB_OUTPUT"
           echo "deploy=true" >> "$GITHUB_OUTPUT"
 
       - if: steps.gate.outputs.deploy == 'true'
@@ -84,11 +87,34 @@ jobs:
           ref: ${{ steps.gate.outputs.sha }}
           fetch-depth: 0
 
+      - name: flyctl
+        if: steps.gate.outputs.deploy == 'true'
+        run: |
+          set -euo pipefail
+          base="https://github.com/superfly/flyctl/releases/download/v$FLYCTL_VERSION"
+          file="flyctl_${FLYCTL_VERSION}_Linux_x86_64.tar.gz"
+          cd "$RUNNER_TEMP"
+          curl -fsSL -o "$file" "$base/$file"
+          curl -fsSL -o checksums.txt "$base/checksums.txt"
+          grep " $file\$" checksums.txt | sha256sum -c
+          tar xzf "$file" flyctl
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: the version live now
+        if: steps.gate.outputs.deploy == 'true'
+        id: live
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          live=$(flyctl machine list -a "$FLY_APP" --json 2>/dev/null | jq -r '[.[] | select(.state == "started") | .config.env.RELAY_VERSION // empty][0] // empty' || true)
+          echo "live: ${live:-none}"
+          echo "live=$live" >> "$GITHUB_OUTPUT"
+
       - name: did anything the relay runs change since the live version
         if: steps.gate.outputs.deploy == 'true'
         id: changed
         env:
-          LIVE: ${{ steps.gate.outputs.live }}
+          LIVE: ${{ steps.live.outputs.live }}
           SHA: ${{ steps.gate.outputs.sha }}
           FORCE: ${{ inputs.force }}
         run: |
@@ -115,19 +141,6 @@ jobs:
           mkdir -p "$RUNNER_TEMP/relay"
           cp apps/blind-relay/dist/main.js apps/blind-relay/Dockerfile apps/blind-relay/fly.toml "$RUNNER_TEMP/relay/"
 
-      - name: flyctl
-        if: steps.changed.outputs.run == 'true'
-        run: |
-          set -euo pipefail
-          base="https://github.com/superfly/flyctl/releases/download/v$FLYCTL_VERSION"
-          file="flyctl_${FLYCTL_VERSION}_Linux_x86_64.tar.gz"
-          cd "$RUNNER_TEMP"
-          curl -fsSL -o "$file" "$base/$file"
-          curl -fsSL -o checksums.txt "$base/checksums.txt"
-          grep " $file\$" checksums.txt | sha256sum -c
-          tar xzf "$file" flyctl
-          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
-
       - name: deploy
         if: steps.changed.outputs.run == 'true'
         env:
@@ -136,14 +149,39 @@ jobs:
         working-directory: ${{ runner.temp }}/relay
         run: flyctl deploy --remote-only --env "RELAY_VERSION=$SHA" --wait-timeout 300
 
-      - name: the new version answers
+      - name: point the relay's names at its addresses
+        if: steps.gate.outputs.deploy == 'true'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          CLOUDFLARE_DNS_TOKEN: ${{ secrets.CLOUDFLARE_DNS_TOKEN }}
+        run: |
+          if [ -z "$CLOUDFLARE_DNS_TOKEN" ]; then
+            echo "::notice::CLOUDFLARE_DNS_TOKEN is not set: DNS for the relay is left as it is"; exit 0
+          fi
+          flyctl ips list -a "$FLY_APP" --json > "$RUNNER_TEMP/ips.json"
+          # shellcheck disable=SC2086 # DNS_NAMES is a list of names, word-split on purpose
+          node apps/blind-relay/scripts/sync-dns.mjs "$DNS_ZONE" $DNS_NAMES < "$RUNNER_TEMP/ips.json"
+
+      - name: the new version runs
         if: steps.changed.outputs.run == 'true'
         env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           SHA: ${{ steps.gate.outputs.sha }}
         run: |
           for i in $(seq 1 30); do
-            live=$(curl -fsS --max-time 10 "$RELAY_URL/healthz" | awk '{print $2}' || true)
-            [ "$live" = "$SHA" ] && { echo "live: $live"; exit 0; }
+            live=$(flyctl machine list -a "$FLY_APP" --json | jq -r '[.[] | select(.state == "started") | .config.env.RELAY_VERSION // empty][0] // empty' || true)
+            [ "$live" = "$SHA" ] && break
             sleep 10
           done
-          echo "the relay didn't answer with $SHA (last: ${live:-nothing})"; exit 1
+          [ "$live" = "$SHA" ] || { echo "the relay isn't running $SHA (last: ${live:-nothing})"; exit 1; }
+          echo "running: $live"
+          # Over IPv4 when the relay has a dedicated one; the runners can't reach IPv6.
+          if flyctl ips list -a "$FLY_APP" --json | jq -e 'any(.[]; .Type == "v4")' > /dev/null; then
+            for i in $(seq 1 30); do
+              answer=$(curl -4 -fsS --max-time 10 "$RELAY_URL/healthz" | awk '{print $2}' || true)
+              [ "$answer" = "$SHA" ] && { echo "/healthz: $answer"; exit 0; }
+              sleep 10
+            done
+            echo "/healthz didn't answer with $SHA (last: ${answer:-nothing})"; exit 1
+          fi
+          echo "::notice::No dedicated IPv4, so /healthz wasn't checked from here."

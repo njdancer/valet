@@ -70,6 +70,27 @@ For now only a development build turns it on, with `VALET_BLIND_RELAY` (the cont
 `VALET_ACME_DIRECTORY` point it at a local relay and CA. A connection with no server name (one
 dialled by address) is answered as the control host.
 
+## Deploying
+
+`.github/workflows/deploy-relay.yml` deploys main's tip to the Fly app `valet-relay` after CI
+passes, when anything the relay runs has changed. It needs the `FLY_API_TOKEN` secret.
+
+With `CLOUDFLARE_DNS_TOKEN` (Zone › DNS › Edit on dncr.me) it then points `relay.valet.dncr.me` and
+`*.valet.dncr.me` at the app's dedicated addresses (`apps/blind-relay/scripts/sync-dns.mjs`):
+
+- an A record per dedicated IPv4 and an AAAA record per dedicated IPv6;
+- DNS only, because Cloudflare's proxy would end TLS;
+- stale addresses removed, nothing else in the zone touched.
+
+Fly's dedicated addresses don't change while they're held, so this only matters when one is added or
+released. The token stays in GitHub: a DNS updater on the relay would hand anyone who broke into it
+the whole zone.
+
+**IPv4.** Fly's free shared IPv4 reaches an app only through Fly's own HTTP and TLS handlers, which
+end TLS at Fly, so the blind relay can't use it. Raw TCP on IPv4 needs a dedicated IPv4. Without
+one, only callers with IPv6 reach the relay. That rules out GitHub's runners, so the workflow reads
+the version live through flyctl rather than `/healthz`.
+
 ## Tests
 
 - `packages/core/test/tunnel.test.ts`: the ClientHello parser against real Node hellos, frames,
@@ -83,3 +104,4 @@ dialled by address) is answered as the control host.
   TLS-ALPN-01. The app gets its certificate through the relay; an agent signs in with the Mac's
   OAuth server from a real browser and calls a tool at the Mac's address; pausing closes it; a relay
   restart costs nothing, not even a new certificate.
+- `apps/blind-relay/test/sync-dns.test.ts`: the deploy's DNS step against a stand-in zone.
