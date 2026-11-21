@@ -15,12 +15,13 @@
   "dependencies": {
     "@valet/core": "workspace:*",
     "ws": "8.21.0",
-    "zod": "^4.6.7"
+    "zod": "^4.6.7",
+    "@valet/acme": "workspace:*"
   },
   "devDependencies": {
     "@types/ws": "^8.18.1",
-    "@valet/acme": "workspace:*",
     "@valet/mcp-server": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.32.2"
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@valet/fake-acme": "workspace:*"
   }
 }

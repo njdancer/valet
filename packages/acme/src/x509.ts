@@ -27,6 +27,8 @@ const OID = {
   subjectAltName: '2.5.29.17',
   basicConstraints: '2.5.29.19',
   extKeyUsage: '2.5.29.37',
+  subjectKeyIdentifier: '2.5.29.14',
+  authorityKeyIdentifier: '2.5.29.35',
   serverAuth: '1.3.6.1.5.5.7.3.1',
   /** RFC 8737 section 6.1. */
   acmeIdentifier: '1.3.6.1.5.5.7.1.31',
@@ -89,17 +91,41 @@ export interface SelfSignedOptions {
 
 /** A self-signed certificate for `names`. DER. */
 export function selfSignedCertificate(keys: KeyPair, options: SelfSignedOptions): Der {
+  return certificate({ ...options, subjectKey: keys.publicKey, issuerKey: keys.privateKey })
+}
+
+export interface CertificateOptions extends SelfSignedOptions {
+  readonly subjectKey: KeyObject
+  /** Signs it. */
+  readonly issuerKey: KeyObject
+  /** The issuer's common name and public key, when it is not self-signed (a test CA). */
+  readonly issuer?: { readonly name: string; readonly publicKey: KeyObject }
+  /** A CA certificate (basicConstraints cA), for a test CA's root. */
+  readonly ca?: boolean
+  readonly serial?: Buffer
+}
+
+/** A certificate, for a test CA or a self-signed one. DER. */
+export function certificate(options: CertificateOptions): Der {
   const first = options.names[0]
   if (first === undefined) throw new Error('no names')
   const notBefore = options.notBefore ?? new Date(Date.now() - 60_000)
   const notAfter = options.notAfter ?? new Date(notBefore.getTime() + 7 * 86_400_000)
-  const serial = randomBytes(16)
+  const serial = options.serial ?? randomBytes(16)
   serial[0] = (serial[0] as number) & 0x7f
   const extensions = [
     subjectAltName(options.names),
-    extension(OID.basicConstraints, sequence(), true),
-    extension(OID.extKeyUsage, sequence(oid(OID.serverAuth))),
+    extension(OID.basicConstraints, options.ca === true ? sequence(boolean(true)) : sequence(), true),
+    extension(OID.subjectKeyIdentifier, octetString(keyIdentifier(options.subjectKey))),
   ]
+  if (options.ca !== true) extensions.push(extension(OID.extKeyUsage, sequence(oid(OID.serverAuth))))
+  if (options.issuer !== undefined)
+    extensions.push(
+      extension(
+        OID.authorityKeyIdentifier,
+        sequence(implicitPrimitive(0, keyIdentifier(options.issuer.publicKey))),
+      ),
+    )
   if (options.acmeKeyAuthorization !== undefined) {
     const digest = createHash('sha256').update(options.acmeKeyAuthorization, 'utf8').digest()
     extensions.push(extension(OID.acmeIdentifier, octetString(digest), true))
@@ -108,13 +134,22 @@ export function selfSignedCertificate(keys: KeyPair, options: SelfSignedOptions)
     explicit(0, integer(Buffer.from([2]))),
     integer(serial),
     signatureAlgorithm(),
-    name(first),
+    name(options.issuer?.name ?? first),
     sequence(time(notBefore), time(notAfter)),
     name(first),
-    spki(keys.publicKey),
+    spki(options.subjectKey),
     explicit(3, sequence(...extensions)),
   )
-  return signed(tbs, keys.privateKey)
+  return signed(tbs, options.issuerKey)
+}
+
+/** RFC 5280 section 4.2.1.2, method 1: SHA-1 of the public key's bits. */
+function keyIdentifier(key: KeyObject): Buffer {
+  const der = spki(key)
+  // The BIT STRING is the last element of the SPKI; for P-256 its 65 key bytes end the encoding.
+  return createHash('sha1')
+    .update(der.subarray(der.length - 65))
+    .digest()
 }
 
 export function toPem(der: Der, label: 'CERTIFICATE' | 'CERTIFICATE REQUEST'): string {

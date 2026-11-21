@@ -96,6 +96,9 @@ importers:
 
   apps/blind-relay:
     dependencies:
+      '@valet/acme':
+        specifier: workspace:*
+        version: link:../../packages/acme
       '@valet/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -112,9 +115,9 @@ importers:
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.2
-      '@valet/acme':
+      '@valet/fake-acme':
         specifier: workspace:*
-        version: link:../../packages/acme
+        version: link:../../fakes/acme
       '@valet/mcp-server':
         specifier: workspace:*
         version: link:../../packages/mcp-server
@@ -303,6 +306,12 @@ importers:
       wrangler:
         specifier: ^4.158.0
         version: 4.158.0(@cloudflare/workers-types@5.20261109.1)(@types/node@24.19.2)
+
+  fakes/acme:
+    dependencies:
+      '@valet/acme':
+        specifier: workspace:*
+        version: link:../../packages/acme
 
   fakes/example-services:
     dependencies:
