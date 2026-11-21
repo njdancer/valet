@@ -36,7 +36,12 @@ import type { HashRoute } from '../../shared/api'
 import { builtinPackages } from '../adapters'
 import { APP_SCHEME, APP_SCHEME_PRIVILEGES, createAppSchemeHandler } from '../core/app-scheme'
 import { ANCHOR_SERVICE, guardPrompts, macApprovalKeys, type PromptGuard } from '../core/approvals'
-import { blindRelaySetup, fileCertificateStore, keychainCertificateStore } from '../core/blind-tunnel'
+import {
+  approverWanted,
+  blindRelaySetup,
+  fileCertificateStore,
+  keychainCertificateStore,
+} from '../core/blind-tunnel'
 import { cloudflaredFromEnv, fileTunnelStore, keychainTunnelStore } from '../core/cloudflare-remote'
 import {
   dataPaths,
@@ -483,7 +488,9 @@ async function main(): Promise<void> {
         }
   const approverKeys = await macApprovalKeys({
     packaged: strictApprovals,
-    approverPath: devRelay === null && blindSetup === null ? nativeHelper('valet-approver') : null,
+    approverPath: approverWanted({ release: strictApprovals, devRelay: devRelay !== null, env: process.env })
+      ? nativeHelper('valet-approver')
+      : null,
     // A demo launch keeps its anchor in its own data folder, never the Keychain.
     keychain:
       keychainHelper === null || mode.demo ? null : new KeychainHelper({ helperPath: keychainHelper }),
