@@ -162,6 +162,8 @@ export interface RemoteAccessDeps {
   /** The policy refused a remote call: audit it like the app's own refusals. */
   readonly refused: (call: ToolCall, reason: RemoteRefusal) => Promise<void>
   readonly start?: (options: RemoteListenerOptions) => Promise<RunningRemoteListener>
+  /** Where the OAuth server's one line per request goes; the console (the app's log) without it. */
+  readonly log?: (line: string) => void
 }
 
 /**
@@ -225,6 +227,8 @@ export class RemoteAccess {
       consents: this.consents,
       now: deps.now,
       consentRequested: () => deps.consentRequested?.(),
+      // The Mac's log: which step of a connector's sign-in came, and what it got back.
+      log: deps.log ?? ((line) => console.log(line)),
       audit: (event) => {
         void deps.audit({ ...event, clientId: `remote:${event.clientId}` }).catch(() => undefined)
         // Its sessions go with its tokens.

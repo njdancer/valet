@@ -125,6 +125,7 @@ interface Setup {
   readonly authorization: RemoteAuthorization
   readonly asked: string[]
   readonly audits: OAuthAuditEvent[]
+  readonly lines: string[]
   readonly clock: { now: number }
   close(): Promise<void>
 }
@@ -139,6 +140,7 @@ async function setup(options: { limits?: Partial<OAuthLimits> } = {}): Promise<S
   const tokens = new RemoteAccessTokens({ now })
   const asked: string[] = []
   const audits: OAuthAuditEvent[] = []
+  const lines: string[] = []
   const big = { limit: 1000, windowMs: 60_000 }
   const authorization = new RemoteAuthorization({
     tokens,
@@ -156,6 +158,7 @@ async function setup(options: { limits?: Partial<OAuthLimits> } = {}): Promise<S
     },
     consentRequested: (request) => asked.push(request.id),
     audit: (event) => audits.push(event),
+    log: (line) => lines.push(line),
   })
   const listener = await startRemoteListener({
     caller,
@@ -171,7 +174,7 @@ async function setup(options: { limits?: Partial<OAuthLimits> } = {}): Promise<S
     await listener.close()
   }
   cleanup.push(close)
-  return { port: listener.port, clients, consents, tokens, authorization, asked, audits, clock, close }
+  return { port: listener.port, clients, consents, tokens, authorization, asked, audits, lines, clock, close }
 }
 
 async function register(
@@ -610,6 +613,51 @@ describe('/token', () => {
     expect(refused.isError).toBe(true)
     // The same token on the other public name is for another resource.
     await expect(connect(s.port, body.access_token, OTHER_HOST)).rejects.toThrow()
+  })
+
+  it('logs one line per request with its outcome, never a code, secret, state or token', async () => {
+    const s = await setup()
+    const reg = JSON.parse(
+      (await register(s, { redirect_uris: [REDIRECT], token_endpoint_auth_method: 'client_secret_post' }))
+        .body,
+    ) as { client_id: string; client_secret: string }
+    const page = await send(s.port, 'GET', authorizePath(reg.client_id))
+    const pending = s.consents.byHandle(
+      new URL(waitPath(page.body), 'https://x').searchParams.get('h') as string,
+    )
+    s.consents.approve(pending?.code as string, ['woolworths.view_cart'])
+    const done = await send(s.port, 'GET', waitPath(page.body))
+    const code = new URL(done.headers['location'] as string).searchParams.get('code') as string
+    // A browser-side exchange carries an Origin: refused, and the line says why.
+    const withOrigin = await send(s.port, 'POST', '/token', {
+      ...form({ grant_type: 'authorization_code', client_id: reg.client_id, code, code_verifier: VERIFIER }),
+      headers: { 'content-type': 'application/x-www-form-urlencoded', origin: 'https://claude.example' },
+    })
+    expect(withOrigin.status).toBe(403)
+    const ok = await exchange(s, reg.client_id, code, { client_secret: reg.client_secret })
+    expect(ok.status).toBe(200)
+    const tokens = JSON.parse(ok.body) as { access_token: string; refresh_token: string }
+    expect((await exchange(s, reg.client_id, code, { client_secret: reg.client_secret })).status).toBe(400)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const shape = s.lines.map((line) => line.replace(/ \d+ms/, ''))
+    expect(shape).toEqual([
+      '[oauth] POST /register 201',
+      '[oauth] GET /authorize 200',
+      '[oauth] GET /authorize/wait 302',
+      '[oauth] POST /token 403 forbidden origin="https://claude.example"',
+      '[oauth] POST /token 200',
+      '[oauth] POST /token 400 invalid_grant',
+    ])
+    const all = s.lines.join('\n')
+    for (const secret of [
+      code,
+      reg.client_secret,
+      tokens.access_token,
+      tokens.refresh_token,
+      'st-123',
+      CHALLENGE,
+    ])
+      expect(all).not.toContain(secret)
   })
 
   it('refuses a wrong verifier, redirect URI or resource, and the code is spent either way', async () => {
