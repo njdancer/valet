@@ -63,6 +63,7 @@ function run(bin: string, args: string[], env: Record<string, string> = {}): Chi
   child.stderr?.on('data', (c) => {
     out += c
   })
+  child.on('error', (error) => console.error(`${bin}: ${error.message}`))
   child.on('exit', (code) => {
     if (code !== null && code !== 0) console.error(`${bin} exited ${code}:\n${out.slice(-2000)}`)
   })

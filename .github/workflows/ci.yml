@@ -147,6 +147,7 @@ jobs:
           echo "a817449d1f05ae58bcb7bf073b4cebe5d31512f859ba4b83951bd825d28d2114  challtestsrv.tgz" | sha256sum -c
           tar xzf pebble.tgz && tar xzf challtestsrv.tgz
           cp pebble-linux-amd64/linux/amd64/pebble pebble-challtestsrv-linux-amd64/linux/amd64/pebble-challtestsrv .
+          chmod +x pebble pebble-challtestsrv
           echo "PEBBLE_DIR=$RUNNER_TEMP/pebble" >> "$GITHUB_ENV"
       - if: matrix.os == 'macos-latest'
         run: pnpm check
