@@ -5,6 +5,7 @@
 // (a file in a development build without the helper), never sent anywhere.
 
 import { readFile, rename, writeFile } from 'node:fs/promises'
+import type { Duplex } from 'node:stream'
 import type { TLSSocket } from 'node:tls'
 import {
   CertificateManager,
@@ -22,6 +23,7 @@ import {
   TunnelClient,
   type TunnelClientStatus,
 } from '@valet/mcp-server'
+import { routeByRequest } from './approvals/phone-door'
 
 export interface BlindRelaySetup {
   /** Where Macs dial in, e.g. relay.valet.dncr.me. */
@@ -58,6 +60,7 @@ export interface BlindTunnelView {
 export class BlindTunnel {
   private client: TunnelClient | null = null
   private certificates: CertificateManager | null = null
+  private phoneDoor: ((socket: Duplex) => void) | null = null
 
   constructor(private readonly options: BlindTunnelOptions) {}
 
@@ -82,7 +85,7 @@ export class BlindTunnel {
       binding,
       certificate: () => certificates.certificate(),
       acmeChallenge: (name) => certificates.challenge(name),
-      listener: () => this.options.accept(),
+      listener: () => this.listener(),
       ...(setup.connectUrl === undefined ? {} : { connectUrl: setup.connectUrl }),
       ...(setup.WebSocket === undefined ? {} : { WebSocket: setup.WebSocket }),
       onStatus: (status) => {
@@ -97,6 +100,32 @@ export class BlindTunnel {
     this.update(host)
     void certificates.start().catch((error) => this.options.log?.(`[certificate] ${String(error)}`))
     client.start()
+  }
+
+  /**
+   * Where phones' connections go (/v1/phone/, PhoneDoor), or null. Phones are served whether or
+   * not remote access is on: approvals don't stop when agents are paused.
+   */
+  setPhoneDoor(accept: ((socket: Duplex) => void) | null): void {
+    this.phoneDoor = accept
+  }
+
+  /** This Mac's own origin at the relay, https://<macId>.<mac domain>, while the tunnel runs. */
+  get origin(): string | null {
+    return this.client === null ? null : `https://${this.client.publicHost}`
+  }
+
+  /** Whether phones can reach this Mac at its own address now: online, with its certificate. */
+  get servingPhones(): boolean {
+    return this.client?.status.state === 'online' && (this.certificates?.certificate() ?? null) !== null
+  }
+
+  private listener(): ((socket: TLSSocket, meta: AcceptedConnection) => void) | null {
+    const remote = this.options.accept()
+    const phone = this.phoneDoor
+    if (remote === null && phone === null) return null
+    return (socket, meta) =>
+      routeByRequest(socket, phone, remote === null ? null : (s) => remote(s as TLSSocket, meta))
   }
 
   stop(): void {

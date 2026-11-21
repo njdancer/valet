@@ -95,7 +95,7 @@ async function setup() {
     devices,
     keys,
     channel: signer.channel,
-    relayOrigin: 'https://relay.test',
+    relayOrigin: () => 'https://relay.test',
     link,
     receive: (from, text) => inbox.receive(from, text),
     approvePairing: async (pair) => {

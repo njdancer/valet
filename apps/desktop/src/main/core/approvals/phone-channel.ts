@@ -95,8 +95,8 @@ export interface PhoneChannelOptions {
   readonly devices: DeviceStore
   readonly keys: MacKeys
   readonly channel: ChannelKeys
-  /** The relay origin, named in the QR code. */
-  readonly relayOrigin: string
+  /** Where the phone dials, named in the QR code: the Mac's own address, or the Worker relay's. */
+  readonly relayOrigin: () => string
   readonly link: RelayLink
   /** The phone's opened message, for the PhoneInbox. */
   readonly receive: (from: string, plaintext: string) => Promise<unknown>
@@ -352,7 +352,9 @@ export class PhoneChannel implements PhoneOutbox {
         this.inbound = this.inbound.then(() => this.receiveEnvelope(event.envelope)).catch(() => undefined)
         return
       case 'pairing-reply':
-        void this.receivePairingReply(event.offerId, event.sealed)
+        void this.receivePairingReply(event.offerId, event.sealed).catch(() =>
+          this.options.log?.('phone channel: could not answer a pairing reply'),
+        )
         return
       case 'relay-locked':
         return
@@ -438,7 +440,7 @@ export class PhoneChannel implements PhoneOutbox {
       macId: this.macId,
       macApprovalKey: this.options.keys.approvalKey,
       macAgreementKey: this.options.keys.agreementKey,
-      relay: this.options.relayOrigin,
+      relay: this.options.relayOrigin(),
       secret,
       expiresAt: new Date(expiresAt).toISOString(),
     })

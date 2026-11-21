@@ -33,16 +33,18 @@ export class Phone {
   readonly frames: Record<string, unknown>[] = []
   readonly messages: Record<string, unknown>[] = []
   socket: WebSocket | null = null
+  /** Opens the socket: the platform's WebSocket, or one that trusts a test CA (the blind relay). */
+  connect: (url: string) => WebSocket = (url) => new WebSocket(url)
   private seq = 0
   private lastInbound = 0
   private readonly held = new Map<number, Record<string, unknown>>()
   constructor(
-    /** Where to dial: http://127.0.0.1:<port>. */
-    private readonly url: string,
+    /** Where to dial: http://127.0.0.1:<port>. Changed to reach the same Mac another way. */
+    public url: string,
     private readonly macId: string,
     private readonly macAgreementKey: string,
-    /** The relay's origin, named in its challenges. */
-    private readonly origin: string,
+    /** The relay's origin, named in its challenges (or the Mac's own, at the blind relay). */
+    public origin: string,
     private readonly onClose: (close: () => void) => void = () => undefined,
     /** The same phone's keys, to reach another Mac (the account's list, relay-hub.md step 4c). */
     keys?: PhoneKeys,
@@ -56,7 +58,7 @@ export class Phone {
   agree = async (peer: KeyObject) => diffieHellman({ privateKey: this.agreement.privateKey, publicKey: peer })
 
   dial(onChallenge: (nonce: string) => void): Promise<void> {
-    const socket = new WebSocket(`${this.url.replace(/^http/, 'ws')}/v1/phone/${this.macId}`)
+    const socket = this.connect(`${this.url.replace(/^http/, 'ws')}/v1/phone/${this.macId}`)
     this.socket = socket
     this.onClose(() => socket.close())
     socket.addEventListener('message', (event) => {

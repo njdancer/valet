@@ -78,6 +78,40 @@ again. It shows the Mac's own address to copy once the certificate is there. Rem
 turned on meanwhile. A connection with no server name (one
 dialled by address) is answered as the control host.
 
+## Phones
+
+The iPhone reaches each Mac at the Mac's own address too: `wss://<macId>.<mac domain>/v1/phone/<macId>`,
+TLS ended on the Mac like an agent's connection. The Mac answers that path itself
+(`apps/desktop/src/main/core/approvals/phone-door.ts`) with exactly the frames the Worker relay
+uses for phones ([relay-worker.md](relay-worker.md#connections)), so the phone app and the phone
+channel above it are the same whichever way a phone comes in:
+
+- a challenge naming the Mac's own origin (`https://<macId>.<mac domain>`), answered by a hello
+  the phone's transport key signs for that origin; a challenge for any other origin is never signed;
+- then sealed envelopes both ways, each checked to be from that phone to this Mac;
+- or, before a hello, one sealed pairing reply to an offer the Mac opened.
+
+What the Worker relay checks because it is a stranger, the Mac checks against its own device list:
+a phone it paired, or one on the account's list. There is no registration, and a phone removed
+there is shut out at once (4403). A stranger and a wrong signature get the same refusal (4401). A
+second connection from the same phone replaces the first (4409). Phones are served whether or not
+remote access is on, because the tunnel hands a connection whose first request is
+`GET /v1/phone/…` to the door before the remote listener sees it (`routeByRequest`). `relay-lock`
+does nothing here: it asks a relay to stop passing traffic while the Mac is away, and nothing
+reaches the Mac at its own address while it is away; Pause and Lock down, sealed, stop it.
+
+**Pairing.** The QR code names the Mac's own origin once the Mac is online at the blind relay
+with its certificate, so a new phone dials only that. Until then, and on a Mac with no Worker
+relay, it names whichever the Mac has.
+
+**Moving over.** A phone paired through the Worker relay knows its Mac's id, and Macs on Valet's
+relay are named under `valet.dncr.me` (`PhoneModel.valetMacDomain`, the same as the Mac's
+`VALET_RELAY`). So it dials `https://<macId>.valet.dncr.me` first and the relay it paired through
+when that doesn't answer, trying its own address again after 15 seconds on the old relay without
+the Mac. Nothing new is sent to the phone, so a phone on an older build keeps working through the
+Worker relay. The Mac sends each phone's envelopes the way that phone is connected: at its own
+address when it is there, else through the Worker relay (`Phones.route`).
+
 ## Deploying
 
 `.github/workflows/deploy-relay.yml` deploys main's tip to the Fly app `valet-relay` after CI
@@ -113,3 +147,9 @@ the version live through flyctl rather than `/healthz`.
   OAuth server from a real browser and calls a tool at the Mac's address; pausing closes it; a relay
   restart costs nothing, not even a new certificate.
 - `apps/blind-relay/test/sync-dns.test.ts`: the deploy's DNS step against a stand-in zone.
+- `apps/desktop/test/main/phone-door.test.ts`: the phone channel at the Mac's own address through
+  the real relay and tunnel: pairing by QR, a card approved, a resend after the phone was away,
+  nothing readable at the relay, refusals, removal and replacement.
+- `ios/ValetPhoneKit/Tests/ValetPhoneCoreTests/OwnAddressTests.swift`: the phone dials the Mac's
+  own address first, falls back to the relay it paired through, goes back, and never signs a
+  challenge for another origin.

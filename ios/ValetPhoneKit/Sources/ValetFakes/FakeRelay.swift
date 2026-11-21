@@ -19,6 +19,13 @@ public final class FakeRelay: RelayTransport {
   public var autoDeliver: Bool
   /// When false, the relay refuses phone connections (the "can't reach the relay" case).
   public var reachable = true
+  /// Other origins this fake answers as, each naming itself in its challenges: the Mac's own
+  /// address at the blind relay, played by the same fake (docs/blind-relay.md#phones).
+  public var alsoAnswers: Set<String> = []
+  /// Origins that refuse every connection, as an unreachable address does.
+  public var unreachableOrigins: Set<String> = []
+  /// Every origin a phone dialled, in order.
+  public private(set) var dialled: [String] = []
   /// A phone asked the relay to stop forwarding remote traffic to the Mac.
   public private(set) var locked = false
   /// A hook for hostile-relay tests: return nil to drop a frame to the phone, or a changed frame.
@@ -41,10 +48,13 @@ public final class FakeRelay: RelayTransport {
   public func connect(
     relay: String, macId: String, path: RelayPath, onFrame: @escaping @MainActor (String) -> Void, onClose: @escaping @MainActor () -> Void
   ) -> RelayConnection {
-    let connection = FakeConnection(relay: self, path: path, onFrame: onFrame, onClose: onClose)
+    let connection = FakeConnection(relay: self, origin: relay, path: path, onFrame: onFrame, onClose: onClose)
+    dialled.append(relay)
     enqueue { [weak self] in
       guard let self else { return }
-      guard self.reachable, relay == self.origin, macId == self.mac.macId else { return connection.closeFromRelay() }
+      guard self.reachable, relay == self.origin || self.alsoAnswers.contains(relay), !self.unreachableOrigins.contains(relay),
+        macId == self.mac.macId
+      else { return connection.closeFromRelay() }
       switch path {
       case .pair:
         self.pairing = connection
@@ -56,7 +66,7 @@ public final class FakeRelay: RelayTransport {
         let nonce = Base64URL.encode(bytes)
         self.challengeNonce = nonce
         connection.deliver(JSON.serialize(.object([
-          ("type", .string("challenge")), ("v", .number("1")), ("nonce", .string(nonce)), ("relay", .string(self.origin)),
+          ("type", .string("challenge")), ("v", .number("1")), ("nonce", .string(nonce)), ("relay", .string(relay)),
         ])))
       }
     }
@@ -106,7 +116,7 @@ public final class FakeRelay: RelayTransport {
         let id = try? f.string("id"), let signature = try? f.string("signature"), let nonce = challengeNonce,
         let transportKey = mac.registeredTransportKey(id)
       else { return connection.closeFromRelay() }
-      let payload = PhoneToRelay.helloPayload(id: id, nonce: nonce, relay: origin)
+      let payload = PhoneToRelay.helloPayload(id: id, nonce: nonce, relay: connection.origin)
       guard Signing.verify(publicKey: transportKey, domain: .relayAuth, payload: payload, signature: signature) else {
         return connection.closeFromRelay()
       }
@@ -175,14 +185,17 @@ public final class FakeRelay: RelayTransport {
 @MainActor
 final class FakeConnection: RelayConnection {
   weak var relay: FakeRelay?
+  /// The origin the phone dialled.
+  let origin: String
   let path: RelayPath
   let onFrame: @MainActor (String) -> Void
   let onClose: @MainActor () -> Void
   var open = true
   var authenticated = false
 
-  init(relay: FakeRelay, path: RelayPath, onFrame: @escaping @MainActor (String) -> Void, onClose: @escaping @MainActor () -> Void) {
+  init(relay: FakeRelay, origin: String, path: RelayPath, onFrame: @escaping @MainActor (String) -> Void, onClose: @escaping @MainActor () -> Void) {
     self.relay = relay
+    self.origin = origin
     self.path = path
     self.onFrame = onFrame
     self.onClose = onClose

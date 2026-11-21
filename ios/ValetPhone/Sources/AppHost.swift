@@ -74,14 +74,19 @@ final class AppHost {
               return keys
             }
           ),
-          hub: URLSessionHubTransport()
+          hub: URLSessionHubTransport(),
+          // The walkthrough's local relay is the only way in, unless the run names a Mac domain.
+          macDomain: Self.argument("-valet-mac-domain", in: arguments)
         )
         model.connect()
         return
       }
     #endif
+    // Each Mac's own address at Valet's blind relay first (docs/blind-relay.md#phones), the relay
+    // the phone paired through after.
     model = PhoneModel(
-      transport: WebSocketRelayTransport(), store: KeychainPhoneStore(), keys: .system, hub: URLSessionHubTransport()
+      transport: WebSocketRelayTransport(), store: KeychainPhoneStore(), keys: .system, hub: URLSessionHubTransport(),
+      macDomain: PhoneModel.valetMacDomain
     )
     model.connect()
   }
