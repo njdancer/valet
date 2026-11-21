@@ -115,6 +115,16 @@ export const NODE_RUNTIME_ENTITLEMENTS_PATH = 'build/entitlements.node.plist'
 export const NODE_RUNTIME_SIGN_IGNORE = `/Contents/MacOS/${NODE_RUNTIME_EXECUTABLE}$`
 
 /**
+ * Cloudflare's connector for "My Cloudflare account" (docs/cloudflare-tunnel.md): the official
+ * release, universal, checked against build/cloudflared.json and signed on its own by
+ * scripts/cloudflared.mjs (its own identifier, the hardened runtime, no entitlements). It keeps that
+ * signature too. A build without it doesn't offer the option.
+ */
+export const CLOUDFLARED_EXECUTABLE = 'cloudflared'
+export const CLOUDFLARED_BUILD = '.cloudflared/cloudflared'
+export const CLOUDFLARED_SIGN_IGNORE = `/Contents/MacOS/${CLOUDFLARED_EXECUTABLE}$`
+
+/**
  * The Messages helper's launch agent, one plist per bundle ID (build/launch-agents), installed as
  * Contents/Library/LaunchAgents/messages-helper.plist, the name SMAppService.agent(plistName:) asks for.
  */
@@ -184,6 +194,8 @@ export interface ConfigDeps {
   readonly readMainBundle: () => string | null
   /** Whether the Node runtime (NODE_RUNTIME_BUILD) has been built and signed. */
   readonly nodeRuntimeBuilt: () => boolean
+  /** Whether cloudflared (CLOUDFLARED_BUILD) has been built and signed. Absent means no. */
+  readonly cloudflaredBuilt?: () => boolean
   /** Whether the native binaries (NATIVE_EXECUTABLES) have been built in SWIFT_BUILD_DIR. */
   readonly bridgeBuilt: () => boolean
 }
@@ -473,6 +485,9 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
             ...(deps.nodeRuntimeBuilt()
               ? [{ from: NODE_RUNTIME_BUILD, to: `MacOS/${NODE_RUNTIME_EXECUTABLE}` }]
               : []),
+            ...(deps.cloudflaredBuilt?.() === true
+              ? [{ from: CLOUDFLARED_BUILD, to: `MacOS/${CLOUDFLARED_EXECUTABLE}` }]
+              : []),
           ],
     asar: true,
     // The protocol host (docs/imap.md#the-protocol-host) is read by the sandboxed Node, which can't
@@ -502,8 +517,9 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
             ),
           }
         : {}),
-      // The Node runtime keeps its own signature, made by scripts/node-runtime.mjs.
-      signIgnore: [NODE_RUNTIME_SIGN_IGNORE],
+      // The Node runtime and cloudflared keep their own signatures (scripts/node-runtime.mjs,
+      // scripts/cloudflared.mjs).
+      signIgnore: [NODE_RUNTIME_SIGN_IGNORE, CLOUDFLARED_SIGN_IGNORE],
       // A dry run signs ad hoc: electron-builder's "-" identity, which uses no key and no keychain.
       ...(dryRun ? { identity: '-' } : signs ? {} : { identity: null }),
       type: release ? 'distribution' : 'development',
@@ -544,6 +560,7 @@ export const nodeDeps: ConfigDeps = {
   readMainBundle: () => readBundle(join(here, 'out', 'main')),
   bridgeBuilt: () => NATIVE_EXECUTABLES.every((name) => existsSync(join(here, SWIFT_BUILD_DIR, name))),
   nodeRuntimeBuilt: () => existsSync(join(here, NODE_RUNTIME_BUILD)),
+  cloudflaredBuilt: () => existsSync(join(here, CLOUDFLARED_BUILD)),
 }
 
 /** Every .js file under `dir`, joined, or null when `dir` has no index.js. */

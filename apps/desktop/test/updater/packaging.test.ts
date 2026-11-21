@@ -11,6 +11,7 @@ import {
   BRIDGE_EXECUTABLE,
   BuildConfigError,
   type BuildEnv,
+  CLOUDFLARED_SIGN_IGNORE,
   type ConfigDeps,
   checkReleaseBundle,
   createBuilderConfig,
@@ -36,6 +37,13 @@ import {
   SWIFT_BUILD_DIR,
   signWithRequirement,
 } from '../../electron-builder.config'
+import {
+  CLOUDFLARED_PIN,
+  cloudflaredSignArguments,
+  cloudflaredUrl,
+  readCloudflaredPin,
+  verifiedCloudflared,
+} from '../../scripts/cloudflared.mjs'
 import { RELEASE_APP_ID as SCRIPT_RELEASE_APP_ID } from '../../scripts/make-feed.mjs'
 import {
   archiveUrl,
@@ -710,6 +718,66 @@ describe('a showcase package (VALET_SHOWCASE=1)', () => {
   })
 })
 
+describe('cloudflared, for “My Cloudflare account”', () => {
+  const pinText = readFileSync(CLOUDFLARED_PIN, 'utf8')
+  const pin = readCloudflaredPin(pinText)
+
+  it('is pinned to Cloudflare’s release for both architectures, with its own identifier', () => {
+    expect(pin.identifier).toBe('me.dncr.valet.cloudflared')
+    expect(cloudflaredUrl(pin, 'arm64')).toBe(
+      `https://github.com/cloudflare/cloudflared/releases/download/${pin.version}/cloudflared-darwin-arm64.tgz`,
+    )
+    expect(cloudflaredUrl(pin, 'x64')).toMatch(/cloudflared-darwin-amd64\.tgz$/)
+  })
+
+  it('refuses a pin that loosens anything', () => {
+    const base = JSON.parse(pinText)
+    const variant = (change: (p: any) => void) => {
+      const p = structuredClone(base)
+      change(p)
+      return () => readCloudflaredPin(JSON.stringify(p))
+    }
+    expect(variant((p) => (p.version = 'latest'))).toThrow(/exact release/)
+    expect(variant((p) => (p.identifier = 'cloudflared'))).toThrow(/identifier/)
+    expect(variant((p) => (p.archives.arm64.sha256 = 'abc'))).toThrow(/sha256/)
+    expect(variant((p) => (p.archives.x64.file = 'cloudflared-darwin-x64.tgz'))).toThrow(/file must be/)
+    expect(variant((p) => delete p.archives.arm64)).toThrow(/arm64 and x64/)
+  })
+
+  it('uses an archive only when it matches the pinned SHA-256', async () => {
+    const cache = mkdtempSync(join(tmpdir(), 'cloudflared-'))
+    try {
+      const good = new TextEncoder().encode('the real archive')
+      const testPin = structuredClone(pin)
+      testPin.archives.arm64.sha256 = sha256(good)
+      const serve = (bytes: Uint8Array<ArrayBuffer>) =>
+        (async () => new Response(bytes)) as unknown as typeof fetch
+      await expect(
+        verifiedCloudflared(testPin, 'arm64', { cache, fetch: serve(new TextEncoder().encode('tampered')) }),
+      ).rejects.toThrow(/isn't the pinned/)
+      const kept = await verifiedCloudflared(testPin, 'arm64', { cache, fetch: serve(good) })
+      expect(readFileSync(kept, 'utf8')).toBe('the real archive')
+      await verifiedCloudflared(testPin, 'arm64', { cache, fetch: serve(new Uint8Array()) })
+    } finally {
+      rmSync(cache, { recursive: true, force: true })
+    }
+  })
+
+  it('is signed on its own: its identifier and the hardened runtime, no entitlements', () => {
+    expect(cloudflaredSignArguments(pin, '-', 'x')).toEqual([
+      '--sign',
+      '-',
+      '--force',
+      '--identifier',
+      'me.dncr.valet.cloudflared',
+      '--options',
+      'runtime',
+      'x',
+    ])
+    expect(cloudflaredSignArguments(pin, 'ABC', 'x')).toContain('--timestamp')
+  })
+})
+
 describe('the Node runtime’s binary', () => {
   const pinText = readFileSync(NODE_RUNTIME_PIN, 'utf8')
   const pin = readPin(pinText)
@@ -793,7 +861,7 @@ describe('the Node runtime’s binary', () => {
   it('ships in a release, keeps its own signature, and a release refuses to build without it', () => {
     const c = config(RELEASE_ENV)
     expect(c.extraFiles).toContainEqual({ from: NODE_RUNTIME_BUILD, to: 'MacOS/valet-node' })
-    expect(c.mac.signIgnore).toEqual([NODE_RUNTIME_SIGN_IGNORE])
+    expect(c.mac.signIgnore).toEqual([NODE_RUNTIME_SIGN_IGNORE, CLOUDFLARED_SIGN_IGNORE])
     expect(new RegExp(NODE_RUNTIME_SIGN_IGNORE).test('/x/Valet.app/Contents/MacOS/valet-node')).toBe(true)
     expect(new RegExp(NODE_RUNTIME_SIGN_IGNORE).test('/x/Valet.app/Contents/MacOS/Valet')).toBe(false)
     expect(c.mac.binaries).not.toContain('Contents/MacOS/valet-node')

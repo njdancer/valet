@@ -820,6 +820,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     url: null,
     hosts: [],
     relayUrl: null,
+    cloudflare: { tunnel: null },
     tools: [
       ...remoteTools.map((t) => ({ ...t, enabled: false })),
       {
@@ -1910,6 +1911,32 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
             t.adapterId === adapterId && t.tool === tool ? { ...t, enabled } : t,
           ),
         })
+      },
+      // A stand-in Cloudflare: "bad" is a token it refuses, "taken.example.com" a name with a record.
+      async connectCloudflare(apiToken, hostname) {
+        enter('remote.connectCloudflare', '(token)', hostname)
+        if (apiToken.trim() === 'bad') return 'token'
+        const name = hostname.trim().toLowerCase()
+        if (name === 'taken.example.com') return 'name-taken'
+        remoteSetupChanged({
+          ...remoteSetup,
+          enabled: true,
+          listening: true,
+          url: 'http://127.0.0.1:47823/mcp',
+          hosts: [...new Set([...remoteSetup.hosts, name])],
+          cloudflare: { tunnel: { hostname: name, state: 'connected' } },
+        })
+        return 'connected'
+      },
+      async disconnectCloudflare() {
+        enter('remote.disconnectCloudflare')
+        const name = remoteSetup.cloudflare?.tunnel?.hostname
+        remoteSetupChanged({
+          ...remoteSetup,
+          hosts: remoteSetup.hosts.filter((h) => h !== name),
+          cloudflare: { tunnel: null },
+        })
+        return 'removed'
       },
     },
     app: {

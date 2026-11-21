@@ -43,6 +43,7 @@ import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { loadFeedPublicKey, verifyFeed } from '../src/main/updater/feed-envelope.ts'
+import { buildCloudflared, CLOUDFLARED_PIN, readCloudflaredPin, signCloudflared } from './cloudflared.mjs'
 import { buildFeedYaml, hashZip, makeFeed } from './make-feed.mjs'
 import {
   buildNodeRuntime,
@@ -298,6 +299,11 @@ async function release() {
     },
   )
 
+  await step('cloudflared: the pinned official release, verified, universal, signed on its own', async () => {
+    const { out, pin } = await buildCloudflared()
+    signCloudflared(pin, dryRun ? '-' : signingIdentity(), out)
+  })
+
   await step('electron-vite build, with the release feed compiled in', () =>
     run(join(APP_DIR, 'node_modules', '.bin', 'electron-vite'), ['build'], {
       cwd: APP_DIR,
@@ -475,6 +481,7 @@ async function verifyApp(app, arch, feedUrl, expect) {
     expect(`${name} ships in Contents/MacOS`, existsSync(join(app, 'Contents', 'MacOS', name)))
   }
   checkNodeRuntime(app, expect)
+  checkCloudflared(app, expect)
   expect(
     'the Messages helper’s launch agent ships',
     existsSync(join(app, 'Contents', 'Library', 'LaunchAgents', 'messages-helper.plist')),
@@ -502,6 +509,45 @@ async function verifyApp(app, arch, feedUrl, expect) {
     return
   }
   await checkRefusals(app, expect)
+}
+
+/**
+ * cloudflared inside the app ("My Cloudflare account"): the pinned version, both architectures, its
+ * own signature with its own identifier and the hardened runtime, and it runs.
+ */
+function checkCloudflared(app, expect) {
+  const pin = readCloudflaredPin(readFileSync(CLOUDFLARED_PIN, 'utf8'))
+  const binary = join(app, 'Contents', 'MacOS', 'cloudflared')
+  expect('cloudflared ships in Contents/MacOS', existsSync(binary))
+  if (!existsSync(binary)) return
+  const archs = capture('/usr/bin/lipo', ['-archs', binary]).stdout.trim().split(/\s+/).sort().join(' ')
+  expect('cloudflared is universal', archs === 'arm64 x86_64', archs)
+  const details = capture('/usr/bin/codesign', ['-dv', '--verbose=4', binary]).stderr
+  expect('cloudflared has its own identifier', details.includes(`Identifier=${pin.identifier}\n`), details)
+  expect(
+    'cloudflared has the hardened runtime',
+    /flags=0x[0-9a-f]*\([^)]*runtime[^)]*\)/.test(details),
+    details,
+  )
+  if (dryRun) expect('cloudflared signed ad hoc', details.includes('Signature=adhoc'), details)
+  else {
+    expect(
+      'cloudflared signed with Developer ID',
+      details.includes('Authority=Developer ID Application:'),
+      details,
+    )
+    expect(
+      'cloudflared signed by the team',
+      details.includes(`TeamIdentifier=${process.env.VALET_TEAM_ID}`),
+      details,
+    )
+  }
+  const version = capture(binary, ['--version'])
+  expect(
+    'cloudflared runs and is the pinned version',
+    version.code === 0 && version.stdout.includes(pin.version),
+    version.stdout + version.stderr,
+  )
 }
 
 /**

@@ -37,6 +37,7 @@ import { builtinPackages } from '../adapters'
 import { APP_SCHEME, APP_SCHEME_PRIVILEGES, createAppSchemeHandler } from '../core/app-scheme'
 import { ANCHOR_SERVICE, guardPrompts, macApprovalKeys, type PromptGuard } from '../core/approvals'
 import { blindRelayFromEnv, fileCertificateStore, keychainCertificateStore } from '../core/blind-tunnel'
+import { cloudflaredFromEnv, fileTunnelStore, keychainTunnelStore } from '../core/cloudflare-remote'
 import {
   dataPaths,
   FEEDBACK_KEYCHAIN_ACCOUNT,
@@ -457,6 +458,29 @@ async function main(): Promise<void> {
                   blindSetup.macDomain,
                 ),
         }
+  // "My Cloudflare account" (docs/cloudflare-tunnel.md): offered when this build has cloudflared, the
+  // copy a release ships beside the app's binary. A development build may name one, and an e2e run
+  // a stand-in Cloudflare API; a release does neither.
+  const bundledCloudflared = app.isPackaged ? nativeHelper('cloudflared') : null
+  const cloudflaredPath = app.isPackaged
+    ? bundledCloudflared === null
+      ? null
+      : { file: bundledCloudflared }
+    : cloudflaredFromEnv(process.env['VALET_CLOUDFLARED'])
+  const cloudflareApi = strictApprovals ? undefined : process.env['VALET_CLOUDFLARE_API']
+  const cloudflare =
+    cloudflaredPath === null
+      ? null
+      : {
+          binary: cloudflaredPath,
+          store:
+            keychainHelper === null || mode.demo || mode.e2e
+              ? fileTunnelStore(join(paths.dir, 'cloudflare-tunnel.json'))
+              : keychainTunnelStore(new KeychainHelper({ helperPath: keychainHelper })),
+          ...(cloudflareApi !== undefined && /^https?:\/\/127\.0\.0\.1:\d+(\/[\w/.-]*)?$/.test(cloudflareApi)
+            ? { apiBase: cloudflareApi }
+            : {}),
+        }
   const approverKeys = await macApprovalKeys({
     packaged: strictApprovals,
     approverPath: devRelay === null && blindSetup === null ? nativeHelper('valet-approver') : null,
@@ -603,6 +627,7 @@ async function main(): Promise<void> {
     approvalKeys,
     relay: devRelay,
     blindRelay,
+    cloudflare,
     // Agents' reports to the Valet team (docs/feedback.md), filed with a token only the Keychain
     // holds. None in demo mode or e2e runs: nothing a test does may reach GitHub.
     feedback:

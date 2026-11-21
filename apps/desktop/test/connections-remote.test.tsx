@@ -52,6 +52,36 @@ describe('remote access', () => {
     expect(called(api, 'remote.setEnabled')).toEqual([[true]])
   })
 
+  it('connects your own Cloudflare account, says plainly Cloudflare can read it, and disconnects', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    renderPage(api, <RemotePage />)
+    const card = within(await screen.findByRole('region', { name: 'Your own Cloudflare account' }))
+    card.getByText(/Cloudflare can read what agents send this Mac/)
+    // The button is re-rendered once it can be pressed, so it is found afresh each time.
+    const connect = () => user.click(card.getByRole('button', { name: 'Connect' }))
+    await user.type(card.getByLabelText('API token'), 'bad')
+    await user.type(card.getByRole('textbox', { name: 'Public name' }), 'Valet.Example.com')
+    await connect()
+    await card.findByText(/didn’t accept that token/)
+    await user.clear(card.getByLabelText('API token'))
+    await user.type(card.getByLabelText('API token'), 'good')
+    await user.click(card.getByRole('button', { name: 'Connect' }))
+    await card.findByText('https://valet.example.com/mcp')
+    card.getByText('Connected to Cloudflare.')
+    // Connecting turned remote access on as well.
+    expect(screen.getByTestId('remote-state').textContent).toContain('On.')
+    // The token never goes into the record of calls, and the name isn't listed twice.
+    expect(called(api, 'remote.connectCloudflare').at(-1)).toEqual(['(token)', 'Valet.Example.com'])
+    within(screen.getByRole('region', { name: 'Public names' })).getByText('None yet.')
+    await user.click(card.getByRole('button', { name: 'Copy the Cloudflare URL' }))
+    expect(called(api, 'app.copyText')).toEqual([['https://valet.example.com/mcp']])
+    await user.click(card.getByRole('button', { name: 'Disconnect…' }))
+    await user.click(await screen.findByRole('button', { name: 'Disconnect' }))
+    await card.findByLabelText('API token')
+    expect(called(api, 'remote.disconnectCloudflare')).toEqual([[]])
+  })
+
   it('says so when a public name is refused', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })

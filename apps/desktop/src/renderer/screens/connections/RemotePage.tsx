@@ -31,7 +31,12 @@ import {
   Value,
 } from '@valet/ui'
 import { useState } from 'react'
-import type { RemoteSetup, RemoteSetupTool } from '../../../shared/api'
+import type {
+  CloudflareConnectAnswer,
+  CloudflareTunnelState,
+  RemoteSetup,
+  RemoteSetupTool,
+} from '../../../shared/api'
 import { useAction, useApi, useLoad } from '../../lib/api-context'
 import { href } from '../../lib/router'
 import { AskingToConnect } from './Asking'
@@ -112,6 +117,7 @@ function RemoteBody({ setup }: { readonly setup: RemoteSetup }) {
         </Card>
       ) : null}
       {setup.relayUrl !== null ? <ThroughRelay url={setup.relayUrl} /> : null}
+      {setup.cloudflare !== null ? <OwnCloudflare setup={setup} /> : null}
       <PublicNames setup={setup} />
       <Section
         title="Cloud agents"
@@ -143,7 +149,157 @@ function ThroughRelay({ url }: { readonly url: string }) {
   )
 }
 
+const CLOUDFLARE_ANSWER: Record<Exclude<CloudflareConnectAnswer, 'connected'>, string> = {
+  'no-binary': 'This build of Valet doesn’t include Cloudflare’s connector.',
+  'remote-off':
+    'Remote access isn’t listening, so there’s nothing yet for the tunnel to reach. Try again in a moment.',
+  refused: 'Not approved, so the name wasn’t added. Nothing was left in your Cloudflare account.',
+  token: 'Cloudflare didn’t accept that token. Check you copied all of it.',
+  permission:
+    'The token can’t make tunnels or DNS records there. It needs Cloudflare Tunnel: Edit and DNS: Edit.',
+  zone: 'None of the domains this token can see holds that name. Use a name under one of your domains.',
+  'name-taken':
+    'That name already has a DNS record. Choose another name, or remove that record in Cloudflare first.',
+  network: 'Couldn’t reach Cloudflare. Check this Mac is online and try again.',
+  cloudflare: 'Cloudflare refused the change. Try again in a minute.',
+}
+
+const CLOUDFLARE_STATE: Record<CloudflareTunnelState, string> = {
+  connected: 'Connected to Cloudflare.',
+  starting: 'Connecting to Cloudflare…',
+  restarting: 'Lost Cloudflare. Trying again shortly.',
+  stopped: 'Not running.',
+  'no-binary': 'This build of Valet can’t run Cloudflare’s connector.',
+  'waiting-for-listener': 'Waiting for remote access to be on.',
+}
+
+function OwnCloudflare({ setup }: { readonly setup: RemoteSetup }) {
+  const api = useApi()
+  const action = useAction()
+  const [token, setToken] = useState('')
+  const [name, setName] = useState('')
+  const [answer, setAnswer] = useState<CloudflareConnectAnswer | null>(null)
+  const [asking, setAsking] = useState(false)
+  const tunnel = setup.cloudflare?.tunnel ?? null
+  const connect = async () => {
+    const got: { answer: CloudflareConnectAnswer | null } = { answer: null }
+    const ok = await action.run(async () => {
+      got.answer = await api.remote.connectCloudflare(token, name)
+    })
+    if (!ok || got.answer === null) return
+    setAnswer(got.answer)
+    if (got.answer === 'connected') {
+      setToken('')
+      setName('')
+    }
+  }
+  return (
+    <Card aria-label="Your own Cloudflare account" role="region">
+      <CardHeader className="flex-col gap-0.5">
+        <CardTitle>Your own Cloudflare account</CardTitle>
+        <Text size="sm" tone="muted">
+          Instead of Valet’s relay, cloud agents can reach this Mac through a Cloudflare Tunnel in your own
+          account, at a name under your own domain. Cloudflare decrypts traffic at its edge in this mode, so
+          Cloudflare can read what agents send this Mac. Valet’s relay can’t.
+        </Text>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        {tunnel !== null ? (
+          <>
+            <div className="flex flex-wrap items-center gap-2" data-testid="remote-cloudflare">
+              <Value mono>{connectorUrl(tunnel.hostname)}</Value>
+              <CopyThrough
+                label="Copy the Cloudflare URL"
+                copy={() => api.app.copyText(connectorUrl(tunnel.hostname))}
+              />
+            </div>
+            <Text size="sm" data-testid="remote-cloudflare-state">
+              {CLOUDFLARE_STATE[tunnel.state]}
+            </Text>
+            <Inline gap={2}>
+              <Button size="sm" variant="danger-soft" disabled={action.busy} onClick={() => setAsking(true)}>
+                Disconnect…
+              </Button>
+            </Inline>
+            <ConfirmDialog
+              open={asking}
+              onOpenChange={setAsking}
+              destructive
+              title="Disconnect your Cloudflare account?"
+              description={`Cloud agents stop reaching this Mac at ${tunnel.hostname}. Valet removes the tunnel and DNS record it made in your account.`}
+              confirmLabel="Disconnect"
+              onConfirm={() =>
+                void action.run(async () => {
+                  const done = await api.remote.disconnectCloudflare()
+                  if (done === 'left-in-cloudflare')
+                    toast(
+                      'Disconnected. Valet couldn’t remove the tunnel from your Cloudflare account; remove it there.',
+                    )
+                })
+              }
+            />
+          </>
+        ) : (
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void connect()
+            }}
+          >
+            <Field
+              label="API token"
+              description="Make one in Cloudflare under My Profile, API Tokens, with Cloudflare Tunnel: Edit for the account and DNS: Edit for the domain. Valet keeps it in your Keychain."
+            >
+              <Input
+                type="password"
+                value={token}
+                autoComplete="off"
+                spellCheck={false}
+                className="font-mono"
+                onChange={(e) => setToken(e.target.value)}
+              />
+            </Field>
+            <Field
+              label="Public name"
+              description="A name under one of your domains. Valet adds its DNS record."
+            >
+              <Input
+                value={name}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="valet.example.com"
+                className="font-mono"
+                onChange={(e) => setName(e.target.value)}
+              />
+            </Field>
+            <Inline gap={2}>
+              <Button
+                type="submit"
+                loading={action.busy}
+                disabled={token.trim().length === 0 || name.trim().length === 0}
+                disabledReason="Paste a token and type a name first"
+              >
+                Connect
+              </Button>
+            </Inline>
+          </form>
+        )}
+        {answer !== null && answer !== 'connected' ? (
+          <Text role="alert" size="sm" tone="danger">
+            {CLOUDFLARE_ANSWER[answer]}
+          </Text>
+        ) : null}
+        <Failed failed={action.failed} what="change your Cloudflare connection" />
+      </CardContent>
+    </Card>
+  )
+}
+
 function PublicNames({ setup }: { readonly setup: RemoteSetup }) {
+  // The name Valet's own Cloudflare tunnel serves is shown, and removed, on its own card.
+  const managed = setup.cloudflare?.tunnel?.hostname ?? null
+  const shown = setup.hosts.filter((h) => h !== managed)
   const api = useApi()
   const action = useAction()
   const [host, setHost] = useState('')
@@ -161,10 +317,10 @@ function PublicNames({ setup }: { readonly setup: RemoteSetup }) {
         </Text>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        {setup.hosts.length === 0 ? <Text tone="muted">None yet.</Text> : null}
-        {setup.hosts.length > 0 ? (
+        {shown.length === 0 ? <Text tone="muted">None yet.</Text> : null}
+        {shown.length > 0 ? (
           <ul className="m-0 flex list-none flex-col gap-2 p-0">
-            {setup.hosts.map((name) => (
+            {shown.map((name) => (
               <li key={name} data-testid="remote-host" className="flex flex-wrap items-center gap-2">
                 <Value mono>{connectorUrl(name)}</Value>
                 <CopyThrough
