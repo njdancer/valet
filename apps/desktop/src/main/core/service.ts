@@ -176,6 +176,8 @@ import { BlockedAudit, LoginSecrets } from './blocked'
 import { type AppRefusal, RefusalBudget, RuntimeToolCaller } from './caller'
 import { addToDesktopConfig } from './claude-desktop'
 import { ClientRegistry, capabilityNames, shownTransport } from './clients'
+import { CloudflareRemote, type CloudflareTunnelStore } from './cloudflare-remote'
+import type { CloudflaredOptions } from './cloudflare-tunnel'
 import { ConfirmationBroker, type ConfirmationSigning, type Timers } from './confirmations'
 import {
   AUTH_FLOW_TIMEOUT_MS,
@@ -367,6 +369,16 @@ export interface ServiceDeps {
    */
   readonly blindRelay?: { readonly setup: BlindRelaySetup; readonly store: CertificateStore } | null
   /**
+   * "My Cloudflare account" (cloudflare-remote.ts): where the tunnel's tokens are kept, and the
+   * bundled cloudflared (null when this build has none). Left out, the option isn't offered.
+   */
+  readonly cloudflare?: {
+    readonly store: CloudflareTunnelStore
+    readonly binary: CloudflaredOptions['command'] | null
+    readonly fetch?: typeof fetch
+    readonly apiBase?: string
+  } | null
+  /**
    * Where agents' feedback goes (docs/feedback.md): the repository, and the GitHub token from the
    * Keychain (null when the person hasn't added one). None: agents get no feedback tools.
    */
@@ -557,6 +569,7 @@ export class AppService {
   private readonly phones: Phones
   /** This Mac at the blind relay, when one is set up (docs/blind-relay.md). */
   private readonly tunnel: BlindTunnel | null
+  private readonly cloudflare: CloudflareRemote | null
   private phoneStatus: PhoneStatusBody | null = null
   /** The write tools' side (admin-writer.ts): one for the app's life, so it remembers requests. */
   private writer: AdminWriterImpl | null = null
@@ -688,6 +701,25 @@ export class AppService {
             setHost: (host, ready) => this.remote.setTunnelHost(host, ready),
             changed: () => this.emit('remote-changed'),
             log: (line) => deps.diagnostics?.({ type: line }),
+          })
+    const cloudflare = deps.cloudflare ?? null
+    this.cloudflare =
+      cloudflare === null
+        ? null
+        : new CloudflareRemote({
+            store: cloudflare.store,
+            binary: cloudflare.binary,
+            // Made below; only called once remote access is up.
+            listenerUrl: () => {
+              const status = this.remote.status()
+              return status.enabled && status.listening ? status.url : null
+            },
+            addHost: (host) => this.changeRemoteHosts([...this.remote.status().hosts, host]),
+            removeHost: (host) => this.remote.setHosts(this.remote.status().hosts.filter((h) => h !== host)),
+            changed: () => this.emit('remote-changed'),
+            log: (line) => deps.diagnostics?.({ type: line }),
+            ...(cloudflare.fetch === undefined ? {} : { fetch: cloudflare.fetch }),
+            ...(cloudflare.apiBase === undefined ? {} : { apiBase: cloudflare.apiBase }),
           })
     this.phones = new Phones({
       tunnel: this.tunnel,
@@ -902,6 +934,7 @@ export class AppService {
       info: { name: 'valet', version: deps.version },
       now: deps.now,
       changed: () => {
+        void this.cloudflare?.sync()
         if (this.remote.status().pendingConsents + this.hubConsents().length === 0)
           this.notifier.remoteConsent(0)
         this.emit('app-changed')
@@ -1063,6 +1096,7 @@ export class AppService {
         },
       })
       .catch(() => undefined)
+    await this.cloudflare?.start().catch(() => undefined)
     // Reports an agent sent while GitHub couldn't be reached, or before the token was there.
     void this.feedback()
       ?.flush()
@@ -1131,6 +1165,7 @@ export class AppService {
       url: status.url,
       hosts: status.hosts,
       relayUrl: status.relayUrl,
+      cloudflare: this.cloudflare === null ? null : { tunnel: this.cloudflare.view },
       tools,
     }
   }
@@ -1162,6 +1197,7 @@ export class AppService {
   async stop(): Promise<void> {
     this.updates?.stop()
     this.phones.stop()
+    this.cloudflare?.stop()
     if (this.pruneTimer !== null) clearInterval(this.pruneTimer)
     this.pruneTimer = null
     // Calls still running are cancelled: each ends failed tool-run/aborted, its prompt declined.
@@ -5175,6 +5211,14 @@ export class AppService {
           await this.changeValetSetting('remote_hosts', [...hosts])
           return this.remoteSetup()
         },
+        connectCloudflare: async (apiToken, hostname) => {
+          if (this.cloudflare === null) throw new ValetError('config', 'unavailable')
+          // One step for the person: remote access goes on too, asked for like any time it goes on.
+          if (!this.remote.status().enabled) await this.changeValetSetting('remote_enabled', true)
+          return this.cloudflare.connect(apiToken, hostname)
+        },
+        disconnectCloudflare: async () =>
+          this.cloudflare === null ? 'removed' : this.cloudflare.disconnect(),
         setTool: async (adapterId, tool, enabled) => {
           const adapter = this.adapter(adapterId)
           const declaration = adapter?.definition.manifest.tools.find((t) => t.name === tool)

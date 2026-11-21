@@ -319,6 +319,11 @@ const HANDLERS: Readonly<
   'remote.setHosts': entry(z.tuple([z.array(z.string().min(1).max(253)).max(8)]), (api, [hosts]) =>
     api.remote.setHosts(hosts),
   ),
+  'remote.connectCloudflare': entry(
+    z.tuple([z.string().min(1).max(512), z.string().min(1).max(253)]),
+    (api, [apiToken, hostname]) => api.remote.connectCloudflare(apiToken, hostname),
+  ),
+  'remote.disconnectCloudflare': entry(none, (api) => api.remote.disconnectCloudflare()),
   'remote.setTool': entry(z.tuple([ADAPTER_ID, TOOL_NAME, z.boolean()]), (api, [adapterId, tool, enabled]) =>
     api.remote.setTool(adapterId, tool, enabled),
   ),

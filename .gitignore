@@ -22,3 +22,5 @@ swift-bridge/apps/Generated/
 
 # The Node runtime's binary and its verified archives (apps/desktop/scripts/node-runtime.mjs)
 apps/desktop/.node-runtime/
+# cloudflared for "My Cloudflare account" and its verified archives (apps/desktop/scripts/cloudflared.mjs)
+apps/desktop/.cloudflared/

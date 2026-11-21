@@ -1406,9 +1406,42 @@ export interface RemoteSetup {
    * is set up in Settings › Devices; null otherwise. Needs no tunnel.
    */
   readonly relayUrl: string | null
+  /** "My Cloudflare account": null when this build doesn't offer it; tunnel null until connected. */
+  readonly cloudflare: { readonly tunnel: CloudflareTunnelView | null } | null
   /** Tools of approved adapters, by adapter then tool. */
   readonly tools: readonly RemoteSetupTool[]
 }
+
+/** cloudflared for the person's own tunnel: running, or why not. */
+export type CloudflareTunnelState =
+  | 'starting'
+  | 'connected'
+  | 'restarting'
+  | 'stopped'
+  /** This build has no cloudflared to run. */
+  | 'no-binary'
+  /** Remote access is off or not listening; cloudflared runs once it is. */
+  | 'waiting-for-listener'
+
+export interface CloudflareTunnelView {
+  readonly hostname: string
+  readonly state: CloudflareTunnelState
+}
+
+/** How connecting a Cloudflare account went. */
+export type CloudflareConnectAnswer =
+  | 'connected'
+  | 'no-binary'
+  /** Remote access isn't listening (its port is taken), so there's nothing to send the name to. */
+  | 'remote-off'
+  /** The person didn't approve adding the name. Nothing was left in the account. */
+  | 'refused'
+  | 'token'
+  | 'permission'
+  | 'zone'
+  | 'name-taken'
+  | 'network'
+  | 'cloudflare'
 
 // ---------- Events ----------
 
@@ -1770,6 +1803,14 @@ export interface ValetApi {
     setHosts(hosts: readonly string[]): Promise<RemoteSetup>
     /** Turns one tool of an approved adapter on or off for remote clients. */
     setTool(adapterId: string, tool: string, enabled: boolean): Promise<RemoteSetup>
+    /**
+     * Makes a tunnel in the person's own Cloudflare account for `hostname`, with an API token that
+     * may edit tunnels and DNS, adds the name (with the person's approval) and runs cloudflared.
+     * Turns remote access on first if it is off, with the approval that always takes.
+     */
+    connectCloudflare(apiToken: string, hostname: string): Promise<CloudflareConnectAnswer>
+    /** Stops it, takes the name away and removes the tunnel and record from the account. */
+    disconnectCloudflare(): Promise<'removed' | 'left-in-cloudflare'>
   }
   readonly app: {
     status(): Promise<AppStatus>

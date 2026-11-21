@@ -425,6 +425,8 @@ describe('every channel', () => {
     'remote.setEnabled': [true],
     'remote.setHosts': [['valet.example.com']],
     'remote.setTool': ['wikipedia', 'get_summary', true],
+    'remote.connectCloudflare': ['token', 'valet.example.com'],
+    'remote.disconnectCloudflare': [],
     'app.status': [],
     'app.setPaused': [true],
     'app.setLockedDown': [false],

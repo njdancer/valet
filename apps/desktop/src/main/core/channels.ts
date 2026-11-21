@@ -98,6 +98,8 @@ export const INVOKE_METHODS = [
   'remote.setEnabled',
   'remote.setHosts',
   'remote.setTool',
+  'remote.connectCloudflare',
+  'remote.disconnectCloudflare',
   'app.status',
   'app.setPaused',
   'app.setLockedDown',

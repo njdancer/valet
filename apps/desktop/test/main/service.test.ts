@@ -2519,8 +2519,15 @@ describe('remote access', () => {
       url: null,
       hosts: [],
       relayUrl: null,
+      // No cloudflared in this build: "My Cloudflare account" isn't offered.
+      cloudflare: null,
       tools: [],
     })
+    await expect(s.api.remote.connectCloudflare('token', 'valet.example.com')).rejects.toMatchObject({
+      stage: 'config',
+      errorClass: 'unavailable',
+    })
+    expect(await s.api.remote.disconnectCloudflare()).toBe('removed')
     await expect(s.api.remote.setTool('shop', 'echo', true)).rejects.toMatchObject({
       errorClass: 'not-found',
     })
