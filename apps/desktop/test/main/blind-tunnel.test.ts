@@ -12,8 +12,10 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   BlindTunnel,
   blindRelayFromEnv,
+  blindRelaySetup,
   fileCertificateStore,
   keychainCertificateStore,
+  VALET_RELAY,
 } from '../../src/main/core/blind-tunnel'
 
 const dirs: string[] = []
@@ -69,6 +71,33 @@ describe('blindRelayFromEnv', () => {
         VALET_ACME_DIRECTORY: 'ftp://x',
       }),
     ).toEqual({ controlHost: 'relay.valet.test', macDomain: 'valet.test' })
+  })
+})
+
+describe('blindRelaySetup', () => {
+  const local = { VALET_BLIND_RELAY: 'relay.valet.test', VALET_BLIND_MAC_DOMAIN: 'valet.test' }
+  it('a release uses Valet’s relay whatever the environment says', () => {
+    expect(VALET_RELAY).toEqual({ controlHost: 'relay.valet.dncr.me', macDomain: 'valet.dncr.me' })
+    expect(blindRelaySetup({}, { release: true, test: false })).toBe(VALET_RELAY)
+    expect(blindRelaySetup({ ...local }, { release: true, test: false })).toBe(VALET_RELAY)
+    expect(blindRelaySetup({ VALET_BLIND_RELAY: 'off' }, { release: true, test: false })).toBe(VALET_RELAY)
+  })
+
+  it('a development build uses Valet’s relay unless it names another or says off', () => {
+    expect(blindRelaySetup({}, { release: false, test: false })).toBe(VALET_RELAY)
+    expect(blindRelaySetup(local, { release: false, test: false })).toEqual({
+      controlHost: 'relay.valet.test',
+      macDomain: 'valet.test',
+    })
+    expect(blindRelaySetup({ VALET_BLIND_RELAY: 'off' }, { release: false, test: false })).toBeNull()
+  })
+
+  it('demo and e2e runs never reach the real relay unless told to', () => {
+    expect(blindRelaySetup({}, { release: false, test: true })).toBeNull()
+    expect(blindRelaySetup(local, { release: false, test: true })).toEqual({
+      controlHost: 'relay.valet.test',
+      macDomain: 'valet.test',
+    })
   })
 })
 

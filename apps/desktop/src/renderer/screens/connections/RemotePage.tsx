@@ -36,6 +36,7 @@ import type {
   CloudflareTunnelState,
   RemoteSetup,
   RemoteSetupTool,
+  ValetRelayView,
 } from '../../../shared/api'
 import { useAction, useApi, useLoad } from '../../lib/api-context'
 import { href } from '../../lib/router'
@@ -78,7 +79,7 @@ export function RemotePage() {
                 aria-label="Remote access on"
                 aria-describedby="remote-state"
                 checked={data.enabled}
-                disabled={!data.enabled && data.hosts.length === 0 && data.relayUrl === null}
+                disabled={!data.enabled && !reachable(data)}
                 pending={toggle.busy}
                 onCheckedChange={(on) => void setEnabled(on)}
               />
@@ -95,9 +96,14 @@ export function RemotePage() {
   )
 }
 
+/** Something can carry agents here: a public name, a relay URL, or Valet's relay setting one up. */
+function reachable(setup: RemoteSetup): boolean {
+  return setup.hosts.length > 0 || setup.relayUrl !== null || setup.valetRelay !== null
+}
+
 function stateWords(setup: RemoteSetup): string {
   if (!setup.enabled)
-    return setup.hosts.length > 0 || setup.relayUrl !== null
+    return reachable(setup)
       ? 'Off. Cloud agents can’t reach this Mac.'
       : 'Off. Set up Valet’s relay in Settings, or add the public name your tunnel forwards, then turn it on.'
   if (setup.listening && setup.url !== null)
@@ -116,7 +122,7 @@ function RemoteBody({ setup }: { readonly setup: RemoteSetup }) {
           </CardContent>
         </Card>
       ) : null}
-      {setup.relayUrl !== null ? <ThroughRelay url={setup.relayUrl} /> : null}
+      {setup.relayUrl !== null || setup.valetRelay !== null ? <ThroughRelay setup={setup} /> : null}
       {setup.cloudflare !== null ? <OwnCloudflare setup={setup} /> : null}
       <PublicNames setup={setup} />
       <Section
@@ -131,8 +137,27 @@ function RemoteBody({ setup }: { readonly setup: RemoteSetup }) {
   )
 }
 
-function ThroughRelay({ url }: { readonly url: string }) {
+/** Where this Mac has got at Valet's relay, while its own address isn't ready; null once it is. */
+export function valetRelayWords(relay: ValetRelayView, now = new Date()): string | null {
+  if (relay.relay === 'refused') return 'Valet’s relay refused this Mac. Trying again shortly.'
+  if (relay.relay === 'replaced')
+    return 'Another copy of Valet on this Mac connected to the relay as this Mac, so this one stopped. Quit the other one.'
+  if (relay.certificate === 'ready') return relay.relay === 'online' ? null : 'Reconnecting to Valet’s relay…'
+  if (relay.relay !== 'online') return 'Connecting to Valet’s relay…'
+  if (relay.certificate === 'queued') {
+    const at = relay.retryAt === null ? null : new Date(relay.retryAt)
+    return at === null || at <= now
+      ? 'Still setting up this Mac’s address. Trying again shortly.'
+      : `Still setting up this Mac’s address. Trying again ${at.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}.`
+  }
+  return 'Setting up this Mac’s address. This takes a minute or two.'
+}
+
+function ThroughRelay({ setup }: { readonly setup: RemoteSetup }) {
   const api = useApi()
+  const words = setup.valetRelay === null ? null : valetRelayWords(setup.valetRelay)
+  // Valet's relay's own address once it can serve; until then, the older relay's if there is one.
+  const url = setup.relayUrl
   return (
     <Card aria-label="Through Valet’s relay" role="region">
       <CardHeader className="flex-col gap-0.5">
@@ -141,10 +166,19 @@ function ThroughRelay({ url }: { readonly url: string }) {
           No tunnel needed. A cloud agent connects to this URL, and the relay passes its calls to this Mac.
         </Text>
       </CardHeader>
-      <CardContent className="flex flex-wrap items-center gap-2" data-testid="remote-relay">
-        <Value mono>{url}</Value>
-        <CopyThrough label="Copy the relay URL" copy={() => api.app.copyText(url)} />
-      </CardContent>
+      {url !== null ? (
+        <CardContent className="flex flex-wrap items-center gap-2" data-testid="remote-relay">
+          <Value mono>{url}</Value>
+          <CopyThrough label="Copy the relay URL" copy={() => api.app.copyText(url)} />
+        </CardContent>
+      ) : null}
+      {words !== null ? (
+        <CardContent>
+          <Text size="sm" tone="muted" data-testid="remote-valet-relay-state">
+            {words}
+          </Text>
+        </CardContent>
+      ) : null}
     </Card>
   )
 }

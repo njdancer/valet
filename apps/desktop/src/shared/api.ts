@@ -1406,6 +1406,11 @@ export interface RemoteSetup {
    * is set up in Settings › Devices; null otherwise. Needs no tunnel.
    */
   readonly relayUrl: string | null
+  /**
+   * Valet's relay (docs/blind-relay.md): this Mac's own name there and how far it has got, while
+   * its tunnel runs; null when this build has no relay. `relayUrl` names it once it can serve.
+   */
+  readonly valetRelay: ValetRelayView | null
   /** "My Cloudflare account": null when this build doesn't offer it; tunnel null until connected. */
   readonly cloudflare: { readonly tunnel: CloudflareTunnelView | null } | null
   /** Tools of approved adapters, by adapter then tool. */
@@ -1422,6 +1427,15 @@ export type CloudflareTunnelState =
   | 'no-binary'
   /** Remote access is off or not listening; cloudflared runs once it is. */
   | 'waiting-for-listener'
+
+/** This Mac at Valet's relay: its connection there and its certificate (TLS ends on the Mac). */
+export interface ValetRelayView {
+  readonly host: string
+  readonly relay: 'connecting' | 'online' | 'offline' | 'refused' | 'replaced' | 'stopped'
+  readonly certificate: 'waiting-for-relay' | 'issuing' | 'ready' | 'queued' | 'stopped'
+  /** When a queued certificate is tried again (Let's Encrypt's weekly limit), ISO. */
+  readonly retryAt: string | null
+}
 
 export interface CloudflareTunnelView {
   readonly hostname: string
