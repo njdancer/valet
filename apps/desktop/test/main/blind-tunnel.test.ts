@@ -10,6 +10,7 @@ import type { StoredCertificate } from '@valet/acme'
 import { MemoryKeychain } from '@valet/credentials'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  approverWanted,
   BlindTunnel,
   blindRelayFromEnv,
   blindRelaySetup,
@@ -31,6 +32,26 @@ const stored: StoredCertificate = {
   certificateKeyPem: 'certificate key',
   certificatePem: 'certificate',
 }
+
+describe('approverWanted', () => {
+  const local = { VALET_BLIND_RELAY: 'relay.valet.test', VALET_BLIND_MAC_DOMAIN: 'valet.test' }
+
+  it("keeps the Secure Enclave in a dev build on Valet's own relay, so the Mac's keys don't change", () => {
+    // Valet's own relay is on by default: no environment names it.
+    expect(blindRelaySetup({}, { release: false, test: false })).toEqual(VALET_RELAY)
+    expect(approverWanted({ release: false, devRelay: false, env: {} })).toBe(true)
+  })
+
+  it('signs in software only when a dev build names a local relay', () => {
+    expect(approverWanted({ release: false, devRelay: true, env: {} })).toBe(false)
+    expect(approverWanted({ release: false, devRelay: false, env: local })).toBe(false)
+  })
+
+  it('always uses the helper in a release, whatever the environment says', () => {
+    expect(approverWanted({ release: true, devRelay: false, env: {} })).toBe(true)
+    expect(approverWanted({ release: true, devRelay: true, env: local })).toBe(true)
+  })
+})
 
 describe('blindRelayFromEnv', () => {
   it('needs both names, and both must be host names', () => {
