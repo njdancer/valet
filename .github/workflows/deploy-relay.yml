@@ -5,7 +5,8 @@ name: Deploy blind relay
 # CI run passed, including check (ubuntu-latest), which runs the relay's end-to-end tests and its
 # certificate test against Pebble; the commit is still main's tip; and it changed something the
 # relay runs. Needs the FLY_API_TOKEN secret (a deploy token for the valet-relay app); without it
-# the job says so and stops. With CLOUDFLARE_DNS_TOKEN (Zone › DNS › Edit on dncr.me) it also points
+# the job says so and stops. With CLOUDFLARE_DNS_TOKEN, or else the hub's CLOUDFLARE_API_TOKEN
+# (either with Zone › DNS › Edit on dncr.me), it also points
 # the relay's names at its dedicated Fly addresses after each run (apps/blind-relay/scripts/
 # sync-dns.mjs). That token lives here, never on the relay. GitHub's runners have no IPv6, so the
 # version live is read through flyctl, not from /healthz.
@@ -159,7 +160,8 @@ jobs:
         if: steps.gate.outputs.deploy == 'true'
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-          CLOUDFLARE_DNS_TOKEN: ${{ secrets.CLOUDFLARE_DNS_TOKEN }}
+          # Its own token if there is one, else the hub's deploy token, given DNS edit on the zone.
+          CLOUDFLARE_DNS_TOKEN: ${{ secrets.CLOUDFLARE_DNS_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           if [ -z "$CLOUDFLARE_DNS_TOKEN" ]; then
             echo "::notice::CLOUDFLARE_DNS_TOKEN is not set: DNS for the relay is left as it is"; exit 0

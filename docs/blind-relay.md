@@ -75,8 +75,8 @@ dialled by address) is answered as the control host.
 `.github/workflows/deploy-relay.yml` deploys main's tip to the Fly app `valet-relay` after CI
 passes, when anything the relay runs has changed. It needs the `FLY_API_TOKEN` secret.
 
-With `CLOUDFLARE_DNS_TOKEN` (Zone › DNS › Edit on dncr.me) it then points `relay.valet.dncr.me` and
-`*.valet.dncr.me` at the app's dedicated addresses (`apps/blind-relay/scripts/sync-dns.mjs`):
+With `CLOUDFLARE_DNS_TOKEN`, or else the hub's `CLOUDFLARE_API_TOKEN` (either with Zone › DNS ›
+Edit on dncr.me), it then points `relay.valet.dncr.me` and `*.valet.dncr.me` at the app's dedicated addresses (`apps/blind-relay/scripts/sync-dns.mjs`):
 
 - an A record per dedicated IPv4 and an AAAA record per dedicated IPv6;
 - DNS only, because Cloudflare's proxy would end TLS;
