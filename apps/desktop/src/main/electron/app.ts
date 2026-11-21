@@ -36,6 +36,7 @@ import type { HashRoute } from '../../shared/api'
 import { builtinPackages } from '../adapters'
 import { APP_SCHEME, APP_SCHEME_PRIVILEGES, createAppSchemeHandler } from '../core/app-scheme'
 import { ANCHOR_SERVICE, guardPrompts, macApprovalKeys, type PromptGuard } from '../core/approvals'
+import { blindRelayFromEnv, fileCertificateStore, keychainCertificateStore } from '../core/blind-tunnel'
 import {
   dataPaths,
   FEEDBACK_KEYCHAIN_ACCOUNT,
@@ -439,9 +440,26 @@ async function main(): Promise<void> {
   // A relay for paired phones (docs/phone-channel.md): the one in Settings › Devices. A dev build
   // can name a local one in the environment instead, and then signs in software.
   const devRelay = strictApprovals ? null : relayFromEnv(process.env)
+  // The blind relay (docs/blind-relay.md): only a development build, from the environment, until
+  // the relay is deployed and has its setting. Its certificate's keys go in Valet's own Keychain
+  // item, or a file in this data folder when there's no helper (a dev or e2e run).
+  const blindSetup = strictApprovals ? null : blindRelayFromEnv(process.env)
+  const blindRelay =
+    blindSetup === null
+      ? null
+      : {
+          setup: blindSetup,
+          store:
+            keychainHelper === null || mode.demo || mode.e2e
+              ? fileCertificateStore(join(paths.dir, 'relay-certificate.json'))
+              : keychainCertificateStore(
+                  new KeychainHelper({ helperPath: keychainHelper }),
+                  blindSetup.macDomain,
+                ),
+        }
   const approverKeys = await macApprovalKeys({
     packaged: strictApprovals,
-    approverPath: devRelay === null ? nativeHelper('valet-approver') : null,
+    approverPath: devRelay === null && blindSetup === null ? nativeHelper('valet-approver') : null,
     // A demo launch keeps its anchor in its own data folder, never the Keychain.
     keychain:
       keychainHelper === null || mode.demo ? null : new KeychainHelper({ helperPath: keychainHelper }),
@@ -584,6 +602,7 @@ async function main(): Promise<void> {
     credentials: demoSite === null ? realCredentials(credentialDeps) : demoSite.credentials,
     approvalKeys,
     relay: devRelay,
+    blindRelay,
     // Agents' reports to the Valet team (docs/feedback.md), filed with a token only the Keychain
     // holds. None in demo mode or e2e runs: nothing a test does may reach GitHub.
     feedback:

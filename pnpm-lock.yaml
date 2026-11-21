@@ -127,6 +127,9 @@ importers:
       '@1password/sdk':
         specifier: ^0.5.0
         version: 0.5.0
+      '@valet/acme':
+        specifier: workspace:*
+        version: link:../../packages/acme
       '@valet/adapter-claude-ai':
         specifier: workspace:*
         version: link:../../adapters/claude-ai
@@ -218,6 +221,12 @@ importers:
       '@types/smtp-server':
         specifier: ^3.5.13
         version: 3.5.13
+      '@valet/blind-relay':
+        specifier: workspace:*
+        version: link:../blind-relay
+      '@valet/fake-acme':
+        specifier: workspace:*
+        version: link:../../fakes/acme
       '@valet/fake-example-services':
         specifier: workspace:*
         version: link:../../fakes/example-services

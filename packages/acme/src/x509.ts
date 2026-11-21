@@ -55,10 +55,13 @@ function extension(id: string, value: Der, critical = false): Der {
     : sequence(oid(id), octetString(value))
 }
 
-function subjectAltName(names: readonly string[]): Der {
+function subjectAltName(names: readonly string[], ips: readonly string[] = []): Der {
   return extension(
     OID.subjectAltName,
-    sequence(...names.map((n) => implicitPrimitive(2, Buffer.from(n, 'latin1')))),
+    sequence(
+      ...names.map((n) => implicitPrimitive(2, Buffer.from(n, 'latin1'))),
+      ...ips.map((ip) => implicitPrimitive(7, Buffer.from(ip.split('.').map(Number)))),
+    ),
   )
 }
 
@@ -83,6 +86,8 @@ export function certificateRequest(keys: KeyPair, names: readonly string[]): Der
 
 export interface SelfSignedOptions {
   readonly names: readonly string[]
+  /** IPv4 addresses, for a test server dialled by address. */
+  readonly ips?: readonly string[]
   readonly notBefore?: Date
   readonly notAfter?: Date
   /** RFC 8737: the SHA-256 of the key authorization, in a critical acmeIdentifier extension. */
@@ -114,7 +119,7 @@ export function certificate(options: CertificateOptions): Der {
   const serial = options.serial ?? randomBytes(16)
   serial[0] = (serial[0] as number) & 0x7f
   const extensions = [
-    subjectAltName(options.names),
+    subjectAltName(options.names, options.ips),
     extension(OID.basicConstraints, options.ca === true ? sequence(boolean(true)) : sequence(), true),
     extension(OID.subjectKeyIdentifier, octetString(keyIdentifier(options.subjectKey))),
   ]

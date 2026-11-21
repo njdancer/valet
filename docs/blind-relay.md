@@ -56,6 +56,20 @@ A connection that offers ALPN `acme-tls/1` is Let's Encrypt validating the name 
 client and the certificate writer are in `packages/acme` (no dependencies; DER written by hand,
 read back with Node's `X509Certificate`).
 
+## In the app
+
+`apps/desktop/src/main/core/blind-tunnel.ts` runs the tunnel and the certificate together. Phones
+starts it once the Mac's keys and relay binding are ready (the same sign-in the Worker relay
+takes), beside the Worker relay until Nick's Mac has moved. Remote access serves the Mac's name
+from then on, and offers `https://<macId>.<mac domain>/mcp` as the connector address once the
+certificate is there. The certificate and its keys stay in Valet's own Keychain item
+(`valet.relay-certificate`), or a 0600 file in a development build without the helper.
+
+For now only a development build turns it on, with `VALET_BLIND_RELAY` (the control host) and
+`VALET_BLIND_MAC_DOMAIN`; `VALET_BLIND_RELAY_CONNECT` (a `wss://` address) and
+`VALET_ACME_DIRECTORY` point it at a local relay and CA. A connection with no server name (one
+dialled by address) is answered as the control host.
+
 ## Tests
 
 - `packages/core/test/tunnel.test.ts`: the ClientHello parser against real Node hellos, frames,
@@ -65,3 +79,7 @@ read back with Node's `X509Certificate`).
   ACME challenge, a stalled caller not blocking others.
 - `apps/blind-relay/test/mcp.test.ts`: a real MCP SDK client registers, gets consent at the Mac,
   takes a token and calls a tool through the relay; nothing it carried is readable.
+- `apps/desktop/e2e/blind-relay.spec.ts`: the built app, the real relay and a CA that really checks
+  TLS-ALPN-01. The app gets its certificate through the relay; an agent signs in with the Mac's
+  OAuth server from a real browser and calls a tool at the Mac's address; pausing closes it; a relay
+  restart costs nothing, not even a new certificate.

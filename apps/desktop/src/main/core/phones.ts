@@ -15,6 +15,7 @@ import { PhoneChannel, type PhoneChannelOptions } from './approvals/phone-channe
 import { PhoneInbox, type SafetySwitches } from './approvals/phone-inbox'
 import { RosterKeeper } from './approvals/roster-keeper'
 import type { MacSigner } from './approvals/signer'
+import type { BlindTunnel } from './blind-tunnel'
 
 export interface RelaySetup {
   /** The relay's origin, https://<host>: named in the QR code and in every challenge. */
@@ -42,6 +43,11 @@ export interface PhonesOptions {
    * relay's consent pages. Without it the relay carries only the phone channel.
    */
   readonly remote?: RelayRemote
+  /**
+   * This Mac at the blind relay (docs/blind-relay.md), started with the same transport key and
+   * binding once they're ready, whether or not the Worker relay is set up.
+   */
+  readonly tunnel?: BlindTunnel | null
 }
 
 export interface RelayRemote {
@@ -113,7 +119,8 @@ export class Phones implements PhoneOutbox {
     this.relayStatus = { state: 'stopped' }
     this.hub = null
     const relay = this.relay
-    if (relay === null) {
+    const tunnel = this.options.tunnel ?? null
+    if (relay === null && tunnel === null) {
       this.unavailable = 'no-relay'
       return
     }
@@ -126,6 +133,15 @@ export class Phones implements PhoneOutbox {
     const binding = await this.binding(parts.signer, keys.approvalKey, keys.transportKey)
     if (binding === null) {
       this.unavailable = 'no-keys'
+      return
+    }
+    tunnel?.start(
+      parts.devices.macId,
+      { publicKey: keys.transportKey, sign: (payload) => keysOps.signTransport(payload) },
+      binding,
+    )
+    if (relay === null) {
+      this.unavailable = 'no-relay'
       return
     }
     this.unavailable = null
@@ -257,6 +273,7 @@ export class Phones implements PhoneOutbox {
   }
 
   stop(): void {
+    this.options.tunnel?.stop()
     this.options.remote?.setRelayHost(null)
     this.client?.stop()
     this.client = null
