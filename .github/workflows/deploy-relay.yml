@@ -35,8 +35,9 @@ env:
   FLY_APP: valet-relay
   DNS_ZONE: dncr.me
   DNS_NAMES: relay.valet.dncr.me *.valet.dncr.me
-  # flyctl's version. Bump by hand after reading its changelog.
-  FLYCTL_VERSION: 0.3.209
+  # flyctl's version, such as 0.3.200. Empty takes flyctl's latest release, checked against that
+  # release's checksums; the step logs which one it used.
+  FLYCTL_VERSION: ''
 
 jobs:
   deploy:
@@ -89,10 +90,15 @@ jobs:
 
       - name: flyctl
         if: steps.gate.outputs.deploy == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          base="https://github.com/superfly/flyctl/releases/download/v$FLYCTL_VERSION"
-          file="flyctl_${FLYCTL_VERSION}_Linux_x86_64.tar.gz"
+          version="${FLYCTL_VERSION:-$(gh api repos/superfly/flyctl/releases/latest -q .tag_name)}"
+          version="${version#v}"
+          echo "flyctl $version"
+          base="https://github.com/superfly/flyctl/releases/download/v$version"
+          file="flyctl_${version}_Linux_x86_64.tar.gz"
           cd "$RUNNER_TEMP"
           curl -fsSL -o "$file" "$base/$file"
           curl -fsSL -o checksums.txt "$base/checksums.txt"
