@@ -252,6 +252,30 @@ describe('the blind relay', () => {
     await expect(get(rig, paused, '/')).rejects.toThrow()
   })
 
+  it('a connection the Mac closes closes for the caller too, promptly', async () => {
+    rig = await startRig()
+    // The Mac drops each connection a moment after it opens, like an idle timer firing.
+    const mac = startMac(rig, (socket) => {
+      setTimeout(() => socket.destroy(), 100)
+    })
+    macs.push(mac)
+    await mac.online()
+    for (const sendFirst of [false, true]) {
+      const socket = dial(rig, mac.host, mac.cert.pem)
+      socket.on('error', () => {})
+      if (sendFirst) socket.once('secureConnect', () => socket.write('GET / HTTP/1.1\r\n'))
+      const closed = await new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => resolve(false), 3000)
+        socket.once('close', () => {
+          clearTimeout(timer)
+          resolve(true)
+        })
+      })
+      socket.destroy()
+      expect(closed, `closed (sent first: ${sendFirst})`).toBe(true)
+    }
+  })
+
   it('a Mac comes back after the relay restarts, with nothing stored', async () => {
     rig = await startRig()
     const port = rig.port
