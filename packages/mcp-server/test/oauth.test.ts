@@ -660,6 +660,26 @@ describe('/token', () => {
       expect(all).not.toContain(secret)
   })
 
+  it('logs the MCP path too: whether a token or session came, never what it was', async () => {
+    const s = await setup()
+    const unsigned = await send(s.port, 'POST', '/mcp', {
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: '{}',
+    })
+    expect(unsigned.status).toBe(401)
+    const wrong = await send(s.port, 'GET', '/mcp', {
+      headers: { authorization: 'Bearer not-a-token-zzz', 'mcp-session-id': 'sess-zzz' },
+    })
+    expect(wrong.status).toBe(401)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const shape = s.lines.map((line) => line.replace(/ \d+ms/, ''))
+    expect(shape).toEqual([
+      '[mcp] POST /mcp 401 Unauthorized bearer=no session=no',
+      '[mcp] GET /mcp 401 Unauthorized bearer=yes session=yes',
+    ])
+    expect(s.lines.join('\n')).not.toContain('zzz')
+  })
+
   it('refuses a wrong verifier, redirect URI or resource, and the code is spent either way', async () => {
     const s = await setup()
     const extras: Record<string, string>[] = [

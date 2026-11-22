@@ -1,0 +1,65 @@
+# Adds Nick's Mac as a Claude.ai connector would, from the public internet, as far as it can go
+# without a person (.github/scripts/connector-check.mjs). Every 10 minutes, after each relay
+# deploy, and on demand. A red run means a connector added now would fail.
+name: connector check
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_run:
+    workflows: ["Deploy blind relay"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      mac_host:
+        description: The Mac's name on the relay
+        default: bc3fa5306fef06686c8ed4281e245667.valet.dncr.me
+      rounds:
+        description: Rounds of discovery
+        default: "10"
+      register:
+        description: Also register a client (expires within the hour)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: connector-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      MAC_HOST: ${{ inputs.mac_host || 'bc3fa5306fef06686c8ed4281e245667.valet.dncr.me' }}
+      ROUNDS: ${{ inputs.rounds || '5' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          sparse-checkout: .github/scripts
+      - name: DNS from two public resolvers
+        run: |
+          set -u
+          [[ "$MAC_HOST" =~ ^[0-9a-f]{32}\.valet\.dncr\.me$ ]] || { echo "not a Mac name"; exit 1; }
+          bad=0
+          for r in 1.1.1.1 8.8.8.8; do
+            a=$(dig +short A "$MAC_HOST" @"$r" | sort | tr '\n' ' ')
+            aaaa=$(dig +short AAAA "$MAC_HOST" @"$r" | sort | tr '\n' ' ')
+            echo "$r A: $a AAAA: $aaaa"
+            # The relay's dedicated IPv4 only: Claude's connectors are IPv4-only, and any other
+            # address (a proxied record, an old tunnel) would answer for some callers and not others.
+            [ "$a" = "149.248.210.244 " ] || bad=1
+          done
+          [ "$bad" -eq 0 ] || { echo "::error::DNS for $MAC_HOST is not just the relay's IPv4"; exit 1; }
+      - name: Add the connector the way Claude does
+        run: |
+          flag=""
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            [ "${{ inputs.register }}" = "true" ] && flag="--register"
+          elif [ "$(date -u +%M)" -lt 10 ]; then
+            flag="--register" # once an hour on the schedule
+          fi
+          node .github/scripts/connector-check.mjs "$MAC_HOST" "$ROUNDS" $flag
