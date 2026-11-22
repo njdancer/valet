@@ -65,6 +65,13 @@ export interface BlindRelayLimits {
   readonly helloTimeoutMs: number
   /** A connection with no bytes either way for this long is closed. */
   readonly idleMs: number
+  /**
+   * A Mac link that sends nothing (not even its ping) for this long is dead though no close came:
+   * it is dropped, so callers aren't piped into it, and the Mac dials again.
+   */
+  readonly silentMs: number
+  /** How long a caller for a Mac that is between links waits for it to come back. */
+  readonly macGraceMs: number
 }
 
 const DEFAULT_LIMITS: BlindRelayLimits = {
@@ -72,6 +79,8 @@ const DEFAULT_LIMITS: BlindRelayLimits = {
   pendingHellos: 2000,
   helloTimeoutMs: 15_000,
   idleMs: 10 * 60_000,
+  silentMs: 45_000,
+  macGraceMs: 10_000,
 }
 
 const CLOSE_BAD_FRAME = 4400
@@ -86,6 +95,8 @@ interface MacLink {
   up: number
   down: number
   connections: number
+  /** When the Mac last sent anything on this link. */
+  heard: number
 }
 
 export interface RunningBlindRelay {
@@ -102,6 +113,20 @@ export async function startBlindRelay(options: BlindRelayOptions): Promise<Runni
   const origin = `https://${controlHost}`
   const denied = options.denied ?? (() => new Set<string>())
   const macs = new Map<string, MacLink>()
+  /** Callers waiting for a Mac that is between links, by macId. */
+  const waiting = new Map<string, Set<(link: MacLink) => void>>()
+  const silence = setInterval(
+    () => {
+      const now = Date.now()
+      for (const [macId, link] of macs)
+        if (now - link.heard > limits.silentMs) {
+          log(`mac silent ${macId}`)
+          link.socket.terminate()
+        }
+    },
+    Math.min(10_000, limits.silentMs / 3),
+  )
+  silence.unref()
   const raw = new Set<Socket>()
   let pending = 0
 
@@ -142,6 +167,7 @@ export async function startBlindRelay(options: BlindRelayOptions): Promise<Runni
       }
       const link = macs.get(macId)
       if (link?.socket !== ws) return
+      link.heard = Date.now()
       if (!isBinary) {
         if (String(data) === 'ping') ws.send('pong')
         return
@@ -187,6 +213,7 @@ export async function startBlindRelay(options: BlindRelayOptions): Promise<Runni
       up: 0,
       down: 0,
       connections: 0,
+      heard: Date.now(),
       mux: new TunnelMux({
         ...(options.window === undefined ? {} : { window: options.window }),
         send: (frame) => ws.send(frame),
@@ -202,6 +229,36 @@ export async function startBlindRelay(options: BlindRelayOptions): Promise<Runni
       }),
     )
     log(`mac online ${macId}`)
+    const callers = waiting.get(macId)
+    waiting.delete(macId)
+    for (const resume of callers ?? []) resume(link)
+  }
+
+  /** Holds a caller for a Mac that is between links until it is back, or the grace runs out. */
+  function waitForMac(socket: Socket, first: Buffer, macId: string): void {
+    const callers = waiting.get(macId) ?? new Set<(link: MacLink) => void>()
+    waiting.set(macId, callers)
+    const resume = (link: MacLink) => {
+      clearTimeout(timer)
+      if (socket.destroyed) return
+      if (link.mux.size >= limits.streamsPerMac) return void socket.destroy()
+      pipeToMac(socket, first, link)
+    }
+    const give = () => {
+      callers.delete(resume)
+      if (callers.size === 0 && waiting.get(macId) === callers) waiting.delete(macId)
+    }
+    log(`holding a caller for ${macId}`)
+    const timer = setTimeout(() => {
+      give()
+      log(`refused offline ${macId}`)
+      socket.destroy()
+    }, limits.macGraceMs)
+    socket.once('close', () => {
+      clearTimeout(timer)
+      give()
+    })
+    callers.add(resume)
   }
 
   // ---- Port 443: read the server name, then answer the control host or pipe to a Mac.
@@ -232,13 +289,20 @@ export async function startBlindRelay(options: BlindRelayOptions): Promise<Runni
       done()
       socket.off('data', onData)
       socket.pause()
-      if (hello.state !== 'complete') return void socket.destroy()
+      if (hello.state !== 'complete') {
+        log(`refused ${hello.state} hello`)
+        return void socket.destroy()
+      }
       // No name can't be a Mac's: the control host answers it, as for a Mac dialling an address.
       if (hello.serverName === null || hello.serverName === controlHost)
         return serveControl(socket, first, hello.alpn)
       const macId = macIdForHost(hello.serverName, options.macDomain)
       const link = macId === null ? undefined : macs.get(macId)
-      if (macId === null || link === undefined || denied().has(macId)) return void socket.destroy()
+      if (macId === null || denied().has(macId)) {
+        log(`refused name ${hello.serverName.slice(0, 100)}`)
+        return void socket.destroy()
+      }
+      if (link === undefined) return waitForMac(socket, first, macId)
       if (link.mux.size >= limits.streamsPerMac) return void socket.destroy()
       pipeToMac(socket, first, link)
     }
@@ -307,6 +371,7 @@ export async function startBlindRelay(options: BlindRelayOptions): Promise<Runni
     port,
     macs: () => [...macs.keys()],
     async close() {
+      clearInterval(silence)
       for (const link of macs.values()) {
         link.mux.close()
         link.socket.terminate()

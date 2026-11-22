@@ -21,7 +21,7 @@ import {
 } from '@valet/mcp-server'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { lookup, MAC_DOMAIN, macKeys, type Rig, startMac, startRig, type TestMac } from './helpers'
+import { lookup, MAC_DOMAIN, macKeys, type Rig, startMac, startRig, type TestMac, waitFor } from './helpers'
 
 const REDIRECT = 'https://claude.example/api/mcp/auth_callback'
 const VERIFIER = `${'v'.repeat(43)}-._~0123456789`
@@ -91,7 +91,7 @@ interface Mac extends TestMac {
   readonly calls: ToolCall[]
 }
 
-async function macWithListener(rig: Rig): Promise<Mac> {
+async function macWithListener(rig: Rig): Promise<Mac & { reconnect(): TestMac }> {
   const keys = macKeys()
   const host = `${keys.macId}.${MAC_DOMAIN}`
   const clients = new RemoteClients()
@@ -115,7 +115,16 @@ async function macWithListener(rig: Rig): Promise<Mac> {
   cleanup.push(() => listener.close())
   const mac = startMac(rig, (socket, meta) => listener.accept(socket, meta), { keys })
   cleanup.push(() => mac.client.stop())
-  return { ...mac, consents, calls }
+  /** The same Mac on a new link, as after its network dropped: same keys, certificate and listener. */
+  const reconnect = () => {
+    const next = startMac(rig, (socket, meta) => listener.accept(socket, meta), {
+      keys,
+      certificate: () => mac.cert.context,
+    })
+    cleanup.push(() => next.client.stop())
+    return next
+  }
+  return { ...mac, consents, calls, reconnect }
 }
 
 describe('an MCP client through the blind relay', () => {
@@ -213,6 +222,84 @@ describe('an MCP client through the blind relay', () => {
     ])
       expect(carried.includes(secret)).toBe(false)
     expect(rig.lines.join('\n')).not.toMatch(/view_cart|claude|Bearer/)
+  })
+
+  it('finishes a claude.ai-style sign-in when the Mac drops off the relay between steps', async () => {
+    const rig = await startRig({ limits: { macGraceMs: 5000 } })
+    cleanup.push(() => rig.close())
+    const mac = await macWithListener(rig)
+    await mac.online()
+    const f = fetchVia(rig, mac.cert.pem)
+    const base = `https://${mac.host}`
+    // As claude.ai registers: a confidential client that sends its secret in the token request.
+    const registered = await f(`${base}/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        redirect_uris: [REDIRECT],
+        token_endpoint_auth_method: 'client_secret_post',
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+        client_name: 'Claude',
+      }),
+    })
+    expect(registered.status).toBe(201)
+    const client = (await registered.json()) as { client_id: string; client_secret: string }
+    const query = new URLSearchParams({
+      response_type: 'code',
+      client_id: client.client_id,
+      redirect_uri: REDIRECT,
+      code_challenge: CHALLENGE,
+      code_challenge_method: 'S256',
+      state: 'st-2',
+      resource: `${base}/mcp`,
+    })
+    const page = await (await f(`${base}/authorize?${query}`)).text()
+    const code = /<div class="code">([A-Z-]+)<\/div>/.exec(page)?.[1] as string
+    const next = (/url=([^"]+)"/.exec(page)?.[1] ?? '').replace(/&amp;/g, '&')
+    expect(mac.consents.approve(code, ['woolworths.view_cart']).ok).toBe(true)
+
+    // The link drops just before the browser comes back for its code; it waits, and is served.
+    mac.client.stop()
+    await waitFor(() => rig.relay.macs().length === 0)
+    const back = f(`${base}${next}`)
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    const second = mac.reconnect()
+    const done = await back
+    expect(done.status).toBe(302)
+    const location = new URL(done.headers.get('location') as string)
+    expect(location.searchParams.get('iss')).toBe(base)
+    expect(location.searchParams.get('state')).toBe('st-2')
+
+    // And again just before Claude's server redeems it.
+    second.client.stop()
+    await waitFor(() => rig.relay.macs().length === 0)
+    const token = f(`${base}/token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: client.client_id,
+        client_secret: client.client_secret,
+        code: location.searchParams.get('code') as string,
+        code_verifier: VERIFIER,
+        redirect_uri: REDIRECT,
+        resource: `${base}/mcp`,
+      }).toString(),
+    })
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    mac.reconnect()
+    const issued = await token
+    expect(issued.status).toBe(200)
+    const { access_token: accessToken } = (await issued.json()) as { access_token: string }
+    const transport = new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
+      requestInit: { headers: { authorization: `Bearer ${accessToken}` } },
+      fetch: f,
+    })
+    const mcp = new Client({ name: 'claude.ai', version: '1.0.0' })
+    await mcp.connect(transport)
+    cleanup.push(() => mcp.close())
+    expect((await mcp.listTools()).tools.map((t) => t.name)).toEqual(['woolworths_view_cart'])
   })
 
   it("replaces a caller's own Cf-Connecting-Ip with the address the relay saw", async () => {
