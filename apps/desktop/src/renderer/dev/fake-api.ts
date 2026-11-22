@@ -1720,7 +1720,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         return mailStatus()
       },
       async update(patch) {
-        enter('mail.update')
+        enter('mail.update', patch)
         const wasOn = mailSettings.enabled
         mailSettings = {
           ...mailSettings,
@@ -1730,7 +1730,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         return mailStatus()
       },
       async action(action) {
-        enter('mail.action')
+        enter('mail.action', action)
         if (action === 'start-reader' && mailStage === 'not-running') mailStage = 'needs-access'
         if (action === 'full-disk-access' && mailStage === 'needs-access') mailStage = 'ready'
       },

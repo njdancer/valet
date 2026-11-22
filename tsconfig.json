@@ -4,6 +4,7 @@
   "include": [
     "packages/*/src",
     "packages/*/test",
+    "packages/native-mail/scripts",
     "adapters/*/src",
     "adapters/*/test",
     "fakes/*/src",
