@@ -130,6 +130,7 @@ type RemoteAuditEvent =
       readonly tool: string
       readonly enabled: boolean
       readonly sideEffect: SideEffect
+      readonly clientId?: string
     }
   | {
       readonly type: 'remote-consent'
@@ -329,10 +330,48 @@ export class RemoteAccess {
     return this.serially(async () => {
       if (!this.canAllowForClient(adapter, declaration, clientId)) return false
       if (!this.clients.addTools(clientId, [`${adapter}.${declaration.name}`])) return false
+      await this.auditClientTool(adapter, declaration, clientId, true)
       this.refresh()
       this.deps.changed()
       return true
     })
+  }
+
+  /**
+   * Takes one tool out of one client's grant (the person's switch on the agent's page). Only
+   * narrows, so it needs no signature; the tool stays on for other cloud agents. False when the
+   * client has no grant or didn't hold it.
+   */
+  removeToolForClient(
+    adapter: string,
+    declaration: Pick<ToolDeclaration, 'name' | 'sideEffect'>,
+    clientId: string,
+  ): Promise<boolean> {
+    return this.serially(async () => {
+      if (!this.clients.removeTools(clientId, [`${adapter}.${declaration.name}`])) return false
+      await this.auditClientTool(adapter, declaration, clientId, false)
+      this.refresh()
+      this.deps.changed()
+      return true
+    })
+  }
+
+  private async auditClientTool(
+    adapter: string,
+    declaration: Pick<ToolDeclaration, 'name' | 'sideEffect'>,
+    clientId: string,
+    enabled: boolean,
+  ): Promise<void> {
+    await this.deps
+      .audit({
+        type: 'remote-tool',
+        adapterId: adapter,
+        tool: declaration.name,
+        enabled,
+        sideEffect: declaration.sideEffect,
+        clientId: `remote:${clientId}`,
+      })
+      .catch(() => undefined)
   }
 
   /** What the consent window shows. */

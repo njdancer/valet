@@ -609,7 +609,7 @@ export const EVENT_FIELDS = {
   'update-downloaded': ['type', 'from', 'to'],
   'update-installed': ['type', 'from', 'to'],
   'remote-state': ['type', 'state', 'revokedTokens'],
-  'remote-tool': ['type', 'adapterId', 'tool', 'enabled', 'sideEffect'],
+  'remote-tool': ['type', 'adapterId', 'tool', 'enabled', 'sideEffect', 'clientId'],
   'setting-changed': ['type', 'adapterId', 'setting', 'cleared'],
   'remote-consent': ['type', 'clientId', 'clientHost', 'source', 'tools', 'answer'],
   'remote-revoked': ['type', 'clientId', 'clients'],

@@ -414,7 +414,7 @@ const EVENT_FIELDS: Readonly<Record<AuditEvent['type'], readonly string[]>> = {
   'update-downloaded': ['from', 'to'],
   'update-installed': ['from', 'to'],
   'remote-state': ['state', 'revokedTokens'],
-  'remote-tool': ['adapterId', 'tool', 'enabled', 'sideEffect'],
+  'remote-tool': ['adapterId', 'tool', 'enabled', 'sideEffect', 'clientId'],
   'setting-changed': ['adapterId', 'setting', 'cleared'],
   'remote-consent': ['clientId', 'clientHost', 'tools', 'answer'],
   'remote-revoked': ['clientId', 'clients'],

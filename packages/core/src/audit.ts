@@ -230,6 +230,8 @@ export type AuditEvent =
       readonly enabled: boolean
       /** The tool's side effect when this was set; a later raise turns it off again. */
       readonly sideEffect: 'read' | 'write' | 'irreversible'
+      /** Set when it changed for one cloud agent only (`remote:<id>`), in that agent's grant. */
+      readonly clientId?: string
     }
   | {
       /**

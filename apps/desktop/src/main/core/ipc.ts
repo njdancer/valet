@@ -323,6 +323,10 @@ const HANDLERS: Readonly<
   'remote.setAskForChanges': entry(z.tuple([REMOTE_CLIENT_ID, z.boolean()]), (api, [id, on]) =>
     api.remote.setAskForChanges(id, on),
   ),
+  'remote.setClientTool': entry(
+    z.tuple([REMOTE_CLIENT_ID, ADAPTER_ID, TOOL_NAME, z.boolean()]),
+    (api, [id, adapterId, tool, on]) => api.remote.setClientTool(id, adapterId, tool, on),
+  ),
   'remote.setup': entry(none, (api) => api.remote.setup()),
   'remote.setEnabled': entry(z.tuple([z.boolean()]), (api, [enabled]) => api.remote.setEnabled(enabled)),
   'remote.setHosts': entry(z.tuple([z.array(z.string().min(1).max(253)).max(8)]), (api, [hosts]) =>

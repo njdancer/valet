@@ -180,6 +180,13 @@ class Agent implements OAuthClientProvider {
     return code
   }
 
+  /** A fresh session with the tokens it holds: what a connector does on its next chat. */
+  async connect(): Promise<Client> {
+    const client = new Client({ name: this.name, version: '1' })
+    await client.connect(this.transport())
+    return client
+  }
+
   async finishSignIn(): Promise<Client> {
     const page = this.page
     if (page === null || this.pending === null) throw new Error('no sign-in started')
@@ -295,6 +302,53 @@ test('an agent signs in with the Mac’s own OAuth server and calls a tool at th
   const found = await client.callTool({ name: 'woolworths_search_products', arguments: { query: 'bread' } })
   expect(found.isError, JSON.stringify(found.content)).toBeFalsy()
   await client.close()
+})
+
+test('the person edits the approved agent’s tools on its page: on with Touch ID, off at once', async () => {
+  const agents = await control.evaluate(async () => (await window.valet?.remote.clients()) ?? [])
+  expect(agents).toHaveLength(1)
+  const id = agents[0]?.id ?? ''
+  await control.evaluate((clientId) => {
+    window.location.hash = `#/connections/${clientId}`
+  }, id)
+  const page = control
+  // The words that told the person to revoke and approve again are gone.
+  await expect(page.getByText(/Turning a tool on needs Touch ID; turning one off is at once/)).toBeVisible()
+  await expect(page.getByText(/revoke it and approve it again/)).toHaveCount(0)
+  const search = page.getByRole('switch', { name: /: Search products$/ })
+  const cart = page.getByRole('switch', { name: /: Get cart$/ })
+  await expect(search).toHaveAttribute('aria-checked', 'true')
+  await expect(cart).toHaveAttribute('aria-checked', 'false')
+
+  // On: the Mac's Touch ID step (answered yes in e2e builds), then the agent's own tool list has
+  // it, though it was never on for remote clients. The agent signs in again for nothing.
+  await cart.click()
+  await expect(cart).toHaveAttribute('aria-checked', 'true')
+  const listed = async () => {
+    const client = await claude.connect()
+    const names = (await client.listTools()).tools.map((t) => t.name).sort()
+    await client.close()
+    return names
+  }
+  expect(await listed()).toEqual(['woolworths_get_cart', 'woolworths_search_products'])
+  const signed = await control.evaluate(async () =>
+    ((await window.valet?.audit.page({}))?.records ?? []).map((r) => r.event),
+  )
+  expect(signed).toContainEqual(expect.objectContaining({ type: 'approval-requested', kind: 'tool-enable' }))
+
+  // Off: at once, still approved, same registration; the other tool stays.
+  await search.click()
+  await expect(search).toHaveAttribute('aria-checked', 'false')
+  expect(await listed()).toEqual(['woolworths_get_cart'])
+  const after = await control.evaluate(async () => (await window.valet?.remote.clients()) ?? [])
+  expect(after.map((c) => [c.id, c.grant?.tools])).toEqual([[id, ['woolworths.get_cart']]])
+
+  // Back as it was for the tests after this one.
+  await search.click()
+  await expect(search).toHaveAttribute('aria-checked', 'true')
+  await cart.click()
+  await expect(cart).toHaveAttribute('aria-checked', 'false')
+  expect(await listed()).toEqual(['woolworths_search_products'])
 })
 
 test('pausing remote access closes the address; on again serves it again', async () => {

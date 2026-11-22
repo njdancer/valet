@@ -1848,6 +1848,11 @@ export interface ValetApi {
      * open sessions close, so its next one has the authoring tools or loses them.
      */
     setAskForChanges(clientId: string, on: boolean): Promise<void>
+    /**
+     * Gives one approved cloud agent one more tool (with Touch ID), or takes one away (at once).
+     * Its grant and tokens stay; its tool list follows.
+     */
+    setClientTool(clientId: string, adapterId: string, tool: string, on: boolean): Promise<void>
     /** Deletes every remote client. Each connector has to be added again. Returns how many. */
     revokeAllClients(): Promise<number>
     /** Remote access as set up now. */
