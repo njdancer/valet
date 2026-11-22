@@ -2648,11 +2648,22 @@ describe('remote access', () => {
     const names = async () =>
       (await (await remoteClient(port, agent.token)).listTools()).tools.map((t) => t.name)
     expect(await names()).toEqual([])
+    // Reading mail is a wide grant: on asks for Touch ID, and a cancelled prompt changes nothing.
+    s.presence.answer = false
+    await expect(s.api.remote.setClientTool(agent.id, 'mail', 'search', true)).rejects.toBeInstanceOf(
+      ValetError,
+    )
+    expect(await names()).toEqual([])
+    expect(s.service.remote.status().tools).toEqual([])
+    s.presence.answer = true
+    const before = s.presence.prompts.length
     await s.api.remote.setClientTool(agent.id, 'mail', 'search', true)
+    expect(s.presence.prompts.length).toBe(before + 1)
     expect(await names()).toEqual(['mail_search'])
     // On for remote clients now, but another agent still needs it in its own grant.
     expect(s.service.remote.status().tools).toEqual(['mail.search'])
     await s.api.remote.setClientTool(agent.id, 'mail', 'search', false)
+    expect(s.presence.prompts.length).toBe(before + 1)
     expect(await names()).toEqual([])
     expect((await s.api.remote.clients()).find((c) => c.id === agent.id)?.grant?.tools).toEqual([])
     // A Mail tool that isn't offered (Mail off) can't be given.
