@@ -954,4 +954,25 @@ describe('pieces', () => {
     expect(consents.declineAll()).toBe(0)
     expect(consents.decline('nope')).toBe(false)
   })
+
+  it('gives a pending request’s code to the Mac by id, and nothing once it isn’t pending', () => {
+    let now = 0
+    const consents = new ConsentRequests({ now: () => now })
+    const about = { clientHost: 'claude.example', clientName: null, source: null }
+    const ask = {
+      clientId: 'rcx',
+      redirectUri: REDIRECT,
+      state: null,
+      codeChallenge: CHALLENGE,
+      resource: RESOURCE,
+    }
+    const one = consents.open(ask, about)
+    const two = consents.open(ask, about)
+    expect(consents.codeFor(one?.id as string)).toBe(one?.code)
+    expect(consents.codeFor('nope')).toBeNull()
+    consents.decline(one?.id as string)
+    expect(consents.codeFor(one?.id as string)).toBeNull()
+    now += CONSENT_TTL_MS
+    expect(consents.codeFor(two?.id as string)).toBeNull()
+  })
 })

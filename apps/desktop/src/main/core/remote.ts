@@ -393,6 +393,11 @@ export class RemoteAccess {
   }
 
   /** The pending consent a typed code names, or null; nothing is approved or counted. */
+  /** A pending consent's code, for the phone's card; null once it isn't pending. */
+  consentCodeFor(id: string): string | null {
+    return this.consents.codeFor(id)
+  }
+
   consentFor(code: string): ConsentPrompt | null {
     return this.consents.matching(code)
   }
