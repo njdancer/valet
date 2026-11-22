@@ -5566,6 +5566,20 @@ export class AppService {
         disconnectCloudflare: async () =>
           this.cloudflare === null ? 'removed' : this.cloudflare.disconnect(),
         setTool: async (adapterId, tool, enabled) => {
+          // A built-in tool (Mail on this Mac) goes on for every cloud agent with Touch ID too: hub
+          // agents need nothing more than this switch.
+          const native = this.nativeDeclaration(adapterId, tool)
+          if (native !== null && enabled && !this.remote.allows(adapterId, native)) {
+            await this.approveOrRefuse('tool-enable', {
+              adapterId,
+              adapterHash: BUILTIN_TOOLS_HASH,
+              tool,
+              scope: 'remote',
+              clientId: null,
+              sideEffect: native.sideEffect,
+            })
+            return this.remoteSetup()
+          }
           const adapter = this.adapter(adapterId)
           const declaration = adapter?.definition.manifest.tools.find((t) => t.name === tool)
           // On only at a side effect at least the one declared now: an update that raised it needs
