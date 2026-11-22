@@ -18,6 +18,11 @@ export type MailStoreFailure =
   /** No such message in an account the person allowed. */
   | 'not-found'
 
+interface AccountName {
+  readonly name: string | null
+  readonly address: string | null
+}
+
 export class MailStoreError extends Error {
   constructor(readonly code: MailStoreFailure) {
     super(`mail: ${code}`)
@@ -277,54 +282,116 @@ export class MailStore {
     return out
   }
 
-  /** Every account Mail has, allowed or not, for the person choosing in the app. */
+  /**
+   * Every account Mail has, allowed or not, for the person choosing in the app. "On My Mac" (local
+   * mailboxes) only when it holds mail: Mail always keeps an empty Outbox there.
+   */
   async allAccounts(): Promise<
     readonly { readonly id: string; readonly name: string; readonly address: string | null }[]
   > {
     return this.#guard(async () => {
-      await this.schema()
-      const rows = await this.files.query('envelope', 'SELECT url FROM mailboxes', [])
+      const schema = await this.schema()
+      const counts = schema.mailboxes.has('total_count') ? ', total_count' : ''
+      const rows = await this.files.query('envelope', `SELECT ROWID AS id, url${counts} FROM mailboxes`, [])
       const ids = new Set<string>()
+      let localMail = 0
+      const localBoxes: number[] = []
       for (const row of rows) {
         const parsed = parseMailboxUrl(str(row['url']) ?? '')
-        if (parsed !== null) ids.add(parsed.accountId)
-      }
-      const names = await this.#accountNames()
-      return [...ids].sort().map((id) => {
-        const named = names.get(id)
-        return {
-          id,
-          name: id === 'local' ? 'On My Mac' : (named?.name ?? `Account ${id.slice(0, 8)}`),
-          address: named?.address ?? null,
+        if (parsed === null) continue
+        ids.add(parsed.accountId)
+        if (parsed.accountId === 'local') {
+          localMail += num(row['total_count']) ?? 0
+          const id = num(row['id'])
+          if (id !== null) localBoxes.push(id)
         }
-      })
+      }
+      if (ids.has('local') && counts === '' && localBoxes.length > 0)
+        localMail = await this.#countIn(localBoxes)
+      if (localMail === 0) ids.delete('local')
+      const names = await this.#accountNames([...ids])
+      return [...ids].sort().map((id) => this.#describe(id, names))
     })
   }
 
-  /** Internet Accounts' names for Mail's account ids, when its database can be read. */
-  async #accountNames(): Promise<Map<string, { name: string; address: string | null }>> {
-    const names = new Map<string, { name: string; address: string | null }>()
-    let rows: readonly MailRow[]
+  async #countIn(mailboxes: readonly number[]): Promise<number> {
+    const rows = await this.files.query(
+      'envelope',
+      `SELECT COUNT(*) AS n FROM messages WHERE mailbox IN (${mailboxes.map(() => '?').join(', ')})`,
+      mailboxes,
+    )
+    return num(rows[0]?.['n']) ?? 0
+  }
+
+  #describe(
+    id: string,
+    names: ReadonlyMap<string, AccountName>,
+  ): { id: string; name: string; address: string | null } {
+    if (id === 'local') return { id, name: 'On My Mac', address: null }
+    const named = names.get(id)
+    return { id, name: named?.name ?? named?.address ?? 'Mail account', address: named?.address ?? null }
+  }
+
+  /**
+   * Names and addresses for Mail's account ids. Internet Accounts (Accounts4.sqlite) names most
+   * accounts on their own row; an iCloud account's mail row has neither name nor address and takes
+   * its name from its parent row, as Mail does. An address the row doesn't give comes from what the
+   * account has sent: the most common sender in its Sent mailbox.
+   */
+  async #accountNames(ids: readonly string[]): Promise<Map<string, AccountName>> {
+    const names = new Map<string, AccountName>()
+    const email = (value: string | null): string | null =>
+      value !== null && value.includes('@') ? value : null
+    let rows: readonly MailRow[] = []
     try {
       rows = await this.files.query(
         'accounts',
-        'SELECT ZIDENTIFIER AS id, ZACCOUNTDESCRIPTION AS description, ZUSERNAME AS username FROM ZACCOUNT',
+        'SELECT a.ZIDENTIFIER AS id, a.ZACCOUNTDESCRIPTION AS description, a.ZUSERNAME AS username, ' +
+          'p.ZACCOUNTDESCRIPTION AS parent_description, p.ZUSERNAME AS parent_username ' +
+          'FROM ZACCOUNT a LEFT JOIN ZACCOUNT p ON p.Z_PK = a.ZPARENTACCOUNT',
         [],
       )
     } catch {
-      return names
+      try {
+        rows = await this.files.query(
+          'accounts',
+          'SELECT ZIDENTIFIER AS id, ZACCOUNTDESCRIPTION AS description, ZUSERNAME AS username FROM ZACCOUNT',
+          [],
+        )
+      } catch {
+        rows = []
+      }
     }
     for (const row of rows) {
       const id = str(row['id'])
       if (id === null) continue
       const username = str(row['username'])
-      const description = str(row['description'])
       names.set(id, {
-        name: description ?? username ?? id,
-        address: username !== null && username.includes('@') ? username : null,
+        name: str(row['description']) ?? str(row['parent_description']) ?? email(username),
+        address: email(username),
       })
     }
+    for (const id of ids) {
+      if (id === 'local' || names.get(id)?.address != null) continue
+      const sent = await this.#sentAddress(id).catch(() => null)
+      if (sent === null) continue
+      const named = names.get(id)
+      names.set(id, { name: named?.name ?? null, address: sent })
+    }
     return names
+  }
+
+  async #sentAddress(accountId: string): Promise<string | null> {
+    const prefix = `imap://${accountId.replace(/[\\%_]/g, (c) => `\\${c}`)}/Sent%`
+    const rows = await this.files.query(
+      'envelope',
+      'SELECT a.address AS address, COUNT(*) AS n FROM messages m ' +
+        'JOIN addresses a ON a.ROWID = m.sender JOIN mailboxes b ON b.ROWID = m.mailbox ' +
+        "WHERE b.url LIKE ? ESCAPE '\\' GROUP BY a.address ORDER BY n DESC LIMIT 1",
+      [prefix],
+    )
+    const address = str(rows[0]?.['address'])
+    return address !== null && address.includes('@') ? address : null
   }
 
   /** The accounts the person allowed, with their mailboxes. */
@@ -332,7 +399,6 @@ export class MailStore {
     return this.#guard(async () => {
       const schema = await this.schema()
       const boxes = await this.#mailboxes(schema)
-      const names = await this.#accountNames()
       const byAccount = new Map<string, Mailbox[]>()
       for (const box of boxes) {
         const list = byAccount.get(box.accountId) ?? []
@@ -345,17 +411,13 @@ export class MailStore {
         })
         byAccount.set(box.accountId, list)
       }
+      const names = await this.#accountNames([...byAccount.keys()])
       return [...byAccount.entries()]
         .sort((a, b) => (a[0] < b[0] ? -1 : 1))
-        .map(([id, mailboxes]) => {
-          const named = names.get(id)
-          return {
-            id,
-            name: id === 'local' ? 'On My Mac' : (named?.name ?? `Account ${id.slice(0, 8)}`),
-            address: named?.address ?? null,
-            mailboxes: mailboxes.sort((a, b) => (a.path < b.path ? -1 : 1)),
-          }
-        })
+        .map(([id, mailboxes]) => ({
+          ...this.#describe(id, names),
+          mailboxes: mailboxes.sort((a, b) => (a.path < b.path ? -1 : 1)),
+        }))
     })
   }
 

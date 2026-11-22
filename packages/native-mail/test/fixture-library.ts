@@ -181,6 +181,12 @@ export interface FixtureOptions {
   /** Leave a column out of messages, to see the store refuse. */
   readonly dropColumn?: string
   readonly messages?: readonly FixtureMessage[]
+  /**
+   * How Internet Accounts names the accounts. `icloud` (the default) is how a real Mac lays out an
+   * iCloud account: its mail row has no name or address and points at a parent row called "iCloud",
+   * whose user name is the Apple ID. `flat` is an older table with neither the parent column nor rows.
+   */
+  readonly accounts?: 'icloud' | 'flat'
 }
 
 /** Builds the library under `root` and returns its mailDir and accounts database paths. */
@@ -292,16 +298,32 @@ export function buildLibrary(
       Buffer.concat([Buffer.from(`${body.length}\n`), body, Buffer.from(plist)]),
     )
   }
+  db.exec(
+    'UPDATE mailboxes SET total_count = (SELECT COUNT(*) FROM messages WHERE mailbox = mailboxes.ROWID)',
+  )
   db.close()
   const accountsDb = join(root, 'Accounts4.sqlite')
   const accounts = new DatabaseSync(accountsDb)
-  accounts.exec(`
+  accounts.exec(
+    options.accounts === 'flat'
+      ? `
     CREATE TABLE ZACCOUNT (Z_PK INTEGER PRIMARY KEY, ZIDENTIFIER TEXT, ZACCOUNTDESCRIPTION TEXT, ZUSERNAME TEXT);
     CREATE TABLE ZCREDENTIAL (Z_PK INTEGER PRIMARY KEY, ZPASSWORD TEXT);
     INSERT INTO ZACCOUNT VALUES (1, '${ALLOWED}', 'iCloud', 'me@example.com');
     INSERT INTO ZACCOUNT VALUES (2, '${OTHER}', 'Work', 'me@work.example');
     INSERT INTO ZCREDENTIAL VALUES (1, 'hunter2');
-  `)
+  `
+      : `
+    CREATE TABLE ZACCOUNT (Z_PK INTEGER PRIMARY KEY, ZIDENTIFIER TEXT, ZACCOUNTDESCRIPTION TEXT,
+      ZUSERNAME TEXT, ZPARENTACCOUNT INTEGER, ZACCOUNTTYPE INTEGER);
+    CREATE TABLE ZCREDENTIAL (Z_PK INTEGER PRIMARY KEY, ZPASSWORD TEXT);
+    INSERT INTO ZACCOUNT VALUES (7, 'C8E1486E-0000-4000-8000-0000000000AA', 'iCloud', 'apple-id@example.com', NULL, 34);
+    INSERT INTO ZACCOUNT VALUES (10, '${ALLOWED}', NULL, NULL, 7, 25);
+    INSERT INTO ZACCOUNT VALUES (16, '${OTHER}', 'Work', 'me@work.example', NULL, 25);
+    INSERT INTO ZACCOUNT VALUES (23, '37FE3693-0000-4000-8000-0000000000BB', 'On My Mac', NULL, NULL, 27);
+    INSERT INTO ZCREDENTIAL VALUES (1, 'hunter2');
+  `,
+  )
   accounts.close()
   return { mailDir, accountsDb }
 }

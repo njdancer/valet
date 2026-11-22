@@ -19,6 +19,9 @@ import type { MailAction, MailSettingsPatch, MailStatus } from '../../../shared/
 import { useAction, useApi, useLoad } from '../../lib/api-context'
 import { Failed } from '../connections/shared'
 
+/** Mail's "On My Mac": mailboxes on this Mac only, outside any email account. */
+const LOCAL_HINT = 'Mailboxes kept only on this Mac, not in any email account'
+
 /** How often the screen looks again while the person is in System Settings. */
 const RECHECK_MS = 2000
 
@@ -195,7 +198,11 @@ function Choices({
                 <CheckboxOption
                   key={a.id}
                   label={a.name}
-                  {...(a.address === null ? {} : { description: a.address })}
+                  {...(a.id === 'local'
+                    ? { description: LOCAL_HINT }
+                    : a.address === null
+                      ? {}
+                      : { description: a.address })}
                   checked={a.allowed}
                   disabled={busy}
                   onCheckedChange={(v) => toggle(a.id, v)}

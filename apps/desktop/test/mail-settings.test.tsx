@@ -29,6 +29,10 @@ describe('settings › Mail', () => {
 
     // Once the reader can read, the accounts appear, none picked.
     const icloud = await screen.findByRole('checkbox', { name: 'iCloud' })
+    // Accounts by name with their address; On My Mac says what it is. Never a raw id.
+    expect(screen.getByText('someone@icloud.com')).toBeTruthy()
+    expect(screen.getByText('Mailboxes kept only on this Mac, not in any email account')).toBeTruthy()
+    expect(screen.queryByText(/0A1B2C3D/)).toBeNull()
     expect(screen.getByText('Agents see no Mail tools until you pick at least one account.')).toBeTruthy()
     await user.click(icloud)
     await waitFor(() =>

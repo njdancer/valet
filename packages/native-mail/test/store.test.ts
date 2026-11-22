@@ -5,7 +5,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DirectMailFiles } from '../src/direct-files'
 import { type MailFiles, MailFilesError } from '../src/files'
 import { MailStore, MailStoreError, parseMailboxUrl } from '../src/store'
-import { ALLOWED, buildLibrary, type FixtureOptions, OTHER } from './fixture-library'
+import {
+  ALLOWED,
+  buildLibrary,
+  type FixtureMessage,
+  type FixtureOptions,
+  MESSAGES,
+  OTHER,
+} from './fixture-library'
 
 let root: string
 
@@ -67,8 +74,41 @@ describe('MailStore', () => {
     expect(accounts[1]?.name).toBe('On My Mac')
   })
 
-  it('lists every account for the person choosing', async () => {
+  it('lists every account for the person choosing, by name and address, never by id', async () => {
+    // As on a real Mac: the iCloud mail row has no name or address; its parent row is "iCloud",
+    // and its address is what it sends from (the Apple ID is not a mail address of the account).
     const all = await store({}, []).allAccounts()
+    expect(all).toEqual([
+      { id: ALLOWED, name: 'iCloud', address: 'me@example.com' },
+      { id: OTHER, name: 'Work', address: 'me@work.example' },
+    ])
+  })
+
+  it('names accounts from an older, flat Internet Accounts table too', async () => {
+    const all = await store({ accounts: 'flat' }, []).allAccounts()
+    expect(all.map((a) => [a.name, a.address])).toEqual([
+      ['iCloud', 'me@example.com'],
+      ['Work', 'me@work.example'],
+    ])
+  })
+
+  it('never shows a raw id when Internet Accounts can’t be read', async () => {
+    const lib = buildLibrary(mkdtempSync(join(root, 'lib-')))
+    rmSync(lib.accountsDb)
+    const s = new MailStore(new DirectMailFiles(lib), { allowedAccounts: () => new Set() })
+    const all = await s.allAccounts()
+    expect(all.find((a) => a.id === ALLOWED)).toEqual({
+      id: ALLOWED,
+      name: 'me@example.com',
+      address: 'me@example.com',
+    })
+    expect(all.find((a) => a.id === OTHER)?.name).toBe('Mail account')
+    for (const a of all) expect(a.name).not.toContain(a.id.slice(0, 8))
+  })
+
+  it('offers On My Mac only when it holds mail', async () => {
+    const withLocal = [...MESSAGES, { ...(MESSAGES[0] as FixtureMessage), id: 4321, mailbox: 5 }]
+    const all = await store({ messages: withLocal }, []).allAccounts()
     expect(all.map((a) => a.name)).toEqual(['iCloud', 'Work', 'On My Mac'])
   })
 
