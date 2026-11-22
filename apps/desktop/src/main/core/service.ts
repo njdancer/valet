@@ -1838,7 +1838,7 @@ export class AppService {
             this.emit('app-changed')
           },
           lockdown: () => this.setLockedDown(true),
-          revokeClient: async (clientId) => void (await this.remote.revokeClient(clientId)),
+          revokeClient: (clientId) => this.revokeFromPhone(clientId),
           revokeDevice: async (deviceId, by) => {
             if (await devices.revoke(deviceId, by, new Date(this.deps.now()).toISOString())) {
               this.phones.unpair(deviceId)
@@ -1882,6 +1882,25 @@ export class AppService {
     } catch {
       this.deps.diagnostics?.({ type: 'phones-unavailable' })
     }
+  }
+
+  /**
+   * The phone's Revoke on its Agents tab. The phone names the agent as the status did,
+   * `local:<id>` or `remote:<id>`; each is revoked as the Mac's own Revoke does it. One already
+   * gone is nothing to do.
+   */
+  private async revokeFromPhone(clientId: string): Promise<void> {
+    const at = clientId.indexOf(':')
+    const origin = clientId.slice(0, at)
+    const id = clientId.slice(at + 1)
+    try {
+      if (origin === 'remote') await this.api.remote.revokeClient(id)
+      else if (origin === 'local') await this.api.clients.revoke(id)
+    } catch (error) {
+      if (!(error instanceof ValetError)) throw error
+    }
+    this.emit('clients-changed')
+    this.emit('remote-changed')
   }
 
   /**
