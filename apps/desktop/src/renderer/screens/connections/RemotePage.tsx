@@ -486,7 +486,10 @@ function SiteTools({
     <Stack gap={2}>
       <Inline gap={2}>
         <SiteAvatar id={siteId} name={name} size="xs" />
-        <ObjectLink href={href.site(siteId, 'tools')}>{name}</ObjectLink>
+        {/* Mail on this Mac is built in, not a site: its page is Settings › Mail. */}
+        <ObjectLink href={siteId === 'mail' ? href.settings('mail') : href.site(siteId, 'tools')}>
+          {name}
+        </ObjectLink>
         <Text size="sm" tone="muted">
           {on} of {tools.length} on
         </Text>

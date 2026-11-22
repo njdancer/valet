@@ -27,6 +27,13 @@ An account that isn't picked doesn't exist for agents: its messages are never re
 message id from it reads as not found. The setting is read on every call, so un-picking an account
 takes effect at once.
 
+### Cloud agents
+
+Agents on this Mac see the tools as soon as Mail is on. Cloud agents (remote access, the claude.ai
+connector) see them only once each is turned on in Connections › Remote, as for any site's tools.
+They are listed there while Mail is on; turning Mail off takes them away from every agent, and
+they can still be switched off remotely.
+
 ## Setup (Settings › Mail)
 
 1. **Turn it on.** This starts the reader helper.
