@@ -93,12 +93,26 @@ describe('blindRelayFromEnv', () => {
       }),
     ).toEqual({ controlHost: 'relay.valet.test', macDomain: 'valet.test' })
   })
+
+  it("takes the Mac's other name's tag only as one short plain label", () => {
+    const base = { VALET_BLIND_RELAY: 'relay.valet.test', VALET_BLIND_MAC_DOMAIN: 'valet.test' }
+    expect(blindRelayFromEnv({ ...base, VALET_BLIND_TAG: 'b7' })).toEqual({
+      controlHost: 'relay.valet.test',
+      macDomain: 'valet.test',
+      tag: 'b7',
+    })
+    for (const tag of ['', 'a-b', 'A', 'x'.repeat(17), 'a.b'])
+      expect(blindRelayFromEnv({ ...base, VALET_BLIND_TAG: tag })).toEqual({
+        controlHost: 'relay.valet.test',
+        macDomain: 'valet.test',
+      })
+  })
 })
 
 describe('blindRelaySetup', () => {
   const local = { VALET_BLIND_RELAY: 'relay.valet.test', VALET_BLIND_MAC_DOMAIN: 'valet.test' }
   it('a release uses Valet’s relay whatever the environment says', () => {
-    expect(VALET_RELAY).toEqual({ controlHost: 'relay.valet.dncr.me', macDomain: 'valet.dncr.me' })
+    expect(VALET_RELAY).toEqual({ controlHost: 'relay.valet.dncr.me', macDomain: 'valet.dncr.me', tag: '2' })
     expect(blindRelaySetup({}, { release: true, test: false })).toBe(VALET_RELAY)
     expect(blindRelaySetup({ ...local }, { release: true, test: false })).toBe(VALET_RELAY)
     expect(blindRelaySetup({ VALET_BLIND_RELAY: 'off' }, { release: true, test: false })).toBe(VALET_RELAY)
@@ -157,7 +171,10 @@ describe('BlindTunnel', () => {
       setup: { controlHost: 'relay.valet.test', macDomain: 'valet.test', connectUrl: 'wss://127.0.0.1:1' },
       store: { load: async () => null, save: async () => {} },
       accept: () => null,
-      setHost: (host, ready) => hosts.push([host, ready]),
+      setHost: (host, ready, tagged) => {
+        hosts.push([host, ready])
+        expect(tagged).toBeNull()
+      },
       changed: () => {
         changes++
       },
@@ -177,5 +194,30 @@ describe('BlindTunnel', () => {
     const count = hosts.length
     tunnel.stop()
     expect(hosts).toHaveLength(count)
+  })
+
+  it("keeps the other name's certificate in its own store, and names it only once it has one", async () => {
+    const tagged: Array<string | null> = []
+    const loads: string[] = []
+    const tunnel = new BlindTunnel({
+      setup: {
+        controlHost: 'relay.valet.test',
+        macDomain: 'valet.test',
+        connectUrl: 'wss://127.0.0.1:1',
+        tag: '2',
+      },
+      store: { load: async () => (loads.push('first'), null), save: async () => {} },
+      taggedStore: { load: async () => (loads.push('tagged'), null), save: async () => {} },
+      accept: () => null,
+      setHost: (_host, _ready, other) => tagged.push(other),
+      changed: () => {},
+    })
+    tunnel.start('abc', { publicKey: 'key', sign: async () => 'sig' }, { approvalKey: 'k', signature: 's' })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(loads.sort()).toEqual(['first', 'tagged'])
+    // No certificate yet for either name: the other name isn't offered.
+    expect(tagged.every((t) => t === null)).toBe(true)
+    expect(tunnel.view?.host).toBe('abc.valet.test')
+    tunnel.stop()
   })
 })

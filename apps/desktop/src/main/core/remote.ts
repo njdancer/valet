@@ -202,6 +202,8 @@ export class RemoteAccess {
    */
   private tunnelHost: string | null = null
   private tunnelReady = false
+  /** The blind relay's other name for this Mac, once it has a certificate (BlindRelaySetup.tag). */
+  private taggedHost: string | null = null
   /** Tokens minted for agents through the hub, by grant id. Memory only, like every access token. */
   private readonly hubTokens = new Map<string, { readonly token: string; readonly renewAt: number }>()
 
@@ -418,12 +420,15 @@ export class RemoteAccess {
       clients: this.clients.list().length,
       pendingConsents: this.consents.prompts().length,
       // The blind relay's name once it can serve (TLS ends here); the Worker relay's otherwise.
+      // The other name first: it's the one agents are given (BlindRelaySetup.tag).
       relayUrl:
-        this.tunnelHost !== null && this.tunnelReady
-          ? `https://${this.tunnelHost}/mcp`
-          : this.relayHost === null
-            ? null
-            : `https://${this.relayHost}/mcp`,
+        this.taggedHost !== null
+          ? `https://${this.taggedHost}/mcp`
+          : this.tunnelHost !== null && this.tunnelReady
+            ? `https://${this.tunnelHost}/mcp`
+            : this.relayHost === null
+              ? null
+              : `https://${this.relayHost}/mcp`,
     }
   }
 
@@ -441,10 +446,12 @@ export class RemoteAccess {
    * The blind relay's name for this Mac while its tunnel runs (null when it stops), and whether it
    * has a certificate yet. The listener answers for the name from now on.
    */
-  setTunnelHost(host: string | null, ready: boolean): void {
-    if (host === this.tunnelHost && ready === this.tunnelReady) return
+  setTunnelHost(host: string | null, ready: boolean, tagged: string | null = null): void {
+    const other = host === null ? null : tagged
+    if (host === this.tunnelHost && ready === this.tunnelReady && other === this.taggedHost) return
     this.tunnelHost = host
     this.tunnelReady = host !== null && ready
+    this.taggedHost = other
     this.deps.changed()
   }
 
@@ -583,6 +590,7 @@ export class RemoteAccess {
           ...this.current.hosts,
           ...(this.relayHost === null ? [] : [this.relayHost]),
           ...(this.tunnelHost === null ? [] : [this.tunnelHost]),
+          ...(this.taggedHost === null ? [] : [this.taggedHost]),
         ]),
       info: this.deps.info,
       // A kept port, so the tunnel's configuration stays right. If something else holds it, this

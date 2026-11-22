@@ -45,8 +45,13 @@ export interface TunnelClientOptions {
   readonly macId: string
   readonly signer: TransportSigner
   readonly binding: RelayBinding
-  /** This Mac's certificate for its public name, or null while it has none yet. */
-  readonly certificate: () => SecureContext | null
+  /**
+   * This Mac's other name, `<macId>-<tag>.<macDomain>`, served beside its public name (see
+   * tunnelHost). Absent: the public name only.
+   */
+  readonly tag?: string
+  /** This Mac's certificate for one of its names, or null while it has none yet. */
+  readonly certificate: (serverName: string) => SecureContext | null
   /** The TLS-ALPN-01 certificate for a name being validated now, or null when nothing is. */
   readonly acmeChallenge?: (serverName: string) => SecureContext | null
   /**
@@ -100,6 +105,12 @@ export class TunnelClient {
   /** The name cloud agents and phones use for this Mac. */
   get publicHost(): string {
     return tunnelHost(this.options.macId, this.options.macDomain)
+  }
+
+  /** Its other name, when it has one: the same Mac to anyone who uses it. */
+  get taggedHost(): string | null {
+    const tag = this.options.tag
+    return tag === undefined ? null : tunnelHost(this.options.macId, this.options.macDomain, tag)
   }
 
   get status(): TunnelClientStatus {
@@ -274,9 +285,10 @@ export class TunnelClient {
         tls.on('secure', () => tls.end())
         return
       }
-      if (hello.serverName !== this.publicHost)
+      const name = hello.serverName?.toLowerCase().replace(/\.$/, '') ?? null
+      if (name === null || (name !== this.publicHost && name !== this.taggedHost))
         return this.drop(stream, `name ${JSON.stringify((hello.serverName ?? '').slice(0, 100))}`)
-      const context = this.options.certificate()
+      const context = this.options.certificate(name)
       const accept = this.options.listener()
       if (context === null) return this.drop(stream, 'no certificate yet')
       if (accept === null) return this.drop(stream, 'remote access paused')
