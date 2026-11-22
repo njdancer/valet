@@ -76,7 +76,7 @@ import {
   type ToolCall,
   type ToolCaller,
 } from '@valet/mcp-server'
-import type { MailDrafts, MailFiles } from '@valet/native-mail'
+import { MAIL_ADAPTER_ID, type MailDrafts, type MailFiles, mailTools } from '@valet/native-mail'
 import { addDependency, diskTarballStore } from '@valet/node-runtime'
 import type { MailAccount } from '@valet/protocols'
 import {
@@ -1186,6 +1186,15 @@ export class AppService {
 
   /** The tool as remote access would turn it on or off, or not-found when it can't be. */
   private async remoteToolDeclaration(adapterId: string, tool: string, enabled: boolean) {
+    // A built-in tool (Mail on this Mac): listed only while the person has it on, so only then.
+    const native = this.nativeDeclaration(adapterId, tool)
+    if (native !== null) return native
+    if (adapterId === MAIL_ADAPTER_ID) {
+      // Mail is off (or the tool isn't listed now): it can still be turned off for remote agents.
+      const known = mailTools({ drafts: true }).find((t) => t.declaration.name === tool)?.declaration
+      if (enabled || known === undefined) throw new ValetError('config', 'not-found')
+      return known
+    }
     const adapter = this.adapter(adapterId)
     const declaration = adapter?.definition.manifest.tools.find((t) => t.name === tool)
     if (adapter === null || declaration === undefined) throw new ValetError('config', 'not-found')
@@ -1198,11 +1207,30 @@ export class AppService {
     return declaration
   }
 
+  /** A built-in tool as the app lists it now (Mail on this Mac), or null. */
+  private nativeDeclaration(adapterId: string, tool: string): ToolDeclaration | null {
+    if (adapterId !== MAIL_ADAPTER_ID || this.mailApp === null) return null
+    return this.mailApp.listTools().find((t) => t.declaration.name === tool)?.declaration ?? null
+  }
+
   /** Remote access as set up now: its state, names, and every tool of each approved adapter. */
   async remoteSetup(): Promise<RemoteSetup> {
     const status = this.remote.status()
     const on = new Set(status.tools)
     const tools: RemoteSetupTool[] = []
+    // Built-in tools first (Mail on this Mac), while the person has them on.
+    for (const listed of this.mailApp?.listTools() ?? []) {
+      const ref = `${listed.adapterId}.${listed.declaration.name}`
+      tools.push({
+        ref,
+        adapterId: listed.adapterId,
+        adapterName: listed.adapterName,
+        tool: listed.declaration.name,
+        toolTitle: listed.declaration.title,
+        sideEffect: listed.declaration.sideEffect,
+        enabled: on.has(ref),
+      })
+    }
     for (const adapter of this.installed) {
       const { manifest } = adapter.definition
       if (!(await this.installGate.isApproved(manifest.id, adapter.hash).catch(() => false))) continue

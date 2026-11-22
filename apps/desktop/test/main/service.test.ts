@@ -73,6 +73,8 @@ import { buildToolLibrary } from '@valet/runtime/tool-script'
 import { NO_LOCAL_ACCESS } from '@valet/sandbox'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
+import { DirectMailFiles } from '../../../../packages/native-mail/src/direct-files'
+import { buildLibrary, ALLOWED as MAIL_ALLOWED } from '../../../../packages/native-mail/test/fixture-library'
 import type { WriterSource } from '../../src/main/core/admin-writer'
 import {
   type ApprovalBroker,
@@ -160,6 +162,7 @@ async function setup(
     imap?: ServiceDeps['imap']
     sftp?: ServiceDeps['sftp']
     mailReader?: ServiceDeps['mailReader']
+    mail?: ServiceDeps['mail']
     raw?: ServiceDeps['raw']
   } = {},
 ) {
@@ -246,6 +249,7 @@ async function setup(
     ...(options.imap === undefined ? {} : { imap: options.imap }),
     ...(options.sftp === undefined ? {} : { sftp: options.sftp }),
     ...(options.mailReader === undefined ? {} : { mailReader: options.mailReader }),
+    ...(options.mail === undefined ? {} : { mail: options.mail }),
     ...(options.raw === undefined ? {} : { raw: options.raw }),
     createDriver: async (_manifest, reporters) => {
       driver.reporters = reporters
@@ -2584,6 +2588,47 @@ describe('remote access', () => {
     await s.api.remote.setEnabled(false)
     expect(prompts()).toBe(asked)
     expect(s.service.remote.status()).toMatchObject({ enabled: false, hosts: [], tools: [] })
+  })
+
+  it('offers Mail on this Mac to cloud agents once it is on, each tool starting off', async () => {
+    const lib = buildLibrary(mkdtempSync(join(tmpdir(), 'sa-mail-')))
+    const s = await setup({
+      mail: {
+        reader: null,
+        files: new DirectMailFiles(lib),
+        drafts: { save: async () => ({ kind: 'saved' }) },
+      },
+    })
+    expect((await s.api.remote.setup()).tools.filter((t) => t.adapterId === 'mail')).toEqual([])
+    await expect(s.api.remote.setTool('mail', 'search', true)).rejects.toMatchObject({
+      errorClass: 'not-found',
+    })
+    await s.api.mail.update({ enabled: true, accounts: [MAIL_ALLOWED] })
+    const mail = (await s.api.remote.setup()).tools.filter((t) => t.adapterId === 'mail')
+    expect(mail.map((t) => [t.tool, t.adapterName, t.enabled])).toEqual([
+      ['accounts', 'Mail', false],
+      ['search', 'Mail', false],
+      ['read', 'Mail', false],
+      ['thread', 'Mail', false],
+    ])
+
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    const port = Number(new URL(s.service.remote.status().url as string).port)
+    const agent = approvedClient(s, ['mail.search'])
+    const client = await remoteClient(port, agent.token)
+    expect((await client.listTools()).tools).toEqual([])
+    await s.api.remote.setTool('mail', 'search', true)
+    expect((await client.listTools()).tools.map((t) => t.name)).toEqual(['mail_search'])
+    const found = await client.callTool({ name: 'mail_search', arguments: { from: 'ada' } })
+    expect(found.isError).not.toBe(true)
+    expect((found.structuredContent as { messages: { id: number }[] }).messages.length).toBeGreaterThan(0)
+
+    // Turned off in Settings › Mail: gone for the agent, and still switchable off remotely.
+    await s.api.mail.update({ enabled: false })
+    expect((await client.listTools()).tools).toEqual([])
+    await s.api.remote.setTool('mail', 'search', false)
+    expect(s.service.remote.status().tools).toEqual([])
   })
 
   it('serves only remote-enabled tools through the same runtime, audited as remote', async () => {
