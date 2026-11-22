@@ -95,6 +95,12 @@ accounts, retries finding the original, only adds recipients a reply doesn't alr
 closes the message (saving) after `save`. The trial now replies only to a message the person sent
 themselves, and reports leftover outgoing messages and compose windows.
 
+Second trial (same day, after that fix): 19 of 20 saved, no compose windows left behind, replies
+addressed only to the person. The miss was again a draft right after Mail started (a new one this
+time), which hung until the timeout and left one unsaved message. So `MailDrafts.save` now retries
+once: it closes that unsaved message without saving (which discards it, never sends) and makes the
+draft again. Decision: drafts stay on scripting; IMAP `APPEND` remains the fallback if this changes.
+
 ### Asking before each draft
 
 `approveDrafts` is stored and `callMailTool` supports asking (declined or timed out comes back to

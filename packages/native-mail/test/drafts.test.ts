@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DRAFT_SCRIPT, type DraftRequest, MailDrafts, type Runner } from '../src/drafts'
+import { DISCARD_SCRIPT, DRAFT_SCRIPT, type DraftRequest, MailDrafts, type Runner } from '../src/drafts'
 
 const draft: DraftRequest = {
   from: null,
@@ -43,6 +43,60 @@ describe('MailDrafts', () => {
     expect(await new MailDrafts(odd).save(draft)).toEqual({ kind: 'failed' })
     const missing: Runner = async () => ({ code: 0, stdout: '{"kind":"reply-not-found"}', stderr: '' })
     expect(await new MailDrafts(missing).save(draft)).toEqual({ kind: 'reply-not-found' })
+  })
+
+  it('after a hung attempt, discards its unsaved message and tries once more', async () => {
+    const scripts: string[] = []
+    let drafts = 0
+    const run: Runner = async (_file, args) => {
+      const script = args[3] ?? ''
+      scripts.push(script === DRAFT_SCRIPT ? 'draft' : script === DISCARD_SCRIPT ? 'discard' : 'other')
+      if (script === DISCARD_SCRIPT) {
+        expect(JSON.parse(args[4] ?? '')).toEqual({ subject: draft.subject, body: draft.body })
+        return { code: 0, stdout: '1', stderr: '' }
+      }
+      drafts += 1
+      return drafts === 1
+        ? { code: null, stdout: '', stderr: '' }
+        : { code: 0, stdout: '{"kind":"saved"}', stderr: '' }
+    }
+    expect(await new MailDrafts(run).save(draft)).toEqual({ kind: 'saved' })
+    expect(scripts).toEqual(['draft', 'discard', 'draft'])
+  })
+
+  it('doesn’t retry a refusal, and gives up after the second failure', async () => {
+    const calls: string[] = []
+    const refuse: Runner = async (_f, args) => {
+      calls.push(args[3] === DRAFT_SCRIPT ? 'draft' : 'discard')
+      return { code: 1, stdout: '', stderr: 'Not authorized (-1743)' }
+    }
+    expect(await new MailDrafts(refuse).save(draft)).toEqual({ kind: 'not-allowed' })
+    expect(calls).toEqual(['draft'])
+    calls.length = 0
+    const broken: Runner = async (_f, args) => {
+      calls.push(args[3] === DRAFT_SCRIPT ? 'draft' : 'discard')
+      return { code: 1, stdout: '', stderr: 'boom' }
+    }
+    expect(await new MailDrafts(broken).save(draft)).toEqual({ kind: 'failed' })
+    expect(calls).toEqual(['draft', 'discard', 'draft'])
+  })
+
+  it('discards only an unsaved message of this draft, closing it without saving', () => {
+    const closed: string[] = []
+    const msg = (subject: string, content: string) => ({
+      subject: () => subject,
+      content: () => content,
+      close: (o: { saving: string }) => closed.push(`${subject}:${o.saving}`),
+    })
+    const Mail = {
+      running: () => true,
+      outgoingMessages: () => [msg('Mine', 'hello body'), msg('Mine', 'other'), msg('Theirs', 'hello body')],
+    }
+    const fn = new Function('Application', `${DISCARD_SCRIPT}; return run;`)(() => Mail) as (
+      a: string[],
+    ) => string
+    expect(fn([JSON.stringify({ subject: 'Mine', body: 'hello body' })])).toBe('1')
+    expect(closed).toEqual(['Mine:no'])
   })
 })
 
