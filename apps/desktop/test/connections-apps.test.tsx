@@ -290,8 +290,11 @@ describe('a cloud agent’s page', () => {
     renderPage(api, <ClientPage clientId="rcdemodemodemodemodemo" />)
     expect(await screen.findByRole('heading', { level: 1, name: 'claude.ai' })).toBeTruthy()
     expect(screen.getByText(/Calls itself “Claude” \(not verified\)/)).toBeTruthy()
-    expect(await screen.findByText('Woolworths: Get cart')).toBeTruthy()
-    expect(screen.queryByText(/Woolworths: Add to cart/)).toBeNull()
+    const getCart = await screen.findByRole('switch', { name: 'Woolworths: Get cart' })
+    expect(getCart.getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByRole('switch', { name: 'Woolworths: Add to cart' }).getAttribute('aria-checked')).toBe(
+      'false',
+    )
     expect(screen.getByText('gone.old_tool')).toBeTruthy()
     expect(screen.getByText('valet.example.com')).toBeTruthy()
     const reach = within(screen.getByRole('region', { name: 'Can reach' }))
@@ -300,6 +303,33 @@ describe('a cloud agent’s page', () => {
     await user.click(screen.getByRole('button', { name: 'Revoke claude.ai' }))
     expect(called(api, 'remote.revokeClient')).toEqual([['rcdemodemodemodemodemo']])
     await waitFor(() => expect(window.location.hash).toBe('#/connections'))
+  })
+
+  it('edits its tools in place: a switch per tool, no revoking', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    await api.remote.approveConsent('ABCDEFGH', ['woolworths.get_cart'])
+    renderPage(api, <ClientPage clientId="rcdemodemodemodemodemo" />)
+    const add = await screen.findByRole('switch', { name: 'Woolworths: Add to cart' })
+    expect(screen.queryByText(/revoke it and approve it again/)).toBeNull()
+    expect(screen.getByText(/Turning a tool on needs Touch ID; turning one off is at once/)).toBeTruthy()
+    await user.click(add)
+    await waitFor(() =>
+      expect(
+        screen.getByRole('switch', { name: 'Woolworths: Add to cart' }).getAttribute('aria-checked'),
+      ).toBe('true'),
+    )
+    await user.click(screen.getByRole('switch', { name: 'Woolworths: Get cart' }))
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: 'Woolworths: Get cart' }).getAttribute('aria-checked')).toBe(
+        'false',
+      ),
+    )
+    expect(called(api, 'remote.setClientTool')).toEqual([
+      ['rcdemodemodemodemodemo', 'woolworths', 'add_to_cart', true],
+      ['rcdemodemodemodemodemo', 'woolworths', 'get_cart', false],
+    ])
+    expect(screen.getByRole('heading', { level: 1, name: 'claude.ai' })).toBeTruthy()
   })
 
   it('turns Ask for changes on and off from its page', async () => {

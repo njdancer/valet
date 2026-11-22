@@ -424,6 +424,7 @@ describe('every channel', () => {
     'remote.revokeHubAgent': [HASH64],
     'remote.revokeAllClients': [],
     'remote.setAskForChanges': ['rcabcdefghijklmnopqrst', true],
+    'remote.setClientTool': ['rcabcdefghijklmnopqrst', 'woolworths', 'view_cart', true],
     'remote.setup': [],
     'remote.setEnabled': [true],
     'remote.setHosts': [['valet.example.com']],

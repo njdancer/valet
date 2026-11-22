@@ -2708,6 +2708,77 @@ describe('remote access', () => {
     expect(await names()).toEqual(['shop_echo'])
   })
 
+  it('lets the person edit an approved agent’s tools in place: on with Touch ID, off at once', async () => {
+    const s = await approved()
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    await s.service.setRemoteTool('shop', 'echo', true)
+    const port = Number(new URL(s.service.remote.status().url as string).port)
+    const agent = approvedClient(s, ['shop.echo'])
+    const other = approvedClient(s, ['shop.echo'])
+    const names = async () =>
+      (await (await remoteClient(port, agent.token)).listTools()).tools.map((t) => t.name)
+    expect(await names()).toEqual(['shop_echo'])
+
+    // A cancelled Touch ID prompt changes nothing.
+    s.presence.answer = false
+    await expect(s.api.remote.setClientTool(agent.id, 'shop', 'add', true)).rejects.toBeInstanceOf(ValetError)
+    expect(await names()).toEqual(['shop_echo'])
+
+    // On: one Touch ID prompt, and only this agent gets it, even though it wasn't on for remote.
+    s.presence.answer = true
+    const before = s.presence.prompts.length
+    await s.api.remote.setClientTool(agent.id, 'shop', 'add', true)
+    expect(s.presence.prompts.length).toBe(before + 1)
+    expect((await names()).sort()).toEqual(['shop_add', 'shop_echo'])
+    expect((await s.api.remote.clients()).find((c) => c.id === agent.id)?.grant?.tools).toEqual([
+      'shop.add',
+      'shop.echo',
+    ])
+    expect((await s.api.remote.clients()).find((c) => c.id === other.id)?.grant?.tools).toEqual(['shop.echo'])
+    // Already on: nothing to ask.
+    await s.api.remote.setClientTool(agent.id, 'shop', 'add', true)
+    expect(s.presence.prompts.length).toBe(before + 1)
+
+    // Off: no prompt, still approved, same token, the rest of its tools kept.
+    await s.api.remote.setClientTool(agent.id, 'shop', 'echo', false)
+    expect(s.presence.prompts.length).toBe(before + 1)
+    expect(await names()).toEqual(['shop_add'])
+    const after = (await s.api.remote.clients()).find((c) => c.id === agent.id)
+    expect(after?.grant?.tools).toEqual(['shop.add'])
+    // The other agent keeps its own, and echo stays on for remote clients.
+    expect(s.service.remote.status().tools).toContain('shop.echo')
+    expect((await (await remoteClient(port, other.token)).listTools()).tools.map((t) => t.name)).toEqual([
+      'shop_echo',
+    ])
+    // Off again is nothing to do; an unknown tool or agent is refused.
+    await s.api.remote.setClientTool(agent.id, 'shop', 'echo', false)
+    await expect(s.api.remote.setClientTool(agent.id, 'shop', 'nope', true)).rejects.toBeInstanceOf(
+      ValetError,
+    )
+    await expect(s.api.remote.setClientTool('rcnobody', 'shop', 'add', true)).rejects.toBeInstanceOf(
+      ValetError,
+    )
+
+    const events = audited(s.paths)
+    expect(events).toContainEqual({
+      type: 'remote-tool',
+      adapterId: 'shop',
+      tool: 'echo',
+      enabled: false,
+      sideEffect: 'read',
+      clientId: `remote:${agent.id}`,
+    })
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'remote-tool',
+        tool: 'add',
+        enabled: true,
+        clientId: `remote:${agent.id}`,
+      }),
+    )
+  })
+
   it('adds a tool to an agent’s own grant with Touch ID, turning it on for cloud agents only as far as that grant', async () => {
     const s = await approved()
     await s.service.setRemoteTool('shop', 'echo', true)
