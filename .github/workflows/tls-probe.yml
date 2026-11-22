@@ -15,22 +15,35 @@ jobs:
           H=34d3475801fae38f59e75ff4.valet.dncr.me
           pip install -q httpx >/dev/null 2>&1
           python3 - <<'PY'
-          import httpx, socket, ssl
+          import httpx, socket, ssl, threading, time
           H="34d3475801fae38f59e75ff4.valet.dncr.me"
-          U=f"https://{H}/mcp"
           body={"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"p","version":"1"}}}
-          def show(label, r):
-            print(label, r.status_code, r.reason_phrase, dict(r.headers), repr(r.content[:200]))
-          with httpx.Client(timeout=15) as c:
-            show("POST default", c.post(U, json=body))
-            show("GET default", c.get(U))
-            show("GET root", c.get(f"https://{H}/"))
-          # raw sockets with exact header sets
-          def raw(label, req, split_body=None):
+          # capture what httpx writes, per send call
+          ls=socket.socket(); ls.bind(("127.0.0.1",0)); ls.listen(1); port=ls.getsockname()[1]
+          chunks=[]
+          def srv():
+            c,_=ls.accept(); c.settimeout(1)
+            try:
+              while True:
+                d=c.recv(65536)
+                if not d: break
+                chunks.append(d)
+            except Exception: pass
+            c.sendall(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n"); c.close()
+          threading.Thread(target=srv,daemon=True).start()
+          try: httpx.post(f"http://127.0.0.1:{port}/mcp", json=body, timeout=5)
+          except Exception as e: print("cap err", e)
+          time.sleep(0.5)
+          print("CAPTURED", [bytes(x) for x in chunks])
+          cap=b"".join(chunks).replace(f"127.0.0.1:{port}".encode(), H.encode())
+          headpart, bodypart = cap.split(b"\r\n\r\n",1)
+          headpart+=b"\r\n\r\n"
+          def raw(label, pieces, gap=0.05):
             ctx=ssl.create_default_context(); ctx.set_alpn_protocols(["http/1.1"])
-            s=ctx.wrap_socket(socket.create_connection((H,443),timeout=15), server_hostname=H)
-            s.sendall(req)
-            if split_body: s.sendall(split_body)
+            s=ctx.wrap_socket(socket.create_connection((H,443),timeout=10), server_hostname=H)
+            for i,p in enumerate(pieces):
+              if i: time.sleep(gap)
+              s.sendall(p)
             out=b""
             try:
               while True:
@@ -38,10 +51,13 @@ jobs:
                 if not d: break
                 out+=d
             except Exception as e: out+=f"<{e}>".encode()
-            print(label, repr(out[:300]))
-          base=f"GET /mcp HTTP/1.1\r\nHost: {H}\r\n"
-          raw("raw minimal", (base+"Connection: close\r\n\r\n").encode())
-          raw("raw httpx-like", (base+"Accept: */*\r\nAccept-Encoding: gzip, deflate\r\nConnection: keep-alive\r\nUser-Agent: python-httpx/0.28.1\r\n\r\n").encode())
-          raw("raw keepalive only", (base+"Connection: keep-alive\r\n\r\n").encode())
-          raw("raw no connection hdr", (base+"Accept: */*\r\n\r\n").encode())
+            print(label, repr(out[:90]))
+          raw("httpx bytes one write", [cap])
+          raw("httpx bytes split", [headpart, bodypart])
+          raw("httpx bytes split nogap", [headpart, bodypart], 0)
+          hp=headpart.replace(b"Accept-Encoding: gzip, deflate\r\n",b"")
+          raw("split no accept-encoding", [hp, bodypart])
+          hp2=headpart.replace(b"Connection: keep-alive\r\n",b"")
+          raw("split no keepalive", [hp2, bodypart])
+          raw("headers only then wait", [headpart], 0)
           PY
