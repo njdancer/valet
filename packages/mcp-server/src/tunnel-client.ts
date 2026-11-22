@@ -57,6 +57,11 @@ export interface TunnelClientOptions {
   readonly onStatus?: (status: TunnelClientStatus) => void
   /** Something the relay sent that this Mac refused (it then drops the connection). */
   readonly onBadFrame?: (why: string) => void
+  /**
+   * A connection this Mac dropped before it reached the listener, and why: a hello it couldn't
+   * read, another name, nothing to serve it with, or a TLS handshake that failed. Never content.
+   */
+  readonly onDropped?: (why: string) => void
   /** Where to connect, when it isn't the relay's own origin (tests and a local relay). */
   readonly connectUrl?: string
   readonly WebSocket?: typeof WebSocket
@@ -244,7 +249,7 @@ export class TunnelClient {
       clearTimeout(timer)
       stream.off('data', onData)
       stream.pause()
-      if (hello.state !== 'complete') return stream.destroy()
+      if (hello.state !== 'complete') return this.drop(stream, `unreadable hello (${hello.state})`)
       // The bytes go back so TLS reads the hello itself.
       stream.unshift(Buffer.concat(chunks))
       if (hello.alpn.includes(ACME_TLS_ALPN)) {
@@ -261,16 +266,26 @@ export class TunnelClient {
         tls.on('secure', () => tls.end())
         return
       }
-      if (hello.serverName !== this.publicHost) return stream.destroy()
+      if (hello.serverName !== this.publicHost)
+        return this.drop(stream, `name ${JSON.stringify((hello.serverName ?? '').slice(0, 100))}`)
       const context = this.options.certificate()
       const accept = this.options.listener()
-      if (context === null || accept === null) return stream.destroy()
+      if (context === null) return this.drop(stream, 'no certificate yet')
+      if (accept === null) return this.drop(stream, 'remote access paused')
       const tls = new TLSSocket(stream, {
         isServer: true,
         secureContext: context,
         ALPNProtocols: ['http/1.1'],
       })
-      tls.on('error', () => tls.destroy())
+      let secured = false
+      tls.once('secure', () => {
+        secured = true
+      })
+      tls.on('error', (error: Error & { code?: string }) => {
+        if (!secured)
+          this.options.onDropped?.(`tls handshake failed: ${error.code ?? ''} ${error.message}`.slice(0, 200))
+        tls.destroy()
+      })
       tls.on('close', () => stream.destroy())
       try {
         accept(tls, { source: open.source })
@@ -282,6 +297,15 @@ export class TunnelClient {
     stream.on('end', () => {
       if (size === 0) stream.destroy()
     })
+  }
+
+  private drop(stream: TunnelStream, why: string): void {
+    try {
+      this.options.onDropped?.(why)
+    } catch {
+      // A log line is not worth more than the connection.
+    }
+    stream.destroy()
   }
 
   private bad(socket: WebSocket, why: string): void {

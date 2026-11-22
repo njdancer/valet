@@ -276,6 +276,35 @@ describe('the blind relay', () => {
     }
   })
 
+  it('tells the Mac why it dropped a connection before serving it', async () => {
+    rig = await startRig()
+    const dropped: string[] = []
+    let paused = false
+    const accept = echoServer().accept
+    const mac = startMac(rig, null, {
+      listener: () => (paused ? null : accept),
+      onDropped: (why) => dropped.push(why),
+    })
+    macs.push(mac)
+    await mac.online()
+    // A client that speaks only h2: the handshake fails on the Mac, and says so.
+    const h2 = dial(rig, mac.host, mac.cert.pem, ['h2'])
+    h2.on('error', () => undefined)
+    await waitFor(() => dropped.length === 1)
+    expect(dropped[0]).toMatch(/^tls handshake failed: /)
+    h2.destroy()
+    paused = true
+    const late = dial(rig, mac.host, mac.cert.pem)
+    late.on('error', () => undefined)
+    await waitFor(() => dropped.length === 2)
+    expect(dropped[1]).toBe('remote access paused')
+    late.destroy()
+    // A served connection is never reported.
+    paused = false
+    expect((await get(rig, mac, '/ok', { body: Buffer.from('x') })).status).toBe(200)
+    expect(dropped).toHaveLength(2)
+  })
+
   it('a Mac comes back after the relay restarts, with nothing stored', async () => {
     rig = await startRig()
     const port = rig.port

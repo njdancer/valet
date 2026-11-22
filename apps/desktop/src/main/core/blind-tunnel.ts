@@ -94,6 +94,7 @@ export class BlindTunnel {
         this.update(host)
       },
       onBadFrame: (why) => this.options.log?.(`[blind relay] refused a frame (${why})`),
+      onDropped: (why) => this.options.log?.(`[blind relay] dropped a connection: ${why}`),
     })
     this.client = client
     this.certificates = certificates
