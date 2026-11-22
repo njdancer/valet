@@ -47,12 +47,17 @@ const HOUR_MS = 60 * 60_000
 const DAY_MS = 24 * HOUR_MS
 const MAX_PENDING_CODES = 64
 
-/** relay.md's starting numbers for one person. Settings later, not constants. */
+/**
+ * Numbers for one person. Through the blind relay every caller arrives from the relay's one
+ * address, so the per-source limits act as global ones: they must leave room for a person
+ * retrying a connector from two or three apps, each of which registers afresh. Registrations are
+ * still capped (oauth-clients.ts) and expire within the hour without a grant.
+ */
 export const DEFAULT_OAUTH_LIMITS: OAuthLimits = {
-  registerPerSource: { limit: 5, windowMs: HOUR_MS },
-  registerGlobal: { limit: 20, windowMs: DAY_MS },
-  authorizePerSource: { limit: 10, windowMs: HOUR_MS },
-  authorizeGlobal: { limit: 30, windowMs: HOUR_MS },
+  registerPerSource: { limit: 30, windowMs: HOUR_MS },
+  registerGlobal: { limit: 200, windowMs: DAY_MS },
+  authorizePerSource: { limit: 30, windowMs: HOUR_MS },
+  authorizeGlobal: { limit: 60, windowMs: HOUR_MS },
   // relay.md sets none for the token endpoint; its secrets are 256-bit, so this only stops a loop.
   tokenPerSource: { limit: 120, windowMs: HOUR_MS },
   tokenGlobal: { limit: 600, windowMs: HOUR_MS },
@@ -158,8 +163,11 @@ export class RemoteAuthorization {
    */
   handler(hosts: () => ReadonlySet<string>): (req: IncomingMessage, res: ServerResponse) => Promise<boolean> {
     return async (req, res) => {
-      if (!RemoteAuthorization.owns(req.url)) return false
-      if (this.options.log !== undefined) logOutcome(req, res, this.options.log)
+      const ours = RemoteAuthorization.owns(req.url)
+      // Every request on the remote listener gets its line, the MCP path's too: a connector that
+      // fails before sign-in shows what it asked for and what it got.
+      if (this.options.log !== undefined) logOutcome(req, res, this.options.log, ours ? 'oauth' : 'mcp')
+      if (!ours) return false
       const host = remoteRequestHost(req.headers, hosts())
       if (host === null) {
         sendJson(res, 403, { error: 'forbidden' })
@@ -552,7 +560,12 @@ export function pkceMatches(verifier: string, challenge: string): boolean {
 }
 
 /** Writes `log`'s one line when the response is sent, or when the connection goes first. */
-function logOutcome(req: IncomingMessage, res: ServerResponse, log: (line: string) => void): void {
+function logOutcome(
+  req: IncomingMessage,
+  res: ServerResponse,
+  log: (line: string) => void,
+  kind: 'oauth' | 'mcp',
+): void {
   let error: string | null = null
   const end = res.end.bind(res) as (...args: unknown[]) => ServerResponse
   res.end = ((...args: unknown[]) => {
@@ -560,7 +573,13 @@ function logOutcome(req: IncomingMessage, res: ServerResponse, log: (line: strin
     if (res.statusCode >= 400 && (typeof body === 'string' || Buffer.isBuffer(body))) {
       try {
         const parsed = JSON.parse(body.toString()) as { error?: unknown }
-        if (typeof parsed.error === 'string') error = parsed.error.slice(0, 40)
+        const message =
+          typeof parsed.error === 'string'
+            ? parsed.error
+            : typeof parsed.error === 'object' && parsed.error !== null
+              ? (parsed.error as { message?: unknown }).message
+              : undefined
+        if (typeof message === 'string') error = message.slice(0, 40).replace(/\s+/g, '-')
       } catch {
         // A page, not JSON: the status says enough.
       }
@@ -572,8 +591,15 @@ function logOutcome(req: IncomingMessage, res: ServerResponse, log: (line: strin
     const origin = req.headers.origin
     const agent = req.headers['user-agent']
     const parts = [
-      `[oauth] ${req.method ?? '?'} ${pathOf(req.url)} ${outcome}`,
+      `[${kind}] ${req.method ?? '?'} ${pathOf(req.url).slice(0, 80)} ${outcome}`,
       ...(error === null ? [] : [error]),
+      // Whether a token or a session came, never what it was.
+      ...(kind === 'mcp'
+        ? [
+            `bearer=${req.headers.authorization === undefined ? 'no' : 'yes'}`,
+            `session=${req.headers['mcp-session-id'] === undefined ? 'no' : 'yes'}`,
+          ]
+        : []),
       `${Date.now() - started}ms`,
       ...(origin === undefined ? [] : [`origin=${JSON.stringify(origin.slice(0, 100))}`]),
       ...(agent === undefined ? [] : [`agent=${JSON.stringify(agent.slice(0, 80))}`]),
