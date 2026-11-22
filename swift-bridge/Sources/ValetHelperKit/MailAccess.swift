@@ -294,8 +294,14 @@ func runQuery(path: String, sql: String, params: [MailValue], tables: Set<String
   sqlite3_set_authorizer(db, mailAuthorizer, context)
   defer { withExtendedLifetime(allowed) {} }
   var statement: OpaquePointer?
-  var tail: UnsafePointer<CChar>?
-  let prepared = sql.withCString { sqlite3_prepare_v2(db, $0, -1, &statement, &tail) }
+  // The tail points into the C string, so it is read before withCString's copy goes away.
+  var trailing = false
+  let prepared = sql.withCString { text -> Int32 in
+    var tail: UnsafePointer<CChar>?
+    let code = sqlite3_prepare_v2(db, text, -1, &statement, &tail)
+    if let tail { trailing = !String(cString: tail).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    return code
+  }
   if prepared == SQLITE_AUTH { throw MailFailure.invalid }
   if prepared != SQLITE_OK || statement == nil {
     // A missing table or column is the caller's question, not the file: invalid. Anything about
@@ -305,9 +311,7 @@ func runQuery(path: String, sql: String, params: [MailValue], tables: Set<String
     throw MailFailure.unavailable
   }
   defer { sqlite3_finalize(statement) }
-  if let tail, !String(cString: tail).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-    throw MailFailure.invalid
-  }
+  if trailing { throw MailFailure.invalid }
   guard sqlite3_stmt_readonly(statement) != 0 else { throw MailFailure.invalid }
   let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
   guard Int(sqlite3_bind_parameter_count(statement)) == params.count else { throw MailFailure.invalid }
