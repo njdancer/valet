@@ -3,8 +3,9 @@
 //
 //   pnpm exec tsx packages/native-mail/scripts/draft-trial.ts --rounds 5 [--account "iCloud"] [--reply]
 //
-// Each trial draft is addressed to nobody, carries a marker in its subject (or its body, for a
-// reply), and is deleted at the end. Nothing is ever sent: the script only calls MailDrafts.save,
+// Each new trial draft is addressed to nobody; a reply goes to a message the person sent themselves,
+// so it is addressed to them alone. Each carries a marker in its subject (or its body, for a reply)
+// and is deleted at the end. Nothing is ever sent: the script only calls MailDrafts.save,
 // the same code the mail_create_draft tool uses, and Mail's own `save`. It prints one JSON line per
 // attempt and a summary. It never runs in CI or in tests.
 
@@ -54,8 +55,14 @@ const PICK = `function run(argv) {
   if (accts.length === 0) return JSON.stringify({ error: 'no-account' });
   var a = accts[0]; var out = { account: a.name(), id: a.id(), address: (a.emailAddresses() || [])[0] || null, reply: null };
   if (req.reply) {
-    var inbox = a.mailboxes.byName('INBOX'); var msgs = inbox.messages();
-    if (msgs.length > 0) { var m = msgs[0]; out.reply = { messageId: m.messageId(), subject: m.subject() }; }
+    // Only a message the person sent themselves, so a reply draft is addressed to them alone.
+    var own = (a.emailAddresses() || []).map(function (x) { return String(x).toLowerCase(); });
+    var msgs = a.mailboxes.byName('INBOX').messages();
+    for (var k = 0; k < msgs.length && k < 500 && out.reply === null; k++) {
+      var from = String(Mail.extractAddressFrom(msgs[k].sender())).toLowerCase();
+      if (own.indexOf(from) >= 0) out.reply = { messageId: msgs[k].messageId(), subject: msgs[k].subject() };
+    }
+    if (out.reply === null) out.noReplyTarget = 'no message from yourself in the newest 500 of INBOX';
   }
   return JSON.stringify(out);
 }`
@@ -77,6 +84,16 @@ const FIND = `function run(argv) {
     });
   });
   return String(n);
+}`
+
+const LEFT = `function run(argv) {
+  var req = JSON.parse(argv[0]); var Mail = Application('Mail');
+  var mine = function (text) { return req.markers.some(function (m) { return String(text).indexOf(m) >= 0; }); };
+  var outgoing = 0;
+  try { Mail.outgoingMessages().forEach(function (m) { if (mine(m.subject()) || mine(m.content())) outgoing++; }); } catch (e) {}
+  var windows = 0;
+  try { Mail.windows().forEach(function (w) { if (/^Re: |valet-trial-/.test(w.name())) windows++; }); } catch (e) {}
+  return JSON.stringify({ outgoing: outgoing, composeWindows: windows });
 }`
 
 async function main(): Promise<void> {
@@ -134,7 +151,11 @@ async function main(): Promise<void> {
   let removed = 0
   for (const marker of markers)
     removed += Number((await jxa(FIND, { marker, body: true, remove: true })).out) || 0
-  process.stdout.write(`${JSON.stringify({ summary: results, removed })}\n`)
+  // What scripting may leave behind: unsaved outgoing messages and compose windows.
+  const left = await jxa(LEFT, { markers })
+  process.stdout.write(
+    `${JSON.stringify({ summary: results, removed, leftBehind: left.ok ? JSON.parse(left.out) : left.err })}\n`,
+  )
 }
 
 main().catch((error: unknown) => {

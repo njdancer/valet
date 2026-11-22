@@ -40,18 +40,31 @@ function run(argv) {
   var req = JSON.parse(argv[0]);
   var Mail = Application('Mail');
   var msg = null;
+  // A Mail that was closed starts here; its accounts and mailboxes take a moment to load, and a
+  // reply's search before then can hang (the trial on a real Mac, docs/mail.md#scripting-or-imap).
+  if (!Mail.running()) {
+    Mail.launch();
+    for (var w = 0; w < 30; w++) {
+      try { if (Mail.accounts().length > 0) break; } catch (e) {}
+      delay(1);
+    }
+    delay(2);
+  }
   if (req.replyTo) {
     var original = null;
     // The account Mail's files name first; Mail's scripting id is usually the same, but not always.
     var accounts = Mail.accounts().slice().sort(function (a, b) {
       return (b.id() === req.replyTo.accountId ? 1 : 0) - (a.id() === req.replyTo.accountId ? 1 : 0);
     });
-    for (var i = 0; i < accounts.length && original === null; i++) {
-      var box = accounts[i].mailboxes.byName(req.replyTo.mailbox);
-      try {
-        var found = box.messages.whose({ messageId: req.replyTo.messageId })();
-        if (found.length > 0) original = found[0];
-      } catch (e) {}
+    for (var attempt = 0; attempt < 3 && original === null; attempt++) {
+      if (attempt > 0) delay(2);
+      for (var i = 0; i < accounts.length && original === null; i++) {
+        var box = accounts[i].mailboxes.byName(req.replyTo.mailbox);
+        try {
+          var found = box.messages.whose({ messageId: req.replyTo.messageId })();
+          if (found.length > 0) original = found[0];
+        } catch (e) {}
+      }
     }
     if (original === null) return JSON.stringify({ kind: 'reply-not-found' });
     msg = Mail.reply(original, { openingWindow: false, replyToAll: req.replyTo.all });
@@ -61,13 +74,27 @@ function run(argv) {
     Mail.outgoingMessages.push(msg);
   }
   if (req.from) msg.sender = req.from;
+  // A reply already has the original's sender (and, for reply-all, its recipients): add only the
+  // addresses it doesn't have yet.
+  var have = {};
+  [msg.toRecipients, msg.ccRecipients, msg.bccRecipients].forEach(function (list) {
+    try { list().forEach(function (r) { have[String(r.address()).toLowerCase()] = true; }); } catch (e) {}
+  });
   var add = function (list, addresses) {
-    for (var j = 0; j < addresses.length; j++) list.push(Mail.Recipient({ address: addresses[j] }));
+    for (var j = 0; j < addresses.length; j++) {
+      var key = String(addresses[j]).toLowerCase();
+      if (have[key]) continue;
+      have[key] = true;
+      list.push(Mail.Recipient({ address: addresses[j] }));
+    }
   };
   add(msg.toRecipients, req.to);
   add(msg.ccRecipients, req.cc);
   add(msg.bccRecipients, req.bcc);
   msg.save();
+  // Close the message, saving it again, so no compose window (hidden or not) is left behind.
+  // Closing without saving would discard the draft just saved.
+  try { delay(0.5); msg.close({ saving: 'yes' }); } catch (e) {}
   return JSON.stringify({ kind: 'saved' });
 }
 `
@@ -92,7 +119,7 @@ const NOT_ALLOWED = /-1743|not allowed to send Apple events|Not authorized/i
 export class MailDrafts {
   constructor(
     private readonly run: Runner = execRunner,
-    private readonly timeoutMs = 60_000,
+    private readonly timeoutMs = 90_000,
   ) {}
 
   async save(draft: DraftRequest): Promise<DraftOutcome> {
