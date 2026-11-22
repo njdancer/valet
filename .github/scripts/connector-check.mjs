@@ -8,6 +8,8 @@
 // Registration makes a real (ungranted) client on the Mac that expires within the hour, so it is
 // opt-in; the rest leaves nothing behind and asks the person for nothing.
 
+import { connect as netConnect } from 'node:net'
+import { Duplex } from 'node:stream'
 import { connect as tlsConnect } from 'node:tls'
 
 const [host, roundsArg, ...flags] = process.argv.slice(2)
@@ -24,35 +26,62 @@ const AGENT = 'python-httpx/0.28.1'
 const CALLBACK = 'https://claude.ai/api/mcp/auth_callback'
 
 /**
- * The same initialize as Python's httpx sends it: the head in one write, the body in the next,
- * at once, so the two TLS records can reach the Mac in one read (fetch sends one write). The
- * Mac once answered exactly this with a bare 400 Bad Request, which Claude showed as
- * "400 Not found". Resolves to the status line.
+ * The same initialize as Python's httpx sends it: the head and the body as two TLS records, here
+ * sent in one TCP write so they reach the Mac in one read (fetch makes one record; httpx's two
+ * sends often share a segment). The Mac once answered exactly this with a bare 400 Bad Request,
+ * which Claude showed as "400 Not found". Resolves to the status line.
  */
 function splitInitialize() {
   return new Promise((resolve) => {
     const started = Date.now()
     let answer = ''
+    let settled = false
     const done = (line) => {
-      socket.destroy()
+      if (settled) return
+      settled = true
+      tcp.destroy()
       resolve({ line, ms: Date.now() - started })
     }
-    const socket = tlsConnect({ host, port: 443, servername: host, ALPNProtocols: ['http/1.1'] }, () => {
-      socket.write(
+    const tcp = netConnect({ host, port: 443 })
+    // Between TLS and TCP: holds what TLS writes while `held` is a list, then sends it at once.
+    let held = null
+    const between = new Duplex({
+      read() {},
+      write(chunk, _encoding, next) {
+        if (held === null) tcp.write(chunk, next)
+        else {
+          held.push(chunk)
+          next()
+        }
+      },
+      destroy(error, next) {
+        tcp.destroy()
+        next(error)
+      },
+    })
+    tcp.on('data', (chunk) => between.push(chunk))
+    tcp.on('end', () => between.push(null))
+    tcp.on('error', (error) => done(`error ${error.code ?? error.message}`))
+    const tls = tlsConnect({ socket: between, servername: host, ALPNProtocols: ['http/1.1'] }, () => {
+      held = []
+      tls.write(
         `POST /mcp HTTP/1.1\r\nHost: ${host}\r\nAccept: */*\r\nAccept-Encoding: gzip, deflate, zstd\r\n` +
           `Connection: keep-alive\r\nUser-Agent: ${AGENT}\r\nContent-Length: ${Buffer.byteLength(initialize)}\r\n` +
           'Content-Type: application/json\r\n\r\n',
       )
-      // Straight after: two TLS records, back to back, as httpx's two sends make them.
-      socket.write(initialize)
+      tls.write(initialize, () => {
+        const both = Buffer.concat(held)
+        held = null
+        tcp.write(both)
+      })
     })
-    socket.setTimeout(15_000, () => done('timeout'))
-    socket.on('data', (chunk) => {
+    tcp.setTimeout(15_000, () => done('timeout'))
+    tls.on('data', (chunk) => {
       answer += chunk.toString('latin1')
       if (answer.includes('\r\n')) done(answer.split('\r\n')[0])
     })
-    socket.on('error', (error) => done(`error ${error.code ?? error.message}`))
-    socket.on('close', () => done(answer.split('\r\n')[0] || 'closed'))
+    tls.on('error', (error) => done(`error ${error.code ?? error.message}`))
+    tls.on('close', () => done(answer.split('\r\n')[0] || 'closed'))
   })
 }
 
