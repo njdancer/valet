@@ -2629,6 +2629,31 @@ describe('remote access', () => {
     })
   })
 
+  it('revokes the agent the phone names, cloud or local, as the status named it', async () => {
+    const s = await approved()
+    const cloud = approvedClient(s, ['shop.echo'])
+    const other = approvedClient(s, ['shop.echo'])
+    const app = await s.api.clients.add('Claude Code')
+    const fromPhone = (
+      s.service as unknown as { revokeFromPhone: (id: string) => Promise<void> }
+    ).revokeFromPhone.bind(s.service)
+    // The phone sends the id with its origin, as the status's agents list gives it.
+    await fromPhone(`remote:${cloud.id}`)
+    expect((await s.api.remote.clients()).map((c) => c.id)).toEqual([other.id])
+    await fromPhone(`local:${app.id}`)
+    expect((await s.api.clients.list()).find((c) => c.id === app.id)?.revokedAt).not.toBeNull()
+    // One already gone is nothing to do, and an unknown origin touches nothing.
+    await fromPhone(`remote:${cloud.id}`)
+    await fromPhone(`hub:${other.id}`)
+    expect((await s.api.remote.clients()).map((c) => c.id)).toEqual([other.id])
+    const events = (await s.api.audit.page({})).records.map((r) => r.event)
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'remote-revoked', clientId: `remote:${cloud.id}` }),
+    )
+    expect(events).toContainEqual({ type: 'client-revoked', clientId: `local:${app.id}` })
+    await s.service.stop()
+  })
+
   it('lets an approved cloud agent ask for changes only once the person signs it, and stops at once', async () => {
     const s = await approved()
     await s.service.remote.setHosts([HOST])
