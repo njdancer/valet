@@ -10,7 +10,7 @@
 
 import { randomBytes } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server } from 'node:http'
-import { Duplex } from 'node:stream'
+import type { Duplex } from 'node:stream'
 import {
   type MacToRelay,
   phoneToRelaySchema,
@@ -382,8 +382,7 @@ export class PhoneDoor {
 
 /**
  * Hands a decrypted connection on by its first request line: one for /v1/phone/ to the door, any
- * other to `other`. Whoever takes it reads the request whole: the phone gets the socket with the
- * bytes put back, and `other` gets them replayed ahead of the rest (replayed).
+ * other to `other`. The bytes read are put back, so whoever takes it reads the request whole.
  */
 export function routeByRequest(
   socket: Duplex,
@@ -409,96 +408,31 @@ export function routeByRequest(
     socket.off('data', onData)
     socket.pause()
     if (target === null) return socket.destroy()
-    if (target === other && chunks.length > 0) {
-      // Not unshift: Node's HTTP server reads a TLS socket's decrypted bytes straight from its
-      // handle, so a record that arrived in the same read as the head (a client that writes its
-      // headers and then its body, as Python's httpx does) reached the parser before the head put
-      // back, and it answered 400 Bad Request. Claude's connector check was that client.
-      target(replayed(socket, Buffer.concat(chunks)))
-      return
-    }
     if (chunks.length > 0) socket.unshift(Buffer.concat(chunks))
     // Whoever takes it attaches its readers now; then the bytes flow again.
     target(socket)
     socket.resume()
   }
   const timer = setTimeout(() => handOn(other), waitMs)
+  let decided = false
   const onData = (chunk: Buffer) => {
     chunks.push(chunk)
     size += chunk.length
+    if (decided) return
     const head = Buffer.concat(chunks)
     const line = head.indexOf('\r\n')
     if (line === -1 && size < 8192) return
     const first = head.subarray(0, line === -1 ? head.length : line).toString('latin1')
-    handOn(isPhoneRequest(first) ? phone : other)
+    // Handed on once this read is done, not now. Node's HTTP server reads a TLS socket's decrypted
+    // bytes straight from its handle, so a record that came in the same read as the head (a client
+    // that writes its headers and then its body, as Python's httpx does) would reach the parser
+    // ahead of the head put back, and it answered 400 Bad Request: Claude's connector check was
+    // that client. Every record of this read lands in `chunks` first.
+    decided = true
+    setImmediate(() => handOn(isPhoneRequest(first) ? phone : other))
   }
   socket.on('data', onData)
   socket.once('close', () => clearTimeout(timer))
-}
-
-/**
- * `socket` as a plain stream that reads `head` first and then everything after it, in order.
- * Writes, ends and closes go through to `socket`. Node's HTTP server takes any Duplex as a
- * connection, and has no handle to read around this one.
- */
-export function replayed(socket: Duplex, head: Buffer): Duplex {
-  const out = new Duplex({
-    // Like the TLS socket it stands for: once one side ends, the whole connection does.
-    allowHalfOpen: false,
-    read() {
-      socket.resume()
-    },
-    write(chunk: Buffer, encoding, done) {
-      socket.write(chunk, encoding, done)
-    },
-    final(done) {
-      socket.end()
-      done()
-    },
-    destroy(error, done) {
-      socket.destroy(error ?? undefined)
-      done(error)
-    },
-  })
-  out.push(head)
-  socket.on('data', (chunk: Buffer) => {
-    if (!out.push(chunk)) socket.pause()
-  })
-  socket.once('end', () => out.push(null))
-  socket.once('error', (error) => out.destroy(error))
-  socket.once('close', () => out.destroy())
-  socket.on('timeout', () => out.emit('timeout'))
-  // What servers call on a net socket: passed through where the socket has them.
-  const passed = socket as Duplex & {
-    setTimeout?: (ms: number, cb?: () => void) => unknown
-    setNoDelay?: (noDelay?: boolean) => unknown
-    setKeepAlive?: (enable?: boolean, delay?: number) => unknown
-  }
-  Object.assign(out, {
-    setTimeout(ms: number, cb?: () => void) {
-      if (cb !== undefined) out.once('timeout', cb)
-      passed.setTimeout?.(ms)
-      return out
-    },
-    setNoDelay(noDelay?: boolean) {
-      passed.setNoDelay?.(noDelay)
-      return out
-    },
-    setKeepAlive(enable?: boolean, delay?: number) {
-      passed.setKeepAlive?.(enable, delay)
-      return out
-    },
-    // Node's HTTP server ends a `connection: close` answer with this where a socket has it, and
-    // with a bare end() where it doesn't, which leaves the connection open (and its tunnel stream
-    // holding the relay link's window) until the caller closes it.
-    destroySoon() {
-      out.end()
-      if (out.writableFinished) out.destroy()
-      else out.once('finish', () => out.destroy())
-    },
-  })
-  socket.resume()
-  return out
 }
 
 /** `GET /v1/phone/<anything> HTTP/1.1`: what a phone sends first. */

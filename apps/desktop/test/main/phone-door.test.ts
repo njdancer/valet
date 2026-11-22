@@ -50,7 +50,6 @@ import {
   DOOR_CLOSE,
   isPhoneRequest,
   PhoneDoor,
-  replayed,
   routeByRequest,
 } from '../../src/main/core/approvals/phone-door'
 
@@ -521,33 +520,6 @@ describe('routeByRequest', () => {
     // A `connection: close` answer closes the connection on the Mac's side, without waiting for
     // the caller to (its tunnel stream would hold the relay link's window till then).
     await until(() => mac.destroyed)
-  })
-
-  it('replays the head, then the rest, and passes writes and closes through', async () => {
-    const written: string[] = []
-    let destroyed = false
-    const inner: Duplex = new Duplex({
-      read() {},
-      write(chunk: Buffer, _e, done) {
-        written.push(chunk.toString())
-        done()
-      },
-      destroy(error, done) {
-        destroyed = true
-        done(error)
-      },
-    })
-    const outer = replayed(inner, Buffer.from('head '))
-    let read = ''
-    outer.on('data', (c: Buffer) => {
-      read += c.toString()
-    })
-    inner.push('rest')
-    await until(() => read === 'head rest')
-    outer.write('answer')
-    expect(written).toEqual(['answer'])
-    outer.destroy()
-    await until(() => destroyed)
   })
 
   it('knows a phone’s request line and nothing else', () => {
