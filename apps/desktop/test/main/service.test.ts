@@ -2631,6 +2631,37 @@ describe('remote access', () => {
     expect(s.service.remote.status().tools).toEqual([])
   })
 
+  it('gives an approved agent a Mail tool from its page, and takes it away, keeping its approval', async () => {
+    const lib = buildLibrary(mkdtempSync(join(tmpdir(), 'sa-mail-')))
+    const s = await setup({
+      mail: {
+        reader: null,
+        files: new DirectMailFiles(lib),
+        drafts: { save: async () => ({ kind: 'saved' }) },
+      },
+    })
+    await s.api.mail.update({ enabled: true, accounts: [MAIL_ALLOWED] })
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    const port = Number(new URL(s.service.remote.status().url as string).port)
+    const agent = approvedClient(s, [])
+    const names = async () =>
+      (await (await remoteClient(port, agent.token)).listTools()).tools.map((t) => t.name)
+    expect(await names()).toEqual([])
+    await s.api.remote.setClientTool(agent.id, 'mail', 'search', true)
+    expect(await names()).toEqual(['mail_search'])
+    // On for remote clients now, but another agent still needs it in its own grant.
+    expect(s.service.remote.status().tools).toEqual(['mail.search'])
+    await s.api.remote.setClientTool(agent.id, 'mail', 'search', false)
+    expect(await names()).toEqual([])
+    expect((await s.api.remote.clients()).find((c) => c.id === agent.id)?.grant?.tools).toEqual([])
+    // A Mail tool that isn't offered (Mail off) can't be given.
+    await s.api.mail.update({ enabled: false })
+    await expect(s.api.remote.setClientTool(agent.id, 'mail', 'search', true)).rejects.toBeInstanceOf(
+      ValetError,
+    )
+  })
+
   it('serves only remote-enabled tools through the same runtime, audited as remote', async () => {
     const s = await approved()
     await s.service.remote.setHosts([HOST])

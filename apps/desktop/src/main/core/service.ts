@@ -2823,12 +2823,27 @@ export class AppService {
     if (!on) {
       if (!held) return
       // Off works for any tool it holds, even one whose site was since removed.
-      const declaration = this.remoteDeclared(adapterId, tool) ?? { name: tool, sideEffect: 'read' as const }
+      const declaration = this.remoteDeclared(adapterId, tool) ??
+        (await this.remoteToolDeclaration(adapterId, tool, false).catch(() => null)) ?? {
+          name: tool,
+          sideEffect: 'read' as const,
+        }
       await this.remote.removeToolForClient(adapterId, declaration, clientId)
       const id = `remote:${clientId}`
       await this.approvalBroker
         .revoke('tool-enable', (s) => s.clientId === id && s.adapterId === adapterId && s.tool === tool)
         .catch(() => 0)
+      this.emit('remote-changed')
+      return
+    }
+    // A built-in tool (Mail on this Mac) has no adapter version to sign for: it goes on for remote
+    // clients as Remote access's own switch turns it on, then into this agent's grant.
+    // Not signed yet: a built-in approval subject, so this asks for Touch ID too, is to follow.
+    const native = this.nativeDeclaration(adapterId, tool)
+    if (native !== null) {
+      if (!this.remote.allows(adapterId, native)) await this.setRemoteTool(adapterId, tool, true)
+      if (!held && !(await this.remote.allowForClient(adapterId, native, clientId)))
+        throw new ValetError('config', 'unavailable')
       this.emit('remote-changed')
       return
     }
