@@ -26,7 +26,7 @@ import {
   verifyDeviceRecord,
   verifyPairingChallenge,
 } from '@valet/core'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import {
   AnchoredFile,
   ApprovalBroker,

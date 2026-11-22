@@ -1,6 +1,6 @@
-// A phone written with core's primitives, speaking the relay's phone frames exactly as the iPhone
-// app does: dial /v1/phone/<macId>, send the sealed pairing reply after the challenge, then, once
-// registered, a signed hello. The relay suite and the desktop end-to-end suite both use it.
+// A phone written with core's primitives, speaking the phone frames exactly as the iPhone app does:
+// dial /v1/phone/<macId> at the Mac's own address, send the sealed pairing reply after the
+// challenge, then, once paired, a signed hello. The door's tests and the end-to-end suite use it.
 
 import { diffieHellman, generateKeyPairSync, type KeyObject, sign } from 'node:crypto'
 import {
