@@ -32,7 +32,7 @@ import {
   Value,
 } from '@valet/ui'
 import { useState } from 'react'
-import type { ClientAccessPatch, ClientInfo, RemoteClientItem } from '../../../shared/api'
+import type { ClientAccessPatch, ClientInfo, RemoteClientItem, RemoteSetupTool } from '../../../shared/api'
 import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
 import { formatAgo, formatDay, plural } from '../../lib/format'
 import { href, navigate } from '../../lib/router'
@@ -401,8 +401,7 @@ function AgentPage({ agent }: { readonly agent: RemoteClientItem }) {
           .filter((s) => s.tools.length > 0)
       : []
   const items = reach.status === 'ready' ? reachItems(scoped) : null
-  const matched = new Set(scoped.flatMap((s) => s.tools.map((t) => `${s.id}.${t.name}`)))
-  const unmatched = reach.status === 'ready' ? [...granted].filter((ref) => !matched.has(ref)) : []
+  const offered = agentToolChoices(reach.status === 'ready' ? reach.data : null, setup)
   const label = agent.clientName === null ? null : clientLabel(agent.clientName)
   const setAsk = async (on: boolean) => {
     if (await action.run(() => api.remote.setAskForChanges(agent.id, on)))
@@ -520,45 +519,16 @@ function AgentPage({ agent }: { readonly agent: RemoteClientItem }) {
             </CardContent>
           </Card>
         ) : null}
-        <Card>
-          <CardHeader>
-            <CardTitle>Tools it may use</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            {granted.size === 0 ? (
-              <Text tone="muted">None. It can connect, but it can’t call any tool.</Text>
-            ) : (
-              <ul className="m-0 flex list-none flex-col gap-2 p-0">
-                {scoped.flatMap((s) =>
-                  s.tools.map((t) => (
-                    <li key={`${s.id}.${t.name}`} className="flex flex-wrap items-center gap-2">
-                      <SiteAvatar id={s.id} name={s.name} size="xs" />
-                      <span>
-                        {s.name}: {t.title}
-                      </span>
-                      <Code>{t.name}</Code>
-                      <RiskBadge purpose={t.sideEffect as 'read' | 'write' | 'irreversible'} />
-                    </li>
-                  )),
-                )}
-                {/* A tool granted on a site that is no longer approved: shown, so nothing is hidden. */}
-                {unmatched.map((ref) => (
-                  <li key={ref} className="flex flex-wrap items-center gap-2">
-                    <Code>{ref}</Code>
-                    <Text size="sm" tone="muted">
-                      its site isn’t approved now, so it can’t be called
-                    </Text>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <Text size="sm" tone="muted">
-              To give it other tools, revoke it and approve it again, or, with Ask for changes, it can ask for
-              one and you approve it. A tool turned off in{' '}
-              <TextLink href={href.remote()}>Remote access</TextLink> is off for every cloud agent.
-            </Text>
-          </CardContent>
-        </Card>
+        {agent.grant !== null ? (
+          <AgentTools
+            agent={agent}
+            granted={granted}
+            tools={offered}
+            unmatched={
+              offered === null ? [] : [...granted].filter((ref) => !offered.some((t) => t.ref === ref))
+            }
+          />
+        ) : null}
       </PageBody>
       <ConfirmDialog
         open={asking}
@@ -570,5 +540,128 @@ function AgentPage({ agent }: { readonly agent: RemoteClientItem }) {
         onConfirm={() => void revoke()}
       />
     </Page>
+  )
+}
+
+/**
+ * Every tool an agent could be given: each approved site's tools, then Valet's own built-in ones
+ * that remote access lists (Mail's, say), with whether each is on for remote clients now.
+ */
+function agentToolChoices(
+  reach: readonly SiteReach[] | null,
+  setup: { readonly status: string; readonly data?: { readonly tools: readonly RemoteSetupTool[] } },
+): RemoteSetupTool[] | null {
+  if (reach === null || setup.status !== 'ready' || setup.data === undefined) return null
+  const listed = new Map(setup.data.tools.map((t) => [t.ref, t]))
+  const out: RemoteSetupTool[] = []
+  for (const site of reach)
+    for (const t of site.tools) {
+      const ref = `${site.id}.${t.name}`
+      out.push({
+        ref,
+        adapterId: site.id,
+        adapterName: site.name,
+        tool: t.name,
+        toolTitle: t.title,
+        sideEffect: t.sideEffect as RemoteSetupTool['sideEffect'],
+        enabled: listed.get(ref)?.enabled ?? false,
+      })
+      listed.delete(ref)
+    }
+  const sites = new Set(reach.map((s) => s.id))
+  for (const t of listed.values()) if (!sites.has(t.adapterId)) out.push(t)
+  return out
+}
+
+/**
+ * One switch per tool a cloud agent could be given: every tool of an approved site (and Valet's
+ * own built-in ones) that remote access can offer. On asks for Touch ID and adds it to this
+ * agent's grant; off takes it out at once. The agent stays approved either way.
+ */
+function AgentTools({
+  agent,
+  granted,
+  tools,
+  unmatched,
+}: {
+  readonly agent: RemoteClientItem
+  readonly granted: ReadonlySet<string>
+  readonly tools: readonly RemoteSetupTool[] | null
+  readonly unmatched: readonly string[]
+}) {
+  const api = useApi()
+  const action = useAction()
+  const [busy, setBusy] = useState<string | null>(null)
+  const set = async (t: RemoteSetupTool, on: boolean) => {
+    setBusy(t.ref)
+    const ok = await action.run(() => api.remote.setClientTool(agent.id, t.adapterId, t.tool, on))
+    setBusy(null)
+    if (ok)
+      toast(on ? `${agent.host} may use ${t.toolTitle}` : `${agent.host} can no longer use ${t.toolTitle}`, {
+        description: 'Its tool list changes now. If it doesn’t see the change, start a new chat.',
+      })
+  }
+  const sites = new Map<string, RemoteSetupTool[]>()
+  for (const t of tools ?? []) sites.set(t.adapterId, [...(sites.get(t.adapterId) ?? []), t])
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Tools it may use</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <Failed failed={action.failed} what="change its tools" />
+        {tools === null ? null : tools.length === 0 ? (
+          <Text tone="muted">No approved site has tools to give it yet.</Text>
+        ) : (
+          <ul className="m-0 flex list-none flex-col gap-4 p-0" data-testid="agent-tools">
+            {[...sites.entries()].map(([siteId, siteTools]) => (
+              <li key={siteId} className="flex flex-col gap-2">
+                <Inline gap={2}>
+                  <SiteAvatar id={siteId} name={siteTools[0]?.adapterName ?? siteId} size="xs" />
+                  <Text weight="medium">{siteTools[0]?.adapterName ?? siteId}</Text>
+                </Inline>
+                <ul className="m-0 flex list-none flex-col gap-2 p-0 pl-6">
+                  {siteTools.map((t) => {
+                    const on = granted.has(t.ref)
+                    return (
+                      <li key={t.ref} className="flex flex-wrap items-center gap-2">
+                        <Switch
+                          aria-label={`${t.adapterName}: ${t.toolTitle}`}
+                          checked={on}
+                          disabled={busy !== null || action.busy}
+                          onCheckedChange={(next) => void set(t, next)}
+                        />
+                        <span>{t.toolTitle}</span>
+                        <Code>{t.tool}</Code>
+                        <RiskBadge purpose={t.sideEffect} />
+                        {on && !t.enabled ? (
+                          <Text size="sm" tone="muted">
+                            off for every cloud agent in Remote access, so it can’t call it now
+                          </Text>
+                        ) : null}
+                      </li>
+                    )
+                  })}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        )}
+        {/* A tool granted on a site that is no longer approved: shown, so nothing is hidden. */}
+        {unmatched.map((ref) => (
+          <div key={ref} className="flex flex-wrap items-center gap-2">
+            <Code>{ref}</Code>
+            <Text size="sm" tone="muted">
+              its site isn’t approved now, so it can’t be called
+            </Text>
+          </div>
+        ))}
+        <Text size="sm" tone="muted">
+          Turning a tool on needs Touch ID; turning one off is at once. Either way it stays approved and keeps
+          its other tools. A tool turned off in <TextLink href={href.remote()}>Remote access</TextLink> is off
+          for every cloud agent.
+        </Text>
+      </CardContent>
+    </Card>
   )
 }

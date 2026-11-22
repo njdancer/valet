@@ -97,6 +97,7 @@ export const INVOKE_METHODS = [
   'remote.revokeHubAgent',
   'remote.revokeAllClients',
   'remote.setAskForChanges',
+  'remote.setClientTool',
   'remote.setup',
   'remote.setEnabled',
   'remote.setHosts',

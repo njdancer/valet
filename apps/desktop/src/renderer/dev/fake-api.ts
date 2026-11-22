@@ -1920,6 +1920,18 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         )
         emit({ type: 'remote-changed' })
       },
+      async setClientTool(id, adapterId, tool, on) {
+        enter('remote.setClientTool', id, adapterId, tool, on)
+        const client = remoteClients.find((c) => c.id === id)
+        if (client === undefined || client.grant === null) throw new Error('refused')
+        const ref = `${adapterId}.${tool}`
+        const tools = client.grant.tools.filter((t) => t !== ref)
+        if (on) tools.push(ref)
+        remoteClients = remoteClients.map((c) =>
+          c.id === id && c.grant !== null ? { ...c, grant: { ...c.grant, tools: tools.sort() } } : c,
+        )
+        emit({ type: 'remote-changed' })
+      },
       async revokeAllClients() {
         enter('remote.revokeAllClients')
         const count = remoteClients.length

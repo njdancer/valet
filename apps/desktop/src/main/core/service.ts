@@ -2869,6 +2869,71 @@ export class AppService {
     this.emit('remote-changed')
   }
 
+  /**
+   * The person's switch for one tool on one cloud agent's page. On adds it to that agent's grant
+   * after Touch ID (the signed `tool-enable` for `remote:<id>`, which also turns it on for remote
+   * clients if it wasn't). Off takes it out of the grant at once: it narrows, so no signature, and
+   * the agent stays approved with the rest of its tools.
+   */
+  private async setRemoteClientTool(
+    clientId: string,
+    adapterId: string,
+    tool: string,
+    on: boolean,
+  ): Promise<void> {
+    const client = this.remote.remoteClients().find((c) => c.id === clientId)
+    if (client === undefined || client.grant === null || this.approvalBroker === null)
+      throw new ValetError('config', 'not-found')
+    const ref = `${adapterId}.${tool}`
+    const held = client.grant.tools.includes(ref)
+    if (!on) {
+      if (!held) return
+      // Off works for any tool it holds, even one whose site was since removed.
+      const declaration = this.remoteDeclared(adapterId, tool) ??
+        (await this.remoteToolDeclaration(adapterId, tool, false).catch(() => null)) ?? {
+          name: tool,
+          sideEffect: 'read' as const,
+        }
+      await this.remote.removeToolForClient(adapterId, declaration, clientId)
+      const id = `remote:${clientId}`
+      await this.approvalBroker
+        .revoke('tool-enable', (s) => s.clientId === id && s.adapterId === adapterId && s.tool === tool)
+        .catch(() => 0)
+      this.emit('remote-changed')
+      return
+    }
+    // A built-in tool (Mail on this Mac) has no adapter version to sign for: it goes on for remote
+    // clients as Remote access's own switch turns it on, then into this agent's grant.
+    // Not signed yet: a built-in approval subject, so this asks for Touch ID too, is to follow.
+    const native = this.nativeDeclaration(adapterId, tool)
+    if (native !== null) {
+      if (!this.remote.allows(adapterId, native)) await this.setRemoteTool(adapterId, tool, true)
+      if (!held && !(await this.remote.allowForClient(adapterId, native, clientId)))
+        throw new ValetError('config', 'unavailable')
+      this.emit('remote-changed')
+      return
+    }
+    const declaration = this.remoteDeclared(adapterId, tool)
+    const adapter = this.adapter(adapterId)
+    if (declaration === null || adapter === null) throw new ValetError('config', 'not-found')
+    // Held at a side effect no higher than declared now: nothing to ask.
+    if (held && this.remote.allows(adapterId, declaration, clientId)) return
+    await this.remoteToolDeclaration(adapterId, tool, true)
+    // Held already, but off for remote clients since (an update raised its side effect): turning
+    // it on again for remote clients is what's asked. Otherwise, this agent's own.
+    const subject = toolEnableSubject(
+      adapter.definition.manifest,
+      adapter.hash,
+      tool,
+      'remote',
+      held ? null : `remote:${clientId}`,
+    )
+    if (subject === null) throw new ValetError('config', 'not-found')
+    await this.approveOrRefuse('tool-enable', subject)
+    if (!this.remote.allows(adapterId, declaration, clientId)) throw new ValetError('config', 'unavailable')
+    this.emit('remote-changed')
+  }
+
   /** Removes the evidence behind a cloud agent's See Valet and Ask for changes. Only tightens. */
   private async dropRemoteCapabilities(clientId: string): Promise<void> {
     const broker = this.approvalBroker
@@ -5465,6 +5530,7 @@ export class AppService {
           return count
         },
         setAskForChanges: (id, on) => this.setRemoteAsk(id, on),
+        setClientTool: (id, adapterId, tool, on) => this.setRemoteClientTool(id, adapterId, tool, on),
         setup: () => this.remoteSetup(),
         setEnabled: async (enabled) => {
           await this.changeValetSetting('remote_enabled', enabled)

@@ -244,6 +244,20 @@ export class RemoteClients {
     return true
   }
 
+  /**
+   * Takes tools out of a client's existing grant, keeping its tokens (the person narrowed what it
+   * may call). False with no grant or when it held none of them.
+   */
+  removeTools(id: string, tools: readonly string[]): boolean {
+    const grant = this.get(id)?.grant
+    if (grant == null) return false
+    const drop = new Set(tools)
+    const next = grant.tools.filter((t) => !drop.has(t))
+    if (next.length === grant.tools.length) return false
+    this.replace(id, (r) => ({ ...r, grant: { ...grant, tools: next } }))
+    return true
+  }
+
   /** Drops a grant and its refresh tokens, keeping the registration (it expires if unused). */
   revokeGrant(id: string): void {
     if (this.get(id)?.grant == null) return
