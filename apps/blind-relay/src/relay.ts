@@ -275,8 +275,10 @@ export async function startBlindRelay(options: BlindRelayOptions): Promise<Runni
     }
     const chunks: Buffer[] = []
     let size = 0
+    const opened = Date.now()
     const timer = setTimeout(() => {
       done()
+      log(`hello timed out after ${size} bytes`)
       socket.destroy()
     }, TUNNEL_LIMITS.clientHelloTimeoutMs)
     const onData = (chunk: Buffer) => {
@@ -303,13 +305,19 @@ export async function startBlindRelay(options: BlindRelayOptions): Promise<Runni
         return void socket.destroy()
       }
       if (link === undefined) return waitForMac(socket, first, macId)
-      if (link.mux.size >= limits.streamsPerMac) return void socket.destroy()
+      if (link.mux.size >= limits.streamsPerMac) {
+        log(`refused busy ${macId} streams=${link.mux.size}`)
+        return void socket.destroy()
+      }
       pipeToMac(socket, first, link)
     }
     socket.on('data', onData)
     socket.on('end', () => {
+      // Only before the hello is read: after it, the connection belongs to a Mac or the control host.
+      if (!counted) return
       clearTimeout(timer)
       done()
+      log(`closed before a hello after ${size} bytes ${Date.now() - opened}ms`)
       socket.destroy()
     })
   })
@@ -338,19 +346,42 @@ export async function startBlindRelay(options: BlindRelayOptions): Promise<Runni
   function pipeToMac(socket: Socket, first: Buffer, link: MacLink): void {
     const stream = link.mux.open({ source: socket.remoteAddress ?? '' })
     link.connections++
-    socket.setTimeout(limits.idleMs, () => socket.destroy())
+    // One line per caller when it ends: how much went each way, for how long, and who ended it.
+    // Sizes and times only; the bytes are TLS the relay can't read.
+    const started = Date.now()
+    let up = 0
+    let down = 0
+    let firstEnd: string | null = null
+    const ended = (who: string) => {
+      firstEnd ??= who
+    }
+    socket.once('end', () => ended('caller'))
+    socket.once('error', () => ended('caller-error'))
+    stream.once('end', () => ended('mac'))
+    stream.once('error', () => ended('mac-error'))
+    socket.once('close', () => {
+      ended('closed')
+      log(`stream up=${up} down=${down} ${Date.now() - started}ms first-end=${firstEnd}`)
+    })
+    socket.setTimeout(limits.idleMs, () => {
+      ended('idle')
+      socket.destroy()
+    })
     stream.on('error', () => socket.destroy())
     socket.on('error', () => stream.destroy())
     socket.on('close', () => stream.destroy())
     stream.on('close', () => socket.destroy())
     stream.on('data', (chunk: Buffer) => {
       link.down += chunk.length
+      down += chunk.length
     })
     socket.on('data', (chunk: Buffer) => {
       link.up += chunk.length
+      up += chunk.length
     })
     stream.write(first)
     link.up += first.length
+    up += first.length
     socket.pipe(stream)
     stream.pipe(socket)
     socket.resume()
