@@ -233,7 +233,8 @@ async function setup(
     },
     timeZone: 'UTC',
     sleep: async () => {},
-    adapters: [adapter],
+    // As the app: with packages, the sites come only from the packages, once they boot.
+    adapters: options.packages === undefined ? [adapter] : [],
     ...(options.packages === undefined ? {} : { packages: options.packages }),
     ...(options.toolProcess === undefined ? {} : { toolProcess: options.toolProcess }),
     ...(options.sandbox === undefined ? {} : { sandbox: options.sandbox }),
@@ -3792,6 +3793,17 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     return { ...s, picked, hashOf }
   }
 
+  it('tells the phone about the sites once the packages have loaded', async () => {
+    const s = await withPackages()
+    const tabs = (s.service as unknown as { phoneStatus: { sites: { adapterId: string }[] } | null })
+      .phoneStatus
+    const ids = (await s.api.adapters.list()).map((a) => a.id)
+    expect(ids.length).toBeGreaterThan(0)
+    // The phone channel opens before the packages boot; its tabs must not keep the empty list.
+    expect(tabs?.sites.map((site) => site.adapterId)).toEqual(ids)
+    await s.service.stop()
+  })
+
   it('seeds the built-in, runs it from its compiled package, and keeps it across a restart', async () => {
     const s = await withPackages()
     const builtin = s.hashOf(shopPackage('v1:'))
@@ -6191,5 +6203,32 @@ describe('when this Mac’s approval keys change (persona QA, key loss)', () => 
     await expect(again.api.attention.dismiss('keys-changed')).rejects.toEqual(
       new ValetError('config', 'not-found'),
     )
+  })
+})
+
+describe('the phone’s tabs', () => {
+  type Tabs = {
+    sites: { adapterId: string }[]
+    agents: { label: string }[]
+    recent: { kind: string; text: string }[]
+  }
+  const tabs = (service: AppService) => (service as unknown as { phoneStatus: Tabs | null }).phoneStatus
+
+  it('lists the sites once they load, and follows agents and calls as they happen', async () => {
+    const s = await setup({})
+    // The phone channel opens before the sites load; the tabs must not stay empty.
+    expect(tabs(s.service)?.sites.map((site) => site.adapterId)).toEqual([s.adapter.definition.manifest.id])
+    const code = await s.api.clients.add('Claude Code')
+    await s.call('echo', { text: 'x' }, 'claude-code', 'call_phone', {
+      transport: 'stdio-bridge' as const,
+      identity: { origin: 'local' as const, clientId: code.id },
+    })
+    const deadline = Date.now() + 5_000
+    while (Date.now() < deadline && !(tabs(s.service)?.recent.some((r) => r.kind === 'call') ?? false))
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(tabs(s.service)?.agents.map((a) => a.label)).toEqual(['Claude Code'])
+    expect(tabs(s.service)?.recent[0]).toMatchObject({ kind: 'call' })
+    expect(tabs(s.service)?.recent[0]?.text).toContain('used echo')
+    await s.service.stop()
   })
 })
