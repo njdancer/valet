@@ -35,14 +35,11 @@ final class AppHost {
               return keys
             },
             load: { try SoftwareDeviceKeys(stored: $0) }
-          ),
-          hub: world.hub
+          )
         )
         self.world = world
         self.model = model
-        if scenario == .signIn {
-          // The person signs in with the account's passkey: the fake hub's page stands in for Safari's.
-        } else if scenario == .pair {
+        if scenario == .pair {
           // The person confirms the code at the Mac: in the simulator, a button stands in for it.
           world.mac.autoConfirmPairing = false
         } else {
@@ -74,7 +71,6 @@ final class AppHost {
               return keys
             }
           ),
-          hub: URLSessionHubTransport(),
           // The walkthrough's local relay is the only way in, unless the run names a Mac domain.
           macDomain: Self.argument("-valet-mac-domain", in: arguments)
         )
@@ -82,10 +78,9 @@ final class AppHost {
         return
       }
     #endif
-    // Each Mac's own address at Valet's blind relay first (docs/blind-relay.md#phones), the relay
-    // the phone paired through after.
+    // Each Mac at its own address at Valet's blind relay (docs/blind-relay.md#phones), and nowhere else.
     model = PhoneModel(
-      transport: WebSocketRelayTransport(), store: KeychainPhoneStore(), keys: .system, hub: URLSessionHubTransport(),
+      transport: WebSocketRelayTransport(), store: KeychainPhoneStore(), keys: .system,
       macDomain: PhoneModel.valetMacDomain
     )
     model.connect()
@@ -123,8 +118,6 @@ final class AppHost {
     /// The person confirms at the Mac that the codes match.
     func confirmAtFakeMac() { world?.mac.confirmPairingAtMac() }
 
-    /// The person's passkey on the fake hub's page, in place of Safari's sheet.
-    func signInAtFakeHub(_ url: URL) -> Bool { world?.signInWithPasskey(url) ?? false }
     func rejectAtFakeMac() { world?.mac.rejectPairingAtMac() }
   #endif
 }

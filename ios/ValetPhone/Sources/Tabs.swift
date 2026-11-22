@@ -8,7 +8,7 @@ struct MainTabs: View {
   var body: some View {
     TabView {
       Tab("Needs you", systemImage: "bell.badge") { NeedsYouView(model: model) }
-        .badge(model.allMacs.reduce(0) { $0 + $1.openCards.count })
+        .badge(model.openCards.count)
       Tab("Activity", systemImage: "list.bullet.rectangle") { ActivityView(model: model) }
       Tab("Sites", systemImage: "globe") { SitesView(model: model) }
       Tab("Agents", systemImage: "person.2") { AgentsView(model: model) }
@@ -197,9 +197,6 @@ struct ValetView: View {
           Text("Lock down stops every agent and declines everything waiting. Only your Mac can unlock it.")
         }
         CommandsSection(model: model)
-        if let account = model.account {
-          AccountSection(account: account)
-        }
         if let devices = model.status?.devices, !devices.isEmpty {
           Section(header: SectionHeader("Devices")) {
             ForEach(devices) { device in

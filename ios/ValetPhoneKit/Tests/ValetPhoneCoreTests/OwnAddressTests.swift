@@ -6,7 +6,7 @@ import XCTest
 @testable import ValetProtocol
 
 /// The phone reaching its Mac at the Mac's own address at the blind relay (docs/blind-relay.md#phones),
-/// `https://<macId>.<macDomain>`, with the relay it paired through as the fallback.
+/// `https://<macId>.<macDomain>`, and nowhere else: the Worker relay and the hub closed (2026-11-22).
 @MainActor
 final class OwnAddressTests: XCTestCase {
   var world: FakeWorld!
@@ -47,7 +47,7 @@ final class OwnAddressTests: XCTestCase {
     world.relay.drain()
     XCTAssertEqual(dialledSinceReopen(), [own])
     XCTAssertTrue(model.connected)
-    XCTAssertTrue(model.dialledOwnAddress)
+    XCTAssertEqual(model.macAddress, own)
     world.mac.ask(.install(id: "7B3Fxxxxxxxxxxxxxxxxxx"))
     world.relay.drain()
     time.advance(2)
@@ -57,40 +57,31 @@ final class OwnAddressTests: XCTestCase {
     XCTAssertEqual(model.cards.first { $0.id.hasPrefix("7B3F") }?.state, .approvedHere)
   }
 
-  func testFallsBackToThePairedRelayWhenTheOwnAddressDoesntAnswer() {
+  func testNeverFallsBackToTheRelayItPairedThrough() {
     setUp(ownReachable: false)
-    model.connect()
-    world.relay.drain()
-    XCTAssertFalse(model.connected)
-    model.connect()
-    world.relay.drain()
-    XCTAssertEqual(dialledSinceReopen(), [own, world.relay.origin])
-    XCTAssertTrue(model.connected)
-    XCTAssertFalse(model.dialledOwnAddress)
+    for _ in 0..<3 {
+      model.connect()
+      world.relay.drain()
+      XCTAssertFalse(model.connected)
+    }
+    XCTAssertEqual(dialledSinceReopen(), [own, own, own])
   }
 
-  func testGoesBackToTheOwnAddressWhenThePairedRelayHasntSeenTheMac() {
-    setUp(ownReachable: false)
+  func testAPhoneAnOlderBuildSignedInToTheAccountIsAskedToPair() {
+    let keys = SoftwareDeviceKeys()
+    let store = MemoryPhoneStore(PersistedPhone(
+      macId: "mac_0123456789abcdef", macApprovalKey: "k", macAgreementKey: "k", relay: "https://valet.example",
+      keys: keys.stored, name: "iPhone", macName: "Mac", recordPayload: nil, recordSignature: nil, lastInbound: 3,
+      nextOutbound: 2, outbox: [:], requests: [], viaAccount: true
+    ))
+    let relay = FakeRelay(mac: FakeMac(), autoDeliver: false)
+    let model = PhoneModel(
+      transport: relay, store: store, keys: PhoneModel.Keys(make: { keys }, load: { _ in keys }), macDomain: "macs.test")
+    XCTAssertEqual(model.phase, .unpaired(notice: PhoneModel.accountClosedNotice))
+    XCTAssertNil(store.state, "the account's state is forgotten")
     model.connect()
-    world.relay.drain()
-    model.connect()
-    world.relay.drain()
-    XCTAssertTrue(model.connected)
-    // The Mac leaves the old relay for the blind one: the old relay says it's gone.
-    world.mac.setOnline(false)
-    world.relay.drain()
-    XCTAssertFalse(model.macOnline)
-    world.relay.alsoAnswers = [own]
-    time.advance(PhoneModel.retryOwnAddressAfter - 1)
-    model.connect()
-    world.relay.drain()
-    XCTAssertFalse(model.dialledOwnAddress, "not before the wait")
-    time.advance(2)
-    model.connect()
-    world.relay.drain()
-    XCTAssertTrue(model.dialledOwnAddress)
-    XCTAssertTrue(model.connected)
-    XCTAssertEqual(dialledSinceReopen().last, own)
+    relay.drain()
+    XCTAssertTrue(relay.dialled.isEmpty, "nothing to dial until it pairs")
   }
 
   func testNeverSignsAChallengeForAnotherOrigin() {
@@ -106,7 +97,7 @@ final class OwnAddressTests: XCTestCase {
 
   func testWithoutADomainDialsOnlyThePairedRelay() {
     setUp(ownReachable: true, macDomain: nil)
-    XCTAssertNil(model.ownAddress)
+    XCTAssertEqual(model.macAddress, world.relay.origin)
     model.connect()
     world.relay.drain()
     XCTAssertEqual(dialledSinceReopen(), [world.relay.origin])
@@ -128,7 +119,7 @@ final class OwnAddressTests: XCTestCase {
     fake.drain()
     XCTAssertEqual(model.phase, .paired)
     XCTAssertTrue(model.connected)
-    XCTAssertNil(model.ownAddress, "the address it paired through is the Mac's own")
+    XCTAssertEqual(model.macAddress, own, "the address it paired through is the Mac's own")
     XCTAssertTrue(fake.dialled.allSatisfy { $0 == own })
   }
 

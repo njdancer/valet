@@ -25,16 +25,6 @@ public enum PairingStep: Equatable, Sendable {
   case failed(PairingFailure)
 }
 
-/// Signing this phone in to the Valet account with a passkey (step 4d).
-public enum SignInState: Equatable, Sendable {
-  case idle
-  /// The hub's page is open, for the person's passkey.
-  case inBrowser
-  /// Back from the page: reading the account.
-  case checking
-  case failed(String)
-}
-
 public enum PairingFailure: String, Equatable, Sendable {
   case notACode = "That isn't a Valet pairing code. Scan the code on your Mac."
   case expired = "That code has run out. Show a new code on your Mac."
@@ -165,32 +155,16 @@ public final class PhoneModel {
   /// The relay stopped forwarding remote traffic to the Mac (a phone or the recovery page asked).
   public private(set) var relayLocked = false
   public private(set) var handoffs: [HandoffEntry] = []
-  /// The Valet account the paired Mac says this phone is on, once it says (step 4c).
-  public private(set) var account: AccountModel?
-  /// The other Macs on the account, each on its own channel with its own cards (step 4c). Only
-  /// the model for the paired Mac has these; each of them is a model for one Mac.
-  public private(set) var otherMacs: [PhoneModel] = []
-  /// Every Mac this phone reaches: the paired one first.
-  public var allMacs: [PhoneModel] { [self] + otherMacs.filter { $0.phase == .paired } }
-
   private let transport: RelayTransport
   /// Where Macs have their own address at the blind relay (docs/blind-relay.md#phones):
-  /// `<macId>.<macDomain>`. The phone dials it first and falls back to the relay it paired
-  /// through. Nil to dial only that relay.
+  /// `<macId>.<macDomain>`. A paired phone dials only that address; there is no other relay to
+  /// fall back to (the Worker relay and the hub closed, Nick 2026-11-22). Nil to dial the address
+  /// the phone paired through, for tests and the local walkthrough.
   private let macDomain: String?
   /// The origin the open connection dialled; every challenge must name it.
   private var dialled: String?
-  /// Dial the Mac's own address next (true) or the relay the phone paired through (false).
-  private var preferOwnAddress = true
-  /// When the open connection to the paired-through relay last saw the Mac go missing.
-  private var macMissingSince: TimeInterval?
-  /// How long the phone waits on the paired-through relay without the Mac before it tries the
-  /// Mac's own address again.
-  public static let retryOwnAddressAfter: TimeInterval = 15
   /// Valet's blind relay names Macs under this domain (VALET_RELAY in the Mac app's blind-tunnel.ts).
   public static let valetMacDomain = "valet.dncr.me"
-  private let hub: HubTransport?
-  private let macStore: @MainActor (String) -> PhoneStore
   private let store: PhoneStore
   private let clock: PhoneClock
   private var persisted: PersistedPhone?
@@ -201,9 +175,6 @@ public final class PhoneModel {
   private var pendingReply: String?
   private var held: [Int: MacToPhone] = [:]
   private var alertCounter = 0
-  /// Signing in with a passkey: where, the keys made for it, and the name the person gave.
-  public private(set) var signIn: SignInState = .idle
-  private var pendingSignIn: (hub: String, keys: DeviceKeys, name: String)?
 
   /// How the model makes and loads keys. Tests pass their own, so they hold the software keys.
   public struct Keys {
@@ -224,20 +195,20 @@ public final class PhoneModel {
   private let keyFactory: Keys
 
   public init(
-    transport: RelayTransport, store: PhoneStore, clock: PhoneClock = .system, keys keyFactory: Keys, hub: HubTransport? = nil,
-    macStore: @escaping @MainActor (String) -> PhoneStore = { _ in MemoryPhoneStore() }, macDomain: String? = nil
+    transport: RelayTransport, store: PhoneStore, clock: PhoneClock = .system, keys keyFactory: Keys,
+    macDomain: String? = nil
   ) {
     self.transport = transport
     self.macDomain = macDomain.flatMap { Self.validDomain($0) ? $0.lowercased() : nil }
-    self.hub = hub
-    self.macStore = macStore
     self.store = store
     self.clock = clock
     self.keyFactory = keyFactory
     guard let saved = store.load() else { return }
     guard saved.paired else {
-      // A pairing that never finished: start again.
+      // A pairing that never finished, or a phone an older build signed in to the Valet account,
+      // which is gone: start again by pairing.
       store.wipe()
+      if saved.viaAccount == true { phase = .unpaired(notice: Self.accountClosedNotice) }
       return
     }
     guard let keys = try? keyFactory.load(saved.keys) else {
@@ -251,8 +222,11 @@ public final class PhoneModel {
     hardwareKeys = keys.hardwareBacked
     phase = .paired
     reloadSavedRequests(saved.requests)
-    if let pin = saved.account { openAccount(hub: pin.hub, accountId: pin.accountId) }
   }
+
+  /// Shown once to a phone that used to sign in to the Valet account.
+  public static let accountClosedNotice =
+    "Valet now pairs your iPhone straight with your Mac, without the Valet account. Scan the code on your Mac once to keep getting approvals here."
 
   // MARK: Identity
 
@@ -305,84 +279,6 @@ public final class PhoneModel {
     })
     pairingConnection = conn
     conn.send(PhoneToRelay.pairingReply(macId: offer.macId, offerId: offerId, sealed: sealed).text)
-  }
-
-  // MARK: Signing in to the account
-
-  /// The account's hub, unless the person names another.
-  public static let defaultHub = "https://valet.dncr.me"
-
-  /// Makes this phone's keys and gives the hub page to open for the person's passkey, with the
-  /// keys in its fragment (which the page sends on as JSON). Nil, with a reason in `signIn`, if
-  /// this phone can't make keys or the address isn't a hub.
-  public func startSignIn(hub: String = PhoneModel.defaultHub, name: String) -> URL? {
-    guard case .unpaired = phase else { return nil }
-    let origin = hub.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-    guard matches(origin, Patterns.hubOrigin) else {
-      signIn = .failed("That isn\u{2019}t a Valet account address.")
-      return nil
-    }
-    let newKeys: DeviceKeys
-    do { newKeys = try keyFactory.make() } catch {
-      signIn = .failed(PairingFailure.noSecureEnclave.rawValue)
-      return nil
-    }
-    let cleanName = DisplayText.isValid(name, max: 60) ? name : "iPhone"
-    pendingSignIn = (origin, newKeys, cleanName)
-    let device = RosterDevice(keys: newKeys.publicKeys, name: cleanName)
-    let fragment = "device=\(Base64URL.encode(Data(JSON.serialize(device.json).utf8)))&return=valet"
-    signIn = .inBrowser
-    touch()
-    return URL(string: "\(origin)/phone#\(fragment)")
-  }
-
-  /// Back from the hub's page: reads the account and, if this phone is on it, reaches its Macs.
-  public func finishSignIn() async {
-    guard let pending = pendingSignIn, let hub else { return }
-    signIn = .checking
-    touch()
-    switch await AccountModel.signedIn(hub: pending.hub, transport: hub, keys: pending.keys) {
-    case let .failure(problem):
-      signIn = .failed(
-        problem == .notOnList
-          ? "This iPhone isn\u{2019}t on your Valet account yet. Try signing in again." : problem.rawValue
-      )
-    case let .success((account, roster)):
-      let macs = roster.order.compactMap { roster.devices[$0] }.filter { $0.role == "mac" }
-      // The Mac this phone talks to first: one online at the hub if there is one.
-      let online = Set(account.nodes.filter(\.online).map(\.macId))
-      guard let mac = macs.first(where: { online.contains($0.deviceId) }) ?? macs.first else {
-        signIn = .failed("Your Valet account has no Mac on it yet. Connect Valet on your Mac to your account first.")
-        touch()
-        return
-      }
-      pendingSignIn = nil
-      keys = pending.keys
-      hardwareKeys = pending.keys.hardwareBacked
-      persisted = PersistedPhone(
-        macId: mac.deviceId, macApprovalKey: mac.approvalKey, macAgreementKey: mac.agreementKey, relay: account.relay,
-        keys: pending.keys.stored, name: pending.name, macName: account.nodes.first { $0.macId == mac.deviceId }?.name ?? mac.name,
-        recordPayload: nil, recordSignature: nil, lastInbound: 0, nextOutbound: 1, outbox: [:], requests: [],
-        account: AccountPin(
-          hub: pending.hub, accountId: account.account, genesis: roster.genesis, seq: roster.seq, head: roster.head
-        ),
-        viaAccount: true
-      )
-      signIn = .idle
-      phase = .paired
-      save()
-      openAccount(hub: pending.hub, accountId: account.account)
-      connect()
-      Task { await self.account?.refresh() }
-    }
-    touch()
-  }
-
-  /// The person closed the hub's page, or chose to start over.
-  public func cancelSignIn() {
-    pendingSignIn = nil
-    signIn = .idle
-    touch()
   }
 
   public func cancelPairing() {
@@ -475,35 +371,18 @@ public final class PhoneModel {
 
   // MARK: Connection
 
-  /// The Mac's own address at the blind relay, `https://<macId>.<macDomain>`, when there is one
-  /// and it isn't the address the phone paired through already.
-  public var ownAddress: String? {
-    guard let macDomain, let persisted else { return nil }
-    let own = "https://\(persisted.macId).\(macDomain)"
-    return own == persisted.relay ? nil : own
+  /// Where the phone reaches its Mac: the Mac's own address at the blind relay,
+  /// `https://<macId>.<macDomain>`, or without a domain the address it paired through.
+  public var macAddress: String? {
+    guard let persisted else { return nil }
+    guard let macDomain else { return persisted.relay }
+    return "https://\(persisted.macId).\(macDomain)"
   }
-
-  /// Where the open connection goes: the Mac's own address, or the relay the phone paired through.
-  public var dialledOwnAddress: Bool { dialled != nil && dialled == ownAddress }
 
   /// Opens the device channel. Called at launch when paired, after the Mac registered us, and
   /// every few seconds while the app is open.
   public func connect() {
-    for mac in otherMacs { mac.connect() }
-    guard let persisted else { return }
-    if connection != nil {
-      // Through the relay the phone paired through, which hasn't seen the Mac for a while: the
-      // Mac may be at its own address only (it moved to the blind relay). Try that again.
-      guard !dialledOwnAddress, ownAddress != nil, let since = macMissingSince,
-        clock.uptime() - since >= Self.retryOwnAddressAfter
-      else { return }
-      connection?.close()
-      connection = nil
-      connected = false
-      macMissingSince = nil
-      preferOwnAddress = true
-    }
-    let origin = (preferOwnAddress ? ownAddress : nil) ?? persisted.relay
+    guard let persisted, connection == nil, let origin = macAddress else { return }
     dialled = origin
     let conn = transport.connect(relay: origin, macId: persisted.macId, path: .phone, onFrame: { [weak self] text in
       self?.receive(frame: text)
@@ -522,20 +401,14 @@ public final class PhoneModel {
   }
 
   public func disconnect() {
-    for mac in otherMacs { mac.disconnect() }
     connection?.close()
     connection = nil
     connected = false
   }
 
   private func closed() {
-    // Closed before the Mac answered: try the other way next time. A connection that worked is
-    // tried again first.
-    if !connected, ownAddress != nil { preferOwnAddress = !dialledOwnAddress }
-    else if connected, !dialledOwnAddress, ownAddress != nil { preferOwnAddress = true }
     connection = nil
     connected = false
-    macMissingSince = nil
     if macOnline { macLastSeen = clock.now() }
     macOnline = false
     touch()
@@ -553,7 +426,6 @@ public final class PhoneModel {
       connection?.send(PhoneToRelay.hello(id: keys.publicKeys.deviceId, signature: Base64URL.encode(signature)).text)
     case let .ready(online):
       connected = true
-      preferOwnAddress = dialledOwnAddress
       setMacOnline(online)
       flushOutbox()
     case let .macOnline(online):
@@ -570,7 +442,6 @@ public final class PhoneModel {
   }
 
   private func setMacOnline(_ online: Bool) {
-    if online { macMissingSince = nil } else if macMissingSince == nil { macMissingSince = clock.uptime() }
     if macOnline && !online { macLastSeen = clock.now() }
     macOnline = online
     if online { macLastSeen = nil }
@@ -636,7 +507,6 @@ public final class PhoneModel {
       if alerts.count > 50 { alerts.removeLast() }
     case let .status(_, status):
       self.status = status
-      if let named = status.account { openAccount(hub: named.hub, accountId: named.accountId) }
       if status.safety == .lockdown {
         for i in cards.indices where cards[i].state.isOpen { cards[i].state = .lockedDown }
       }
@@ -654,9 +524,6 @@ public final class PhoneModel {
   }
 
   private func resetToUnpaired(notice: String?) {
-    for mac in otherMacs { mac.unpair() }
-    otherMacs = []
-    account = nil
     keys = nil
     persisted = nil
     cards = []
@@ -676,86 +543,6 @@ public final class PhoneModel {
   public func unpair() {
     disconnect()
     resetToUnpaired(notice: nil)
-  }
-
-  // MARK: The account
-
-  /// Starts on the account the Mac named, unless it's the one already open. The view reads it
-  /// with `account.refresh()` when it shows, and the person adds a waiting Mac from there.
-  private func openAccount(hub url: String, accountId: String) {
-    guard let hub, let keys, let persisted else { return }
-    if let account, account.hub == url, account.accountId == accountId { return }
-    account = AccountModel(
-      hub: url, accountId: accountId, transport: hub, keys: keys,
-      pairedMac: (id: persisted.macId, approvalKey: persisted.macApprovalKey), pin: persisted.account, clock: clock,
-      onPin: { [weak self] pin in
-        self?.persisted?.account = pin
-        self?.save()
-      },
-      onList: { [weak self] in self?.syncMacs() }
-    )
-  }
-
-  /// One model per other Mac on the checked list, dialling the account's relay with this phone's
-  /// own keys. The Mac knows this phone from the same list, so there's nothing to pair. A Mac the
-  /// list drops is forgotten here.
-  private func syncMacs() {
-    guard let account, let relay = account.relay, var persisted, keys != nil else { return }
-    // On the account, by its passkey or by scanning a Mac's QR code (then the phone pinned the
-    // account's list): when the list drops the Mac this phone talks to first (it lost its keys, or
-    // was removed), another Mac on the list takes its place. The QR code is a shortcut for signing
-    // in, not a tie to one Mac (Nick, 2026-11-18).
-    if persisted.viaAccount == true || persisted.account != nil,
-      !account.devices.contains(where: { $0.deviceId == persisted.macId }),
-      let next = account.devices.first(where: { $0.role == "mac" })
-    {
-      connection?.close()
-      connection = nil
-      connected = false
-      macOnline = false
-      cards = []
-      status = nil
-      held = [:]
-      otherMacs.first { $0.macId == next.deviceId }?.unpair()
-      otherMacs.removeAll { $0.macId == next.deviceId }
-      persisted = PersistedPhone(
-        macId: next.deviceId, macApprovalKey: next.approvalKey, macAgreementKey: next.agreementKey, relay: relay,
-        keys: persisted.keys, name: persisted.name, macName: account.name(next.deviceId), recordPayload: nil,
-        recordSignature: nil, lastInbound: 0, nextOutbound: 1, outbox: [:], requests: [], account: persisted.account,
-        viaAccount: true
-      )
-      self.persisted = persisted
-      save()
-      connect()
-    }
-    let macs = account.devices.filter { $0.role == "mac" && $0.deviceId != persisted.macId }
-    let wanted = Set(macs.map(\.deviceId))
-    for mac in otherMacs where !wanted.contains(mac.macId ?? "") { mac.unpair() }
-    otherMacs.removeAll { !wanted.contains($0.macId ?? "") }
-    for mac in macs {
-      if let model = otherMacs.first(where: { $0.macId == mac.deviceId }), model.phase == .paired { continue }
-      otherMacs.removeAll { $0.macId == mac.deviceId }
-      let store = macStore(mac.deviceId)
-      var state = store.load()
-      if state?.viaAccount != true || state?.macApprovalKey != mac.approvalKey || state?.macAgreementKey != mac.agreementKey
-        || state?.keys != persisted.keys
-      {
-        state = PersistedPhone(
-          macId: mac.deviceId, macApprovalKey: mac.approvalKey, macAgreementKey: mac.agreementKey, relay: relay,
-          keys: persisted.keys, name: persisted.name, macName: nil, recordPayload: nil, recordSignature: nil,
-          lastInbound: 0, nextOutbound: 1, outbox: [:], requests: [], viaAccount: true
-        )
-      }
-      guard var state else { continue }
-      state.relay = relay
-      state.macName = account.name(mac.deviceId)
-      store.save(state)
-      let model = PhoneModel(transport: transport, store: store, clock: clock, keys: keyFactory, macDomain: macDomain)
-      guard model.phase == .paired else { continue }
-      otherMacs.append(model)
-      if connection != nil { model.connect() }
-    }
-    touch()
   }
 
   // MARK: Sending
@@ -1030,7 +817,6 @@ public final class PhoneModel {
 
   /// Re-checks deadlines. The app calls this every second; tests call it after moving the clock.
   public func tick() {
-    for mac in otherMacs { mac.tick() }
     let now = clock.uptime()
     for i in cards.indices {
       let entry = cards[i]

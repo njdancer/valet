@@ -1,58 +1,16 @@
-import AuthenticationServices
 import SwiftUI
 import ValetPhoneCore
 import VisionKit
 
-/// Sign in to the Valet account with its passkey (step 4d): the hub's page opens in Safari's
-/// sheet, the passkey adds this phone, and the phone reaches every Mac on the account. Pairing
-/// with one Mac's code (J1) stays, below it, for an account without a passkey.
+/// Pair with the Mac by scanning the code it shows (J1). This is the only way in: the Valet
+/// account and its passkey sign-in closed with the hub (Nick, 2026-11-22). The phone then reaches
+/// the Mac at its own address at the blind relay (docs/blind-relay.md#phones).
 struct PairStartView: View {
   let model: PhoneModel
   let host: AppHost
   let notice: String?
   @State private var scanning = false
   @State private var name = "iPhone"
-  @State private var hubAddress: String
-  @State private var showAddress = false
-  @State private var showPairing: Bool
-
-  init(model: PhoneModel, host: AppHost, notice: String?) {
-    self.model = model
-    self.host = host
-    self.notice = notice
-    var hub = PhoneModel.defaultHub
-    var pairing = false
-    #if VALET_FAKES
-      // The fake hub stands in for valet.dncr.me; the pairing journeys and the walkthrough start
-      // from a Mac's code.
-      if let world = host.world { hub = world.hub.origin }
-      pairing = host.pairFrom != nil || host.world?.scenario == .pair
-    #endif
-    _hubAddress = State(initialValue: hub)
-    _showPairing = State(initialValue: pairing)
-  }
-  @Environment(\.webAuthenticationSession) private var webAuthenticationSession
-
-  private func signIn() async {
-    guard let url = model.startSignIn(hub: hubAddress, name: name) else { return }
-    #if VALET_FAKES
-      if host.world != nil {
-        _ = host.signInAtFakeHub(url)
-        await model.finishSignIn()
-        return
-      }
-    #endif
-    do {
-      _ = try await webAuthenticationSession.authenticate(
-        using: url, callbackURLScheme: "valet", preferredBrowserSession: .shared
-      )
-      await model.finishSignIn()
-    } catch {
-      // Closed the sheet: nothing changed. If the passkey had already added this phone, the
-      // next sign-in finds it on the list.
-      model.cancelSignIn()
-    }
-  }
 
   var body: some View {
     NavigationStack {
@@ -65,71 +23,14 @@ struct PairStartView: View {
               .background(.orange.opacity(0.15), in: .rect(cornerRadius: 12))
               .accessibilityIdentifier("pair.notice")
           }
-          Text("Sign in to Valet").font(.largeTitle.bold())
+          Text("Pair with your Mac").font(.largeTitle.bold())
           Text(
-            "Valet asks you here before an agent can do something that matters. Sign in with the passkey you set up for your Valet account, and this iPhone reaches every Mac on it."
+            "Valet asks you here before an agent can do something that matters. On your Mac, open Valet and choose Settings, then Devices, and show the code there. Scan it with this iPhone."
           )
           TextField("Name for this iPhone", text: $name)
             .textFieldStyle(.roundedBorder)
             .textContentType(.name)
             .accessibilityIdentifier("pair.name")
-          Button {
-            Task { await signIn() }
-          } label: {
-            Label("Sign in with your passkey", systemImage: "person.badge.key").frame(maxWidth: .infinity)
-          }
-          .buttonStyle(.borderedProminent)
-          .controlSize(.large)
-          .disabled(model.signIn == .checking || model.signIn == .inBrowser)
-          .accessibilityIdentifier("signin.start")
-          switch model.signIn {
-          case .checking, .inBrowser:
-            ProgressView("Signing in\u{2026}").accessibilityIdentifier("signin.progress")
-          case let .failed(reason):
-            Text(verbatim: reason)
-              .padding()
-              .frame(maxWidth: .infinity, alignment: .leading)
-              .background(.orange.opacity(0.15), in: .rect(cornerRadius: 12))
-              .accessibilityIdentifier("signin.failed")
-          case .idle:
-            EmptyView()
-          }
-          if showAddress {
-            TextField("Account address", text: $hubAddress)
-              .textFieldStyle(.roundedBorder)
-              .keyboardType(.URL)
-              .textInputAutocapitalization(.never)
-              .autocorrectionDisabled()
-              .accessibilityIdentifier("signin.hub")
-          } else {
-            Button("Use another account address") { showAddress = true }
-              .accessibilityIdentifier("signin.showHub")
-          }
-          Divider()
-          if showPairing {
-            pairing
-          } else {
-            Button("Or scan a sign-in code from your Mac") { showPairing = true }
-              .accessibilityIdentifier("pair.instead")
-          }
-        }
-        .padding()
-      }
-      .sheet(isPresented: $scanning) {
-        QRScanner { text in
-          scanning = false
-          model.pair(qr: text, name: name)
-        }
-        .ignoresSafeArea()
-      }
-    }
-  }
-
-  @ViewBuilder private var pairing: some View {
-    VStack(alignment: .leading, spacing: 16) {
-          Text(
-            "On your Mac, open Valet and choose Settings, then Devices, then Show a sign-in code. Scan it with this phone, and it signs in to your Valet account."
-          )
           Button {
             scanning = true
           } label: {
@@ -161,8 +62,17 @@ struct PairStartView: View {
               .accessibilityIdentifier("pair.fake")
             }
           #endif
+        }
+        .padding()
+      }
+      .sheet(isPresented: $scanning) {
+        QRScanner { text in
+          scanning = false
+          model.pair(qr: text, name: name)
+        }
+        .ignoresSafeArea()
+      }
     }
-    .padding(.top, 8)
   }
 }
 
