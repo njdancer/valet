@@ -49,9 +49,6 @@ import type { MacToPhoneBody, PhoneOutbox } from './broker'
 import type { DeviceStore } from './devices'
 import type { ChannelKeys, MacKeys } from './signer'
 
-/** How long after the relay's `ready` a phone the Mac doesn't know is let in, for the hub's list. */
-const PRUNE_AFTER_MS = 30_000
-
 /** What the QR code's text starts with; the phone's scanner passes on only text with it. */
 export const PAIRING_QR_PREFIX = 'valet-pair:'
 
@@ -154,8 +151,6 @@ export class PhoneChannel implements PhoneOutbox {
   private offer: Offer | null = null
   private pairingState: PairingState = { step: 'idle' }
   /** The phones the relay lets in, as of its last `ready` and what the Mac changed since. */
-  private relayDevices: Set<string> | null = null
-  private pruneTimer: ReturnType<typeof setTimeout> | null = null
   private saving: Promise<void> = Promise.resolve()
   private inbound: Promise<void> = Promise.resolve()
   private readonly now: () => number
@@ -226,35 +221,8 @@ export class PhoneChannel implements PhoneOutbox {
     for (const id of ids) this.send(id, { type: 'status', ...status })
   }
 
-  /**
-   * The phones the Mac trusts changed without a pairing here (the account's list): the relay lets
-   * in each new one, and stops letting in each one gone; a new one gets the tabs' status.
-   */
-  devicesChanged(): void {
-    if (this.relayDevices === null) return
-    const active = this.options.devices.activePhones()
-    for (const phone of active)
-      if (!this.relayDevices.has(phone.deviceId)) {
-        this.register(phone)
-        this.sendStatus(phone.deviceId)
-      }
-    const ids = new Set(active.map((p) => p.deviceId))
-    for (const id of [...this.relayDevices]) if (!ids.has(id)) this.unregister(id)
-  }
-
-  private register(phone: DeviceRecord): void {
-    if (this.relayDevices?.has(phone.deviceId) === true) return
-    const sent = this.options.link.send({
-      type: 'device-register',
-      deviceId: phone.deviceId,
-      transportKey: phone.transportKey,
-    })
-    if (sent) this.relayDevices?.add(phone.deviceId)
-  }
-
   private unregister(deviceId: string): void {
     this.options.link.send({ type: 'device-unregister', deviceId })
-    this.relayDevices?.delete(deviceId)
   }
 
   /** Tells a phone it was removed, then stops the relay letting it in. */
@@ -316,32 +284,6 @@ export class PhoneChannel implements PhoneOutbox {
   /** Everything the relay client passes on. */
   handle(event: ChannelEvent): void {
     switch (event.type) {
-      case 'ready': {
-        // Register any phone the relay doesn't know (it lost its storage, or the Mac paired while
-        // offline), and send each what is waiting.
-        this.relayDevices = new Set(event.devices)
-        for (const phone of this.options.devices.activePhones()) {
-          this.register(phone)
-          this.resend(phone.deviceId)
-        }
-        // A revoked phone the relay still lets in: stop it. One this Mac doesn't know may be on
-        // the account's list, which comes from the hub just after: give that a moment.
-        for (const id of event.devices) if (this.options.devices.revokedAt(id) !== null) this.unregister(id)
-        if (this.pruneTimer !== null) clearTimeout(this.pruneTimer)
-        this.pruneTimer = setTimeout(() => {
-          this.pruneTimer = null
-          for (const id of [...(this.relayDevices ?? [])])
-            if (!this.options.devices.isActivePhone(id)) this.unregister(id)
-        }, PRUNE_AFTER_MS)
-        this.pruneTimer.unref?.()
-        if (this.offer !== null && this.pairingState.step === 'scan')
-          this.options.link.send({
-            type: 'pairing-open',
-            offerId: this.offer.offerId,
-            expiresAt: new Date(this.offer.expiresAt).toISOString(),
-          })
-        return
-      }
       case 'device-online':
         if (event.online && this.options.devices.isActivePhone(event.deviceId)) {
           this.resend(event.deviceId)
@@ -564,7 +506,6 @@ export class PhoneChannel implements PhoneOutbox {
     this.save()
     // Registered before the result goes, so the phone's first hello is let in.
     this.options.link.send({ type: 'device-register', deviceId, transportKey: reply.transportKey })
-    this.relayDevices?.add(deviceId)
     this.sendResult(offer, {
       outcome: 'paired',
       deviceRecord,

@@ -1,16 +1,13 @@
-// Paired phones, as the app runs them (docs/phone-channel.md): the relay connection, which only
-// dials out, and the phone channel over it. Off unless a relay is set up. Keys that can't do the
-// channel's operations say so instead of pairing in some weaker way.
+// Paired phones, as the app runs them (docs/phone-channel.md): they reach this Mac at its own
+// address through the blind relay (docs/blind-relay.md#phones), which the Mac only dials out to.
+// Keys that can't do the channel's operations say so instead of pairing in some weaker way.
 
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
 import { type DeviceRecord, SIGNING_DOMAINS, verifyP256 } from '@valet/core'
-import { RelayClient, type RelayClientStatus, type RelayConsentView } from '@valet/mcp-server'
-import type { HubView, PairingView, PhonesStatus } from '../../shared/api'
+import type { PairingView, PhonesStatus } from '../../shared/api'
 import type { ApprovalBroker, MacToPhoneBody, PhoneOutbox } from './approvals/broker'
 import type { DeviceStore } from './approvals/devices'
-import { HubAgents } from './approvals/hub-agents'
-import type { TrustedLedger } from './approvals/ledger'
 import {
   type ChannelEvent,
   PhoneChannel,
@@ -19,53 +16,18 @@ import {
 } from './approvals/phone-channel'
 import { PhoneDoor } from './approvals/phone-door'
 import { PhoneInbox, type SafetySwitches } from './approvals/phone-inbox'
-import { RosterKeeper } from './approvals/roster-keeper'
 import type { MacSigner } from './approvals/signer'
 import type { BlindTunnel } from './blind-tunnel'
 
-export interface RelaySetup {
-  /** The relay's origin, https://<host>: named in the QR code and in every challenge. */
-  readonly origin: string
-  /** Where to dial when that isn't the origin itself (a local relay in development). */
-  readonly connectUrl?: string
-  /**
-   * The base of this Mac's own host for cloud agents, when the relay names Macs under another
-   * domain (its RELAY_MAC_HOST): `<macId>.<macHost>`.
-   */
-  readonly macHost?: string
-}
-
 export interface PhonesOptions {
-  readonly relay: RelaySetup | null
   readonly macName: string
   /** The channel's counters (phone-channel.json) and the relay binding (relay-binding.json). */
   readonly statePath: string
   readonly bindingPath: string
   readonly emit: () => void
   readonly log?: (line: string) => void
-  /**
-   * Remote access, for agents that reach this Mac through the relay (docs/relay-worker.md): the
-   * relay client forwards their requests to its listener, byte for byte, and asks it about the
-   * relay's consent pages. Without it the relay carries only the phone channel.
-   */
-  readonly remote?: RelayRemote
-  /**
-   * This Mac at the blind relay (docs/blind-relay.md), started with the same transport key and
-   * binding once they're ready, whether or not the Worker relay is set up.
-   */
-  readonly tunnel?: BlindTunnel | null
-}
-
-export interface RelayRemote {
-  /** The relay's public name for this Mac, while the relay client runs; null when it stops. */
-  setRelayHost(host: string | null): void
-  /** The listener's loopback URL, or null while remote access is off. */
-  relayListener(): string | null
-  relayConsent(id: string, query: string, source: string | null): RelayConsentView
-  /** For an agent through the hub whose grant this Mac checked: a credential, or null (remote.ts). */
-  hubAuthorization(grantId: string): string | null
-  /** The hub's grants this Mac honours now. */
-  hubGrantsChanged(live: ReadonlySet<string>): void
+  /** This Mac at the blind relay, started with the transport key and binding once they're ready. */
+  readonly tunnel: BlindTunnel | null
 }
 
 export interface PhonesParts {
@@ -76,60 +38,27 @@ export interface PhonesParts {
   readonly approvePairing: PhoneChannelOptions['approvePairing']
   readonly paired: (record: DeviceRecord) => Promise<void>
   readonly status: PhoneChannelOptions['status']
-  /** Where the Mac pins the account's device list. */
-  readonly ledger: TrustedLedger
-  /** A phone paired here that another device removed from the account's list: revoke it. */
-  readonly removedFromAccount: (deviceId: string, by: string) => Promise<void>
   readonly now: () => number
-  /** Agents' sign-ins at the hub changed; `opened` when a new one arrived (show the sheet). */
-  readonly hubConsents: (opened: boolean) => void
 }
 
 export class Phones implements PhoneOutbox {
   private channel: PhoneChannel | null = null
-  private client: RelayClient | null = null
-  private relayStatus: RelayClientStatus = { state: 'stopped' }
-  private hub: HubView | null = null
+  /** Phones connected at this Mac's own address. */
   private online = new Set<string>()
-  /** Phones connected at this Mac's own address (the blind relay), as opposed to the Worker relay. */
-  private doorOnline = new Set<string>()
   private door: PhoneDoor | null = null
   private devices: DeviceStore | null = null
   private unavailable: PhonesStatus['unavailableReason'] = 'approvals-unavailable'
-  private relay: RelaySetup | null
-  private parts: PhonesParts | null = null
-  private roster: RosterKeeper | null = null
-  private agents: HubAgents | null = null
 
   constructor(private readonly options: PhonesOptions) {
-    this.relay = options.relay
-    if (options.relay === null) this.unavailable = 'no-relay'
-  }
-
-  /**
-   * A different relay (the person changed it in Settings › Devices): the channel restarts on it.
-   * Phones paired through the old one keep dialling it until they pair again.
-   */
-  async setRelay(relay: RelaySetup | null): Promise<void> {
-    const same = relay?.origin === this.relay?.origin && relay?.connectUrl === this.relay?.connectUrl
-    // The same relay again restarts only after a cancelled Touch ID, so the person is asked again.
-    if (same && this.unavailable !== 'no-keys') return
-    this.relay = relay
-    if (this.parts !== null) await this.open(this.parts)
-    else if (relay === null) this.unavailable = 'no-relay'
-    this.options.emit()
+    if (options.tunnel === null) this.unavailable = 'no-relay'
   }
 
   /** Starts the channel once the broker is open. Safe to call again after a reopen. */
   async open(parts: PhonesParts): Promise<void> {
     this.stop()
-    this.parts = parts
     this.devices = parts.devices
-    this.relayStatus = { state: 'stopped' }
-    this.hub = null
-    const relay = this.relay
-    const tunnel = this.options.tunnel ?? null
-    if (relay === null && tunnel === null) {
+    const tunnel = this.options.tunnel
+    if (tunnel === null) {
       this.unavailable = 'no-relay'
       return
     }
@@ -144,222 +73,46 @@ export class Phones implements PhoneOutbox {
       this.unavailable = 'no-keys'
       return
     }
-    tunnel?.start(
+    tunnel.start(
       parts.devices.macId,
       { publicKey: keys.transportKey, sign: (payload) => keysOps.signTransport(payload) },
       binding,
     )
     this.unavailable = null
     const inbox = new PhoneInbox(parts.broker, parts.devices, parts.safety)
-    // Phones at this Mac's own address, through the blind relay (docs/blind-relay.md#phones).
-    const door =
-      tunnel === null
-        ? null
-        : new PhoneDoor({
-            devices: parts.devices,
-            origin: () => tunnel.origin,
-            onEvent: (event) => this.doorEvent(event),
-            now: parts.now,
-            ...(this.options.log === undefined ? {} : { log: this.options.log }),
-          })
-    this.door = door
-    // Once the channel is there to hear them.
-    const openDoor = () => tunnel?.setPhoneDoor(door === null ? null : (socket) => door.accept(socket))
-    const link: RelayLink = { send: (frame) => this.route(frame) }
-    if (relay === null) {
-      this.channel = await PhoneChannel.open(this.channelOptions(parts, keys, inbox, link, null))
-      openDoor()
-      return
-    }
-    const roster = new RosterKeeper({
-      ledger: parts.ledger,
+    const door = new PhoneDoor({
       devices: parts.devices,
-      keys,
-      channel: keysOps,
-      macName: this.options.macName,
-      send: (changes) => this.client?.send({ type: 'hub-roster-append', changes: [...changes] }) ?? false,
-      sendJoin: (record) => this.client?.send({ type: 'hub-roster-join', record }) ?? false,
-      removed: parts.removedFromAccount,
+      origin: () => tunnel.origin,
+      onEvent: (event) => this.doorEvent(event),
       now: parts.now,
-      onChange: () => {
-        // The phones hear which account they are on once this Mac is on its list.
-        this.channel?.sendStatus()
-        this.options.emit()
-      },
-      // Phones on the account's list: trusted here like paired ones, let in by the relay.
-      onPhones: (phones) => {
-        parts.devices.setAccountPhones(phones)
-        this.channel?.devicesChanged()
-        this.door?.devicesChanged()
-        this.options.emit()
-      },
       ...(this.options.log === undefined ? {} : { log: this.options.log }),
     })
-    const agents = new HubAgents({
-      macId: parts.devices.macId,
-      channel: keysOps,
-      roster: () => roster.roster,
-      send: (frame) => this.client?.send(frame) ?? false,
-      now: parts.now,
-      onChange: (opened) => parts.hubConsents(opened),
-    })
-    const client = new RelayClient({
-      relay: relay.origin,
-      macId: parts.devices.macId,
-      signer: { publicKey: keys.transportKey, sign: (payload) => keysOps.signTransport(payload) },
-      binding,
-      // Remote agents: a byte pipe to the same listener, OAuth server and policy as a tunnel's.
-      listener: () => this.options.remote?.relayListener() ?? null,
-      consent: (id, query, source) =>
-        this.options.remote?.relayConsent(id, query, source) ?? { state: 'declined' },
-      // Agents through the hub: only for a grant this Mac checks against the account's list now.
-      hubAuthorization: (grantId) =>
-        agents.grants().some((g) => g.id === grantId)
-          ? (this.options.remote?.hubAuthorization(grantId) ?? null)
-          : null,
-      ...(relay.connectUrl === undefined ? {} : { connectUrl: relay.connectUrl }),
-      ...(relay.macHost === undefined ? {} : { macHost: relay.macHost }),
-      onBadFrame: (why) => this.options.log?.(`[relay] refused a frame from the relay (${why})`),
-      onStatus: (status) => {
-        // A local relay (VALET_RELAY_CONNECT, dev builds only): say what it does, for the walkthrough.
-        if (relay.connectUrl !== undefined) console.log(`[relay] ${status.state}`)
-        this.relayStatus = status
-        if (status.state !== 'online') this.online.clear()
-        this.options.emit()
-      },
-      onEvent: (event) => {
-        if (relay.connectUrl !== undefined)
-          console.log(
-            `[relay] ${event.type}${event.type === 'device-online' ? ` ${event.deviceId} ${event.online}` : ''}`,
-          )
-        if (event.type === 'hub-status') {
-          // Linking, then linked: the person just added this Mac with the code it showed.
-          const fresh = this.hub?.state === 'linking' && event.hub.state === 'linked'
-          if (this.hub?.state !== event.hub.state) this.options.log?.(`[hub] ${event.hub.state}`)
-          this.hub = event.hub
-          void roster
-            .linked(event.hub.state === 'linked' ? event.hub.accountId : null, fresh)
-            .catch(() => undefined)
-          this.options.emit()
-          return
-        }
-        if (event.type === 'hub-consents') {
-          agents.received(event.consents)
-          return
-        }
-        if (event.type === 'hub-grants') {
-          agents.grantsReceived(event.grants)
-          this.options.remote?.hubGrantsChanged(new Set(agents.grants().map((g) => g.id)))
-          return
-        }
-        if (event.type === 'hub-roster') {
-          this.options.log?.(
-            `[roster] the hub's list: ${event.changes.length} changes, ${event.passkeys?.length ?? 'no'} passkeys${event.refused === undefined ? '' : `, refused ${event.refused}`}`,
-          )
-          void roster
-            .received(event.changes, event.refused, event.passkeys)
-            .catch((error) => this.options.log?.(`[roster] ${String(error)}`))
-          return
-        }
-        if (event.type === 'device-online') {
-          if (event.online) this.online.add(event.deviceId)
-          else this.online.delete(event.deviceId)
-          this.options.emit()
-        }
-        this.channel?.handle(event)
-      },
-    })
-    this.client = client
-    this.channel = await PhoneChannel.open(
-      this.channelOptions(parts, keys, inbox, link, () => {
-        void roster.changed().catch(() => undefined)
-      }),
-    )
-    openDoor()
-    this.roster = roster
-    this.agents = agents
-    this.options.remote?.setRelayHost(client.publicHost)
-    client.start()
-  }
-
-  /** What the phone channel needs, whichever ways phones reach this Mac. */
-  private channelOptions(
-    parts: PhonesParts,
-    keys: Awaited<ReturnType<MacSigner['keys']>>,
-    inbox: PhoneInbox,
-    link: RelayLink,
-    afterPairing: (() => void) | null,
-  ): PhoneChannelOptions {
-    return {
+    this.door = door
+    const link: RelayLink = { send: (frame) => door.send(frame) }
+    this.channel = await PhoneChannel.open({
       devices: parts.devices,
       keys,
-      channel: parts.signer.channel as NonNullable<MacSigner['channel']>,
-      relayOrigin: () => this.pairingOrigin(),
+      channel: keysOps,
+      // Where a new phone dials, named in the QR code: this Mac's own address.
+      relayOrigin: () => tunnel.origin ?? '',
       link,
       receive: (from, text) => inbox.receive(from, text),
       approvePairing: parts.approvePairing,
-      paired: async (record) => {
-        await parts.paired(record)
-        afterPairing?.()
-      },
+      paired: parts.paired,
       macName: this.options.macName,
-      status: () => {
-        const status = parts.status?.()
-        const account = this.account()
-        return status === undefined || account === null ? status : { ...status, account }
-      },
+      status: parts.status,
       statePath: this.options.statePath,
       onChange: () => this.options.emit(),
       ...(this.options.log === undefined ? {} : { log: this.options.log }),
-    }
-  }
-
-  /**
-   * Where a new phone dials, named in the QR code: this Mac's own address once phones can reach it
-   * there, else the Worker relay while there is one.
-   */
-  private pairingOrigin(): string {
-    const tunnel = this.options.tunnel ?? null
-    const own = tunnel?.origin ?? null
-    if (own !== null && (tunnel?.servingPhones === true || this.relay === null)) return own
-    return this.relay?.origin ?? own ?? ''
-  }
-
-  /**
-   * The phone channel's frames, to whichever way each phone is connected: at this Mac's own
-   * address if it is there, else through the Worker relay.
-   */
-  private route(frame: Parameters<RelayLink['send']>[0]): boolean {
-    const door = this.door
-    const client = this.client
-    switch (frame.type) {
-      case 'envelope':
-        if (door?.send(frame) === true) return true
-        return client?.send(frame) ?? false
-      case 'pairing-challenge':
-      case 'pairing-result':
-        if (door?.pairingHere(frame.offerId) === true) return door.send(frame)
-        return client?.send(frame) ?? false
-      case 'pairing-open': {
-        const here = door?.send(frame) ?? false
-        const there = client?.send(frame) ?? false
-        return here || there
-      }
-      case 'device-register':
-      case 'device-unregister': {
-        const here = door?.send(frame) ?? false
-        // The channel keeps count of what the Worker relay lets in, so its answer is the one.
-        return client === null ? here : client.send(frame)
-      }
-      default:
-        return client?.send(frame) ?? false
-    }
+    })
+    // Once the channel is there to hear them.
+    tunnel.setPhoneDoor((socket) => door.accept(socket))
   }
 
   private doorEvent(event: ChannelEvent): void {
     if (event.type === 'device-online') {
-      if (event.online) this.doorOnline.add(event.deviceId)
-      else this.doorOnline.delete(event.deviceId)
+      if (event.online) this.online.add(event.deviceId)
+      else this.online.delete(event.deviceId)
       this.options.emit()
     }
     this.channel?.handle(event)
@@ -368,17 +121,10 @@ export class Phones implements PhoneOutbox {
   stop(): void {
     this.door?.stop()
     this.door = null
-    this.doorOnline.clear()
+    this.online.clear()
     this.options.tunnel?.setPhoneDoor(null)
     this.options.tunnel?.stop()
-    this.options.remote?.setRelayHost(null)
-    this.client?.stop()
-    this.client = null
     this.channel = null
-    this.roster = null
-    this.agents?.received([])
-    this.agents = null
-    this.online.clear()
   }
 
   send(deviceId: string, message: MacToPhoneBody): void {
@@ -396,76 +142,23 @@ export class Phones implements PhoneOutbox {
       available: this.unavailable === null,
       unavailableReason: this.unavailable,
       relay: this.connection(),
-      relayOrigin: this.relay?.origin ?? this.options.tunnel?.origin ?? null,
+      relayOrigin: this.options.tunnel?.origin ?? null,
       worksLocked: null,
-      // Only the blind relay: no hub to hear from, so no account; phones pair here.
-      hub: this.relay === null && this.channel !== null ? { state: 'off' } : this.hub,
-      roster: this.roster?.view ?? { state: 'off', devices: 0 },
       phones: phones.map((p) => ({
         deviceId: p.deviceId,
         name: p.name,
         pairedAt: p.pairedAt,
-        online: this.online.has(p.deviceId) || this.doorOnline.has(p.deviceId),
+        online: this.online.has(p.deviceId),
       })),
       pairing: this.channel?.pairing ?? { step: 'idle' },
     }
   }
 
-  /** How phones reach this Mac: the Worker relay's connection, or else the blind relay's. */
+  /** How phones reach this Mac: the blind relay's connection. */
   private connection(): PhonesStatus['relay'] {
-    if (this.relay === null) {
-      const state = this.options.tunnel?.view?.relay ?? 'stopped'
-      if (state === 'online') return this.options.tunnel?.servingPhones === true ? 'online' : 'connecting'
-      return state === 'replaced' ? 'refused' : state
-    }
-    return this.relayStatus.state === 'replaced' ? 'refused' : this.relayStatus.state
-  }
-
-  /** The account this Mac is on, for its phones, once the Mac is on the account's list. */
-  private account(): { hub: string; accountId: string } | null {
-    const hub = this.hub
-    if (hub?.state !== 'linked' || this.roster?.view.state !== 'on') return null
-    return { hub: hub.url, accountId: hub.accountId }
-  }
-
-  /** Asks the hub for a code to join the account (relay-hub.md). False when not connected. */
-  joinHub(): boolean {
-    if (this.client === null || this.relayStatus.state !== 'online') return false
-    return this.client.send({ type: 'hub-link-start', name: this.options.macName.slice(0, 64) })
-  }
-
-  leaveHub(): boolean {
-    if (this.client === null || this.relayStatus.state !== 'online') return false
-    return this.client.send({ type: 'hub-unlink' })
-  }
-
-  /**
-   * A phone was removed here: take it off the account's list too (one Touch ID prompt). Also
-   * Settings' "Try again" after a cancelled prompt.
-   */
-  rosterChanged(): Promise<void> {
-    return this.roster?.changed() ?? Promise.resolve()
-  }
-
-  /** Agents signing in through the hub, while the relay connection runs. */
-  get hubAgents(): HubAgents | null {
-    return this.agents
-  }
-
-  /** Removes an agent approved through the hub; this Mac stops serving it at once. */
-  revokeHubAgent(grantId: string): boolean {
-    const agents = this.agents
-    if (agents === null || !agents.revoke(grantId)) return false
-    this.options.remote?.hubGrantsChanged(new Set(agents.grants().map((g) => g.id)))
-    return true
-  }
-
-  /** A page on the hub the relay named, https only; null when there is none. */
-  hubPage(path: '/' | '/link'): string | null {
-    const hub = this.hub
-    if (hub === null || hub.state === 'off') return null
-    const url = new URL(path, hub.url)
-    return url.protocol === 'https:' ? url.toString() : null
+    const state = this.options.tunnel?.view?.relay ?? 'stopped'
+    if (state === 'online') return this.options.tunnel?.servingPhones === true ? 'online' : 'connecting'
+    return state === 'replaced' ? 'refused' : state
   }
 
   startPairing(): PairingView {
@@ -520,34 +213,6 @@ export class Phones implements PhoneOutbox {
     await rename(`${path}.tmp`, path)
     return { approvalKey, signature }
   }
-}
-
-/** VALET_RELAY_ORIGIN (https://…) and, for a local relay, VALET_RELAY_CONNECT (where to dial). */
-export function relayFromEnv(env: NodeJS.ProcessEnv): RelaySetup | null {
-  const origin = env['VALET_RELAY_ORIGIN']
-  if (origin === undefined || !/^https:\/\/[a-z0-9.-]+(:\d+)?$/.test(origin)) return null
-  const connect = env['VALET_RELAY_CONNECT']
-  const macHost = env['VALET_RELAY_MAC_HOST']
-  return {
-    origin,
-    ...(connect !== undefined && /^https?:\/\/[a-z0-9.-]+(:\d+)?$/.test(connect)
-      ? { connectUrl: connect }
-      : {}),
-    ...(macHost !== undefined && HOST_NAME.test(macHost) ? { macHost } : {}),
-  }
-}
-
-const HOST_NAME = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$/
-
-/**
- * The relay a host name in Settings names: always https, on the default port. `macHost`, when
- * set, is the base of this Mac's own host for cloud agents (the relay's RELAY_MAC_HOST).
- */
-export function relayFromHost(host: string | null, macHost: string | null = null): RelaySetup | null {
-  if (host === null) return null
-  return macHost === null || !HOST_NAME.test(macHost)
-    ? { origin: `https://${host}` }
-    : { origin: `https://${host}`, macHost }
 }
 
 /** The Mac's name as a paired phone shows it. */

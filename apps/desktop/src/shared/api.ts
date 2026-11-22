@@ -1065,8 +1065,6 @@ export interface RemoteConsentItem {
   readonly source: string | null
   readonly requestedAt: IsoTime
   readonly expiresAt: IsoTime
-  /** 'hub': an agent signing in through the Valet account (RemoteConsentRequest.via). */
-  readonly via?: 'hub'
 }
 
 /** An approved site with a required setting not chosen yet: "Choose your Woolworths store". */
@@ -1222,17 +1220,6 @@ export interface Settings {
    * of the app's windows; nothing is approved from it.
    */
   readonly notifications: boolean
-  /**
-   * The host name of Valet's relay (relay.example.com), which phones and remote agents reach this
-   * Mac through. Null until the person sets it; phones can't pair without one.
-   */
-  readonly relayHost: string | null
-  /**
-   * The base of this Mac's own address for cloud agents, when the relay gives Macs names under
-   * another domain (valet.example.com makes it `<macId>.valet.example.com`). Null: under the
-   * relay's own host.
-   */
-  readonly relayMacHost: string | null
 }
 
 /** What the renderer may change directly. The 1Password CLI path isn't among them. */
@@ -1322,11 +1309,6 @@ export interface RemoteConsentRequest {
   readonly source: string | null
   readonly requestedAt: IsoTime
   readonly expiresAt: IsoTime
-  /**
-   * 'hub': an agent signing in through the Valet account (relay-hub.md, step 3). Approving it
-   * gives it the tools each Mac lets cloud agents use, so the tools ticked here don't apply.
-   */
-  readonly via?: 'hub'
 }
 
 /** A tool the person can grant at consent: one that is on for remote clients now. */
@@ -1361,19 +1343,6 @@ export interface RemoteClientItem {
    */
   readonly seeValet: boolean
   readonly askForChanges: boolean
-}
-
-/** An agent approved through the Valet account: one grant the hub holds and this Mac checked. */
-export interface HubAgentItem {
-  /** The grant's id, 64 hex characters. */
-  readonly id: string
-  readonly host: string
-  /** What it calls itself: a claim. */
-  readonly clientName: string
-  readonly approvedAt: IsoTime
-  readonly expiresAt: IsoTime
-  /** Approved on this Mac (otherwise on another device on the account). */
-  readonly approvedHere: boolean
 }
 
 /** What a cloud agent may do beyond Use tools, ticked on the consent sheet. */
@@ -1510,24 +1479,6 @@ export type PairingView =
       readonly why: 'expired' | 'declined' | 'too-many-attempts' | 'cancelled' | 'not-sent' | 'unavailable'
     }
 
-export interface RosterStatus {
-  readonly state: 'off' | 'waiting' | 'on' | 'needs-you' | 'not-added' | 'joining' | 'refused'
-  readonly devices: number
-}
-
-export type HubView =
-  | { readonly state: 'off' }
-  | { readonly state: 'unlinked'; readonly url: string; readonly problem?: 'too-many' | 'unavailable' }
-  | { readonly state: 'linking'; readonly url: string; readonly code: string; readonly expiresAt: string }
-  | {
-      readonly state: 'linked'
-      readonly url: string
-      readonly accountId: string
-      readonly account: string
-      readonly slug: string
-      readonly name: string
-    }
-
 export interface PhonesStatus {
   /**
    * Whether this Mac can pair phones: `no-relay`, none is set up; `no-keys`, this Mac's keys
@@ -1543,13 +1494,6 @@ export interface PhonesStatus {
    * renewed (phones.renewKeys). Null where it doesn't apply (no Secure Enclave helper).
    */
   readonly worksLocked: boolean | null
-  /**
-   * This Mac at the Valet hub (docs/relay-hub.md), as the relay last said; null until it has.
-   * `off`: the relay has no hub. `linking`: the code to type on the hub's page, signed in.
-   */
-  readonly hub: HubView | null
-  /** The account's device list, once this Mac is on an account (relay-hub.md, step 4). */
-  readonly roster: RosterStatus
   readonly phones: readonly {
     readonly deviceId: string
     readonly name: string
@@ -1611,17 +1555,6 @@ export interface ValetApi {
      * Every paired phone is removed (it must pair again) and Valet restarts.
      */
     renewKeys(): Promise<void>
-    /**
-     * Asks the hub for a code to add this Mac to the Valet account, and opens the hub's page
-     * where it is typed. Adds nothing by itself: someone signed in to the account must type it.
-     */
-    joinHub(): Promise<void>
-    /** Opens the hub's page in the browser. */
-    openHub(): Promise<void>
-    /** Leaves the account: the hub forgets this Mac at once. */
-    leaveHub(): Promise<void>
-    /** Asks for Touch ID again to bring the account's device list in step, after a cancel. */
-    retryRoster(): Promise<void>
   }
   readonly adapters: {
     list(): Promise<readonly AdapterSummary[]>
@@ -1839,10 +1772,6 @@ export interface ValetApi {
     clients(): Promise<readonly RemoteClientItem[]>
     /** Deletes one client's registration, grant and tokens, and closes its sessions. */
     revokeClient(clientId: string): Promise<void>
-    /** Agents approved through the Valet account (relay-hub.md), as this Mac checked their grants. */
-    hubAgents(): Promise<readonly HubAgentItem[]>
-    /** Removes one at the hub: its tokens stop working on every Mac at once. */
-    revokeHubAgent(grantId: string): Promise<void>
     /**
      * Lets one approved cloud agent ask for changes (with Touch ID), or stops it (at once). Its
      * open sessions close, so its next one has the authoring tools or loses them.

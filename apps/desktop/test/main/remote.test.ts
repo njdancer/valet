@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import type { ToolDeclaration } from '@valet/core'
 import type { RemoteListenerOptions, RunningRemoteListener } from '@valet/mcp-server'
 import { afterEach, describe, expect, it } from 'vitest'
-import { hubClientId, RemoteAccess, type RemoteStatus } from '../../src/main/core/remote'
+import { RemoteAccess, type RemoteStatus } from '../../src/main/core/remote'
 import { remoteTrayState } from '../../src/main/core/tray-remote'
 
 const dirs: string[] = []
@@ -105,23 +105,6 @@ describe('the remote policy', () => {
     expect(starts[0]).not.toHaveProperty('host')
   })
 
-  it('answers for the relay’s name beside the tunnel’s while the relay runs, and only while on', async () => {
-    const { remote, caller, starts } = make()
-    await remote.start(caller)
-    expect(remote.relayListener()).toBeNull()
-    remote.setRelayHost('m1.relay.example')
-    expect(remote.status().relayUrl).toBe('https://m1.relay.example/mcp')
-    expect(remote.relayConsent('c1', '', null)).toEqual({ state: 'expired' })
-    await remote.setEnabled(true)
-    expect(remote.relayListener()).toBe('http://127.0.0.1:41234/mcp')
-    expect([...(starts[0]?.hosts() ?? [])]).toEqual(['m1.relay.example'])
-    remote.setRelayHost(null)
-    expect(remote.status().relayUrl).toBeNull()
-    expect([...(starts[0]?.hosts() ?? [])]).toEqual([])
-    await remote.setEnabled(false)
-    expect(remote.relayListener()).toBeNull()
-  })
-
   it("answers for the blind relay's other name once it has a certificate, and gives agents that one", async () => {
     const { remote, caller, starts } = make()
     await remote.start(caller)
@@ -136,40 +119,6 @@ describe('the remote policy', () => {
     remote.setTunnelHost(null, false, 'abc-2.valet.test')
     expect(remote.status().relayUrl).toBeNull()
     expect([...(starts[0]?.hosts() ?? [])]).toEqual([])
-  })
-
-  it('lets an agent through the hub use every remote-enabled tool, with a token only while on', async () => {
-    const { remote, caller } = make()
-    await remote.start(caller)
-    const grant = 'ab'.repeat(32)
-    const client = hubClientId(grant)
-    expect(client).toBe(`hub-${'ab'.repeat(16)}`)
-    await remote.setTool('shop', declaration('add', 'write'), true)
-    expect(remote.allows('shop', declaration('add', 'write'), client)).toBe(true)
-    expect(remote.allows('shop', declaration('other', 'read'), client)).toBe(false)
-    // A registration can't pass for one: theirs start `rc`, and the pattern is exact.
-    expect(remote.allows('shop', declaration('add', 'write'), 'hub-nope')).toBe(false)
-
-    // No token while paused or before the relay names this Mac.
-    expect(remote.hubAuthorization(grant)).toBeNull()
-    await remote.setEnabled(true)
-    expect(remote.hubAuthorization(grant)).toBeNull()
-    remote.setRelayHost('m1.relay.example')
-    expect(remote.hubAuthorization('not-a-grant')).toBeNull()
-    const first = remote.hubAuthorization(grant)
-    expect(first).toMatch(/^Bearer /)
-    expect(remote.hubAuthorization(grant)).toBe(first)
-    const token = (first ?? '').slice('Bearer '.length)
-    expect(remote.tokens.identify(token, 'https://m1.relay.example/mcp')).toBe(client)
-
-    // A grant the hub stops sending, or the kill switch, takes its token.
-    remote.hubGrantsChanged(new Set())
-    expect(remote.tokens.identify(token, 'https://m1.relay.example/mcp')).toBeNull()
-    const again = remote.hubAuthorization(grant)
-    expect(again).not.toBe(first)
-    await remote.setEnabled(false)
-    expect(remote.tokens.identify((again ?? '').slice(7), 'https://m1.relay.example/mcp')).toBeNull()
-    expect(remote.hubAuthorization(grant)).toBeNull()
   })
 })
 

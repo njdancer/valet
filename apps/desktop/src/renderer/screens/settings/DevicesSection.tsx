@@ -1,17 +1,14 @@
-// Settings › Devices (#/settings/devices), account first (Nick, 2026-11-17): where this Mac stands
-// with the Valet account, then the iPhones, then the relay's settings under Advanced. "Pair an
-// iPhone" (J1, docs/phone-channel.md) shows a QR code; once a phone has scanned it, three codes,
-// one of which the phone shows. The right one asks for Touch ID, then the phone is paired.
+// Settings › Devices (#/settings/devices): the iPhones paired with this Mac, and how they reach it
+// (this Mac's own address at Valet's relay, docs/blind-relay.md#phones). "Pair an iPhone" (J1,
+// docs/phone-channel.md) shows a QR code; once a phone has scanned it, three codes, one of which
+// the phone shows. The right one asks for Touch ID, then the phone is paired.
 
 import {
   Button,
   Card,
   CardContent,
   Dialog,
-  Disclosure,
-  Field,
   Inline,
-  Input,
   List,
   ListRow,
   Section,
@@ -21,17 +18,15 @@ import {
   StatusDot,
   SuccessCheck,
   Text,
-  Value,
 } from '@valet/ui'
 import QRCode from 'qrcode'
 import { useEffect, useMemo, useState } from 'react'
-import type { HubView, PairingView, PhonesStatus, RosterStatus } from '../../../shared/api'
-import { accountLine } from '../../lib/account-status'
+import type { PairingView, PhonesStatus } from '../../../shared/api'
 import { useAction, useApi, useLoad } from '../../lib/api-context'
 import { Failed } from '../connections/shared'
 
 const UNAVAILABLE: Record<NonNullable<PhonesStatus['unavailableReason']>, string> = {
-  'no-relay': 'Pairing a phone needs Valet’s relay. Enter its host name below.',
+  'no-relay': 'Pairing a phone needs Valet’s relay, and this copy of Valet runs without it.',
   'no-keys':
     'Valet needs Touch ID once to connect this Mac to the relay, and didn’t get it. Quit and reopen Valet to be asked again.',
   'approvals-unavailable': 'Valet can’t ask for approvals right now, so it can’t pair a phone.',
@@ -57,16 +52,12 @@ export function DevicesSection() {
       {status.status === 'error' ? <Failed failed what="load your devices" /> : null}
       <Card>
         <CardContent className="flex flex-col gap-4">
-          <AccountStatus status={s} />
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="flex flex-col gap-4">
           <Text weight="semibold">iPhones</Text>
           <Text tone="muted">
             A paired iPhone gets Valet’s approvals and alerts. You can approve there with Face ID or your
             passcode, and lock Valet down from it.
           </Text>
+          {s !== null && s.available ? <RelayLine status={s} /> : null}
           {s !== null && s.phones.length > 0 ? (
             <List label="Paired phones">
               {s.phones.map((p) => (
@@ -84,8 +75,7 @@ export function DevicesSection() {
             <Text tone="muted">{UNAVAILABLE[s.unavailableReason]}</Text>
           ) : null}
           <Text tone="muted">
-            To add an iPhone, open Valet on it and sign in with the passkey for your Valet account. Or, as a
-            shortcut, show a sign-in code here and scan it with the iPhone: it signs in to the same account.
+            To add an iPhone, pair it here: open Valet on the iPhone and scan the code this Mac shows.
           </Text>
           <div>
             <Button
@@ -94,19 +84,14 @@ export function DevicesSection() {
               disabledReason={
                 s !== null && s.available && !relayOnline
                   ? 'Valet isn’t connected to its relay right now'
-                  : 'Valet can’t sign a phone in right now'
+                  : 'Valet can’t pair a phone right now'
               }
               onClick={() => setPairing(true)}
             >
-              Show a sign-in code
+              Pair an iPhone
             </Button>
           </div>
           {s !== null && s.worksLocked === false ? <RenewKeys phones={s.phones.length} /> : null}
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="flex flex-col gap-4">
-          <AdvancedSettings paired={s?.phones.length ?? 0} />
         </CardContent>
       </Card>
       <PairSheet open={pairing} onOpenChange={setPairing} view={s?.pairing ?? { step: 'idle' }} />
@@ -114,176 +99,9 @@ export function DevicesSection() {
   )
 }
 
-/**
- * The account first: one line with a dot saying where this Mac stands (the same line as the Needs
- * you status card), the relay under it, then what to do about the account.
- */
-function AccountStatus({ status }: { readonly status: PhonesStatus | null }) {
-  const line = status === null ? null : accountLine(status)
-  const hub = status?.hub ?? null
-  return (
-    <Stack gap={3}>
-      <Text weight="semibold">Valet account</Text>
-      {line !== null ? (
-        <div className="flex items-center gap-2" data-testid="account-line">
-          <StatusDot tone={line.tone} />
-          <Text>{line.text.replace(/^Valet account · /, '')}</Text>
-        </div>
-      ) : status === null || (status.relayOrigin !== null && hub === null && status.relay !== 'stopped') ? (
-        <div className="flex items-center gap-2">
-          <StatusDot tone="neutral" pulse />
-          <Text tone="muted">Checking your Valet account…</Text>
-        </div>
-      ) : status.relayOrigin === null ? (
-        <Text tone="muted">
-          Valet’s relay isn’t set up, so this Mac can’t join an account or pair a phone. Enter its host name
-          under Advanced.
-        </Text>
-      ) : hub?.state === 'off' ? (
-        <Text tone="muted">Your relay has no Valet account. Phones pair with this Mac directly.</Text>
-      ) : null}
-      {status !== null && status.relayOrigin !== null ? <RelayLine status={status} /> : null}
-      {status !== null && status.relay === 'online' && hub !== null && hub.state !== 'off' ? (
-        <HubAccount hub={hub} roster={status.roster} />
-      ) : null}
-    </Stack>
-  )
-}
-
-/** The relay's settings: most people never touch them, and a wrong value breaks everything. */
-function AdvancedSettings({ paired }: { readonly paired: number }) {
-  const settings = useLoad((a) => a.settings.get(), [], ['settings-changed'])
-  if (settings.status !== 'ready') return null
-  return (
-    <Disclosure summary="Advanced" defaultOpen={settings.data.relayHost === null}>
-      <Stack gap={4}>
-        <RelaySetting paired={paired} />
-        <AgentHostSetting />
-      </Stack>
-    </Disclosure>
-  )
-}
-
-/** A relay's host name, as Settings keeps it: lower case, no scheme, no port, no path. */
-export function relayHostFrom(typed: string): string | null {
-  const host = typed
-    .trim()
-    .toLowerCase()
-    .replace(/^https:\/\//, '')
-    .replace(/\/$/, '')
-  return /^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$/.test(host) &&
-    host.length <= 253
-    ? host
-    : null
-}
-
-/**
- * The relay's host name. Phones dial the relay they were paired through, so after a change they
- * need pairing again; the description says so when there are any.
- */
-function RelaySetting({ paired }: { readonly paired: number }) {
-  const api = useApi()
-  const action = useAction()
-  const settings = useLoad((a) => a.settings.get(), [], ['settings-changed'])
-  const saved = settings.status === 'ready' ? settings.data.relayHost : null
-  const [draft, setDraft] = useState<string | null>(null)
-  const text = draft ?? saved ?? ''
-  const host = text.trim() === '' ? null : relayHostFrom(text)
-  const invalid = text.trim() !== '' && host === null
-  const changed = !invalid && host !== saved
-  if (settings.status !== 'ready') return null
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault()
-        if (changed)
-          void action.run(async () => {
-            await api.settings.set({ relayHost: host })
-            setDraft(null)
-          })
-      }}
-    >
-      <Field
-        label="Relay"
-        description={
-          paired > 0
-            ? 'The host name of your Valet relay. Phones paired now keep using the relay they were paired through, so after a change, pair them again.'
-            : 'The host name of your Valet relay, on Cloudflare. Phones and remote agents reach this Mac through it; it only passes on sealed messages.'
-        }
-        error={invalid ? 'Enter a host name, like relay.example.com' : undefined}
-      >
-        <Inline gap={2} wrap={false}>
-          <Input
-            aria-label="Relay host name"
-            placeholder="relay.example.com"
-            value={text}
-            className="flex-1"
-            spellCheck={false}
-            onChange={(e) => setDraft(e.target.value)}
-          />
-          <Button type="submit" loading={action.busy} disabled={!changed} disabledReason="Nothing to save">
-            Save
-          </Button>
-        </Inline>
-      </Field>
-      <Failed failed={action.failed} what="save the relay" />
-    </form>
-  )
-}
-
-/**
- * Where cloud agents reach this Mac through the relay, when the relay names Macs under a domain
- * of its own (its RELAY_MAC_HOST, docs/relay-worker.md "Host names"). Empty: under the relay's host.
- */
-function AgentHostSetting() {
-  const api = useApi()
-  const action = useAction()
-  const settings = useLoad((a) => a.settings.get(), [], ['settings-changed'])
-  const saved = settings.status === 'ready' ? settings.data.relayMacHost : null
-  const [draft, setDraft] = useState<string | null>(null)
-  const text = draft ?? saved ?? ''
-  const host = text.trim() === '' ? null : relayHostFrom(text)
-  const invalid = text.trim() !== '' && host === null
-  const changed = !invalid && host !== saved
-  if (settings.status !== 'ready' || settings.data.relayHost === null) return null
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault()
-        if (changed)
-          void action.run(async () => {
-            await api.settings.set({ relayMacHost: host })
-            setDraft(null)
-          })
-      }}
-    >
-      <Field
-        label="Cloud agents’ domain (optional)"
-        description="When your relay gives each Mac a name under its own domain, enter that domain. Cloud agents then connect to this Mac’s name under it. Leave it empty to use the relay’s host."
-        error={invalid ? 'Enter a domain, like valet.example.com' : undefined}
-      >
-        <Inline gap={2} wrap={false}>
-          <Input
-            aria-label="Cloud agents’ domain"
-            placeholder="valet.example.com"
-            value={text}
-            className="flex-1"
-            spellCheck={false}
-            onChange={(e) => setDraft(e.target.value)}
-          />
-          <Button type="submit" loading={action.busy} disabled={!changed} disabledReason="Nothing to save">
-            Save
-          </Button>
-        </Inline>
-      </Field>
-      <Failed failed={action.failed} what="save the domain" />
-    </form>
-  )
-}
-
 const RELAY_DOWN: Record<Exclude<PhonesStatus['relay'], 'online' | 'connecting'>, string> = {
   offline: 'Valet keeps trying. Check this Mac is online.',
-  refused: 'The relay turned this Mac away. Check the host name under Advanced.',
+  refused: 'The relay turned this Mac away. Quit and reopen Valet to try again.',
   stopped: 'Valet isn’t using the relay right now.',
 }
 
@@ -315,129 +133,6 @@ function RemovePhone({ deviceId, name }: { readonly deviceId: string; readonly n
     >
       Remove {name}
     </Button>
-  )
-}
-
-const HUB_PROBLEM: Record<NonNullable<Extract<HubView, { state: 'unlinked' }>['problem']>, string> = {
-  'too-many': 'The hub has too many Macs waiting to join. Try again in a few minutes.',
-  unavailable: 'The hub has no account yet. Set one up on its page first, then connect this Mac.',
-}
-
-/**
- * This Mac at the Valet hub (docs/relay-hub.md): one address for agents that reaches every Mac on
- * your account. Joining shows a code, typed on the hub's page by someone signed in to the account.
- */
-function HubAccount({
-  hub,
-  roster,
-}: {
-  readonly hub: Exclude<HubView, { state: 'off' }>
-  readonly roster: RosterStatus
-}) {
-  const api = useApi()
-  const action = useAction()
-  const [confirming, setConfirming] = useState(false)
-  const host = new URL(hub.url).host
-  return (
-    <Stack gap={2}>
-      {hub.state === 'linked' ? (
-        <Text tone="muted">
-          At {host}, as {hub.name}.
-        </Text>
-      ) : hub.state === 'linking' ? (
-        <Text tone="muted">
-          On the page that opened, signed in to your account, type this code. It works until{' '}
-          {new Date(hub.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.
-        </Text>
-      ) : (
-        <Text tone="muted">
-          Put this Mac on your Valet account at {host}, so agents can reach all your Macs at one address.
-        </Text>
-      )}
-      {hub.state === 'linking' ? (
-        <div>
-          <Value mono size="lg" copy={hub.code}>
-            {hub.code}
-          </Value>
-        </div>
-      ) : null}
-      {hub.state === 'linked' && roster.state !== 'off' ? <RosterLine roster={roster} /> : null}
-      {hub.state === 'unlinked' && hub.problem !== undefined ? (
-        <Text tone="muted">{HUB_PROBLEM[hub.problem]}</Text>
-      ) : null}
-      <Inline gap={2}>
-        {hub.state === 'unlinked' ? (
-          <Button loading={action.busy} onClick={() => void action.run(() => api.phones.joinHub())}>
-            Connect to your Valet account
-          </Button>
-        ) : null}
-        {hub.state === 'linking' ? (
-          <>
-            <Button onClick={() => void action.run(() => api.phones.openHub())}>Open the hub</Button>
-            <Button loading={action.busy} onClick={() => void action.run(() => api.phones.joinHub())}>
-              New code
-            </Button>
-            <Button variant="ghost" onClick={() => void action.run(() => api.phones.leaveHub())}>
-              Cancel
-            </Button>
-          </>
-        ) : null}
-        {hub.state === 'linked' && roster.state === 'needs-you' && !confirming ? (
-          <Button
-            variant="primary"
-            loading={action.busy}
-            onClick={() => void action.run(() => api.phones.retryRoster())}
-          >
-            Try again
-          </Button>
-        ) : null}
-        {hub.state === 'linked' ? (
-          confirming ? (
-            <>
-              <Button
-                variant="primary"
-                loading={action.busy}
-                onClick={() => void action.run(() => api.phones.leaveHub())}
-              >
-                Leave the account
-              </Button>
-              <Button onClick={() => setConfirming(false)}>Cancel</Button>
-            </>
-          ) : (
-            <>
-              <Button onClick={() => void action.run(() => api.phones.openHub())}>Open the hub</Button>
-              <Button onClick={() => setConfirming(true)}>Leave the account</Button>
-            </>
-          )
-        ) : null}
-      </Inline>
-      <Failed failed={action.failed} what="reach the hub" />
-    </Stack>
-  )
-}
-
-const ROSTER_LINE: Record<Exclude<RosterStatus['state'], 'off' | 'on'>, string> = {
-  waiting: 'Putting this Mac and its iPhones on your account’s device list…',
-  'needs-you':
-    'Touch ID was cancelled, so this Mac and its iPhones aren’t on your account’s device list yet.',
-  'not-added':
-    'Another device started your account’s device list, and only an iPhone on it can add this Mac. Leave the account and add this Mac again with its code, then approve it on your iPhone.',
-  joining: 'Waiting for your iPhone: open Valet on it and approve adding this Mac to your account.',
-  refused: 'The device list the hub sent doesn’t check, so Valet isn’t using it.',
-}
-
-/**
- * The account's device list (relay-hub.md, step 4): every device on it signs who joins. Try again,
- * when Touch ID was cancelled, sits with the account's other buttons.
- */
-function RosterLine({ roster }: { readonly roster: RosterStatus }) {
-  if (roster.state === 'off') return null
-  return (
-    <Text tone="muted">
-      {roster.state === 'on'
-        ? `Your account’s device list has ${roster.devices} ${roster.devices === 1 ? 'device' : 'devices'}, each added by one already on it.`
-        : ROSTER_LINE[roster.state]}
-    </Text>
   )
 }
 
@@ -503,7 +198,7 @@ function PairSheet({
   return (
     <Dialog open={open} onOpenChange={close}>
       <SheetContent
-        title={view.step === 'paired' ? 'iPhone signed in' : 'Sign in an iPhone'}
+        title={view.step === 'paired' ? 'iPhone paired' : 'Pair an iPhone'}
         description={description(view)}
         footer={
           <>

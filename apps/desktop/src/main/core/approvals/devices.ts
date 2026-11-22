@@ -5,10 +5,6 @@
 // record is stored as the Mac signed it and counts only if that signature verifies against the
 // Mac's approval key now. Revocations only tighten and need no signature; the Mac's own id can
 // never be revoked.
-//
-// Phones on the account's device list (relay-hub.md, step 4c) count too, while the list the Mac
-// verified against its pin has them: the RosterKeeper hands them over each time it checks the
-// list, and they are kept only in memory, so they count again only once the list checks again.
 
 import {
   canRevokeDevice,
@@ -17,7 +13,6 @@ import {
   type DeviceRevocation,
   deviceRecordSchema,
   keyId,
-  type RosterDevice,
   type SignedText,
   verifyDeviceRecord,
 } from '@valet/core'
@@ -30,8 +25,6 @@ const MAC_PAIRED_AT = '2026-01-01T00:00:00.000Z'
 export class DeviceStore implements DeviceLookup {
   readonly mac: DeviceRecord
   private cache: { readonly source: LedgerDataRef; readonly phones: Map<string, DeviceRecord> } | null = null
-  /** Phones on the account's verified list that weren't paired here. */
-  private account = new Map<string, DeviceRecord>()
 
   constructor(
     private readonly ledger: TrustedLedger,
@@ -58,37 +51,7 @@ export class DeviceStore implements DeviceLookup {
 
   device(deviceId: string): DeviceRecord | null {
     if (deviceId === this.mac.deviceId) return this.mac
-    return this.phones().get(deviceId) ?? this.account.get(deviceId) ?? null
-  }
-
-  /**
-   * The phones on the account's list as the Mac last verified it, each with when it was added.
-   * Replaces the ones before: a phone the list dropped stops counting at once.
-   */
-  setAccountPhones(phones: readonly AccountPhoneInput[]): void {
-    const next = new Map<string, DeviceRecord>()
-    for (const { device, addedAt } of phones) {
-      if (device.role !== 'phone' || device.deviceId === this.mac.deviceId) continue
-      const record = deviceRecordSchema.safeParse({
-        v: 1,
-        deviceId: device.deviceId,
-        macId: this.mac.deviceId,
-        role: 'phone',
-        platform: device.platform,
-        name: device.name,
-        approvalKey: device.approvalKey,
-        transportKey: device.transportKey,
-        agreementKey: device.agreementKey,
-        pairedAt: addedAt,
-      })
-      if (record.success) next.set(device.deviceId, record.data)
-    }
-    this.account = next
-  }
-
-  /** True if this phone counts because it is on the account's list, not because it paired here. */
-  isAccountPhone(deviceId: string): boolean {
-    return !this.phones().has(deviceId) && this.account.has(deviceId)
+    return this.phones().get(deviceId) ?? null
   }
 
   revokedAt(deviceId: string): string | null {
@@ -96,15 +59,14 @@ export class DeviceStore implements DeviceLookup {
     return this.ledger.data.revocations.find((r) => r.deviceId === deviceId)?.revokedAt ?? null
   }
 
-  /** Phones paired here or on the account's list that aren't revoked. */
+  /** Phones paired here that aren't revoked. */
   activePhones(): DeviceRecord[] {
     return this.allPhones().filter((d) => this.revokedAt(d.deviceId) === null)
   }
 
-  /** Every phone record that verifies, revoked or not, and every phone on the account's list. */
+  /** Every phone record that verifies, revoked or not. */
   allPhones(): DeviceRecord[] {
-    const paired = this.phones()
-    return [...paired.values(), ...[...this.account.values()].filter((d) => !paired.has(d.deviceId))]
+    return [...this.phones().values()]
   }
 
   /** True if this id is a paired phone that isn't revoked. */
@@ -159,12 +121,6 @@ export class DeviceStore implements DeviceLookup {
 }
 
 type LedgerDataRef = readonly SignedText[]
-
-/** A phone on the account's list (roster-keeper.ts's AccountPhone). */
-export interface AccountPhoneInput {
-  readonly device: RosterDevice
-  readonly addedAt: string
-}
 
 function recordId(signed: SignedText): string | null {
   try {

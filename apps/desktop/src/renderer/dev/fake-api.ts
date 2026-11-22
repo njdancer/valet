@@ -28,7 +28,6 @@ import type {
   EndpointStatus,
   GrantInfo,
   GrantRequest,
-  HubAgentItem,
   LoginMissingItem,
   MailSettings,
   MailStatus,
@@ -739,8 +738,6 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     onePasswordAccount: null,
     traceRetentionDays: 14,
     notifications: true,
-    relayHost: 'relay.example',
-    relayMacHost: null,
   }
 
   const updates: UpdateStatus = {
@@ -791,16 +788,12 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
   let pairing: PairingView = { step: 'idle' }
   let phones: PhonesStatus['phones'] = []
   let worksLocked: boolean | null = true
-  let hub: PhonesStatus['hub'] = { state: 'unlinked', url: 'https://valet.example' }
   const phonesStatus = (): PhonesStatus => ({
-    available: settings.relayHost !== null,
-    unavailableReason: settings.relayHost === null ? 'no-relay' : null,
-    relay: settings.relayHost === null ? 'stopped' : 'online',
-    relayOrigin: settings.relayHost === null ? null : `https://${settings.relayHost}`,
+    available: true,
+    unavailableReason: null,
+    relay: 'online',
+    relayOrigin: 'https://0123456789abcdef.valet.example',
     worksLocked,
-    hub: settings.relayHost === null ? null : hub,
-    roster:
-      hub?.state === 'linked' ? { state: 'on', devices: phones.length + 1 } : { state: 'off', devices: 0 },
     phones,
     pairing,
   })
@@ -834,7 +827,6 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     },
   ]
   let remoteClients: RemoteClientItem[] = []
-  let hubAgents: HubAgentItem[] = []
   let remoteWrong = 0
   let remoteSetup: RemoteSetup = {
     enabled: false,
@@ -1583,7 +1575,6 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           source: r.source,
           requestedAt: r.requestedAt,
           expiresAt: r.expiresAt,
-          ...(r.via === undefined ? {} : { via: r.via }),
         }))
         const missing = [...adapters.values()].flatMap((a) => missingOf(detailOf(a)))
         return clone(sorted([...attention, ...consents, ...agentRequests, ...missing, ...repairs, ...missed]))
@@ -1823,27 +1814,6 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         phones = phones.filter((p) => p.deviceId !== deviceId)
         emit({ type: 'phones-changed' })
       },
-      async joinHub() {
-        enter('phones.joinHub')
-        hub = {
-          state: 'linking',
-          url: 'https://valet.example',
-          code: remoteCode.replace(/^(....)/, '$1-'),
-          expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
-        }
-        emit({ type: 'phones-changed' })
-      },
-      async openHub() {
-        enter('phones.openHub')
-      },
-      async leaveHub() {
-        enter('phones.leaveHub')
-        hub = { state: 'unlinked', url: 'https://valet.example' }
-        emit({ type: 'phones-changed' })
-      },
-      async retryRoster() {
-        enter('phones.retryRoster')
-      },
       async renewKeys() {
         enter('phones.renewKeys')
         phones = []
@@ -1900,15 +1870,6 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       async revokeClient(id) {
         enter('remote.revokeClient', id)
         remoteClients = remoteClients.filter((c) => c.id !== id)
-        emit({ type: 'remote-changed' })
-      },
-      async hubAgents() {
-        enter('remote.hubAgents')
-        return clone(hubAgents)
-      },
-      async revokeHubAgent(id) {
-        enter('remote.revokeHubAgent', id)
-        hubAgents = hubAgents.filter((a) => a.id !== id)
         emit({ type: 'remote-changed' })
       },
       async setAskForChanges(id, on) {

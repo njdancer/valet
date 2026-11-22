@@ -10,7 +10,7 @@ import { z } from 'zod'
 import { ClientRegistry, cleanClientName, shownTransport } from '../../src/main/core/clients'
 import { ensurePrivateDir, JsonDocument, readJsonFile, writeJsonFile } from '../../src/main/core/files'
 import { builtinAdapter, MANIFEST_ENTRY, SnapshotStore } from '../../src/main/core/registry'
-import { DEFAULT_SETTINGS, relayHostSchema, SettingsStore } from '../../src/main/core/settings'
+import { DEFAULT_SETTINGS, SettingsStore } from '../../src/main/core/settings'
 import { SHOP, SHOP_FILES, shopDefinition } from './fixtures'
 
 const dirs: string[] = []
@@ -78,20 +78,22 @@ describe('SettingsStore', () => {
     })
   })
 
-  it('keeps a relay host name, and nothing that isn’t one', async () => {
+  it('still reads a file that names the old Worker relay, and drops its host names', async () => {
     const path = join(dir(), 'settings.json')
+    writeFileSync(
+      path,
+      JSON.stringify({
+        ...DEFAULT_SETTINGS,
+        launchAtLogin: true,
+        relayHost: 'valet.example.com',
+        relayMacHost: null,
+      }),
+    )
     const store = new SettingsStore(path)
-    expect((await store.get()).relayHost).toBeNull()
-    expect((await store.set({ relayHost: 'relay.example.com' })).relayHost).toBe('relay.example.com')
-    for (const bad of [
-      'https://relay.example.com',
-      'relay.example.com:8443',
-      'localhost',
-      'Relay.Example.com',
-    ])
-      expect(relayHostSchema.safeParse(bad).success, bad).toBe(false)
-    writeFileSync(path, JSON.stringify({ ...DEFAULT_SETTINGS, relayHost: 'evil.example/x' }))
-    expect(await store.get()).toEqual(DEFAULT_SETTINGS)
+    const read = await store.get()
+    expect(read).toEqual({ ...DEFAULT_SETTINGS, launchAtLogin: true })
+    expect(read).not.toHaveProperty('relayHost')
+    expect(await store.set({ notifications: false })).not.toHaveProperty('relayMacHost')
   })
 
   it('reads an edited or broken file as the defaults', async () => {

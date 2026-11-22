@@ -22,18 +22,7 @@ export const DEFAULT_SETTINGS: Settings = {
   onePasswordAccount: null,
   traceRetentionDays: DEFAULT_TRACE_RETENTION_DAYS,
   notifications: true,
-  relayHost: null,
-  relayMacHost: null,
 }
-
-/**
- * A relay's host name: lower-case DNS labels, at least two, no port, no scheme. The relay is
- * always reached over https on the default port.
- */
-export const relayHostSchema = z
-  .string()
-  .max(253)
-  .regex(/^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$/)
 
 /** What DesktopAuth takes: an account name or UUID, trimmed, without control characters. */
 export const onePasswordAccountSchema = z.string().refine(isOnePasswordAccount)
@@ -61,12 +50,13 @@ const settingsSchema = z
     traceRetentionDays: traceRetentionDaysSchema.default(DEFAULT_TRACE_RETENTION_DAYS),
     // On unless the person turns it off: a notification only opens one of the app's own windows.
     notifications: z.boolean().default(true),
-    relayHost: relayHostSchema.nullable().default(null),
-    // The base of this Mac's own host for cloud agents, when the relay names Macs under another
-    // domain than its own (docs/relay-worker.md, "Host names"). Unset: `<macId>.<relayHost>`.
-    relayMacHost: relayHostSchema.nullable().default(null),
+    // The old Worker relay's host names, in files written while it existed: read and dropped, so
+    // such a file still reads instead of falling back to the defaults.
+    relayHost: z.unknown().optional(),
+    relayMacHost: z.unknown().optional(),
   })
   .strict()
+  .transform(({ relayHost: _host, relayMacHost: _macHost, ...settings }): Settings => settings)
 
 export class SettingsStore {
   private readonly document: JsonDocument<Settings>
@@ -89,8 +79,6 @@ export class SettingsStore {
       ...(patch.onePasswordAccount === undefined ? {} : { onePasswordAccount: patch.onePasswordAccount }),
       ...(patch.traceRetentionDays === undefined ? {} : { traceRetentionDays: patch.traceRetentionDays }),
       ...(patch.notifications === undefined ? {} : { notifications: patch.notifications }),
-      ...(patch.relayHost === undefined ? {} : { relayHost: patch.relayHost }),
-      ...(patch.relayMacHost === undefined ? {} : { relayMacHost: patch.relayMacHost }),
     }
     return this.document.update((current) => ({ ...current, ...known }))
   }
