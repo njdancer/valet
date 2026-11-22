@@ -7,16 +7,31 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 6
     steps:
-      - name: dns
+      - name: probe
         run: |
           set +e
-          for H in bc3fa5306fef06686c8ed4281e245667.valet.dncr.me probe.valet.dncr.me relay.valet.dncr.me; do
-            echo "=================== $H"
-            for t in A AAAA CNAME HTTPS TXT; do echo "-- $t"; dig +noall +answer +authority $t $H @1.1.1.1; done
-            echo "-- dnssec 8.8.8.8"; dig +dnssec +noall +answer +comments A $H @8.8.8.8 | grep -E "flags|status|RRSIG|IN A"
-            echo "-- authoritative"; ns=$(dig +short NS dncr.me @1.1.1.1 | head -1); echo "ns=$ns"; dig +noall +answer A $H @$ns; dig +noall +answer AAAA $H @$ns
-          done
-          echo "-- any explicit records under valet.dncr.me? (zone NSEC walk not possible on CF; try a few)"
-          for H in valet.dncr.me x.valet.dncr.me; do dig +noall +answer A $H @1.1.1.1; done
+          H=34d3475801fae38f59e75ff4.valet.dncr.me
+          echo "== openssl default"; echo | timeout 15 openssl s_client -connect $H:443 -servername $H -showcerts 2>&1 | grep -E "s:|i:|Verify return|Protocol|Cipher|ALPN|alert|error" | head -30
+          echo "== openssl alpn h2,http/1.1"; echo | timeout 15 openssl s_client -connect $H:443 -servername $H -alpn h2,http/1.1 2>&1 | grep -E "ALPN|Verify return|alert|error" | head
+          echo "== openssl alpn h2 only"; echo | timeout 15 openssl s_client -connect $H:443 -servername $H -alpn h2 2>&1 | grep -E "ALPN|Verify return|alert|error" | head
+          echo "== openssl tls1.2"; echo | timeout 15 openssl s_client -connect $H:443 -servername $H -tls1_2 2>&1 | grep -E "Protocol|Cipher|Verify return|alert|error" | head
+          echo "== curl http1.1"; curl -sS -m 15 -o /dev/null -w "%{http_code} %{http_version}\n" -X POST -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"p","version":"1"}}}' https://$H/mcp
+          echo "== curl http2"; curl -sS --http2 -m 15 -o /dev/null -w "%{http_code} %{http_version}\n" https://$H/mcp
+          echo "== curl GET"; curl -sS -m 15 -i https://$H/mcp | head -12
+          pip install -q httpx[http2] certifi >/dev/null 2>&1
+          python3 - <<'PY'
+          import httpx, json
+          H="https://34d3475801fae38f59e75ff4.valet.dncr.me/mcp"
+          body={"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"p","version":"1"}}}
+          for h2 in (False, True):
+            try:
+              with httpx.Client(http2=h2, timeout=15) as c:
+                r=c.post(H, json=body, headers={"accept":"application/json, text/event-stream"})
+                print("httpx http2=",h2, r.status_code, r.http_version, dict(r.headers).get("www-authenticate"), r.text[:200])
+                r=c.get(H.replace("/mcp","/.well-known/oauth-protected-resource/mcp")); print(" prm", r.status_code, r.text[:300])
+                r=c.get(H.replace("/mcp","/.well-known/oauth-protected-resource")); print(" prm-root", r.status_code, r.text[:200])
+            except Exception as e:
+              print("httpx http2=",h2,"ERR",type(e).__name__, e)
+          PY
