@@ -68,19 +68,6 @@ class JourneyTestCase: XCTestCase {
 
 }
 
-final class SignInJourneyTests: JourneyTestCase {
-  /// Step 4d: no code to scan and nothing on the Mac. The passkey signs this phone in on the
-  /// hub's page (the fake hub's, here), and the Mac's requests arrive.
-  func testSignsInWithThePasskeyAndNoPairing() {
-    launch("sign-in")
-    XCTAssertFalse(element("pair.scan").exists, "pairing with a code is tucked away")
-    XCTAssertTrue(element("pair.instead").exists)
-    waitFor("signin.start").tap()
-    XCTAssertTrue(app.tabBars.buttons["Needs you"].waitForExistence(timeout: 10))
-    XCTAssertTrue(element("needs.empty").exists)
-  }
-}
-
 final class PairingJourneyTests: JourneyTestCase {
   // MARK: J1
 
@@ -319,18 +306,6 @@ final class ScreensForReviewTests: JourneyTestCase {
   }
 
   func testScreensForReview() {
-    // The account sign-in (step 4d), which replaced pairing as the way in.
-    launch("sign-in")
-    shot("00a sign in")
-    waitFor("pair.instead").tap()
-    shot("00b sign in, pairing shown")
-    waitFor("signin.start").tap()
-    XCTAssertTrue(app.tabBars.buttons["Needs you"].waitForExistence(timeout: 10))
-    shot("00c signed in, nothing waiting")
-    app.tabBars.buttons["Valet"].tap()
-    shot("00d valet tab, account")
-    app.swipeUp()
-    shot("00e valet tab, account lower")
     launch("raw")
     for (ref, name) in [("8F21", "11 raw confirm"), ("8F22", "12 raw confirm, Mac only")] {
       openCard(ref)

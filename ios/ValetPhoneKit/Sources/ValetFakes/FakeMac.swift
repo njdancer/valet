@@ -142,46 +142,6 @@ public final class FakeMac {
     return SignedText(payload: text, signature: Base64URL.encode(signature.rawRepresentation))
   }
 
-  // MARK: The account (step 4c)
-
-  /// This Mac as a device on the account's list.
-  public var rosterDevice: RosterDevice {
-    RosterDevice(
-      deviceId: macId, role: "mac", platform: "macos", name: name, approvalKey: Signing.spki(approvalKey.publicKey),
-      transportKey: Signing.spki(transportKey.publicKey), agreementKey: Signing.spki(agreementKey.publicKey)
-    )
-  }
-
-  /// The phone it paired, as a device on the list.
-  public var phoneDevice: RosterDevice? {
-    phoneRecord.map {
-      RosterDevice(
-        deviceId: $0.deviceId, role: "phone", platform: "ios", name: $0.name, approvalKey: $0.approvalKey,
-        transportKey: $0.transportKey, agreementKey: $0.agreementKey
-      )
-    }
-  }
-
-  /// A change to the account's list, signed by this Mac's approval key (Touch ID on a real Mac).
-  public func signRoster(_ payload: String) -> SignedText {
-    let signature = try! approvalKey.signature(for: Signing.input(.rosterChange, payload))
-    return SignedText(payload: payload, signature: Base64URL.encode(signature.rawRepresentation))
-  }
-
-  /// A phone on the account's list that this Mac didn't pair: it trusts it from the list, as the
-  /// Mac's DeviceStore does with account phones, and the relay lets it in.
-  public func trust(phone: RosterDevice) {
-    let signed = record(role: "phone", deviceId: phone.deviceId, name: phone.name, approval: phone.approvalKey,
-                        transport: phone.transportKey, agreement: phone.agreementKey)
-    phoneRecord = try? DeviceRecord.parse(signed.payload)
-  }
-
-  /// This Mac's own record, signed by its own key: what it sends the hub to ask to join a list.
-  public func joinRecord() -> SignedText {
-    record(role: "mac", deviceId: macId, name: name, approval: Signing.spki(approvalKey.publicKey),
-           transport: Signing.spki(transportKey.publicKey), agreement: Signing.spki(agreementKey.publicKey))
-  }
-
   private func confirmPairing(reply: PairingReply, offer: PairingOffer) {
     guard let deviceId = Signing.keyId(reply.approvalKey) else { return }
     let phone = record(role: "phone", deviceId: deviceId, name: reply.deviceName, approval: reply.approvalKey,
