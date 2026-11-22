@@ -11,6 +11,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { ToolDeclaration } from '@valet/core'
 import {
   ConsentRequests,
+  DEFAULT_OAUTH_LIMITS,
   type ListedTool,
   RemoteAccessTokens,
   RemoteAuthorization,
@@ -311,7 +312,7 @@ describe('an MCP client through the blind relay', () => {
     // Registration allows a few per source an hour: a caller who could pick its source each time
     // would never run out. Through the tunnel, every forged address counts as the relay's one.
     const statuses: number[] = []
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i <= DEFAULT_OAUTH_LIMITS.registerPerSource.limit + 1; i++) {
       const res = await f(`https://${mac.host}/register`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'cf-connecting-ip': `198.51.100.${i}` },
