@@ -99,6 +99,28 @@ function run(argv) {
 }
 `
 
+/**
+ * Closes, without saving, the unsaved outgoing messages a hung attempt left for this draft (same
+ * subject and body). Closing without saving discards; it never sends.
+ */
+export const DISCARD_SCRIPT = String.raw`
+function run(argv) {
+  var req = JSON.parse(argv[0]);
+  var Mail = Application('Mail');
+  if (!Mail.running()) return '0';
+  var n = 0;
+  Mail.outgoingMessages().forEach(function (m) {
+    try {
+      if (m.subject() === req.subject && String(m.content()).indexOf(req.body) >= 0) {
+        m.close({ saving: 'no' });
+        n++;
+      }
+    } catch (e) {}
+  });
+  return String(n);
+}
+`
+
 export type Runner = (
   file: string,
   args: readonly string[],
@@ -119,10 +141,32 @@ const NOT_ALLOWED = /-1743|not allowed to send Apple events|Not authorized/i
 export class MailDrafts {
   constructor(
     private readonly run: Runner = execRunner,
-    private readonly timeoutMs = 90_000,
+    private readonly timeoutMs = 60_000,
   ) {}
 
+  /**
+   * One retry: on a real Mac, about one in twenty drafts made right after Mail started hung until
+   * the timeout, leaving an unsaved compose message (docs/mail.md#scripting-or-imap). That leftover
+   * is discarded, never saved or sent, and the draft is made once more.
+   */
   async save(draft: DraftRequest): Promise<DraftOutcome> {
+    const first = await this.once(draft)
+    if (first.kind !== 'failed') return first
+    await this.run(
+      '/usr/bin/osascript',
+      [
+        '-l',
+        'JavaScript',
+        '-e',
+        DISCARD_SCRIPT,
+        JSON.stringify({ subject: draft.subject, body: draft.body }),
+      ],
+      15_000,
+    )
+    return this.once(draft)
+  }
+
+  private async once(draft: DraftRequest): Promise<DraftOutcome> {
     const result = await this.run(
       '/usr/bin/osascript',
       ['-l', 'JavaScript', '-e', DRAFT_SCRIPT, JSON.stringify(draft)],
