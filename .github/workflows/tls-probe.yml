@@ -1,0 +1,40 @@
+name: tls probe
+on:
+  push:
+    branches: [claude/tls-probe]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: probes
+        run: |
+          set +e
+          for H in bc3fa5306fef06686c8ed4281e245667.valet.dncr.me relay.valet.dncr.me; do
+            echo "=================== $H"
+            echo "-- curl http1.1";   curl -sS -o /dev/null -m 15 -w '%{http_code} %{time_total} alpn=%{http_version}\n' --http1.1 -X POST -d '{}' -H 'content-type: application/json' https://$H/mcp
+            echo "-- curl http2";     curl -sS -o /dev/null -m 15 -w '%{http_code} %{time_total} alpn=%{http_version}\n' --http2 -X POST -d '{}' -H 'content-type: application/json' https://$H/mcp
+            echo "-- openssl alpn h2 only"; timeout 15 openssl s_client -connect $H:443 -servername $H -alpn h2 </dev/null 2>&1 | grep -E "ALPN|Verify return|alert|errno|CONNECTED|Protocol" | head -5
+            echo "-- openssl tls1.2"; timeout 15 openssl s_client -connect $H:443 -servername $H -tls1_2 </dev/null 2>&1 | grep -E "Verify return|alert|Protocol|Cipher is" | head -4
+            echo "-- node24 PQ";      timeout 20 node .github/scripts/tls-probe.mjs $H
+            echo "-- go default";     (cd .github/scripts/goprobe && timeout 20 go run . $H)
+            echo "-- python httpx";   timeout 20 python3 -c "
+          import subprocess,sys
+          subprocess.run([sys.executable,'-m','pip','install','-q','httpx[http2]==0.28.1'],check=False)
+          import httpx,time
+          for h2 in (False,True):
+            t=time.time()
+            try:
+              r=httpx.post('https://$H/mcp',json={},timeout=15,http2=h2); print('http2' if h2 else 'http1', r.status_code, r.http_version, round(time.time()-t,2))
+            except Exception as e: print('http2' if h2 else 'http1','ERR',type(e).__name__,e, round(time.time()-t,2))
+          "
+          done
