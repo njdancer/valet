@@ -122,6 +122,22 @@ describe('the remote policy', () => {
     expect(remote.relayListener()).toBeNull()
   })
 
+  it("answers for the blind relay's other name once it has a certificate, and gives agents that one", async () => {
+    const { remote, caller, starts } = make()
+    await remote.start(caller)
+    await remote.setEnabled(true)
+    remote.setTunnelHost('abc.valet.test', true, null)
+    expect(remote.status().relayUrl).toBe('https://abc.valet.test/mcp')
+    expect([...(starts[0]?.hosts() ?? [])]).toEqual(['abc.valet.test'])
+    remote.setTunnelHost('abc.valet.test', true, 'abc-2.valet.test')
+    expect(remote.status().relayUrl).toBe('https://abc-2.valet.test/mcp')
+    expect([...(starts[0]?.hosts() ?? [])]).toEqual(['abc.valet.test', 'abc-2.valet.test'])
+    // The tunnel stopping takes both names with it.
+    remote.setTunnelHost(null, false, 'abc-2.valet.test')
+    expect(remote.status().relayUrl).toBeNull()
+    expect([...(starts[0]?.hosts() ?? [])]).toEqual([])
+  })
+
   it('lets an agent through the hub use every remote-enabled tool, with a token only while on', async () => {
     const { remote, caller } = make()
     await remote.start(caller)

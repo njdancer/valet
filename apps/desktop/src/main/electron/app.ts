@@ -462,6 +462,18 @@ async function main(): Promise<void> {
                   new KeychainHelper({ helperPath: keychainHelper }),
                   blindSetup.macDomain,
                 ),
+          // The other name's certificate (BlindRelaySetup.tag), kept the same way under its own name.
+          ...(blindSetup.tag === undefined
+            ? {}
+            : {
+                taggedStore:
+                  keychainHelper === null || mode.demo || mode.e2e
+                    ? fileCertificateStore(join(paths.dir, `relay-certificate-${blindSetup.tag}.json`))
+                    : keychainCertificateStore(
+                        new KeychainHelper({ helperPath: keychainHelper }),
+                        `${blindSetup.macDomain}#${blindSetup.tag}`,
+                      ),
+              }),
         }
   // "My Cloudflare account" (docs/cloudflare-tunnel.md): offered when this build has cloudflared, the
   // copy a release ships beside the app's binary. A development build may name one, and an e2e run

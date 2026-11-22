@@ -137,19 +137,31 @@ export type TunnelReady = z.infer<typeof tunnelReadySchema>
 
 /**
  * A Mac's public name: its macId (the approval key's id, so the relay can check it without a
- * registry) as one label under the relay's Mac domain.
+ * registry) as one label under the relay's Mac domain. With a tag, one of its other names,
+ * `<macId>-<tag>`: the same Mac under a name a client hasn't seen before (a client that has given
+ * up on the first name, as claude.ai's backend did on 2026-11-22, can be pointed at a fresh one).
  */
-export function tunnelHost(macId: string, macDomain: string): string {
-  return `${macId}.${macDomain.toLowerCase().replace(/\.$/, '')}`
+export function tunnelHost(macId: string, macDomain: string, tag?: string): string {
+  return `${macId}${tag === undefined ? '' : `-${tag}`}.${macDomain.toLowerCase().replace(/\.$/, '')}`
 }
 
-/** The macId a server name routes to, or null when it is not exactly `<macId>.<macDomain>`. */
+/** A tag for a Mac's other name: a short lowercase label, so `<macId>-<tag>` stays one label. */
+export const TUNNEL_TAG = /^[a-z0-9]{1,16}$/
+
+/**
+ * The macId a server name routes to, or null when it is not exactly `<macId>.<macDomain>` or
+ * `<macId>-<tag>.<macDomain>`. Every tag routes to the same Mac: it ends TLS itself, so a name it
+ * has no certificate for goes nowhere.
+ */
 export function macIdForHost(serverName: string, macDomain: string): string | null {
   const name = serverName.toLowerCase().replace(/\.$/, '')
   const suffix = `.${macDomain.toLowerCase().replace(/\.$/, '')}`
   if (!name.endsWith(suffix)) return null
   const label = name.slice(0, -suffix.length)
-  return keyIdSchema.safeParse(label).success ? label : null
+  const dash = label.indexOf('-')
+  const id = dash === -1 ? label : label.slice(0, dash)
+  if (dash !== -1 && !TUNNEL_TAG.test(label.slice(dash + 1))) return null
+  return keyIdSchema.safeParse(id).success ? id : null
 }
 
 // ---------------------------------------------------------------------------------------------

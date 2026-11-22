@@ -1,4 +1,5 @@
-# Adds Nick's Mac as a Claude.ai connector would, from the public internet, as far as it can go
+# Adds Nick's Mac as a Claude.ai connector would (at its other name, -2: claude.ai stopped dialling
+# its first name on 2026-11-22), from the public internet, as far as it can go
 # without a person (.github/scripts/connector-check.mjs). Every 10 minutes, after each relay
 # deploy, and on demand. A red run means a connector added now would fail.
 name: connector check
@@ -13,7 +14,7 @@ on:
     inputs:
       mac_host:
         description: The Mac's name on the relay
-        default: bc3fa5306fef06686c8ed4281e245667.valet.dncr.me
+        default: bc3fa5306fef06686c8ed4281e245667-2.valet.dncr.me
       rounds:
         description: Rounds of discovery
         default: "10"
@@ -34,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     env:
-      MAC_HOST: ${{ inputs.mac_host || 'bc3fa5306fef06686c8ed4281e245667.valet.dncr.me' }}
+      MAC_HOST: ${{ inputs.mac_host || 'bc3fa5306fef06686c8ed4281e245667-2.valet.dncr.me' }}
       ROUNDS: ${{ inputs.rounds || '5' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -43,7 +44,7 @@ jobs:
       - name: DNS from two public resolvers
         run: |
           set -u
-          [[ "$MAC_HOST" =~ ^[0-9a-f]{32}\.valet\.dncr\.me$ ]] || { echo "not a Mac name"; exit 1; }
+          [[ "$MAC_HOST" =~ ^[0-9a-f]{32}(-[a-z0-9]{1,16})?\.valet\.dncr\.me$ ]] || { echo "not a Mac name"; exit 1; }
           bad=0
           for r in 1.1.1.1 8.8.8.8; do
             a=$(dig +short A "$MAC_HOST" @"$r" | sort | tr '\n' ' ')

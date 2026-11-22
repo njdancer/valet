@@ -367,7 +367,12 @@ export interface ServiceDeps {
    * The blind relay (docs/blind-relay.md): where this Mac's tunnel dials, and where its
    * certificate is kept. None: no tunnel.
    */
-  readonly blindRelay?: { readonly setup: BlindRelaySetup; readonly store: CertificateStore } | null
+  readonly blindRelay?: {
+    readonly setup: BlindRelaySetup
+    readonly store: CertificateStore
+    /** The Mac's other name's certificate (BlindRelaySetup.tag). */
+    readonly taggedStore?: CertificateStore
+  } | null
   /**
    * "My Cloudflare account" (cloudflare-remote.ts): where the tunnel's tokens are kept, and the
    * bundled cloudflared (null when this build has none). Left out, the option isn't offered.
@@ -696,9 +701,12 @@ export class AppService {
         : new BlindTunnel({
             setup: deps.blindRelay.setup,
             store: deps.blindRelay.store,
+            ...(deps.blindRelay.taggedStore === undefined
+              ? {}
+              : { taggedStore: deps.blindRelay.taggedStore }),
             // Made below; only called once the tunnel runs.
             accept: () => this.remote.tunnelAccept(),
-            setHost: (host, ready) => this.remote.setTunnelHost(host, ready),
+            setHost: (host, ready, tagged) => this.remote.setTunnelHost(host, ready, tagged),
             changed: () => this.emit('remote-changed'),
             log: (line) => deps.diagnostics?.({ type: line }),
           })

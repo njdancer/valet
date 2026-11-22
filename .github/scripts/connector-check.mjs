@@ -9,8 +9,8 @@
 // opt-in; the rest leaves nothing behind and asks the person for nothing.
 
 const [host, roundsArg, ...flags] = process.argv.slice(2)
-if (!/^[0-9a-f]{32}\.valet\.dncr\.me$/.test(host ?? '')) {
-  console.error('usage: connector-check.mjs <macid>.valet.dncr.me [rounds] [--register]')
+if (!/^[0-9a-f]{32}(-[a-z0-9]{1,16})?\.valet\.dncr\.me$/.test(host ?? '')) {
+  console.error('usage: connector-check.mjs <macid>[-<tag>].valet.dncr.me [rounds] [--register]')
   process.exit(2)
 }
 const rounds = Number(roundsArg ?? 5)

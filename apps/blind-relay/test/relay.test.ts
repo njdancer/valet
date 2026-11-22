@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { createServer as createHttpServer, type IncomingMessage } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import type { TLSSocket } from 'node:tls'
+import { tunnelHost } from '@valet/core'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   CONTROL_HOST,
@@ -142,6 +143,46 @@ describe('the blind relay', () => {
       const socket = dial(rig, name, mac.cert.pem)
       await expect(new Promise((_, reject) => socket.on('error', reject))).rejects.toThrow()
     }
+  })
+
+  it("serves the Mac's other name with that name's certificate, and no tag it doesn't have", async () => {
+    rig = await startRig()
+    const keys = macKeys()
+    const tagged = tunnelHost(keys.macId, MAC_DOMAIN, '2')
+    const taggedCert = certFor([tagged])
+    const first = certFor([tunnelHost(keys.macId, MAC_DOMAIN)])
+    const mac = startMac(rig, echoServer().accept, {
+      keys,
+      tag: '2',
+      certificate: (name) => (name === tagged ? taggedCert.context : first.context),
+    })
+    macs.push(mac)
+    await mac.online()
+    expect(mac.client.taggedHost).toBe(tagged)
+    const res = await new Promise<{ status: number; host: unknown }>((resolve, reject) => {
+      const req = httpsRequest(
+        {
+          host: tagged,
+          port: rig?.port,
+          path: '/mcp',
+          ca: taggedCert.pem,
+          lookup,
+          servername: tagged,
+          headers: { host: tagged },
+          agent: false,
+        },
+        (r) => {
+          r.resume()
+          r.on('end', () => resolve({ status: r.statusCode ?? 0, host: r.headers['x-saw-host'] }))
+        },
+      )
+      req.on('error', reject)
+      req.end()
+    })
+    expect(res).toEqual({ status: 200, host: tagged })
+    // Another tag routes to this Mac at the relay, but the Mac has no such name and drops it.
+    const socket = dial(rig, tunnelHost(keys.macId, MAC_DOMAIN, '3'), taggedCert.pem)
+    await expect(new Promise((_, reject) => socket.on('error', reject))).rejects.toThrow()
   })
 
   it('answers its own control host with its own certificate', async () => {

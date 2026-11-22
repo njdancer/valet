@@ -14,7 +14,7 @@ import {
   LETS_ENCRYPT,
   type StoredCertificate,
 } from '@valet/acme'
-import { tunnelHost } from '@valet/core'
+import { TUNNEL_TAG, tunnelHost } from '@valet/core'
 import type { KeychainStore } from '@valet/credentials'
 import {
   type AcceptedConnection,
@@ -36,15 +36,25 @@ export interface BlindRelaySetup {
   readonly acmeDirectory?: string
   /** The WebSocket class, for tests that dial a relay with its own test certificate. */
   readonly WebSocket?: typeof WebSocket
+  /**
+   * The Mac's other name, `<macId>-<tag>.<macDomain>` (tunnelHost), served beside its own with its
+   * own certificate. Agents are pointed at it; phones keep the first name.
+   */
+  readonly tag?: string
 }
 
 export interface BlindTunnelOptions {
   readonly setup: BlindRelaySetup
   readonly store: CertificateStore
+  /** Where the other name's certificate is kept; the other name is served only with one. */
+  readonly taggedStore?: CertificateStore
   /** The listener's accept while remote access is on, else null. */
   readonly accept: () => ((socket: TLSSocket, meta: AcceptedConnection) => void) | null
-  /** The name, and whether it has a certificate to serve, or null when the tunnel stops. */
-  readonly setHost: (host: string | null, ready: boolean) => void
+  /**
+   * The name, and whether it has a certificate to serve, or null when the tunnel stops; and the
+   * other name once it has its certificate, else null.
+   */
+  readonly setHost: (host: string | null, ready: boolean, tagged: string | null) => void
   readonly changed: () => void
   readonly log?: (line: string) => void
 }
@@ -60,6 +70,7 @@ export interface BlindTunnelView {
 export class BlindTunnel {
   private client: TunnelClient | null = null
   private certificates: CertificateManager | null = null
+  private tagged: { readonly host: string; readonly certificates: CertificateManager } | null = null
   private phoneDoor: ((socket: Duplex) => void) | null = null
 
   constructor(private readonly options: BlindTunnelOptions) {}
@@ -69,27 +80,43 @@ export class BlindTunnel {
     const { setup } = this.options
     const host = tunnelHost(macId, setup.macDomain)
     let client: TunnelClient | null = null
-    const certificates = new CertificateManager({
-      name: host,
-      directoryUrl: setup.acmeDirectory ?? LETS_ENCRYPT,
-      store: this.options.store,
-      reachable: () => client?.status.state === 'online',
-      onStatus: () => this.update(host),
-      ...(this.options.log === undefined ? {} : { log: this.options.log }),
-    })
+    const manager = (name: string, store: CertificateStore) =>
+      new CertificateManager({
+        name,
+        directoryUrl: setup.acmeDirectory ?? LETS_ENCRYPT,
+        store,
+        reachable: () => client?.status.state === 'online',
+        onStatus: () => this.update(host),
+        ...(this.options.log === undefined ? {} : { log: this.options.log }),
+      })
+    const certificates = manager(host, this.options.store)
+    const taggedStore = this.options.taggedStore
+    const tagged =
+      setup.tag === undefined || taggedStore === undefined
+        ? null
+        : (() => {
+            const name = tunnelHost(macId, setup.macDomain, setup.tag)
+            return { host: name, certificates: manager(name, taggedStore) }
+          })()
+    const forName = (name: string) =>
+      tagged !== null && name === tagged.host ? tagged.certificates : certificates
     client = new TunnelClient({
       relay: `https://${setup.controlHost}`,
       macDomain: setup.macDomain,
       macId,
       signer,
       binding,
-      certificate: () => certificates.certificate(),
-      acmeChallenge: (name) => certificates.challenge(name),
+      ...(tagged === null || setup.tag === undefined ? {} : { tag: setup.tag }),
+      certificate: (name) => forName(name).certificate(),
+      acmeChallenge: (name) => forName(name).challenge(name),
       listener: () => this.listener(),
       ...(setup.connectUrl === undefined ? {} : { connectUrl: setup.connectUrl }),
       ...(setup.WebSocket === undefined ? {} : { WebSocket: setup.WebSocket }),
       onStatus: (status) => {
-        if (status.state === 'online') certificates.kick()
+        if (status.state === 'online') {
+          certificates.kick()
+          tagged?.certificates.kick()
+        }
         this.options.log?.(`[blind relay] ${status.state}`)
         this.update(host)
       },
@@ -98,8 +125,12 @@ export class BlindTunnel {
     })
     this.client = client
     this.certificates = certificates
+    this.tagged = tagged
     this.update(host)
     void certificates.start().catch((error) => this.options.log?.(`[certificate] ${String(error)}`))
+    void tagged?.certificates
+      .start()
+      .catch((error) => this.options.log?.(`[certificate] ${tagged.host}: ${String(error)}`))
     client.start()
   }
 
@@ -131,12 +162,14 @@ export class BlindTunnel {
 
   stop(): void {
     this.certificates?.stop()
+    this.tagged?.certificates.stop()
     this.client?.stop()
     const was = this.client !== null
     this.client = null
     this.certificates = null
+    this.tagged = null
     if (was) {
-      this.options.setHost(null, false)
+      this.options.setHost(null, false, null)
       this.options.changed()
     }
   }
@@ -156,7 +189,12 @@ export class BlindTunnel {
 
   private update(host: string): void {
     if (this.client === null) return
-    this.options.setHost(host, this.certificates !== null && this.certificates.certificate() !== null)
+    const tagged = this.tagged
+    this.options.setHost(
+      host,
+      this.certificates !== null && this.certificates.certificate() !== null,
+      tagged !== null && tagged.certificates.certificate() !== null ? tagged.host : null,
+    )
     this.options.changed()
   }
 }
@@ -207,12 +245,18 @@ export function fileCertificateStore(path: string): CertificateStore {
 }
 
 /** Valet's relay (docs/blind-relay.md#deploying): the Fly app, Macs under valet.dncr.me. */
-export const VALET_RELAY: BlindRelaySetup = { controlHost: 'relay.valet.dncr.me', macDomain: 'valet.dncr.me' }
+// Tag '2': claude.ai's backend stopped connecting to Macs' first names on 2026-11-22 (it never
+// even dialled them, while any other name under the domain got through), so agents use this one.
+export const VALET_RELAY: BlindRelaySetup = {
+  controlHost: 'relay.valet.dncr.me',
+  macDomain: 'valet.dncr.me',
+  tag: '2',
+}
 
 /**
  * The blind relay this run uses. A release uses Valet's relay. A development build does too,
  * unless the environment names another: VALET_BLIND_RELAY (control host, or `off`),
- * VALET_BLIND_MAC_DOMAIN, and for a local one VALET_BLIND_RELAY_CONNECT and VALET_ACME_DIRECTORY.
+ * VALET_BLIND_MAC_DOMAIN (and VALET_BLIND_TAG for the Mac's other name), and for a local one VALET_BLIND_RELAY_CONNECT and VALET_ACME_DIRECTORY.
  * Demo and e2e runs use one only when the environment names it, so tests never reach the real one.
  */
 export function blindRelaySetup(
@@ -247,6 +291,7 @@ export function blindRelayFromEnv(env: NodeJS.ProcessEnv): BlindRelaySetup | nul
   if (!HOST.test(controlHost) || !HOST.test(macDomain)) return null
   const connect = env['VALET_BLIND_RELAY_CONNECT']
   const acme = env['VALET_ACME_DIRECTORY']
+  const tag = env['VALET_BLIND_TAG']
   return {
     controlHost,
     macDomain,
@@ -254,6 +299,7 @@ export function blindRelayFromEnv(env: NodeJS.ProcessEnv): BlindRelaySetup | nul
       ? { connectUrl: connect }
       : {}),
     ...(acme !== undefined && /^https?:\/\/[^\s]+$/.test(acme) ? { acmeDirectory: acme } : {}),
+    ...(tag !== undefined && TUNNEL_TAG.test(tag) ? { tag } : {}),
   }
 }
 
