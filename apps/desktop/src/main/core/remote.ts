@@ -228,7 +228,7 @@ export class RemoteAccess {
       now: deps.now,
       consentRequested: () => deps.consentRequested?.(),
       // The Mac's log: which step of a connector's sign-in came, and what it got back.
-      log: deps.log ?? ((line) => console.log(line)),
+      log: deps.log ?? ((line) => console.log(`${new Date().toISOString()} ${line}`)),
       audit: (event) => {
         void deps.audit({ ...event, clientId: `remote:${event.clientId}` }).catch(() => undefined)
         // Its sessions go with its tokens.
