@@ -50,12 +50,12 @@ public struct PersistedPhone: Codable, Equatable, Sendable {
   public var outbox: [Int: String]
   /// Open request texts, so cards survive a restart. Re-parsed on load.
   public var requests: [String]
-  /// The account the phone accepted at the hub, once it has (step 4c).
-  public var account: AccountPin? = nil
-  /// A Mac this phone reaches because both are on the Valet account, not because it paired here.
+  /// Set by older builds on a phone that signed in to the Valet account instead of pairing. The
+  /// account is gone (Nick, 2026-11-22), so such a phone is shown pairing, with a word on why.
   public var viaAccount: Bool? = nil
 
-  public var paired: Bool { recordPayload != nil || viaAccount == true }
+  /// Paired with the Mac: it signed this phone's device record.
+  public var paired: Bool { recordPayload != nil }
 }
 
 public protocol PhoneStore: AnyObject {

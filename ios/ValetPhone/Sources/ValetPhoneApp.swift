@@ -40,10 +40,7 @@ struct AppRoot: View {
     .onChange(of: scenePhase) { _, phase in
       switch phase {
       case .background: host.model.disconnect()
-      case .active:
-        host.model.connect()
-        // The other Macs on the account come from the list, so read it when the app comes back.
-        if let account = host.model.account { Task { await account.refresh() } }
+      case .active: host.model.connect()
       default: break
       }
     }

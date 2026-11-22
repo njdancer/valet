@@ -37,25 +37,12 @@ struct NeedsYouView: View {
             }
           }
         }
-        if model.allMacs.allSatisfy({ $0.openCards.isEmpty }) && model.handoffs.isEmpty {
+        if model.openCards.isEmpty && model.handoffs.isEmpty {
           ContentUnavailableView(
             "Nothing needs you", systemImage: "checkmark.circle",
             description: Text("When an agent asks for something that matters, it shows up here.")
           )
           .accessibilityIdentifier("needs.empty")
-        }
-        // The other Macs on the account, each with its own cards (step 4c).
-        ForEach(model.otherMacs.filter { $0.phase == .paired && !$0.openCards.isEmpty }, id: \.macId) { mac in
-          Section(header: SectionHeader("Waiting for you on \(mac.macName)")) {
-            ForEach(mac.openCards) { entry in
-              Button {
-                selected = SheetID(macId: mac.macId, cardId: entry.id)
-              } label: {
-                CardRowView(entry: entry, remaining: mac.remaining(entry))
-              }
-              .accessibilityIdentifier("card.\(entry.card.ref)")
-            }
-          }
         }
         if !model.openCards.isEmpty {
           Section(header: SectionHeader("Waiting for you")) {
@@ -101,7 +88,7 @@ struct NeedsYouView: View {
       }
       .navigationTitle("Needs you")
       .sheet(item: $selected) { sheet in
-        CardSheet(model: model.allMacs.first { $0.macId == sheet.macId } ?? model, requestId: sheet.cardId)
+        CardSheet(model: model, requestId: sheet.cardId)
       }
     }
   }

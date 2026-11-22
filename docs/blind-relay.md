@@ -104,13 +104,13 @@ reaches the Mac at its own address while it is away; Pause and Lock down, sealed
 with its certificate, so a new phone dials only that. Until then, and on a Mac with no Worker
 relay, it names whichever the Mac has.
 
-**Moving over.** A phone paired through the Worker relay knows its Mac's id, and Macs on Valet's
-relay are named under `valet.dncr.me` (`PhoneModel.valetMacDomain`, the same as the Mac's
-`VALET_RELAY`). So it dials `https://<macId>.valet.dncr.me` first and the relay it paired through
-when that doesn't answer, trying its own address again after 15 seconds on the old relay without
-the Mac. Nothing new is sent to the phone, so a phone on an older build keeps working through the
-Worker relay. The Mac sends each phone's envelopes the way that phone is connected: at its own
-address when it is there, else through the Worker relay (`Phones.route`).
+**Only this way (2026-11-22).** Nick closed the hub and the Worker relay, so the phone app has no
+account sign-in and no fallback: a paired phone dials only `https://<macId>.valet.dncr.me`
+(`PhoneModel.valetMacDomain`, the same as the Mac's `VALET_RELAY`), and pairing by the Mac's QR
+code is the only way in. A phone an older build signed in to the account (`viaAccount`) forgets
+that state at launch and asks to pair, with a word on why. The Mac sends each phone's envelopes
+the way that phone is connected (`Phones.route`), so it keeps serving paired phones at the door
+whether or not the Worker relay is still there.
 
 ## Deploying
 
