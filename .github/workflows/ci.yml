@@ -86,7 +86,7 @@ jobs:
             # Code is everything but prose; docs/ Markdown is still formatted and linted by pnpm check.
             echo "code=$(echo "$files" | grep -vE '(\.md$|^docs/|^\.github/workflows/(app-tour|demo-video|live-sites|qa-screens)\.yml$)' | grep -q . && echo true || echo false)" >> "$GITHUB_OUTPUT"
             # The native binaries and the TypeScript suites run against them.
-            echo "swift=$(has "$shared|^swift-bridge/|^packages/(mcp-server|credentials)/|^apps/desktop/src/main/core/approvals/|^apps/desktop/test/main/approver-contract")" >> "$GITHUB_OUTPUT"
+            echo "swift=$(has "$shared|^swift-bridge/|^packages/(mcp-server|credentials|native-mail)/|^apps/desktop/src/main/core/approvals/|^apps/desktop/test/main/approver-contract")" >> "$GITHUB_OUTPUT"
             # What the release command packages and signs.
             echo "release=$(has "$shared|^swift-bridge/|^apps/desktop/(package\.json|electron-builder\.config\.ts|electron\.vite\.config\.ts|build/|scripts/)")" >> "$GITHUB_OUTPUT"
             # The iOS Swift package, and the core contracts its interop vectors are checked against.
@@ -237,7 +237,9 @@ jobs:
       # Debug, where the helpers take a throwaway keychain file and a fixture Messages database.
       - run: swift build --package-path swift-bridge
       - name: helper contract suites
-        run: pnpm exec vitest run --project credentials test/keychain-contract test/otp-contract
+        run: |
+          pnpm exec vitest run --project credentials test/keychain-contract test/otp-contract
+          pnpm exec vitest run --project native-mail test/helper-contract
         env:
           VALET_SWIFT_KEYCHAIN: ${{ github.workspace }}/swift-bridge/.build/debug/valet-keychain
           VALET_SWIFT_MESSAGES_HELPER: ${{ github.workspace }}/swift-bridge/.build/debug/valet-messages-helper
