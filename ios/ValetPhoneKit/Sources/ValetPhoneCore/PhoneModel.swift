@@ -14,6 +14,7 @@
 
 import Foundation
 import Observation
+import os
 import ValetCrypto
 import ValetProtocol
 
@@ -249,7 +250,7 @@ public final class PhoneModel {
     self.keys = keys
     hardwareKeys = keys.hardwareBacked
     phase = .paired
-    for text in saved.requests { accept(requestText: text) }
+    reloadSavedRequests(saved.requests)
     if let pin = saved.account { openAccount(hub: pin.hub, accountId: pin.accountId) }
   }
 
@@ -807,18 +808,46 @@ public final class PhoneModel {
 
   // MARK: Cards
 
+  private static let log = Logger(subsystem: "me.dncr.valet", category: "requests")
+
+  /// Requests saved by an earlier launch. One this build can't read, for another Mac, or past its
+  /// expiry is dropped from storage quietly: it was shown (or refused) when it arrived, and counting
+  /// it again would show "couldn't read" on every launch for a request nobody can answer any more.
+  private func reloadSavedRequests(_ texts: [String]) {
+    var kept: [String] = []
+    for text in texts {
+      guard case let .success(parsed) = Requests.parse(text), parsed.request.macId == persisted?.macId,
+        parsed.request.expiresAt.timeIntervalSince(clock.now()) + 60 > 0
+      else {
+        Self.log.info("dropped a saved request this launch can't use")
+        continue
+      }
+      kept.append(text)
+    }
+    if kept.count != texts.count {
+      persisted?.requests = kept
+      save()
+    }
+    for text in kept { accept(requestText: text) }
+  }
+
+  private func refuse(_ text: String, _ why: String) {
+    unreadable += 1
+    Self.log.error("unreadable request: \(why, privacy: .public) (\(text.utf8.count) bytes)")
+  }
+
   private func accept(requestText text: String) {
     switch Requests.parse(text) {
     case .failure(.unknownKindOrVersion):
-      unreadable += 1
+      refuse(text, "unknown kind or version")
       needsUpdate = true
-    case .failure:
-      unreadable += 1
+    case let .failure(.malformed(reason)):
+      refuse(text, "malformed: \(reason)")
     case let .success(parsed):
-      guard parsed.request.macId == persisted?.macId else { unreadable += 1; return }
+      guard parsed.request.macId == persisted?.macId else { refuse(text, "for another Mac"); return }
       if let existing = cards.first(where: { $0.id == parsed.request.id }) {
         // The same request again is a resend; a different text under the same id is refused.
-        if Array(existing.text.utf8) != Array(text.utf8) { unreadable += 1 }
+        if Array(existing.text.utf8) != Array(text.utf8) { refuse(text, "different text under the same id") }
         return
       }
       // The request's own life, but never past its expiry by this phone's clock (with a minute of

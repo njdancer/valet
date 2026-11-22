@@ -557,6 +557,30 @@ final class PhoneModelTests: XCTestCase {
     XCTAssertFalse(again.openCards.contains { $0.id.hasPrefix("7B3F") })
   }
 
+  func testASavedRequestItCantUseIsDroppedQuietlyOnLaunch() {
+    setUp(.install)
+    let good = store.state!.requests
+    XCTAssertFalse(good.isEmpty)
+    let foreign = good[0].replacingOccurrences(of: world.mac.macId, with: String(repeating: "0", count: world.mac.macId.count))
+    store.state!.requests = good + ["{not json", foreign]
+    let keys = self.keys!
+    let again = PhoneModel(transport: world.relay, store: store, clock: time.clock, keys: PhoneModel.Keys(make: { keys }, load: { _ in keys }))
+    XCTAssertEqual(again.unreadable, 0, "no \"couldn't read\" for requests saved by an earlier launch")
+    XCTAssertEqual(store.state!.requests, good)
+    XCTAssertTrue(again.cards.contains { $0.id.hasPrefix("7B3F") })
+  }
+
+  func testAnExpiredSavedRequestIsForgottenOnLaunch() {
+    setUp(.install)
+    XCTAssertFalse(store.state!.requests.isEmpty)
+    time.advance(25 * 3600)
+    let keys = self.keys!
+    let again = PhoneModel(transport: world.relay, store: store, clock: time.clock, keys: PhoneModel.Keys(make: { keys }, load: { _ in keys }))
+    XCTAssertEqual(again.unreadable, 0)
+    XCTAssertTrue(store.state!.requests.isEmpty)
+    XCTAssertFalse(again.openCards.contains { $0.id.hasPrefix("7B3F") })
+  }
+
   func testAKeyThatCantBeReadKeepsThePairing() {
     setUp(.quiet)
     struct Locked: Error {}
