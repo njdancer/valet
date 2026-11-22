@@ -9,7 +9,7 @@ on:
       mac_host:
         description: A Mac's public name to check from outside, such as <macId>.valet.dncr.me
         required: false
-        default: ''
+        default: ""
 
 permissions:
   contents: read
