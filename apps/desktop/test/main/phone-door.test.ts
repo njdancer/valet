@@ -518,6 +518,9 @@ describe('routeByRequest', () => {
     expect(errors).toEqual([])
     expect(answer.split('\r\n')[0]).toBe('HTTP/1.1 401 Unauthorized')
     expect(bodies).toEqual([`POST /mcp ${body}`])
+    // A `connection: close` answer closes the connection on the Mac's side, without waiting for
+    // the caller to (its tunnel stream would hold the relay link's window till then).
+    await until(() => mac.destroyed)
   })
 
   it('replays the head, then the rest, and passes writes and closes through', async () => {

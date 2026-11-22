@@ -443,6 +443,8 @@ export function routeByRequest(
  */
 export function replayed(socket: Duplex, head: Buffer): Duplex {
   const out = new Duplex({
+    // Like the TLS socket it stands for: once one side ends, the whole connection does.
+    allowHalfOpen: false,
     read() {
       socket.resume()
     },
@@ -485,6 +487,14 @@ export function replayed(socket: Duplex, head: Buffer): Duplex {
     setKeepAlive(enable?: boolean, delay?: number) {
       passed.setKeepAlive?.(enable, delay)
       return out
+    },
+    // Node's HTTP server ends a `connection: close` answer with this where a socket has it, and
+    // with a bare end() where it doesn't, which leaves the connection open (and its tunnel stream
+    // holding the relay link's window) until the caller closes it.
+    destroySoon() {
+      out.end()
+      if (out.writableFinished) out.destroy()
+      else out.once('finish', () => out.destroy())
     },
   })
   socket.resume()
