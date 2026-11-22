@@ -30,6 +30,8 @@ import type {
   GrantRequest,
   HubAgentItem,
   LoginMissingItem,
+  MailSettings,
+  MailStatus,
   MissedItem,
   PairingView,
   PendingReview,
@@ -707,6 +709,24 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     listening: true,
     url: 'http://127.0.0.1:47821/mcp',
     connectedClients: 2,
+  }
+
+  // Mail on this Mac: the fake walks through setup as the buttons are pressed.
+  let mailSettings: MailSettings = { enabled: false, accounts: [], drafts: false, approveDrafts: false }
+  let mailStage: 'not-running' | 'needs-access' | 'ready' = 'not-running'
+  const MAIL_ACCOUNTS = [
+    { id: '0A1B2C3D-0000-4000-8000-000000000001', name: 'iCloud', address: 'someone@icloud.com' },
+    { id: '0A1B2C3D-0000-4000-8000-000000000002', name: 'Work', address: 'someone@example.com' },
+  ]
+  const mailStatus = (): MailStatus => {
+    if (!mailSettings.enabled) return { state: 'off', settings: clone(mailSettings), accounts: [] }
+    if (mailStage !== 'ready') return { state: mailStage, settings: clone(mailSettings), accounts: [] }
+    const allowed = new Set(mailSettings.accounts)
+    return {
+      state: 'ready',
+      settings: clone(mailSettings),
+      accounts: MAIL_ACCOUNTS.map((a) => ({ ...a, allowed: allowed.has(a.id) })),
+    }
   }
 
   let settings: Settings = {
@@ -1692,6 +1712,27 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         settings = { ...settings, opPath: null }
         emit({ type: 'settings-changed' })
         return clone(settings)
+      },
+    },
+    mail: {
+      async status() {
+        enter('mail.status')
+        return mailStatus()
+      },
+      async update(patch) {
+        enter('mail.update', patch)
+        const wasOn = mailSettings.enabled
+        mailSettings = {
+          ...mailSettings,
+          ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)),
+        } as MailSettings
+        if (mailSettings.enabled && !wasOn && mailStage === 'not-running') mailStage = 'needs-access'
+        return mailStatus()
+      },
+      async action(action) {
+        enter('mail.action', action)
+        if (action === 'start-reader' && mailStage === 'not-running') mailStage = 'needs-access'
+        if (action === 'full-disk-access' && mailStage === 'needs-access') mailStage = 'ready'
       },
     },
     updates: {

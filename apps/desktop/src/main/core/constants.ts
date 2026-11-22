@@ -91,6 +91,8 @@ export interface DataPaths {
   /** When each site's last request went out, so a restart keeps the pace (the runtime's own). */
   readonly budgets: string
   readonly settings: string
+  /** Mail on this Mac: on or off, the accounts agents may read, drafts (docs/mail.md). */
+  readonly mail: string
   /** What the person chose for each adapter's settings (D69). */
   readonly adapterSettings: string
   readonly clients: string
@@ -144,6 +146,7 @@ export function dataPaths(dir: string): DataPaths {
     breakers: join(dir, 'breakers.json'),
     budgets: join(dir, 'budgets.json'),
     settings: join(dir, 'settings.json'),
+    mail: join(dir, 'mail.json'),
     adapterSettings: join(dir, 'adapter-settings.json'),
     clients: join(dir, 'clients.json'),
     clientConfigs: join(dir, 'client-configs'),

@@ -21,6 +21,7 @@ import { type AdapterManifest, DEFAULT_SANDBOX, rawEndpoints } from '@valet/core
 import { KeychainHelper, KeychainTokenSource, messagesHelperSocketPath } from '@valet/credentials'
 import { EgressBroker, type OpenTunnels } from '@valet/egress'
 import { startEndpoint } from '@valet/mcp-server'
+import { HelperMailFiles, MailDrafts } from '@valet/native-mail'
 import { diskTarballStore, loadDependencies, nodeRuntimeProcess } from '@valet/node-runtime'
 import {
   HostMailReader,
@@ -75,6 +76,7 @@ import {
   rendererBase,
   userDataDir,
 } from '../core/launch'
+import { agentReader, bundleReader, type ReaderControl } from '../core/mail'
 import { devHelperPath } from '../core/native-helpers'
 import { addOwnPort, ownPorts, recordOwnPorts } from '../core/own-ports'
 import { macName, relayFromEnv } from '../core/phones'
@@ -211,6 +213,18 @@ function nativeHelper(name: string): string | null {
   }
   const bridge = resolve(app.getAppPath(), '../../swift-bridge/.build')
   return devHelperPath(name, bridge, existsSync)
+}
+
+/**
+ * The Mail reader on this Mac: the packaged app's launch agent, or in a development build the
+ * "Valet Reader" bundle swift-bridge/build-helper-apps.sh makes. Null on other systems or without one.
+ */
+function macMailReader(label: string, packagedBinary: string | null): ReaderControl | null {
+  if (process.platform !== 'darwin') return null
+  const socketPath = messagesHelperSocketPath(label)
+  if (app.isPackaged) return packagedBinary === null ? null : agentReader(packagedBinary, socketPath)
+  const bundle = resolve(app.getAppPath(), '../../swift-bridge/.build/apps/Debug/Valet Reader.app')
+  return existsSync(bundle) ? bundleReader(bundle, label, socketPath) : null
 }
 
 /**
@@ -555,8 +569,19 @@ async function main(): Promise<void> {
     } else windows.openControlPanel(target.route)
   }, mode.e2e)
 
+  // Mail on this Mac (docs/mail.md): read through the reader helper, which alone has Full Disk Access.
+  const mailReader = macMailReader(names.messagesHelperLabel, messagesBinary)
+  log(`Mail reader: ${mailReader === null ? 'none in this build' : 'present'}`)
   service = new AppService({
     paths,
+    mail:
+      mailReader === null
+        ? null
+        : {
+            reader: mailReader,
+            files: new HelperMailFiles({ socketPath: mailReader.socketPath }),
+            drafts: new MailDrafts(),
+          },
     version: app.getVersion(),
     demo: mode.demo,
     now: () => Date.now(),

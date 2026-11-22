@@ -76,6 +76,7 @@ import {
   type ToolCall,
   type ToolCaller,
 } from '@valet/mcp-server'
+import type { MailDrafts, MailFiles } from '@valet/native-mail'
 import { addDependency, diskTarballStore } from '@valet/node-runtime'
 import type { MailAccount } from '@valet/protocols'
 import {
@@ -95,6 +96,7 @@ import {
   type Sleep,
   type SmtpBackend,
   sensitiveMatcher,
+  type ToolCallResult,
   ToolHost,
   type ToolProcessFactory,
 } from '@valet/runtime'
@@ -217,6 +219,13 @@ import {
   signedByOldKeys,
 } from './keys-changed'
 import { createAuthRunner, Handoffs, isBlockedPage, SessionTracker } from './login'
+import {
+  MailService,
+  type MailSettingsPatch,
+  MailSettingsStore,
+  type MailStatus,
+  type ReaderControl,
+} from './mail'
 import { type AppNotification, attentionTitle, Notifier } from './notifications'
 import { type FolderInstall, InstallError, installReason, PackageManager, rollbackEligible } from './packages'
 import { addsPermissions, permissionDiff } from './permission-diff'
@@ -391,6 +400,15 @@ export interface ServiceDeps {
     readonly repo: string
     readonly token: () => Promise<SecretValue | null>
     readonly fetch?: typeof fetch
+  } | null
+  /**
+   * Mail on this Mac (docs/mail.md): the reader helper, and the files and drafts through it. None:
+   * this build has no built-in Mail tools (not a Mac, or a test).
+   */
+  readonly mail?: {
+    readonly reader: ReaderControl | null
+    readonly files: MailFiles | null
+    readonly drafts: Pick<MailDrafts, 'save'>
   } | null
   /** This Mac's name, as a paired phone shows it. */
   readonly macName?: string
@@ -642,6 +660,8 @@ export class AppService {
   /** When each installed hash was approved, for the confirmation panel (which reads synchronously). */
   private readonly approvedAt = new Map<string, string>()
   private caller: RuntimeToolCaller | null = null
+  /** Valet's built-in Mail tools, when this build has them. */
+  private mailApp: MailService | null = null
   private endpoint: SessionReportingEndpoint | null = null
   /** The remote listener, its policy and the kill switch (relay.md). Off unless the person turns it on. */
   readonly remote: RemoteAccess
@@ -1061,29 +1081,49 @@ export class AppService {
       host.register(this.registration(adapter, driver))
       this.drivers.set(adapter.definition.manifest.id, driver)
     }
-    this.caller = new RuntimeToolCaller(host, {
-      paused: () => this.paused,
-      lockedDown: () => this.lockedDown,
-      sitePaused: (adapterId) => this.appState.sitePaused(adapterId),
-      // What a local app turned off for itself with valet_turn_off_tool.
-      toolsOff: (identity) =>
-        identity.origin === 'local' ? this.clients.toolsOff(identity.clientId) : new Set(),
-      explain: (call, outcome) => this.explain(call, outcome),
-      started: (call) => {
-        this.memory.started(call.callId, call.tool, call.client, call.input)
-        if (call.identity !== undefined) this.callers.set(call.callId, identityLabel(call.identity))
-        // The token named the client; the transport is the endpoint's label for the session.
-        const id = call.identity?.origin === 'local' ? call.identity.clientId : null
-        if (id !== null && this.clients.seen(id, call.client, shownTransport(call.transport)))
-          this.emit('clients-changed')
+    const mail = this.deps.mail ?? null
+    if (mail !== null) {
+      this.mailApp = new MailService({
+        settings: new MailSettingsStore(paths.mail),
+        reader: mail.reader,
+        files: mail.files,
+        drafts: mail.drafts,
+        audit: (call, result, durationMs) => this.auditNativeCall(call, result, durationMs),
+        now: this.deps.now,
+        changed: () => {
+          void this.refreshTools().catch(() => undefined)
+          this.emit('adapters-changed')
+        },
+      })
+      await this.mailApp.load().catch(() => undefined)
+    }
+    this.caller = new RuntimeToolCaller(
+      host,
+      {
+        paused: () => this.paused,
+        lockedDown: () => this.lockedDown,
+        sitePaused: (adapterId) => this.appState.sitePaused(adapterId),
+        // What a local app turned off for itself with valet_turn_off_tool.
+        toolsOff: (identity) =>
+          identity.origin === 'local' ? this.clients.toolsOff(identity.clientId) : new Set(),
+        explain: (call, outcome) => this.explain(call, outcome),
+        started: (call) => {
+          this.memory.started(call.callId, call.tool, call.client, call.input)
+          if (call.identity !== undefined) this.callers.set(call.callId, identityLabel(call.identity))
+          // The token named the client; the transport is the endpoint's label for the session.
+          const id = call.identity?.origin === 'local' ? call.identity.clientId : null
+          if (id !== null && this.clients.seen(id, call.client, shownTransport(call.transport)))
+            this.emit('clients-changed')
+        },
+        finished: (call, result) => {
+          this.callers.delete(call.callId)
+          this.memory.finished(call.callId, result.status === 'ok' ? result.output : undefined)
+        },
+        refused: (call, refusal) => this.auditRefusal(call, refusal),
+        protocolRefused: (refusal) => this.auditProtocolRefusal(refusal),
       },
-      finished: (call, result) => {
-        this.callers.delete(call.callId)
-        this.memory.finished(call.callId, result.status === 'ok' ? result.output : undefined)
-      },
-      refused: (call, refusal) => this.auditRefusal(call, refusal),
-      protocolRefused: (refusal) => this.auditProtocolRefusal(refusal),
-    })
+      this.mailApp === null ? [] : [this.mailApp],
+    )
     await this.caller.refresh()
     await this.reapplyInstalls()
     this.authoring = await this.startAuthoring()
@@ -3818,6 +3858,55 @@ export class AppService {
    * client's name made printable, an undeclared tool as "(invalid)". A call id the runtime wouldn't
    * accept, or an adapter that isn't installed, has nothing to attribute it to and isn't recorded.
    */
+  /** A built-in tool's call (docs/mail.md), audited as the runtime audits an adapter's. */
+  private async auditNativeCall(call: ToolCall, result: ToolCallResult, durationMs: number): Promise<void> {
+    if (!CALL_ID.test(call.callId)) return
+    await this.audit.append({
+      type: 'tool-called',
+      adapterId: call.adapterId,
+      adapterHash: BUILTIN_HASH,
+      tool: call.tool,
+      client: printableClient(call.client),
+      ...(call.identity === undefined ? {} : { clientId: identityLabel(call.identity) }),
+      callId: call.callId,
+    })
+    await this.audit.append({
+      type: 'tool-finished',
+      adapterId: call.adapterId,
+      callId: call.callId,
+      outcome:
+        result.status === 'ok' ||
+        result.status === 'needsUser' ||
+        result.status === 'failed' ||
+        result.status === 'declined'
+          ? result.status
+          : 'blocked',
+      ...(result.status === 'needsUser' ? { needsUser: result.reason } : {}),
+      ...(result.status === 'failed' ? { stage: result.stage, errorClass: result.errorClass } : {}),
+      durationMs,
+    })
+  }
+
+  /** Mail on this Mac, for its settings screen. Null when this build has no Mail tools. */
+  async mailStatus(): Promise<MailStatus | null> {
+    return this.mailApp === null ? null : this.mailApp.status()
+  }
+
+  async updateMail(patch: MailSettingsPatch): Promise<MailStatus | null> {
+    if (this.mailApp === null) return null
+    return this.mailApp.update(patch)
+  }
+
+  async mailAction(
+    action: 'start-reader' | 'full-disk-access' | 'login-items' | 'reveal-reader',
+  ): Promise<void> {
+    if (this.mailApp === null) return
+    if (action === 'start-reader') await this.mailApp.startReader()
+    else if (action === 'full-disk-access') await this.mailApp.openFullDiskAccess()
+    else if (action === 'login-items') await this.mailApp.openLoginItems()
+    else await this.mailApp.revealReader()
+  }
+
   private async auditRefusal(call: ToolCall, refusal: AppRefusal): Promise<void> {
     const adapter = this.adapter(call.adapterId)
     if (adapter === null || !CALL_ID.test(call.callId)) return
@@ -5085,6 +5174,11 @@ export class AppService {
         },
         clearOpPath: async () => this.afterSettings(await this.settings.setOpPath(null)),
       },
+      mail: {
+        status: async () => this.mailStatus(),
+        update: async (patch) => this.updateMail(patch),
+        action: async (action) => this.mailAction(action),
+      },
       updates: {
         status: async (): Promise<UpdateStatus> =>
           (this.updates ?? disabledUpdates(deps.version, 'not-configured', false)).status(),
@@ -5296,6 +5390,8 @@ export class AppService {
 
 /** The runtime's call-id alphabet: what ToolHost.call accepts. */
 const CALL_ID = /^[A-Za-z0-9_-]{1,64}$/
+/** What the audit log names as a built-in tool's version: not an adapter anyone approved. */
+const BUILTIN_HASH = 'builtin'
 
 /** A client name as the runtime records it: printable, trimmed, at most 100 characters. */
 /** A set nothing is registered in: sensitiveMatcher's secrets, when only session values are matched. */

@@ -163,6 +163,9 @@ importers:
       '@valet/mcp-server':
         specifier: workspace:*
         version: link:../../packages/mcp-server
+      '@valet/native-mail':
+        specifier: workspace:*
+        version: link:../../packages/native-mail
       '@valet/node-runtime':
         specifier: workspace:*
         version: link:../../packages/node-runtime
@@ -493,6 +496,15 @@ importers:
       '@valet/adapter-woolworths':
         specifier: workspace:*
         version: link:../../adapters/woolworths
+
+  packages/native-mail:
+    dependencies:
+      '@valet/core':
+        specifier: workspace:*
+        version: link:../core
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
 
   packages/node-runtime:
     dependencies:

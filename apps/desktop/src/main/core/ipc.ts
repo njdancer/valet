@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { panelOnlyRoute, parseRoute } from '../../renderer/lib/routes'
 import type { HashRoute, ValetApi } from '../../shared/api'
 import { CHANNEL_PREFIX, INVOKE_METHODS, type InvokeMethod } from './channels'
+import { mailSettingsPatchSchema } from './mail'
 import { onePasswordAccountSchema, relayHostSchema, traceRetentionDaysSchema } from './settings'
 
 /** Which of the app's windows sent a request. The main process assigns it when it opens the window. */
@@ -285,6 +286,14 @@ const HANDLERS: Readonly<
   'settings.set': entry(z.tuple([settingsPatch]), (api, [patch]) => api.settings.set(stripUndefined(patch))),
   'settings.chooseOpPath': entry(none, (api) => api.settings.chooseOpPath()),
   'settings.clearOpPath': entry(none, (api) => api.settings.clearOpPath()),
+  'mail.status': entry(none, (api) => api.mail.status()),
+  'mail.update': entry(z.tuple([mailSettingsPatchSchema]), (api, [patch]) =>
+    api.mail.update(stripUndefined(patch)),
+  ),
+  'mail.action': entry(
+    z.tuple([z.enum(['start-reader', 'full-disk-access', 'login-items', 'reveal-reader'])]),
+    (api, [action]) => api.mail.action(action),
+  ),
   'updates.status': entry(none, (api) => api.updates.status()),
   'updates.check': entry(none, (api) => api.updates.check()),
   'health.sites': entry(none, (api) => api.health.sites()),

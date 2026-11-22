@@ -75,3 +75,26 @@ targets:
         PRODUCT_NAME: Valet Keychain
         EXECUTABLE_NAME: valet-keychain
         PRODUCT_BUNDLE_IDENTIFIER: me.dncr.valet.dev.keychain
+  # The reader helper (valet-messages-helper) as an app of its own for development builds, so Full
+  # Disk Access names "Valet Reader" and not the Terminal or Electron that starts Valet. Valet opens
+  # it through LaunchServices (`open -a`), which makes it responsible for itself. No entitlements: it
+  # only reads Mail's and Messages' files, which Full Disk Access alone allows.
+  ValetReader:
+    type: application
+    platform: macOS
+    sources:
+      - path: ../Sources/valet-messages-helper
+    dependencies:
+      - target: ValetHelperKit
+      - sdk: ServiceManagement.framework
+      - sdk: libsqlite3.tbd
+    info:
+      path: Generated/Info-ValetReader.plist
+      properties:
+        CFBundleExecutable: valet-messages-helper
+        LSBackgroundOnly: true
+    settings:
+      base:
+        PRODUCT_NAME: Valet Reader
+        EXECUTABLE_NAME: valet-messages-helper
+        PRODUCT_BUNDLE_IDENTIFIER: me.dncr.valet.dev.reader

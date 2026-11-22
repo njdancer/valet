@@ -1,4 +1,4 @@
-// Settings (#/settings[/notifications|/data|/updates|/reset]): how the app behaves. 1Password, its
+// Settings (#/settings[/notifications|/data|/updates|/devices|/mail|/reset]): how the app behaves. 1Password, its
 // CLI and one-time codes from Messages live in Secrets (IA section 10); General links there.
 
 import {
@@ -32,6 +32,7 @@ import { href, type SettingsSection } from '../../lib/router'
 import { updatesOffWording } from '../../lib/wording'
 import { Failed } from '../connections/shared'
 import { DevicesSection } from './DevicesSection'
+import { MailSection } from './MailSection'
 
 const SECTIONS: readonly { readonly id: SettingsSection; readonly label: string }[] = [
   { id: 'general', label: 'General' },
@@ -39,6 +40,7 @@ const SECTIONS: readonly { readonly id: SettingsSection; readonly label: string 
   { id: 'data', label: 'Data and privacy' },
   { id: 'updates', label: 'Updates' },
   { id: 'devices', label: 'Devices' },
+  { id: 'mail', label: 'Mail' },
   { id: 'reset', label: 'Reset and uninstall' },
 ]
 
@@ -68,6 +70,7 @@ export function SettingsPage({ section }: { readonly section: SettingsSection })
         {section === 'data' && s !== null ? <Data settings={s} set={set} /> : null}
         {section === 'updates' ? <Updates settings={s} set={set} /> : null}
         {section === 'devices' ? <DevicesSection /> : null}
+        {section === 'mail' ? <MailSection /> : null}
         {section === 'reset' ? <Reset /> : null}
       </PageBody>
     </Page>

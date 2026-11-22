@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Builds valet-approver and valet-keychain as signed development app bundles that can open Valet's
-# secure store (the data protection Keychain, access group <team>.me.dncr.valet.dev.keys), into
+# secure store (the data protection Keychain, access group <team>.me.dncr.valet.dev.keys), and
+# "Valet Reader" (the Mail and Messages reader, given Full Disk Access by name), into
 # swift-bridge/.build/apps/Debug. Xcode creates the development App IDs and profiles itself
 # (-allowProvisioningUpdates), which needs an Apple ID signed in under Xcode › Settings › Accounts.
 #
@@ -28,4 +29,5 @@ for app in "Valet Approver" "Valet Keychain"; do
   codesign --verify --strict "$bundle"
   test -f "$bundle/Contents/embedded.provisionprofile"
 done
-echo "built: $here/.build/apps/Debug/{Valet Approver,Valet Keychain}.app"
+codesign --verify --strict "$here/.build/apps/Debug/Valet Reader.app"
+echo "built: $here/.build/apps/Debug/{Valet Approver,Valet Keychain,Valet Reader}.app"
