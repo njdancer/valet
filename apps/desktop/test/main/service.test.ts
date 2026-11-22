@@ -2983,6 +2983,68 @@ describe('remote access', () => {
     expect(again.service.remote.status()).toMatchObject({ enabled: true, listening: true, url: first })
   })
 
+  it('files each waiting connection as one card for the paired phones, which goes when it ends or the Mac answers it', async () => {
+    const s = await approved()
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    await s.service.setRemoteTool('shop', 'echo', true)
+    await s.service.setRemoteTool('shop', 'add', true)
+    const internals = s.service as unknown as {
+      approvalBroker: ApprovalBroker
+      deviceStore: { activePhones: () => unknown[] }
+    }
+    const broker = internals.approvalBroker
+    // One phone paired: the card goes to it (Phones.send drops it for a phone it doesn't know).
+    internals.deviceStore.activePhones = () => [{ deviceId: 'p'.repeat(43), platform: 'ios', name: 'iPhone' }]
+    const port = Number(new URL(s.service.remote.status().url as string).port)
+    const web = tunnelFetch(port, HOST)
+    const base = `http://${HOST}`
+    const startSignIn = async () => {
+      const registered = await web(`${base}/register`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          redirect_uris: ['https://claude.example/cb'],
+          token_endpoint_auth_method: 'none',
+        }),
+      })
+      const { client_id: clientId } = (await registered.json()) as { client_id: string }
+      const query = new URLSearchParams({
+        response_type: 'code',
+        client_id: clientId,
+        redirect_uri: 'https://claude.example/cb',
+        code_challenge: createHash('sha256').update('x'.repeat(64)).digest('base64url'),
+        code_challenge_method: 'S256',
+        state: 'abc',
+        resource: REMOTE_RESOURCE,
+      })
+      const page = await (await web(`${base}/authorize?${query}`)).text()
+      return /class="code">([0-9A-Z]{4}-[0-9A-Z]{4})</.exec(page)?.[1] as string
+    }
+    const cards = () => broker.list().filter((p) => p.request.kind === 'remote-client')
+
+    const first = await startSignIn()
+    await expect.poll(() => cards().length).toBe(1)
+    const card = cards()[0]
+    // It offers the tools that only read, and never carries the code.
+    expect(card?.request.subject).toMatchObject({ host: 'claude.example', tools: ['shop.echo'] })
+    expect(card?.text).not.toContain(first)
+    expect(card?.text).not.toContain(first.replace('-', ''))
+
+    // Answered at the Mac: the phone's card goes, and the Mac's own approval is the one signed.
+    expect(await s.api.remote.approveConsent(first, ['shop.echo', 'shop.add'])).toBe('approved')
+    expect(cards()).toEqual([])
+    expect(s.presence.prompts.at(-1)).toMatch(/^let a remote agent connect/)
+
+    // Declined at the Mac: its card goes too.
+    await startSignIn()
+    await expect.poll(() => cards().length).toBe(1)
+    const waiting = (await s.api.remote.consents()).requests[0]
+    await s.api.remote.declineConsent(waiting?.id ?? '')
+    await expect.poll(() => cards().length).toBe(0)
+    await s.service.stop()
+  })
+
   it('adds a connector end to end: registration, the browser’s code typed on the Mac, tokens, ticked tools only', async () => {
     const s = await approved()
     await s.service.remote.setHosts([HOST])
