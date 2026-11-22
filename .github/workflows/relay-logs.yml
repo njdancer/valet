@@ -1,0 +1,63 @@
+# Reads the blind relay's recent log lines (counts, Macs coming and going, refused connections;
+# never content) and checks a Mac's address from outside, the way a cloud agent reaches it. Run by
+# hand when a connector misbehaves. Needs the FLY_API_TOKEN secret, as deploy-relay.yml does.
+name: relay logs
+
+on:
+  workflow_dispatch:
+    inputs:
+      mac_host:
+        description: A Mac's public name to check from outside, such as <macId>.valet.dncr.me
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  FLY_APP: valet-relay
+
+jobs:
+  logs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: flyctl
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api repos/superfly/flyctl/releases/latest > "$RUNNER_TEMP/flyctl-release.json"
+          asset=$(jq -c '[.assets[] | select(.name | test("linux_x86_64\\.tar\\.gz$"; "i"))][0] // empty' "$RUNNER_TEMP/flyctl-release.json")
+          [ -n "$asset" ] || { echo "no Linux x86-64 tarball"; exit 1; }
+          url=$(jq -r .browser_download_url <<< "$asset")
+          sha=$(jq -r '.digest // "" | sub("^sha256:"; "")' <<< "$asset")
+          [ -n "$sha" ] || { echo "GitHub has no digest for $url"; exit 1; }
+          cd "$RUNNER_TEMP"
+          curl -fsSL -o flyctl.tar.gz "$url"
+          echo "$sha  flyctl.tar.gz" | sha256sum -c
+          tar xzf flyctl.tar.gz flyctl
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: recent relay log
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl logs -a "$FLY_APP" --no-tail 2>&1 | tail -n 400
+
+      - name: the Mac's address from outside
+        if: inputs.mac_host != ''
+        env:
+          MAC_HOST: ${{ inputs.mac_host }}
+        run: |
+          set -u
+          [[ "$MAC_HOST" =~ ^[0-9a-f]{32}\.valet\.dncr\.me$ ]] || { echo "not a Mac name"; exit 1; }
+          fails=0
+          for i in $(seq 1 30); do
+            a=$(curl -sS -o /dev/null -m 10 -w '%{http_code} %{time_total}' "https://$MAC_HOST/.well-known/oauth-protected-resource/mcp" 2>&1)
+            b=$(curl -sS -o /dev/null -m 10 -w '%{http_code} %{time_total}' -X POST -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d '{}' "https://$MAC_HOST/mcp" 2>&1)
+            echo "$(date -u +%H:%M:%S) metadata=$a mcp=$b"
+            [[ "$a" == 200* && "$b" == 401* ]] || fails=$((fails + 1))
+            sleep 1
+          done
+          echo "failures: $fails of 30"
+          [ "$fails" -eq 0 ]
