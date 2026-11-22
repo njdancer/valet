@@ -2618,7 +2618,14 @@ describe('remote access', () => {
     const agent = approvedClient(s, ['mail.search'])
     const client = await remoteClient(port, agent.token)
     expect((await client.listTools()).tools).toEqual([])
+    // On for every cloud agent asks for Touch ID; a cancelled prompt changes nothing.
+    s.presence.answer = false
+    await expect(s.api.remote.setTool('mail', 'search', true)).rejects.toBeInstanceOf(ValetError)
+    expect((await client.listTools()).tools).toEqual([])
+    s.presence.answer = true
+    const before = s.presence.prompts.length
     await s.api.remote.setTool('mail', 'search', true)
+    expect(s.presence.prompts.length).toBe(before + 1)
     expect((await client.listTools()).tools.map((t) => t.name)).toEqual(['mail_search'])
     const found = await client.callTool({ name: 'mail_search', arguments: { from: 'ada' } })
     expect(found.isError).not.toBe(true)
