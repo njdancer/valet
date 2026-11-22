@@ -8,9 +8,11 @@
 // Registration makes a real (ungranted) client on the Mac that expires within the hour, so it is
 // opt-in; the rest leaves nothing behind and asks the person for nothing.
 
+import { connect as tlsConnect } from 'node:tls'
+
 const [host, roundsArg, ...flags] = process.argv.slice(2)
-if (!/^[0-9a-f]{32}\.valet\.dncr\.me$/.test(host ?? '')) {
-  console.error('usage: connector-check.mjs <macid>.valet.dncr.me [rounds] [--register]')
+if (!/^([0-9a-f]{32}|[0-9a-f]{24})\.valet\.dncr\.me$/.test(host ?? '')) {
+  console.error('usage: connector-check.mjs <macid or alias>.valet.dncr.me [rounds] [--register]')
   process.exit(2)
 }
 const rounds = Number(roundsArg ?? 5)
@@ -20,6 +22,39 @@ const resource = `${base}/mcp`
 // What claude.ai's backend sends (seen in the Mac's sign-in log).
 const AGENT = 'python-httpx/0.28.1'
 const CALLBACK = 'https://claude.ai/api/mcp/auth_callback'
+
+/**
+ * The same initialize as Python's httpx sends it: the head in one write, the body in the next,
+ * at once, so the two TLS records can reach the Mac in one read (fetch sends one write). The
+ * Mac once answered exactly this with a bare 400 Bad Request, which Claude showed as
+ * "400 Not found". Resolves to the status line.
+ */
+function splitInitialize() {
+  return new Promise((resolve) => {
+    const started = Date.now()
+    let answer = ''
+    const done = (line) => {
+      socket.destroy()
+      resolve({ line, ms: Date.now() - started })
+    }
+    const socket = tlsConnect({ host, port: 443, servername: host, ALPNProtocols: ['http/1.1'] }, () => {
+      socket.write(
+        `POST /mcp HTTP/1.1\r\nHost: ${host}\r\nAccept: */*\r\nAccept-Encoding: gzip, deflate, zstd\r\n` +
+          `Connection: keep-alive\r\nUser-Agent: ${AGENT}\r\nContent-Length: ${Buffer.byteLength(initialize)}\r\n` +
+          'Content-Type: application/json\r\n\r\n',
+      )
+      // Straight after: two TLS records, back to back, as httpx's two sends make them.
+      socket.write(initialize)
+    })
+    socket.setTimeout(15_000, () => done('timeout'))
+    socket.on('data', (chunk) => {
+      answer += chunk.toString('latin1')
+      if (answer.includes('\r\n')) done(answer.split('\r\n')[0])
+    })
+    socket.on('error', (error) => done(`error ${error.code ?? error.message}`))
+    socket.on('close', () => done(answer.split('\r\n')[0] || 'closed'))
+  })
+}
 
 const failures = []
 const check = (round, step, ok, detail) => {
@@ -86,6 +121,13 @@ async function round(n) {
     )
   )
     return
+  const split = await splitInitialize()
+  check(
+    n,
+    'POST /mcp in two writes (httpx) asks for sign-in',
+    split.line === 'HTTP/1.1 401 Unauthorized',
+    `${split.line} ${split.ms}ms`,
+  )
   const get = await request('/mcp', { headers: { accept: 'text/event-stream' } })
   check(n, 'GET /mcp asks for sign-in', get.status === 401, describe(get))
 
