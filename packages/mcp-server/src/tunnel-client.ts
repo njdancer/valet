@@ -67,6 +67,11 @@ export interface TunnelClientOptions {
   readonly WebSocket?: typeof WebSocket
   readonly backoff?: { readonly minMs: number; readonly maxMs: number }
   readonly random?: () => number
+  /**
+   * How often the Mac pings the relay. A ping the relay hasn't answered by the next one means the
+   * link is dead though no close came (a network that dropped it silently): the Mac drops it and
+   * dials again at once, rather than leaving callers' connections to vanish into it.
+   */
   readonly pingMs?: number
   /** For tests: TUNNEL_LIMITS.window otherwise. Both ends must agree. */
   readonly window?: number
@@ -85,6 +90,8 @@ export class TunnelClient {
   private attempt = 0
   private retry: ReturnType<typeof setTimeout> | null = null
   private ping: ReturnType<typeof setInterval> | null = null
+  /** A ping is out and nothing has come back from the relay since. */
+  private unanswered = false
   private current: TunnelClientStatus = { state: 'stopped' }
   private readonly open = new Set<TunnelStream>()
 
@@ -138,6 +145,7 @@ export class TunnelClient {
     let ready = false
     socket.addEventListener('message', (event) => {
       if (this.socket !== socket) return
+      this.unanswered = false
       const data: unknown = event.data
       if (typeof data === 'string') {
         if (data === 'pong') return
@@ -315,9 +323,31 @@ export class TunnelClient {
 
   private startPing(socket: WebSocket): void {
     if (this.ping !== null) clearInterval(this.ping)
+    this.unanswered = false
     this.ping = setInterval(() => {
-      if (this.socket === socket && socket.readyState === OPEN) socket.send('ping')
-    }, this.options.pingMs ?? 30_000)
+      if (this.socket !== socket) return
+      if (this.unanswered) return this.dead(socket)
+      if (socket.readyState !== OPEN) return
+      this.unanswered = true
+      socket.send('ping')
+    }, this.options.pingMs ?? 15_000)
+  }
+
+  /** The relay stopped answering: let this socket go without waiting for a close, and dial again. */
+  private dead(socket: WebSocket): void {
+    this.socket = null
+    this.teardown()
+    const terminate = (socket as unknown as { terminate?: () => void }).terminate
+    try {
+      if (typeof terminate === 'function') terminate.call(socket)
+      else socket.close(4000, 'no answer')
+    } catch {
+      // Gone either way.
+    }
+    if (this.stopped) return
+    // It was online a moment ago: straight back, not after a backoff.
+    this.attempt = 0
+    this.scheduleRetry(false)
   }
 
   private teardown(): void {

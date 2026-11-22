@@ -15,6 +15,7 @@ import {
   startMac,
   startRig,
   type TestMac,
+  testWebSocket,
   waitFor,
 } from './helpers'
 
@@ -303,6 +304,77 @@ describe('the blind relay', () => {
     paused = false
     expect((await get(rig, mac, '/ok', { body: Buffer.from('x') })).status).toBe(200)
     expect(dropped).toHaveLength(2)
+  })
+
+  it('holds a caller for a Mac that is between links, and serves it once the Mac is back', async () => {
+    rig = await startRig({ limits: { macGraceMs: 5000 } })
+    const keys = macKeys()
+    const first = startMac(rig, echoServer().accept, { keys })
+    macs.push(first)
+    await first.online()
+    first.client.stop()
+    await waitFor(() => rig?.relay.macs().length === 0)
+    const pendingAnswer = get(rig, first, '/echo', { body: Buffer.from('held') })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const again = startMac(rig, echoServer().accept, { keys, certificate: () => first.cert.context })
+    macs.push(again)
+    const res = await pendingAnswer
+    expect(res.status).toBe(200)
+    expect(res.body.toString()).toBe('held')
+  })
+
+  it('drops a link that went silent on both ends, and the Mac comes straight back', async () => {
+    rig = await startRig({ limits: { macGraceMs: 5000 } })
+    let holes = 0
+    const ca = rig.controlCert.pem
+    const Base = testWebSocket(ca)
+    // The first link loses every frame both ways after a moment, as a network that died silently.
+    class Flaky extends (Base as unknown as new (
+      url: string,
+    ) => {
+      emit(event: string, ...args: unknown[]): boolean
+      send(data: unknown): void
+    }) {
+      private hole = false
+      constructor(url: string) {
+        super(url)
+        if (holes++ === 0) setTimeout(() => (this.hole = true), 400)
+      }
+      override emit(event: string, ...args: unknown[]): boolean {
+        if (this.hole && event === 'message') return false
+        return super.emit(event, ...args)
+      }
+      override send(data: unknown): void {
+        if (!this.hole) super.send(data)
+      }
+    }
+    const mac = startMac(rig, echoServer().accept, {
+      WebSocket: Flaky as unknown as typeof WebSocket,
+      pingMs: 150,
+    })
+    macs.push(mac)
+    await mac.online()
+    // The Mac hears no answer to its ping, drops the link and dials again without a backoff.
+    await waitFor(() => holes === 2 && mac.client.status.state === 'online')
+    expect(mac.statuses.map((s) => s.state)).toEqual([
+      'connecting',
+      'online',
+      'offline',
+      'connecting',
+      'online',
+    ])
+    const res = await get(rig, mac, '/echo', { body: Buffer.from('after') })
+    expect(res.body.toString()).toBe('after')
+  })
+
+  it('drops a Mac link it hears nothing on, so callers are not piped into it', async () => {
+    rig = await startRig({ limits: { silentMs: 300 } })
+    // A Mac that never pings: to the relay, a link whose network died without a close.
+    const mac = startMac(rig, echoServer().accept, { pingMs: 60_000 })
+    macs.push(mac)
+    await mac.online()
+    await waitFor(() => rig?.lines.some((l) => l.startsWith(`mac silent ${mac.keys.macId}`)) === true)
+    await waitFor(() => mac.statuses.filter((s) => s.state === 'online').length >= 2)
   })
 
   it('a Mac comes back after the relay restarts, with nothing stored', async () => {

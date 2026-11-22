@@ -115,6 +115,8 @@ export async function startRig(extra: Partial<BlindRelayOptions> = {}): Promise<
     host: '127.0.0.1',
     log: (line) => lines.push(line),
     ...extra,
+    // A caller for an offline Mac waits this long for it: short, so tests of closing stay quick.
+    limits: { macGraceMs: 300, ...extra.limits },
   })
   return { relay, controlCert, port: relay.port, lines, close: () => relay.close() }
 }
