@@ -163,6 +163,9 @@ importers:
       '@valet/mcp-server':
         specifier: workspace:*
         version: link:../../packages/mcp-server
+      '@valet/native-mail':
+        specifier: workspace:*
+        version: link:../../packages/native-mail
       '@valet/node-runtime':
         specifier: workspace:*
         version: link:../../packages/node-runtime

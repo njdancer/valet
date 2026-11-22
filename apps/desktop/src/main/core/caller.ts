@@ -77,6 +77,19 @@ export interface CallerHooks {
 
 const NONE: ReadonlySet<string> = new Set()
 
+/**
+ * Tools Valet itself provides over something on this Mac (docs/mail.md): fixed, built in, and never
+ * run by the adapter runtime. They pass the same pause, lock-down, tools-off and audit hooks as an
+ * adapter's tools. Only a Mac build has any; the core knows none of them by name.
+ */
+export interface NativeTools {
+  /** The pseudo-adapter id their tools are listed under, e.g. "mail". */
+  readonly adapterId: string
+  /** The tools as they stand now: re-read on every refresh. */
+  listTools(): readonly ListedTool[]
+  call(call: ToolCall, signal: AbortSignal): Promise<ToolCallResult>
+}
+
 export class RuntimeToolCaller implements ToolCaller {
   private tools: readonly ListedTool[] = []
   /** Aborted when the app stops: every call still running is cancelled. */
@@ -85,19 +98,33 @@ export class RuntimeToolCaller implements ToolCaller {
   constructor(
     private readonly host: Pick<ToolHost, 'listTools' | 'call'>,
     private readonly hooks: CallerHooks,
+    private readonly natives: readonly NativeTools[] = [],
   ) {}
 
-  /** Re-reads the runtime's listing. Call before the endpoint's refresh(). */
+  /** Re-reads the runtime's listing, and the native tools'. Call before the endpoint's refresh(). */
   async refresh(): Promise<void> {
-    this.tools = (await this.host.listTools()).map(
-      ({ adapterId, adapterName, declaration, input, output }) => ({
-        adapterId,
-        adapterName,
-        declaration,
-        input,
-        output,
-      }),
-    )
+    const native: ListedTool[] = []
+    for (const source of this.natives) {
+      try {
+        native.push(...source.listTools().filter((t) => t.adapterId === source.adapterId))
+      } catch {
+        // A source that can't list now lists nothing until the next refresh.
+      }
+    }
+    // An installed adapter can't take a native source's id: the native tools win.
+    const ids = new Set(this.natives.map((n) => n.adapterId))
+    this.tools = [
+      ...native,
+      ...(await this.host.listTools())
+        .filter(({ adapterId }) => !ids.has(adapterId))
+        .map(({ adapterId, adapterName, declaration, input, output }) => ({
+          adapterId,
+          adapterName,
+          declaration,
+          input,
+          output,
+        })),
+    ]
   }
 
   listTools(identity?: ClientIdentity): readonly ListedTool[] {
@@ -140,6 +167,21 @@ export class RuntimeToolCaller implements ToolCaller {
       return outcomeOf(refusal)
     }
     this.hooks.started(call)
+    const native = this.natives.find((n) => n.adapterId === call.adapterId)
+    if (native !== undefined) {
+      const signal =
+        call.signal instanceof AbortSignal
+          ? AbortSignal.any([call.signal, this.stopping.signal])
+          : this.stopping.signal
+      let result: ToolCallResult
+      try {
+        result = await native.call(call, signal)
+      } catch {
+        result = { status: 'failed', stage: 'tool-run', errorClass: 'internal' }
+      }
+      this.hooks.finished(call, result)
+      return outcomeOf(result)
+    }
     const result = await this.host.call({
       adapterId: call.adapterId,
       tool: call.tool,

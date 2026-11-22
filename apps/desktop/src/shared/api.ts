@@ -1561,6 +1561,41 @@ export interface PhonesStatus {
 
 // ---------- The API ----------
 
+/** Mail on this Mac (docs/mail.md), as its settings screen sees it. */
+export type MailSetupState = 'off' | 'no-reader' | 'not-running' | 'needs-access' | 'unsupported' | 'ready'
+
+export interface MailSettings {
+  readonly enabled: boolean
+  /** Mail's ids for the accounts agents may read. */
+  readonly accounts: readonly string[]
+  /** Whether agents may save drafts. */
+  readonly drafts: boolean
+  /** Ask the person before each draft is saved. */
+  readonly approveDrafts: boolean
+}
+
+export interface MailSettingsPatch {
+  readonly enabled?: boolean
+  readonly accounts?: readonly string[]
+  readonly drafts?: boolean
+  readonly approveDrafts?: boolean
+}
+
+export interface MailStatus {
+  readonly state: MailSetupState
+  readonly settings: MailSettings
+  /** Every account Mail has, once the reader can see them; the ones agents may read marked. */
+  readonly accounts: readonly {
+    readonly id: string
+    readonly name: string
+    readonly address: string | null
+    readonly allowed: boolean
+  }[]
+}
+
+/** The setup screen's buttons: start the reader, open System Settings, show the reader in Finder. */
+export type MailAction = 'start-reader' | 'full-disk-access' | 'login-items' | 'reveal-reader'
+
 export interface ValetApi {
   readonly phones: {
     status(): Promise<PhonesStatus>
@@ -1768,6 +1803,12 @@ export interface ValetApi {
     chooseOpPath(): Promise<Settings>
     /** Goes back to searching the usual places, where the same checks apply. */
     clearOpPath(): Promise<Settings>
+  }
+  /** Null answers: this build has no built-in Mail tools. */
+  readonly mail: {
+    status(): Promise<MailStatus | null>
+    update(patch: MailSettingsPatch): Promise<MailStatus | null>
+    action(action: MailAction): Promise<void>
   }
   readonly updates: {
     status(): Promise<UpdateStatus>

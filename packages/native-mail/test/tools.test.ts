@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { DirectMailFiles } from '../src/direct-files'
 import type { DraftRequest } from '../src/drafts'
-import { DirectMailFiles } from '../src/files'
 import { MailStore } from '../src/store'
 import {
   callMailTool,
