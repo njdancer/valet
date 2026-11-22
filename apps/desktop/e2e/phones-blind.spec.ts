@@ -413,17 +413,17 @@ test('a cloud agent’s sign-in is a card on the phone, and the code typed there
     decision: phone.approve(String(card['requestText']), macId, code),
   })
   // The browser's waiting page goes on once, so keep the answer that does.
-  let back: Awaited<ReturnType<typeof atMac>> | null = null
+  const seen: { back: Awaited<ReturnType<typeof atMac>> | null } = { back: null }
   await expect
     .poll(
       async () => {
-        back = await atMac(wait)
-        return back.status
+        seen.back = await atMac(wait)
+        return seen.back.status
       },
       { timeout: 20_000 },
     )
     .toBe(302)
-  const location = new URL(String(back?.headers['location'] ?? 'https://x.invalid/'))
+  const location = new URL(String(seen.back?.headers['location'] ?? 'https://x.invalid/'))
   expect(location.origin + location.pathname).toBe(REDIRECT)
   // The agent redeems it: its token is for the tools the phone's card offered.
   const token = await atMac('/token', {
