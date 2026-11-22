@@ -8,6 +8,10 @@
 // Registration makes a real (ungranted) client on the Mac that expires within the hour, so it is
 // opt-in; the rest leaves nothing behind and asks the person for nothing.
 
+import { connect as netConnect } from 'node:net'
+import { Duplex } from 'node:stream'
+import { connect as tlsConnect } from 'node:tls'
+
 const [host, roundsArg, ...flags] = process.argv.slice(2)
 if (!/^([0-9a-f]{32}|[0-9a-f]{24})\.valet\.dncr\.me$/.test(host ?? '')) {
   console.error('usage: connector-check.mjs <macid or alias>.valet.dncr.me [rounds] [--register]')
@@ -20,6 +24,66 @@ const resource = `${base}/mcp`
 // What claude.ai's backend sends (seen in the Mac's sign-in log).
 const AGENT = 'python-httpx/0.28.1'
 const CALLBACK = 'https://claude.ai/api/mcp/auth_callback'
+
+/**
+ * The same initialize as Python's httpx sends it: the head and the body as two TLS records, here
+ * sent in one TCP write so they reach the Mac in one read (fetch makes one record; httpx's two
+ * sends often share a segment). The Mac once answered exactly this with a bare 400 Bad Request,
+ * which Claude showed as "400 Not found". Resolves to the status line.
+ */
+function splitInitialize() {
+  return new Promise((resolve) => {
+    const started = Date.now()
+    let answer = ''
+    let settled = false
+    const done = (line) => {
+      if (settled) return
+      settled = true
+      tcp.destroy()
+      resolve({ line, ms: Date.now() - started })
+    }
+    const tcp = netConnect({ host, port: 443 })
+    // Between TLS and TCP: holds what TLS writes while `held` is a list, then sends it at once.
+    let held = null
+    const between = new Duplex({
+      read() {},
+      write(chunk, _encoding, next) {
+        if (held === null) tcp.write(chunk, next)
+        else {
+          held.push(chunk)
+          next()
+        }
+      },
+      destroy(error, next) {
+        tcp.destroy()
+        next(error)
+      },
+    })
+    tcp.on('data', (chunk) => between.push(chunk))
+    tcp.on('end', () => between.push(null))
+    tcp.on('error', (error) => done(`error ${error.code ?? error.message}`))
+    const tls = tlsConnect({ socket: between, servername: host, ALPNProtocols: ['http/1.1'] }, () => {
+      held = []
+      tls.write(
+        `POST /mcp HTTP/1.1\r\nHost: ${host}\r\nAccept: */*\r\nAccept-Encoding: gzip, deflate, zstd\r\n` +
+          `Connection: keep-alive\r\nUser-Agent: ${AGENT}\r\nContent-Length: ${Buffer.byteLength(initialize)}\r\n` +
+          'Content-Type: application/json\r\n\r\n',
+      )
+      tls.write(initialize, () => {
+        const both = Buffer.concat(held)
+        held = null
+        tcp.write(both)
+      })
+    })
+    tcp.setTimeout(15_000, () => done('timeout'))
+    tls.on('data', (chunk) => {
+      answer += chunk.toString('latin1')
+      if (answer.includes('\r\n')) done(answer.split('\r\n')[0])
+    })
+    tls.on('error', (error) => done(`error ${error.code ?? error.message}`))
+    tls.on('close', () => done(answer.split('\r\n')[0] || 'closed'))
+  })
+}
 
 const failures = []
 const check = (round, step, ok, detail) => {
@@ -86,6 +150,13 @@ async function round(n) {
     )
   )
     return
+  const split = await splitInitialize()
+  check(
+    n,
+    'POST /mcp in two writes (httpx) asks for sign-in',
+    split.line === 'HTTP/1.1 401 Unauthorized',
+    `${split.line} ${split.ms}ms`,
+  )
   const get = await request('/mcp', { headers: { accept: 'text/event-stream' } })
   check(n, 'GET /mcp asks for sign-in', get.status === 401, describe(get))
 

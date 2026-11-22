@@ -407,21 +407,29 @@ export function routeByRequest(
     clearTimeout(timer)
     socket.off('data', onData)
     socket.pause()
-    if (chunks.length > 0) socket.unshift(Buffer.concat(chunks))
     if (target === null) return socket.destroy()
+    if (chunks.length > 0) socket.unshift(Buffer.concat(chunks))
     // Whoever takes it attaches its readers now; then the bytes flow again.
     target(socket)
     socket.resume()
   }
   const timer = setTimeout(() => handOn(other), waitMs)
+  let decided = false
   const onData = (chunk: Buffer) => {
     chunks.push(chunk)
     size += chunk.length
+    if (decided) return
     const head = Buffer.concat(chunks)
     const line = head.indexOf('\r\n')
     if (line === -1 && size < 8192) return
     const first = head.subarray(0, line === -1 ? head.length : line).toString('latin1')
-    handOn(isPhoneRequest(first) ? phone : other)
+    // Handed on once this read is done, not now. Node's HTTP server reads a TLS socket's decrypted
+    // bytes straight from its handle, so a record that came in the same read as the head (a client
+    // that writes its headers and then its body, as Python's httpx does) would reach the parser
+    // ahead of the head put back, and it answered 400 Bad Request: Claude's connector check was
+    // that client. Every record of this read lands in `chunks` first.
+    decided = true
+    setImmediate(() => handOn(isPhoneRequest(first) ? phone : other))
   }
   socket.on('data', onData)
   socket.once('close', () => clearTimeout(timer))

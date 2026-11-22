@@ -5,10 +5,13 @@
 // TLS for <macId>.<mac domain>. The relay sees only ciphertext.
 
 import { mkdtempSync } from 'node:fs'
+import { createServer as createHttpServer } from 'node:http'
 import { createServer, connect as netConnect, type Server } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Duplex } from 'node:stream'
 import { setTimeout as delay } from 'node:timers/promises'
+import { TLSSocket, connect as tlsConnect } from 'node:tls'
 import {
   type AuditEvent,
   type AuditRecord,
@@ -22,6 +25,7 @@ import {
 import { afterEach, describe, expect, it } from 'vitest'
 import { WebSocket as WsWebSocket } from 'ws'
 import {
+  certFor,
   lookup,
   MAC_DOMAIN,
   type Rig,
@@ -442,6 +446,80 @@ describe('routeByRequest', () => {
     await until(() => got.length === 1)
     expect(got).toEqual(['other: POST /register HTTP/1.1'])
     expect(closed).toBe(false)
+  })
+
+  it('answers a request whose body came in the same read as its head, as Python’s httpx sends it', async () => {
+    // Claude's connector check writes the headers, then the body: two TLS records that can reach
+    // the Mac in one read. The HTTP server must still see the head first (it answered 400).
+    const cert = certFor(['mac.test'])
+    let hold: Buffer[] | null = null
+    const macEnd: Duplex = new Duplex({
+      read() {},
+      write(chunk: Buffer, _e, done) {
+        callerEnd.push(chunk)
+        done()
+      },
+    })
+    const callerEnd: Duplex = new Duplex({
+      read() {},
+      write(chunk: Buffer, _e, done) {
+        if (hold === null) macEnd.push(chunk)
+        else hold.push(chunk)
+        done()
+      },
+    })
+    const bodies: string[] = []
+    const errors: string[] = []
+    const app = createHttpServer((req, res) => {
+      let body = ''
+      req.on('data', (c: Buffer) => {
+        body += c.toString()
+      })
+      req.on('end', () => {
+        bodies.push(`${req.method} ${req.url} ${body}`)
+        res.writeHead(401, { connection: 'close' }).end()
+      })
+    })
+    app.on('clientError', (error: Error & { code?: string }, socket) => {
+      errors.push(error.code ?? 'error')
+      socket.destroy()
+    })
+    const mac = new TLSSocket(macEnd, {
+      isServer: true,
+      secureContext: cert.context,
+      ALPNProtocols: ['http/1.1'],
+    })
+    routeByRequest(
+      mac,
+      () => undefined,
+      (socket) => app.emit('connection', socket),
+    )
+    const caller = tlsConnect({
+      socket: callerEnd,
+      ca: cert.pem,
+      servername: 'mac.test',
+      ALPNProtocols: ['http/1.1'],
+    })
+    await new Promise<void>((resolve) => caller.once('secureConnect', () => resolve()))
+    let answer = ''
+    caller.on('data', (c: Buffer) => {
+      answer += c.toString()
+    })
+    hold = []
+    const body = '{"jsonrpc":"2.0","id":1,"method":"initialize"}'
+    caller.write(`POST /mcp HTTP/1.1\r\nhost: mac.test\r\ncontent-length: ${body.length}\r\n\r\n`)
+    caller.write(body)
+    await delay(20)
+    const both = Buffer.concat(hold)
+    hold = null
+    macEnd.push(both)
+    await until(() => answer.includes('\r\n\r\n') || errors.length > 0)
+    expect(errors).toEqual([])
+    expect(answer.split('\r\n')[0]).toBe('HTTP/1.1 401 Unauthorized')
+    expect(bodies).toEqual([`POST /mcp ${body}`])
+    // A `connection: close` answer closes the connection on the Mac's side, without waiting for
+    // the caller to (its tunnel stream would hold the relay link's window till then).
+    await until(() => mac.destroyed)
   })
 
   it('knows a phone’s request line and nothing else', () => {
