@@ -12,6 +12,7 @@ import {
   TunnelMux,
   type TunnelStream,
   tunnelHost,
+  tunnelLabel,
 } from '../src'
 
 /** The bytes a real Node TLS client sends first. */
@@ -106,17 +107,17 @@ describe('tunnel hosts', () => {
     expect(macIdForHost('relay.macs.test', 'macs.test')).toBeNull()
     expect(macIdForHost(`${macId}.notmacs.test`, 'macs.test')).toBeNull()
   })
-  it('reads a tagged name back to the same Mac', () => {
-    expect(tunnelHost(macId, 'macs.test', '2')).toBe(`${macId}-2.macs.test`)
-    expect(macIdForHost(`${macId}-2.macs.test`, 'macs.test')).toBe(macId)
-    expect(macIdForHost(`${macId}-Ab9.MACS.test.`, 'macs.test')).toBe(macId)
-  })
-  it('refuses a tag that is empty, too long, or not one plain label', () => {
-    expect(macIdForHost(`${macId}-.macs.test`, 'macs.test')).toBeNull()
-    expect(macIdForHost(`${macId}-${'a'.repeat(17)}.macs.test`, 'macs.test')).toBeNull()
-    expect(macIdForHost(`${macId}-a-b.macs.test`, 'macs.test')).toBeNull()
-    expect(macIdForHost(`${macId}-a_b.macs.test`, 'macs.test')).toBeNull()
-    expect(macIdForHost(`${macId.slice(1)}-2.macs.test`, 'macs.test')).toBeNull()
+  it("names a Mac's other name without its macId, the same every time", () => {
+    const tagged = tunnelHost(macId, 'macs.test', '2')
+    expect(tagged).toMatch(/^[0-9a-f]{24}\.macs\.test$/)
+    expect(tagged).not.toContain(macId)
+    expect(tunnelHost(macId, 'macs.test', '2')).toBe(tagged)
+    expect(tunnelHost(macId, 'macs.test', '3')).not.toBe(tagged)
+    expect(tunnelLabel(tagged.toUpperCase(), 'macs.test')).toBe(tagged.split('.')[0])
+    // Not a macId: only the relay's own table maps it back.
+    expect(macIdForHost(tagged, 'macs.test')).toBeNull()
+    expect(macIdForHost(`${macId}-2.macs.test`, 'macs.test')).toBeNull()
+    expect(tunnelLabel(`a.b.macs.test`, 'macs.test')).toBeNull()
   })
 })
 

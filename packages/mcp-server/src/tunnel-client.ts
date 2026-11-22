@@ -46,7 +46,7 @@ export interface TunnelClientOptions {
   readonly signer: TransportSigner
   readonly binding: RelayBinding
   /**
-   * This Mac's other name, `<macId>-<tag>.<macDomain>`, served beside its public name (see
+   * This Mac's other name, `<tunnelAlias(macId, tag)>.<macDomain>`, served beside its public name (see
    * tunnelHost). Absent: the public name only.
    */
   readonly tag?: string
