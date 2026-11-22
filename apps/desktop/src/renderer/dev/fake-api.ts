@@ -717,6 +717,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
   const MAIL_ACCOUNTS = [
     { id: '0A1B2C3D-0000-4000-8000-000000000001', name: 'iCloud', address: 'someone@icloud.com' },
     { id: '0A1B2C3D-0000-4000-8000-000000000002', name: 'Work', address: 'someone@example.com' },
+    { id: 'local', name: 'On My Mac', address: null },
   ]
   const mailStatus = (): MailStatus => {
     if (!mailSettings.enabled) return { state: 'off', settings: clone(mailSettings), accounts: [] }
