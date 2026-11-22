@@ -3,7 +3,7 @@
 // reaches it only through the injected ports (driver factory, endpoint, UI), so all of it runs and is
 // tested in plain Node.
 
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { copyFile, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { CertificateStore } from '@valet/acme'
@@ -2131,6 +2131,15 @@ export class AppService {
       // A tool turned on for remote clients (all of them; one client's own list is consent's).
       'tool-enable': {
         precheck: (subject) => {
+          const native = this.nativeDeclaration(subject.adapterId, subject.tool)
+          if (native !== null) {
+            // A built-in tool: listed now, at the side effect signed for.
+            if (subject.scope !== 'remote' || subject.adapterHash !== BUILTIN_TOOLS_HASH) return false
+            if (native.sideEffect !== subject.sideEffect) return false
+            if (subject.clientId === null) return true
+            const client = remoteClientKey(subject.clientId)
+            return client !== null && this.remote.canRequestForClient(subject.adapterId, native, client)
+          }
           if (subject.scope !== 'remote' || this.adapter(subject.adapterId)?.hash !== subject.adapterHash)
             return false
           if (subject.clientId === null) return true
@@ -2147,7 +2156,9 @@ export class AppService {
         apply: async (subject) => {
           if (subject.clientId === null) return this.setRemoteTool(subject.adapterId, subject.tool, true)
           const client = remoteClientKey(subject.clientId)
-          const declaration = this.remoteDeclared(subject.adapterId, subject.tool)
+          const declaration =
+            this.nativeDeclaration(subject.adapterId, subject.tool) ??
+            this.remoteDeclared(subject.adapterId, subject.tool)
           if (client === null || declaration === null) throw new ValetError('config', 'not-found')
           // The person approved this tool for this agent: it is on for cloud agents from now on
           // (each still needs it in its own grant), then in this agent's grant.
@@ -2836,14 +2847,20 @@ export class AppService {
       this.emit('remote-changed')
       return
     }
-    // A built-in tool (Mail on this Mac) has no adapter version to sign for: it goes on for remote
-    // clients as Remote access's own switch turns it on, then into this agent's grant.
-    // Not signed yet: a built-in approval subject, so this asks for Touch ID too, is to follow.
+    // A built-in tool (Mail on this Mac): signed like an adapter's, for the built-in "version"
+    // (BUILTIN_TOOLS_HASH), so it asks for Touch ID too. Reading mail is a wide grant.
     const native = this.nativeDeclaration(adapterId, tool)
     if (native !== null) {
-      if (!this.remote.allows(adapterId, native)) await this.setRemoteTool(adapterId, tool, true)
-      if (!held && !(await this.remote.allowForClient(adapterId, native, clientId)))
-        throw new ValetError('config', 'unavailable')
+      if (held && this.remote.allows(adapterId, native, clientId)) return
+      await this.approveOrRefuse('tool-enable', {
+        adapterId,
+        adapterHash: BUILTIN_TOOLS_HASH,
+        tool,
+        scope: 'remote',
+        clientId: held ? null : `remote:${clientId}`,
+        sideEffect: native.sideEffect,
+      })
+      if (!this.remote.allows(adapterId, native, clientId)) throw new ValetError('config', 'unavailable')
       this.emit('remote-changed')
       return
     }
@@ -5551,6 +5568,8 @@ export class AppService {
 const CALL_ID = /^[A-Za-z0-9_-]{1,64}$/
 /** What the audit log names as a built-in tool's version: not an adapter anyone approved. */
 const BUILTIN_HASH = 'builtin'
+/** The "version" a built-in tool's tool-enable approval is signed for: there is no package hash. */
+const BUILTIN_TOOLS_HASH = createHash('sha256').update('valet built-in tools v1').digest('hex')
 
 /** A client name as the runtime records it: printable, trimmed, at most 100 characters. */
 /** A set nothing is registered in: sensitiveMatcher's secrets, when only session values are matched. */
