@@ -47,10 +47,11 @@ conventional-style subjects (`feat(runtime): …`, `test(core): …`, `docs: …
   test that tries to get past it.
 - Fakes live next to the tests that use them, or in `fakes/*` when several packages share them.
   No test talks to a real site, 1Password, or the Messages database.
-- Anything that crosses parts (the app, the relay, the hub, a browser, an agent) gets an end-to-end
-  test that runs those real parts together, before anyone is asked to try it by hand. The hub's is
-  `apps/desktop/e2e/hub.spec.ts`; the relay and hub deploy only from main, by
-  `.github/workflows/deploy-hub.yml`, after that commit's CI passed with it. Don't deploy by hand.
+- Anything that crosses parts (the app, the relay, a phone, a browser, an agent) gets an end-to-end
+  test that runs those real parts together, before anyone is asked to try it by hand. The blind
+  relay's are `apps/desktop/e2e/blind-relay.spec.ts` and `phones-blind.spec.ts`; the relay deploys
+  only from main, by `.github/workflows/deploy-relay.yml`, after that commit's CI passed with them.
+  Don't deploy by hand.
 
 ## Changes that come from agent feedback
 

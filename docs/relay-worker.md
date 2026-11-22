@@ -1,6 +1,9 @@
 # The relay Worker (workstream G)
 
-> **2026-11-16:** remote agents move to one hub address for all your nodes: [relay-hub.md](relay-hub.md). The per-Mac host below is kept until that ships.
+> **Retired 2026-11-22.** The Worker is gone ([blind-relay.md](blind-relay.md) replaced it, and
+> `.github/workflows/retire-hub.yml` deleted it). Its phone frames live on: each Mac answers them
+> itself at its own address (`phone-door.ts`), as described under [Connections](#connections).
+> The rest of this page is the record of what was built.
 
 Status: built, and tested in CI against a local Workers runtime (Miniflare). Not deployed:
 deploying needs Nick's Cloudflare account and a host name ([What needs Nick](#what-needs-nick)).

@@ -1,0 +1,52 @@
+# Shuts down the old Valet hub and Worker relay (the Cloudflare Worker "valet-relay" at
+# valet.dncr.me and valet-relay.nick-01a.workers.dev). Nick chose on 2026-11-22 to close it all:
+# phones pair with the Mac and reach it at its own address through the blind relay, and agents
+# connect to each Mac's own address, so nothing uses the Worker any more. Deleting the Worker also
+# deletes its Durable Objects' storage (the hub's accounts, passkeys and device lists) and its
+# custom domain. Run by hand, once, after the code that used it is gone from main. It cannot be
+# undone, so it asks for the Worker's name typed back.
+name: retire the old hub
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type valet-relay to delete that Worker and its storage
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  retire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_ACCOUNT_ID: 01a118752330d91e08371f43d5403f0f
+      WORKER: valet-relay
+    steps:
+      - name: check the name typed back
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: '[ "$CONFIRM" = "$WORKER" ] || { echo "::error::type $WORKER to confirm"; exit 1; }'
+      - name: what answers now
+        run: |
+          for url in https://valet.dncr.me/ https://valet-relay.nick-01a.workers.dev/; do
+            echo "$url: $(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$url" || echo none)"
+          done
+      - name: delete the Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          [ -n "$CLOUDFLARE_API_TOKEN" ] || { echo "::error::the CLOUDFLARE_API_TOKEN secret isn't set"; exit 1; }
+          npx --yes wrangler@4.158.0 delete --name "$WORKER" --force
+      - name: nothing answers any more
+        run: |
+          # The custom domain and workers.dev name go with the Worker; DNS and caches take a moment.
+          for attempt in $(seq 1 30); do
+            hub=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 https://valet.dncr.me/api/version || true)
+            dev=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 https://valet-relay.nick-01a.workers.dev/ || true)
+            echo "attempt $attempt: valet.dncr.me $hub, workers.dev $dev"
+            case "$hub$dev" in *200*) sleep 10 ;; *) exit 0 ;; esac
+          done
+          echo "::error::the Worker still answers"; exit 1

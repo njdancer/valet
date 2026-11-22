@@ -1,5 +1,10 @@
 # The relay as a hub: one MCP address for all your nodes
 
+> **Retired 2026-11-22.** Nick closed the hub: no accounts, no passkeys, no shared `/mcp`. Agents
+> connect to each Mac at its own address and phones pair with the Mac by QR, both through the
+> blind relay ([blind-relay.md](blind-relay.md)). The Worker was deleted by
+> `.github/workflows/retire-hub.yml`. This page is kept as the record of what was built.
+
 Status: **step 1 built** (see [Step 1 as built](#step-1-as-built)); steps 2 to 5 not yet. Agreed with Nick in the project thread on 2026-11-15/16. It
 replaces the per-Mac byte pipe in [relay-worker.md](relay-worker.md) as the way remote agents
 reach Valet. The phone channel, pairing crypto and approvals described there stay unless this
