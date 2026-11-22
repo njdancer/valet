@@ -152,7 +152,8 @@ export class Phone {
   }
 
   /** Signs an approval of a request text the Mac sent, as the phone does after Face ID. */
-  approve(requestText: string, macId: string) {
+  /** A signed approval; `typedCode` is the code typed from the browser, for a connection's card. */
+  approve(requestText: string, macId: string, typedCode?: string) {
     const request = JSON.parse(requestText) as { id: string }
     const payload = decisionPayload({
       v: 1,
@@ -162,6 +163,7 @@ export class Phone {
       requestDigest: domainDigest(SIGNING_DOMAINS.approvalRequest, requestText),
       deviceId: this.deviceId,
       decidedAt: new Date().toISOString(),
+      ...(typedCode === undefined ? {} : { typedCode }),
     })
     const signature = sign('sha256', signingInput(SIGNING_DOMAINS.approvalDecision, payload), {
       key: this.approval.privateKey,

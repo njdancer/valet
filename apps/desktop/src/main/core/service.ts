@@ -608,6 +608,9 @@ export class AppService {
   /** The last status sent, without its time, so an unchanged one isn't sent again. */
   private phoneStatusSent: string | null = null
   private phoneStatusTimer: ReturnType<typeof setTimeout> | null = null
+  /** Each connection waiting on this Mac, by its consent id, to the phone card filed for it. */
+  private readonly phoneConsents = new Map<string, string>()
+  private phoneConsentSync: Promise<void> = Promise.resolve()
   /** The write tools' side (admin-writer.ts): one for the app's life, so it remembers requests. */
   private writer: AdminWriterImpl | null = null
   /** Agents' feedback (feedback.ts): one for the app's life. */
@@ -977,6 +980,7 @@ export class AppService {
       now: deps.now,
       changed: () => {
         void this.cloudflare?.sync()
+        this.syncPhoneConsents()
         if (this.remote.status().pendingConsents + this.hubConsents().length === 0)
           this.notifier.remoteConsent(0)
         this.emit('app-changed')
@@ -1596,8 +1600,67 @@ export class AppService {
     return [...own, ...hub]
   }
 
+  /**
+   * Each connection waiting on this Mac is also one card on the paired phones (relay.md, "Consent
+   * happens on the Mac or a paired phone"): the person types the browser's code there and approves
+   * with Face ID or the passcode. The card offers the remote tools that only read; anything more
+   * is given later. A connection that ends, or is answered at the Mac, takes its card with it.
+   */
+  private syncPhoneConsents(): void {
+    this.phoneConsentSync = this.phoneConsentSync
+      .then(() => this.syncPhoneConsentsNow())
+      .catch(() => undefined)
+  }
+
+  private async syncPhoneConsentsNow(): Promise<void> {
+    const broker = this.approvalBroker
+    if (broker === null) return
+    const waiting = this.remote.consentView().requests
+    const ids = new Set(waiting.map((r) => r.id))
+    for (const [consentId, requestId] of this.phoneConsents) {
+      if (ids.has(consentId)) continue
+      this.phoneConsents.delete(consentId)
+      if (broker.get(requestId) !== null) await broker.withdraw(requestId, { kind: 'app' }).catch(() => false)
+    }
+    if (this.deviceStore === null || this.deviceStore.activePhones().length === 0) return
+    for (const consent of waiting) {
+      if (this.phoneConsents.has(consent.id)) continue
+      const code = this.remote.consentCodeFor(consent.id)
+      if (code === null) continue
+      const asked = await broker.request(
+        'remote-client',
+        remoteClientSubject(consent, this.readOnlyRemoteTools()),
+        {
+          kind: 'app',
+        },
+        { consentCode: displayCode(code) },
+      )
+      if (asked.ok) this.phoneConsents.set(consent.id, asked.requestId)
+    }
+  }
+
+  /** The tools on for remote agents that only read: what a phone's consent card offers. */
+  private readOnlyRemoteTools(): string[] {
+    return this.remote.status().tools.filter((qualified) => {
+      const dot = qualified.indexOf('.')
+      const tool = this.adapter(qualified.slice(0, dot))?.definition.manifest.tools.find(
+        (t) => t.name === qualified.slice(dot + 1),
+      )
+      return tool?.sideEffect === 'read'
+    })
+  }
+
+  /** The phone's card for a connection the person is answering at the Mac goes: one answer each. */
+  private async withdrawPhoneConsent(consentId: string): Promise<void> {
+    const requestId = this.phoneConsents.get(consentId)
+    if (requestId === undefined) return
+    this.phoneConsents.delete(consentId)
+    await this.approvalBroker?.withdraw(requestId, { kind: 'app' }).catch(() => false)
+  }
+
   /** A connection began waiting: one notification for all of them, and the one sheet. */
   private consentRequested(): void {
+    this.syncPhoneConsents()
     const requests = this.consentRequests()
     const soonest = Math.min(...requests.map((r) => Date.parse(r.expiresAt)))
     this.notifier.remoteConsent(
@@ -2169,6 +2232,9 @@ export class AppService {
         apply: async (subject, evidence) => {
           const code = evidence === null ? undefined : decisionTypedCode(evidence.decision.payload)
           if (code === undefined) throw new ValetError('config', 'invalid')
+          // This approval is the phone's card (or the Mac's own): nothing is left to withdraw.
+          const consent = this.remote.consentFor(code)
+          if (consent !== null) this.phoneConsents.delete(consent.id)
           const answer = await this.remote.approveConsent(code, subject.tools)
           if (answer !== 'approved') throw new ValetError('config', 'not-found')
         },
@@ -5330,6 +5396,7 @@ export class AppService {
           if (consent === null || typed === null) return this.remote.approveConsent(code, tools)
           const on = new Set(this.remote.status().tools)
           if (tools.some((t) => !on.has(t))) throw new ValetError('config', 'invalid')
+          await this.withdrawPhoneConsent(consent.id)
           await this.approveOrRefuse('remote-client', remoteClientSubject(consent, tools, capabilities), {
             consentCode: displayCode(typed),
             typedCode: displayCode(typed),

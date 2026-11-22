@@ -168,6 +168,16 @@ export class ConsentRequests {
   }
 
   /**
+   * A pending request's code, for the one card a paired phone is sent: the Mac keeps it beside the
+   * request and the phone's signed approval must carry the same typed code (relay.md). Never
+   * shown or listed. Null once the request isn't pending.
+   */
+  codeFor(id: string): string | null {
+    this.sweep()
+    return this.pending().find((r) => r.id === id)?.code ?? null
+  }
+
+  /**
    * The person typed a code and ticked tools. Only the request the code belongs to is approved.
    * A wrong code counts; the third cancels every pending request.
    */
