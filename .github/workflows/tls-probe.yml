@@ -13,25 +13,35 @@ jobs:
         run: |
           set +e
           H=34d3475801fae38f59e75ff4.valet.dncr.me
-          echo "== openssl default"; echo | timeout 15 openssl s_client -connect $H:443 -servername $H -showcerts 2>&1 | grep -E "s:|i:|Verify return|Protocol|Cipher|ALPN|alert|error" | head -30
-          echo "== openssl alpn h2,http/1.1"; echo | timeout 15 openssl s_client -connect $H:443 -servername $H -alpn h2,http/1.1 2>&1 | grep -E "ALPN|Verify return|alert|error" | head
-          echo "== openssl alpn h2 only"; echo | timeout 15 openssl s_client -connect $H:443 -servername $H -alpn h2 2>&1 | grep -E "ALPN|Verify return|alert|error" | head
-          echo "== openssl tls1.2"; echo | timeout 15 openssl s_client -connect $H:443 -servername $H -tls1_2 2>&1 | grep -E "Protocol|Cipher|Verify return|alert|error" | head
-          echo "== curl http1.1"; curl -sS -m 15 -o /dev/null -w "%{http_code} %{http_version}\n" -X POST -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"p","version":"1"}}}' https://$H/mcp
-          echo "== curl http2"; curl -sS --http2 -m 15 -o /dev/null -w "%{http_code} %{http_version}\n" https://$H/mcp
-          echo "== curl GET"; curl -sS -m 15 -i https://$H/mcp | head -12
-          pip install -q httpx[http2] certifi >/dev/null 2>&1
+          pip install -q httpx >/dev/null 2>&1
           python3 - <<'PY'
-          import httpx, json
-          H="https://34d3475801fae38f59e75ff4.valet.dncr.me/mcp"
+          import httpx, socket, ssl
+          H="34d3475801fae38f59e75ff4.valet.dncr.me"
+          U=f"https://{H}/mcp"
           body={"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"p","version":"1"}}}
-          for h2 in (False, True):
+          def show(label, r):
+            print(label, r.status_code, r.reason_phrase, dict(r.headers), repr(r.content[:200]))
+          with httpx.Client(timeout=15) as c:
+            show("POST default", c.post(U, json=body))
+            show("GET default", c.get(U))
+            show("GET root", c.get(f"https://{H}/"))
+          # raw sockets with exact header sets
+          def raw(label, req, split_body=None):
+            ctx=ssl.create_default_context(); ctx.set_alpn_protocols(["http/1.1"])
+            s=ctx.wrap_socket(socket.create_connection((H,443),timeout=15), server_hostname=H)
+            s.sendall(req)
+            if split_body: s.sendall(split_body)
+            out=b""
             try:
-              with httpx.Client(http2=h2, timeout=15) as c:
-                r=c.post(H, json=body, headers={"accept":"application/json, text/event-stream"})
-                print("httpx http2=",h2, r.status_code, r.http_version, dict(r.headers).get("www-authenticate"), r.text[:200])
-                r=c.get(H.replace("/mcp","/.well-known/oauth-protected-resource/mcp")); print(" prm", r.status_code, r.text[:300])
-                r=c.get(H.replace("/mcp","/.well-known/oauth-protected-resource")); print(" prm-root", r.status_code, r.text[:200])
-            except Exception as e:
-              print("httpx http2=",h2,"ERR",type(e).__name__, e)
+              while True:
+                d=s.recv(65536)
+                if not d: break
+                out+=d
+            except Exception as e: out+=f"<{e}>".encode()
+            print(label, repr(out[:300]))
+          base=f"GET /mcp HTTP/1.1\r\nHost: {H}\r\n"
+          raw("raw minimal", (base+"Connection: close\r\n\r\n").encode())
+          raw("raw httpx-like", (base+"Accept: */*\r\nAccept-Encoding: gzip, deflate\r\nConnection: keep-alive\r\nUser-Agent: python-httpx/0.28.1\r\n\r\n").encode())
+          raw("raw keepalive only", (base+"Connection: keep-alive\r\n\r\n").encode())
+          raw("raw no connection hdr", (base+"Accept: */*\r\n\r\n").encode())
           PY
