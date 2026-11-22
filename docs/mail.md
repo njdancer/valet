@@ -87,6 +87,14 @@ rounds of new and reply drafts with Mail closed and open, checking each lands in
 deleting them. If it isn't reliable, drafts go through IMAP `APPEND` to the Drafts folder instead
 (the same `MailDrafts.save` interface), which needs the account's app-specific password.
 
+First trial (2026-11-22, iCloud, 5 rounds): new drafts 10 of 10 (about 3 s with Mail closed,
+under 1 s open); replies 9 of 10, the miss being the first reply right after Mail was quit (it timed
+out). Replies left compose windows behind, hidden and one visible, and `reply` fills in the
+original's sender as recipient. So the script now waits for a freshly started Mail to load its
+accounts, retries finding the original, only adds recipients a reply doesn't already have, and
+closes the message (saving) after `save`. The trial now replies only to a message the person sent
+themselves, and reports leftover outgoing messages and compose windows.
+
 ### Asking before each draft
 
 `approveDrafts` is stored and `callMailTool` supports asking (declined or timed out comes back to
