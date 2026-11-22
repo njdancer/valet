@@ -37,8 +37,8 @@ export interface BlindRelaySetup {
   /** The WebSocket class, for tests that dial a relay with its own test certificate. */
   readonly WebSocket?: typeof WebSocket
   /**
-   * The Mac's other name, `<macId>-<tag>.<macDomain>` (tunnelHost), served beside its own with its
-   * own certificate. Agents are pointed at it; phones keep the first name.
+   * The Mac's other name, `<tunnelAlias(macId, tag)>.<macDomain>` (tunnelHost), served beside its
+   * own with its own certificate. Agents are pointed at it; phones keep the first name.
    */
   readonly tag?: string
 }
@@ -245,8 +245,9 @@ export function fileCertificateStore(path: string): CertificateStore {
 }
 
 /** Valet's relay (docs/blind-relay.md#deploying): the Fly app, Macs under valet.dncr.me. */
-// Tag '2': claude.ai's backend stopped connecting to Macs' first names on 2026-11-22 (it never
-// even dialled them, while any other name under the domain got through), so agents use this one.
+// Tag '2': since 2026-11-22 claude.ai's backend won't dial any name containing Nick's Mac's id
+// (it never reached the relay, in any spelling, while other names did), so agents use the name
+// tunnelAlias gives instead, which doesn't contain it.
 export const VALET_RELAY: BlindRelaySetup = {
   controlHost: 'relay.valet.dncr.me',
   macDomain: 'valet.dncr.me',

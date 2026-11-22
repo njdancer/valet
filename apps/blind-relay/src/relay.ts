@@ -28,8 +28,11 @@ import {
   TUNNEL_LIMITS,
   TUNNEL_PATH_PREFIX,
   TUNNEL_PROTOCOL_VERSION,
+  TUNNEL_TAGS,
   TunnelMux,
+  tunnelAlias,
   tunnelHost,
+  tunnelLabel,
   verifyP256,
   verifyRelayBinding,
 } from '@valet/core'
@@ -113,6 +116,11 @@ export async function startBlindRelay(options: BlindRelayOptions): Promise<Runni
   const origin = `https://${controlHost}`
   const denied = options.denied ?? (() => new Set<string>())
   const macs = new Map<string, MacLink>()
+  /**
+   * Macs' other names (tunnelAlias), by label, for every Mac signed in since the relay started:
+   * those names don't contain the macId, so only this table maps them back.
+   */
+  const aliases = new Map<string, string>()
   /** Callers waiting for a Mac that is between links, by macId. */
   const waiting = new Map<string, Set<(link: MacLink) => void>>()
   const silence = setInterval(
@@ -221,6 +229,7 @@ export async function startBlindRelay(options: BlindRelayOptions): Promise<Runni
       }),
     }
     macs.set(macId, link)
+    for (const tag of TUNNEL_TAGS) aliases.set(tunnelAlias(macId, tag), macId)
     ws.send(
       JSON.stringify({
         type: 'ready',
@@ -298,7 +307,10 @@ export async function startBlindRelay(options: BlindRelayOptions): Promise<Runni
       // No name can't be a Mac's: the control host answers it, as for a Mac dialling an address.
       if (hello.serverName === null || hello.serverName === controlHost)
         return serveControl(socket, first, hello.alpn)
-      const macId = macIdForHost(hello.serverName, options.macDomain)
+      const label = tunnelLabel(hello.serverName, options.macDomain)
+      const macId =
+        macIdForHost(hello.serverName, options.macDomain) ??
+        (label === null ? null : (aliases.get(label) ?? null))
       const link = macId === null ? undefined : macs.get(macId)
       if (macId === null || denied().has(macId)) {
         log(`refused name ${hello.serverName.slice(0, 100)}`)

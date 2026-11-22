@@ -94,14 +94,14 @@ describe('blindRelayFromEnv', () => {
     ).toEqual({ controlHost: 'relay.valet.test', macDomain: 'valet.test' })
   })
 
-  it("takes the Mac's other name's tag only as one short plain label", () => {
+  it("takes the Mac's other name's tag only as one of its digits", () => {
     const base = { VALET_BLIND_RELAY: 'relay.valet.test', VALET_BLIND_MAC_DOMAIN: 'valet.test' }
-    expect(blindRelayFromEnv({ ...base, VALET_BLIND_TAG: 'b7' })).toEqual({
+    expect(blindRelayFromEnv({ ...base, VALET_BLIND_TAG: '7' })).toEqual({
       controlHost: 'relay.valet.test',
       macDomain: 'valet.test',
-      tag: 'b7',
+      tag: '7',
     })
-    for (const tag of ['', 'a-b', 'A', 'x'.repeat(17), 'a.b'])
+    for (const tag of ['', '1', '10', 'b7', 'a-b', 'A'])
       expect(blindRelayFromEnv({ ...base, VALET_BLIND_TAG: tag })).toEqual({
         controlHost: 'relay.valet.test',
         macDomain: 'valet.test',
