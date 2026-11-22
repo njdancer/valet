@@ -229,6 +229,7 @@ import {
 import { type AppNotification, attentionTitle, Notifier } from './notifications'
 import { type FolderInstall, InstallError, installReason, PackageManager, rollbackEligible } from './packages'
 import { addsPermissions, permissionDiff } from './permission-diff'
+import { phoneAgents, phoneRecent } from './phone-status'
 import { Phones, type RelaySetup, relayFromHost } from './phones'
 import { type ApprovedSnapshot, type BuiltinAdapter, SnapshotStore, snapshotIntact } from './registry'
 import { RemoteAccess } from './remote'
@@ -533,6 +534,16 @@ const EVENTS_FOR: Readonly<Partial<Record<AuditEvent['type'], readonly AppEvent[
 
 /** What a phone's tabs show (relay-protocol's `status`), before the channel numbers it. */
 type PhoneStatusBody = Omit<Extract<MacToPhoneMessage, { type: 'status' }>, 'type' | 'seq'>
+/** The app events that can change what the phone's tabs show. */
+const PHONE_STATUS_EVENTS: ReadonlySet<AppEvent['type']> = new Set([
+  'adapters-changed',
+  'clients-changed',
+  'remote-changed',
+  'app-changed',
+  'runs-changed',
+])
+/** How long after a change the phone's tabs are rebuilt: long enough to take a burst as one. */
+const PHONE_STATUS_DELAY_MS = 1_500
 
 /** The write tools' setting names, as the signed `setting` subject names them (approvals/subjects.ts). */
 const SETTING_SUBJECT_NAMES = {
@@ -594,6 +605,9 @@ export class AppService {
   private readonly tunnel: BlindTunnel | null
   private readonly cloudflare: CloudflareRemote | null
   private phoneStatus: PhoneStatusBody | null = null
+  /** The last status sent, without its time, so an unchanged one isn't sent again. */
+  private phoneStatusSent: string | null = null
+  private phoneStatusTimer: ReturnType<typeof setTimeout> | null = null
   /** The write tools' side (admin-writer.ts): one for the app's life, so it remembers requests. */
   private writer: AdminWriterImpl | null = null
   /** Agents' feedback (feedback.ts): one for the app's life. */
@@ -1145,6 +1159,8 @@ export class AppService {
       })
       .catch(() => undefined)
     await this.cloudflare?.start().catch(() => undefined)
+    // The phone channel opened before the sites and agents were loaded: its tabs get them now.
+    if (this.phoneStatus !== null) await this.refreshPhoneStatus().catch(() => undefined)
     // Reports an agent sent while GitHub couldn't be reached, or before the token was there.
     void this.feedback()
       ?.flush()
@@ -1246,6 +1262,8 @@ export class AppService {
   async stop(): Promise<void> {
     this.updates?.stop()
     this.phones.stop()
+    if (this.phoneStatusTimer !== null) clearTimeout(this.phoneStatusTimer)
+    this.phoneStatusTimer = null
     this.cloudflare?.stop()
     if (this.pruneTimer !== null) clearInterval(this.pruneTimer)
     this.pruneTimer = null
@@ -1365,6 +1383,7 @@ export class AppService {
         ...this.repairItems(),
         ...this.missed.list(),
       ])
+    if (PHONE_STATUS_EVENTS.has(type)) this.schedulePhoneStatus()
     this.deps.emit({ type })
   }
 
@@ -1865,19 +1884,41 @@ export class AppService {
     }
   }
 
-  /** What the phone's tabs show: the sites, the agents, the devices. */
+  /**
+   * The phone's tabs follow the Mac: a site added, paused or loaded, an agent connected or a call
+   * made. Changes come in bursts (every call emits several), so one rebuild runs a moment after.
+   */
+  private schedulePhoneStatus(): void {
+    if (this.phoneStatus === null || this.phoneStatusTimer !== null) return
+    this.phoneStatusTimer = setTimeout(() => {
+      this.phoneStatusTimer = null
+      void this.refreshPhoneStatus().catch(() => undefined)
+    }, PHONE_STATUS_DELAY_MS)
+    this.phoneStatusTimer.unref?.()
+  }
+
+  /** What the phone's tabs show: the sites, the agents, the devices, the latest activity. */
   private async refreshPhoneStatus(): Promise<void> {
     const sites = await this.api.adapters.list().catch(() => [])
+    const records = await this.reader.records().catch(() => [] as readonly AuditRecord[])
+    const names = new Map(sites.map((a) => [a.id, a.name]))
     const devices = this.deviceStore
-    this.phoneStatus = {
-      at: new Date(this.deps.now()).toISOString(),
+    const body: Omit<PhoneStatusBody, 'at'> = {
       safety: this.lockedDown ? 'lockdown' : this.paused ? 'paused' : 'running',
       sites: sites.slice(0, 50).map((a) => ({
         adapterId: a.id,
         name: a.name.slice(0, 80),
         health: a.paused ? 'paused' : a.approval === 'approved' ? 'ok' : 'needs-you',
       })),
-      agents: [],
+      agents: phoneAgents(
+        (await this.clientInfos().catch(() => [])).map((c) => ({
+          id: c.id,
+          name: c.name,
+          revokedAt: c.revokedAt,
+        })),
+        this.remote.remoteClients(),
+        records,
+      ),
       devices:
         devices === null
           ? []
@@ -1887,8 +1928,13 @@ export class AppService {
               platform: d.platform,
               lastSeenAt: null,
             })),
-      recent: [],
+      recent: phoneRecent(records, (id) => names.get(id)),
     }
+    // The same tabs again send nothing: a burst of calls that changes no line costs the phone nothing.
+    const same = JSON.stringify(body)
+    if (same === this.phoneStatusSent) return
+    this.phoneStatusSent = same
+    this.phoneStatus = { at: new Date(this.deps.now()).toISOString(), ...body }
     this.phones.statusChanged()
   }
 
