@@ -52,12 +52,12 @@ jobs:
           set -u
           [[ "$MAC_HOST" =~ ^[0-9a-f]{32}\.valet\.dncr\.me$ ]] || { echo "not a Mac name"; exit 1; }
           fails=0
-          for i in $(seq 1 30); do
-            a=$(curl -sS -o /dev/null -m 10 -w '%{http_code} %{time_total}' "https://$MAC_HOST/.well-known/oauth-protected-resource/mcp" 2>&1)
-            b=$(curl -sS -o /dev/null -m 10 -w '%{http_code} %{time_total}' -X POST -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d '{}' "https://$MAC_HOST/mcp" 2>&1)
+          for i in $(seq 1 120); do
+            a=$(curl -sS -o /dev/null -m 10 -w '%{http_code} %{time_total}' "https://$MAC_HOST/.well-known/oauth-protected-resource/mcp" 2>&1 || true)
+            b=$(curl -sS -o /dev/null -m 10 -w '%{http_code} %{time_total}' -X POST -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d '{}' "https://$MAC_HOST/mcp" 2>&1 || true)
             echo "$(date -u +%H:%M:%S) metadata=$a mcp=$b"
             [[ "$a" == 200* && "$b" == 401* ]] || fails=$((fails + 1))
             sleep 1
           done
-          echo "failures: $fails of 30"
+          echo "failures: $fails of 120"
           [ "$fails" -eq 0 ]
