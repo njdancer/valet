@@ -1093,7 +1093,10 @@ export class AppService {
         audit: (call, result, durationMs) => this.auditNativeCall(call, result, durationMs),
         now: this.deps.now,
         changed: () => {
-          void this.refreshTools().catch(() => undefined)
+          // Agents holding Mail's tools list again: a session's first list is all claude.ai reads.
+          void this.refreshTools()
+            .then(() => this.remote.reopenHolding(MAIL_ADAPTER_ID))
+            .catch(() => undefined)
           this.emit('adapters-changed')
         },
       })

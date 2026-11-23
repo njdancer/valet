@@ -390,7 +390,8 @@ function AppAccess({ client }: { readonly client: ClientInfo }) {
 function AgentPage({ agent }: { readonly agent: RemoteClientItem }) {
   const api = useApi()
   const reach = useReach()
-  const setup = useLoad((a) => a.remote.setup(), [], ['remote-changed'])
+  // Mail turned on or off changes what can be given: adapters-changed, as for a site.
+  const setup = useLoad((a) => a.remote.setup(), [], ['remote-changed', 'adapters-changed'])
   const action = useAction()
   const [asking, setAsking] = useState(false)
   const granted = new Set(agent.grant?.tools ?? [])
