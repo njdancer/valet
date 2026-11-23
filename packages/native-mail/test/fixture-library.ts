@@ -3,7 +3,7 @@
 // database that names the accounts. No test ever reads the person's own.
 
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { messageFolder } from '../src/emlx'
 
@@ -30,6 +30,8 @@ export interface FixtureMessage {
   readonly partial?: boolean
   /** Put the file somewhere other than where Mail normally keeps it. */
   readonly misplaced?: boolean
+  /** Attachments Mail keeps beside the message: "<section>/<name>" to contents. */
+  readonly attachmentFiles?: Readonly<Record<string, string | Buffer>>
 }
 
 export const MAILBOXES: readonly (readonly [number, string])[] = [
@@ -299,6 +301,11 @@ export function buildLibrary(
         ? join(folder, 'UUID-1', 'Elsewhere', 'Deep')
         : join(folder, 'UUID-1', messageFolder(m.id))
     mkdirSync(dir, { recursive: true })
+    for (const [where, contents] of Object.entries(m.attachmentFiles ?? {})) {
+      const file = join(folder, 'UUID-1', 'Attachments', String(m.id), where)
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, contents)
+    }
     const body = Buffer.from(m.raw, 'utf8')
     const plist =
       '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>flags</key><integer>1</integer></dict></plist>\n'

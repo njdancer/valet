@@ -59,6 +59,9 @@ const detail = summary.extend({
   references: z.array(z.string()),
   body: z.string(),
   bodyTruncated: z.boolean(),
+  bodyOffset: z.number().int(),
+  nextOffset: z.number().int().nullable(),
+  links: z.array(z.object({ text: z.string(), url: z.string() })),
   downloaded: z.boolean(),
   attachments: z.array(z.object({ name: z.string(), contentType: z.string(), size: z.number() })),
 })
@@ -111,7 +114,23 @@ export const mailInputs = {
         .min(100)
         .max(MAX_BODY_CHARS)
         .optional()
-        .describe('How much of the body, 20,000 characters by default.'),
+        .describe('How much text to return, 20,000 characters by default.'),
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .max(10_000_000)
+        .optional()
+        .describe('Where to start in the body (or the attachment): a previous result’s nextOffset.'),
+      attachment: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe(
+          'Read this attachment instead of the body: its number in the message’s attachments, from 1.',
+        ),
     })
     .strict(),
   thread: z.object({ id: z.number().int().min(0).describe('Any message id in the conversation.') }).strict(),
@@ -190,7 +209,22 @@ export const mailOutputs = {
     note: z.string(),
   }),
   search: z.object({ messages: z.array(summary), nextOffset: z.number().int().nullable(), note: z.string() }),
-  read: z.object({ message: detail, note: z.string() }),
+  read: z.object({
+    message: detail.optional(),
+    attachment: z
+      .object({
+        index: z.number().int(),
+        name: z.string(),
+        contentType: z.string(),
+        size: z.number(),
+        text: z.string().nullable(),
+        offset: z.number().int(),
+        nextOffset: z.number().int().nullable(),
+        reason: z.enum(['binary', 'not-downloaded', 'too-large', 'unreadable']).optional(),
+      })
+      .optional(),
+    note: z.string(),
+  }),
   thread: z.object({ messages: z.array(detail), note: z.string() }),
   create_draft: z.object({ saved: z.boolean(), note: z.string() }),
   move: z.object({
@@ -222,8 +256,10 @@ const DECLARATIONS: Readonly<Record<MailToolName, Omit<ToolDeclaration, 'name'>>
   read: {
     title: 'Read a message',
     description:
-      'One message from Mail: its headers, the body as plain text, and attachment names (not their ' +
-      `contents). ${MAIL_DATA_NOTE}`,
+      'One message from Mail: its headers, the body as plain text, the links in it, and its attachments. ' +
+      'A long body comes in chunks: pass nextOffset as offset for the next one. To read an attachment, ' +
+      'pass its number (from 1) as attachment: text, CSV, calendar, HTML, PDF and forwarded messages come ' +
+      `back as text, in chunks the same way; images and other files give only their name, type and size. ${MAIL_DATA_NOTE}`,
     sideEffect: 'read',
   },
   thread: {
@@ -390,7 +426,11 @@ export async function callMailTool(
       }
       case 'read': {
         const q = mailInputs.read.parse(input)
-        const message = await deps.store.read(q.id, q.maxChars)
+        if (q.attachment !== undefined) {
+          const attachment = await deps.store.readAttachment(q.id, q.attachment, q.maxChars, q.offset)
+          return { status: 'ok', output: { attachment, note: MAIL_DATA_NOTE } }
+        }
+        const message = await deps.store.read(q.id, q.maxChars, q.offset)
         return { status: 'ok', output: { message, note: MAIL_DATA_NOTE } }
       }
       case 'thread': {

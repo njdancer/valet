@@ -163,6 +163,8 @@ export interface MailServiceDeps {
   readonly drafts: Pick<MailDrafts, 'save'>
   /** Moves and marks messages through Mail. Absent: agents can't organise mail in this build. */
   readonly organizer?: Pick<MailOrganizer, 'apply'>
+  /** A PDF attachment's text. Absent: agents get PDFs' names only. */
+  readonly pdfText?: (bytes: Buffer) => Promise<string | null>
   /** Records the messages a call moved (the audit log, which Undo reads). */
   readonly moved?: (moves: readonly MoveRecord[], call: ToolCall) => Promise<void>
   /** Audits a call and its end, as the runtime does for an adapter's tools. */
@@ -190,6 +192,7 @@ export class MailService implements NativeTools {
         ? null
         : new MailStore(deps.files, {
             allowedAccounts: () => new Set(this.current.enabled ? this.current.accounts : []),
+            ...(deps.pdfText === undefined ? {} : { pdfText: deps.pdfText }),
           })
   }
 

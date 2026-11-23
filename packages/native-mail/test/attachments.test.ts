@@ -1,0 +1,277 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { DirectMailFiles } from '../src/direct-files'
+import { htmlLinks } from '../src/mime'
+import { pdfText } from '../src/pdf'
+import { MailStore, MailStoreError } from '../src/store'
+import { callMailTool, mailOutputs } from '../src/tools'
+import { ALLOWED, buildLibrary, type FixtureMessage, MESSAGES } from './fixture-library'
+
+const crlf = (lines: readonly string[]): string => lines.join('\r\n')
+
+/** Plain and HTML parts, a CSV, a calendar, a PDF, an image and a forwarded message. */
+const WITH_FILES: FixtureMessage = {
+  id: 501,
+  mailbox: 1,
+  from: ['Shop', 'orders@shop.example'],
+  subject: 'Your order',
+  received: 1_763_800_000,
+  raw: crlf([
+    'From: Shop <orders@shop.example>',
+    'Subject: Your order',
+    'Message-ID: <order@shop.example>',
+    'MIME-Version: 1.0',
+    'Content-Type: multipart/mixed; boundary="outer"',
+    '',
+    '--outer',
+    'Content-Type: multipart/alternative; boundary="alt"',
+    '',
+    '--alt',
+    'Content-Type: text/plain; charset=utf-8',
+    '',
+    'Thanks for your order. Track it online.',
+    '--alt',
+    'Content-Type: text/html; charset=utf-8',
+    '',
+    '<p>Thanks for your order. <a href="https://shop.example/track?id=1&amp;x=2">Track it</a> or ' +
+      '<a href="mailto:help@shop.example">ask us</a>. <a href="javascript:alert(1)">no</a> ' +
+      '<a href="https://shop.example/track?id=1&amp;x=2">again</a></p>',
+    '--alt--',
+    '--outer',
+    'Content-Type: text/csv; charset=utf-8; name="items.csv"',
+    'Content-Disposition: attachment; filename="items.csv"',
+    '',
+    'item,qty',
+    'tea,2',
+    '--outer',
+    'Content-Type: text/calendar; charset=utf-8; name="delivery.ics"',
+    'Content-Disposition: attachment; filename="delivery.ics"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    Buffer.from('BEGIN:VCALENDAR\nSUMMARY:Delivery\nEND:VCALENDAR').toString('base64'),
+    '--outer',
+    'Content-Type: application/pdf; name="invoice.pdf"',
+    'Content-Disposition: attachment; filename="invoice.pdf"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    Buffer.from('%PDF-1.4 fake invoice').toString('base64'),
+    '--outer',
+    'Content-Type: image/png; name="logo.png"',
+    'Content-Disposition: attachment; filename="logo.png"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64'),
+    '--outer',
+    'Content-Type: message/rfc822',
+    '',
+    'From: Ada <ada@example.com>',
+    'To: Nick <me@example.com>',
+    'Subject: Earlier',
+    '',
+    'The forwarded words.',
+    '--outer--',
+  ]),
+}
+
+/** A partly downloaded message: its attachment is a stub, kept in a file of its own. */
+const PARTIAL: FixtureMessage = {
+  id: 502,
+  mailbox: 1,
+  from: ['Bank', 'statements@bank.example'],
+  subject: 'Statement',
+  received: 1_763_810_000,
+  partial: true,
+  raw: crlf([
+    'From: statements@bank.example',
+    'Subject: Statement',
+    'Content-Type: multipart/mixed; boundary="b"',
+    '',
+    '--b',
+    'Content-Type: text/plain',
+    '',
+    'Your statement is attached.',
+    '--b',
+    'Content-Type: text/csv; name="statement.csv"',
+    'Content-Disposition: attachment; filename="statement.csv"',
+    'X-Apple-Content-Length: 24',
+    '',
+    '',
+    '--b',
+    'Content-Type: text/plain; name="missing.txt"',
+    'Content-Disposition: attachment; filename="missing.txt"',
+    'X-Apple-Content-Length: 10',
+    '',
+    '',
+    '--b--',
+  ]),
+  attachmentFiles: { '2/statement.csv': 'date,amount\n1 Nov,-4.50' },
+}
+
+let root: string
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'valet-mail-att-'))
+})
+afterEach(() => {
+  rmSync(root, { recursive: true, force: true })
+})
+
+function store(pdf?: (bytes: Buffer) => Promise<string | null>): MailStore {
+  const paths = buildLibrary(mkdtempSync(join(root, 'lib-')), {
+    messages: [...MESSAGES, WITH_FILES, PARTIAL],
+  })
+  return new MailStore(new DirectMailFiles(paths), {
+    allowedAccounts: () => new Set([ALLOWED]),
+    ...(pdf === undefined ? {} : { pdfText: pdf }),
+  })
+}
+
+describe('reading a message in full', () => {
+  it('gives the links from the HTML part even when there is a plain-text part, each once', async () => {
+    const message = await store().read(501)
+    expect(message.body).toBe('Thanks for your order. Track it online.')
+    expect(message.links).toEqual([
+      { text: 'Track it', url: 'https://shop.example/track?id=1&x=2' },
+      { text: 'ask us', url: 'mailto:help@shop.example' },
+    ])
+    expect(message.attachments.map((a) => a.name)).toEqual([
+      'items.csv',
+      'delivery.ics',
+      'invoice.pdf',
+      'logo.png',
+      'forwarded message.eml',
+    ])
+  })
+
+  it('reads a long body in chunks', async () => {
+    const s = store()
+    const first = await s.read(501, 100, 0)
+    expect(first.bodyOffset).toBe(0)
+    expect(first.nextOffset).toBeNull()
+    const later = await s.read(501, 100, 11)
+    expect(later.body).toBe('your order. Track it online.')
+    expect(later.bodyOffset).toBe(11)
+  })
+
+  it('finds at most 100 links, only web and mail ones', () => {
+    const many = Array.from({ length: 150 }, (_, i) => `<a href="https://x.example/${i}">${i}</a>`).join('')
+    expect(htmlLinks(many)).toHaveLength(100)
+    expect(htmlLinks('<a href="file:///etc/passwd">x</a><a href=\'https://ok.example\'>ok</a>')).toEqual([
+      { text: 'ok', url: 'https://ok.example' },
+    ])
+  })
+})
+
+describe('reading an attachment', () => {
+  it('reads text, calendars and forwarded messages as text', async () => {
+    const s = store()
+    expect(await s.readAttachment(501, 1)).toMatchObject({
+      index: 1,
+      name: 'items.csv',
+      contentType: 'text/csv',
+      text: 'item,qty\ntea,2',
+      nextOffset: null,
+    })
+    expect((await s.readAttachment(501, 2)).text).toContain('SUMMARY:Delivery')
+    const forwarded = await s.readAttachment(501, 5)
+    expect(forwarded.text).toContain('From: Ada <ada@example.com>')
+    expect(forwarded.text).toContain('Subject: Earlier')
+    expect(forwarded.text).toContain('The forwarded words.')
+  })
+
+  it('reads a PDF through PDFKit, and says when it can’t', async () => {
+    const seen: string[] = []
+    const withPdf = store(async (bytes) => {
+      seen.push(bytes.toString('latin1'))
+      return 'Invoice total 42'
+    })
+    expect((await withPdf.readAttachment(501, 3)).text).toBe('Invoice total 42')
+    expect(seen).toEqual(['%PDF-1.4 fake invoice'])
+    expect(await store().readAttachment(501, 3)).toMatchObject({ text: null, reason: 'unreadable' })
+  })
+
+  it('gives an image’s name, type and size only', async () => {
+    expect(await store().readAttachment(501, 4)).toMatchObject({
+      name: 'logo.png',
+      contentType: 'image/png',
+      size: 4,
+      text: null,
+      reason: 'binary',
+    })
+  })
+
+  it('reads an attachment Mail keeps in a file of its own, and says when it isn’t downloaded', async () => {
+    const s = store()
+    const message = await s.read(502)
+    expect(message.attachments).toEqual([
+      { name: 'statement.csv', contentType: 'text/csv', size: 24 },
+      { name: 'missing.txt', contentType: 'text/plain', size: 10 },
+    ])
+    expect((await s.readAttachment(502, 1)).text).toBe('date,amount\n1 Nov,-4.50')
+    expect(await s.readAttachment(502, 2)).toMatchObject({ text: null, reason: 'not-downloaded' })
+  })
+
+  it('reads in chunks', async () => {
+    const s = store()
+    const first = await s.readAttachment(502, 1, 100, 0)
+    expect(first.nextOffset).toBeNull()
+    const later = await s.readAttachment(502, 1, 100, 12)
+    expect(later.text).toBe('1 Nov,-4.50')
+    expect(later.offset).toBe(12)
+  })
+
+  it('refuses an attachment number the message doesn’t have, and a message of another account', async () => {
+    const s = store()
+    await expect(s.readAttachment(501, 6)).rejects.toBeInstanceOf(MailStoreError)
+    await expect(s.readAttachment(11, 1)).rejects.toMatchObject({ code: 'not-found' })
+  })
+
+  it('is mail_read with an attachment number, in the shape it declares', async () => {
+    const s = store()
+    const deps = { store: s, drafts: { save: async () => ({ kind: 'failed' as const }) } }
+    // biome-ignore lint/suspicious/noExplicitAny: only the store is used here.
+    const result = await callMailTool(deps as any, 'read', { id: 501, attachment: 1 })
+    expect(result.status).toBe('ok')
+    if (result.status !== 'ok') return
+    const out = mailOutputs.read.parse(result.output)
+    expect(out.message).toBeUndefined()
+    expect(out.attachment?.text).toBe('item,qty\ntea,2')
+  })
+})
+
+describe('pdfText', () => {
+  it('runs the fixed script on a private copy and removes it', async () => {
+    let file = ''
+    const text = await pdfText(Buffer.from('%PDF-1.7 x'), async (args) => {
+      file = args[args.length - 1] as string
+      expect(args.slice(0, 2)).toEqual(['-l', 'JavaScript'])
+      return { code: 0, stdout: 'Page one\n' }
+    })
+    expect(text).toBe('Page one')
+    const { existsSync } = await import('node:fs')
+    expect(existsSync(file)).toBe(false)
+  })
+
+  it('reads nothing that isn’t a PDF, and nothing from a failed run', async () => {
+    expect(await pdfText(Buffer.from('hello'), async () => ({ code: 0, stdout: 'x' }))).toBeNull()
+    expect(await pdfText(Buffer.from('%PDF-1.7'), async () => ({ code: 1, stdout: '' }))).toBeNull()
+  })
+})
+
+describe('which of Mail’s files may be read', () => {
+  it('reads messages and attachment files, never the databases', async () => {
+    const { isMailMessageFile } = await import('../src/files')
+    expect(isMailMessageFile('ACCT/INBOX.mbox/U/Data/7.emlx')).toBe(true)
+    expect(isMailMessageFile('ACCT/INBOX.mbox/U/Attachments/7/1.2/a b.pdf')).toBe(true)
+    for (const path of [
+      'MailData/Envelope Index',
+      'ACCT/MailData/x.emlx',
+      'ACCT/Attachments/7/2/x',
+      'ACCT/INBOX.mbox/U/Attachments/seven/2/x',
+      'ACCT/INBOX.mbox/U/Attachments/7/x',
+      'ACCT/INBOX.mbox/U/../Attachments/7/2/x',
+    ])
+      expect(isMailMessageFile(path), path).toBe(false)
+  })
+})

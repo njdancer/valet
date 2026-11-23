@@ -120,6 +120,28 @@ final class MailAccessTests: XCTestCase {
     XCTAssertEqual(try ask(["v": 1, "op": "mail.file", "path": "ACCT/link.emlx"])["error"] as? String, "invalid")
   }
 
+  func testReadsAttachmentFilesBesideMessagesOnly() throws {
+    let dir = root + "/Mail/V10/ACCT/INBOX.mbox/UUID/Attachments/7/2"
+    try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    try "a,b\n1,2".write(toFile: dir + "/report.csv", atomically: true, encoding: .utf8)
+    let file = try ask(["v": 1, "op": "mail.file", "path": "ACCT/INBOX.mbox/UUID/Attachments/7/2/report.csv"])
+    XCTAssertEqual(Data(base64Encoded: file["base64"] as? String ?? "").map { String(decoding: $0, as: UTF8.self) }, "a,b\n1,2")
+    for path in [
+      "MailData/Attachments/7/2/x", "ACCT/Attachments/7/2/x", "ACCT/INBOX.mbox/UUID/Attachments/7/report.csv",
+      "ACCT/INBOX.mbox/UUID/Attachments/seven/2/report.csv", "ACCT/INBOX.mbox/UUID/Data/Messages/7.txt",
+    ] {
+      XCTAssertEqual(try ask(["v": 1, "op": "mail.file", "path": path])["error"] as? String, "invalid", path)
+    }
+    // An attachment-shaped link to Mail's database is followed and refused.
+    try FileManager.default.createSymbolicLink(
+      atPath: dir + "/index.csv", withDestinationPath: root + "/Mail/V10/MailData/Envelope Index")
+    XCTAssertEqual(
+      try ask(["v": 1, "op": "mail.file", "path": "ACCT/INBOX.mbox/UUID/Attachments/7/2/index.csv"])["error"] as? String,
+      "invalid")
+    XCTAssertTrue(isMailMessageFile("ACCT/INBOX.mbox/UUID/Attachments/7/1.2/a.pdf"))
+    XCTAssertFalse(isMailMessageFile("ACCT/INBOX.mbox/UUID/Attachments/7/2/x/y"))
+  }
+
   func testListsFolders() throws {
     let answer = try ask(["v": 1, "op": "mail.list", "path": "ACCT/INBOX.mbox/UUID/Data/Messages"])
     let entries = answer["entries"] as? [[String: Any]]

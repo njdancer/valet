@@ -5,6 +5,7 @@ import * as nodeFs from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
+  isMailMessageFile,
   type ListEntry,
   type MailDb,
   type MailFiles,
@@ -108,8 +109,11 @@ export class DirectMailFiles implements MailFiles {
   }
 
   async file(path: string): Promise<Buffer> {
+    if (!isMailMessageFile(path)) throw new MailFilesError('invalid')
     const resolved = await this.#inside(path)
-    if (!resolved.endsWith('.emlx')) throw new MailFilesError('invalid')
+    const library = await nodeFs.realpath(join(this.options.mailDir, await this.library()))
+    if (!isMailMessageFile(relative(library, resolved).split(sep).join('/')))
+      throw new MailFilesError('invalid')
     try {
       return await nodeFs.readFile(resolved)
     } catch {

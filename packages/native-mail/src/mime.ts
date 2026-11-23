@@ -15,6 +15,19 @@ export interface Attachment {
   readonly size: number
 }
 
+/** An attachment as found in the file: its MIME section ("2", "1.3") and decoded bytes. */
+export interface AttachmentPart extends Attachment {
+  readonly section: string
+  readonly charset: string | null
+  /** Empty when Mail keeps the attachment in a file of its own (a partly downloaded message). */
+  readonly data: Buffer
+}
+
+export interface Link {
+  readonly text: string
+  readonly url: string
+}
+
 export interface ParsedMessage {
   readonly headers: ReadonlyMap<string, readonly string[]>
   readonly subject: string | null
@@ -30,6 +43,10 @@ export interface ParsedMessage {
   /** The plain-text body: the text/plain part, or the HTML part as text. Empty when there is none. */
   readonly text: string
   readonly attachments: readonly Attachment[]
+  /** The same attachments in order, with their bytes; never handed to agents as such. */
+  readonly attachmentParts: readonly AttachmentPart[]
+  /** Web and mail links from the HTML part, whether or not there is a plain-text part. */
+  readonly links: readonly Link[]
 }
 
 const MAX_DEPTH = 8
@@ -301,11 +318,11 @@ function splitMultipart(body: Buffer, boundary: string): Buffer[] {
 interface Collected {
   plain: string | null
   html: string | null
-  attachments: Attachment[]
+  attachments: AttachmentPart[]
   parts: number
 }
 
-function walk(raw: Buffer, depth: number, found: Collected): void {
+function walk(raw: Buffer, depth: number, found: Collected, section = '1'): void {
   if (depth > MAX_DEPTH || found.parts >= MAX_PARTS) return
   found.parts++
   const { head, body } = splitMessage(raw)
@@ -317,7 +334,11 @@ function walk(raw: Buffer, depth: number, found: Collected): void {
   if (type.startsWith('multipart/')) {
     const boundary = contentType.params.get('boundary')
     if (boundary === undefined || boundary.length === 0) return
-    for (const part of splitMultipart(body, boundary)) walk(part, depth + 1, found)
+    const parts = splitMultipart(body, boundary)
+    // IMAP's section numbers: a top-level multipart's parts are 1, 2…; deeper ones 1.1, 1.2….
+    parts.forEach((part, i) => {
+      walk(part, depth + 1, found, depth === 0 ? `${i + 1}` : `${section}.${i + 1}`)
+    })
     return
   }
   const decoded = decodeTransfer(body, headers.get('content-transfer-encoding')?.[0])
@@ -331,10 +352,14 @@ function walk(raw: Buffer, depth: number, found: Collected): void {
     return
   }
   if (name !== null || isAttachment || type === 'message/rfc822') {
+    const declared = Number(headers.get('x-apple-content-length')?.[0])
     found.attachments.push({
-      name: name ?? (type === 'message/rfc822' ? 'forwarded message.eml' : 'attachment'),
+      name: decodeWords(name ?? (type === 'message/rfc822' ? 'forwarded message.eml' : 'attachment')),
       contentType: type,
-      size: decoded.length,
+      size: decoded.length === 0 && Number.isFinite(declared) && declared > 0 ? declared : decoded.length,
+      section,
+      charset: contentType.params.get('charset') ?? null,
+      data: decoded,
     })
   }
 }
@@ -359,7 +384,9 @@ export function parseMessage(raw: Buffer): ParsedMessage {
     inReplyTo: messageIds(first('in-reply-to'))[0] ?? null,
     references: messageIds(first('references')),
     text: normaliseText(text),
-    attachments: found.attachments,
+    attachments: found.attachments.map(({ name, contentType, size }) => ({ name, contentType, size })),
+    attachmentParts: found.attachments,
+    links: found.html === null ? [] : htmlLinks(found.html),
   }
 }
 
@@ -448,6 +475,26 @@ export function htmlToText(html: string): string {
     else if (tag === 'td' || tag === 'th') out += ' '
   }
   return decodeEntities(out)
+}
+
+const MAX_LINKS = 100
+
+/** The http(s) and mailto links in some HTML with their text, each address once, at most 100. */
+export function htmlLinks(html: string): Link[] {
+  const out: Link[] = []
+  const seen = new Set<string>()
+  const re = /<a\b[^>]*?\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a\s*>/gi
+  for (const m of html.matchAll(re)) {
+    const url = decodeEntities((m[1] ?? m[2] ?? m[3] ?? '').trim())
+    if (!/^(https?:|mailto:)/i.test(url) || url.length > 2_000 || seen.has(url)) continue
+    seen.add(url)
+    const text = normaliseText(htmlToText(m[4] ?? ''))
+      .replace(/\n/g, ' ')
+      .slice(0, 200)
+    out.push({ text, url })
+    if (out.length >= MAX_LINKS) break
+  }
+  return out
 }
 
 /** Line endings as \n, runs of spaces as one, at most one blank line in a row. */

@@ -8,7 +8,15 @@
 
 import { messageFolder, parseEmlx } from './emlx'
 import { type MailFiles, MailFilesError, type MailRow, type MailValue } from './files'
-import { type Address, parseMessage } from './mime'
+import {
+  type Address,
+  type AttachmentPart,
+  decodeCharset,
+  htmlToText,
+  type Link,
+  normaliseText,
+  parseMessage,
+} from './mime'
 
 export type MailStoreFailure =
   /** The helper isn't installed or running, or has no Full Disk Access, or Mail has no library. */
@@ -70,6 +78,11 @@ export interface MessageDetail extends MessageSummary {
   readonly references: readonly string[]
   readonly body: string
   readonly bodyTruncated: boolean
+  /** Where `body` starts in the whole text, and where the next chunk starts; null at the end. */
+  readonly bodyOffset: number
+  readonly nextOffset: number | null
+  /** Web and mail links from the HTML part. */
+  readonly links: readonly Link[]
   /** False when Mail hasn't downloaded the whole message, so parts of the body may be missing. */
   readonly downloaded: boolean
   readonly attachments: readonly {
@@ -77,6 +90,20 @@ export interface MessageDetail extends MessageSummary {
     readonly contentType: string
     readonly size: number
   }[]
+}
+
+/** One attachment as text, a chunk at a time. */
+export interface AttachmentText {
+  /** 1-based, in the order mail_read lists the attachments. */
+  readonly index: number
+  readonly name: string
+  readonly contentType: string
+  readonly size: number
+  /** Null when it can't be read as text; `reason` says why. */
+  readonly text: string | null
+  readonly offset: number
+  readonly nextOffset: number | null
+  readonly reason?: 'binary' | 'not-downloaded' | 'too-large' | 'unreadable'
 }
 
 export interface SearchQuery {
@@ -196,7 +223,17 @@ function str(value: MailValue | undefined): string | null {
 export interface MailStoreOptions {
   /** Mail's account ids (accounts()'s `id`) the person allowed agents to read. */
   readonly allowedAccounts: () => ReadonlySet<string>
+  /** A PDF's text (macOS's PDFKit in the app); without it PDFs are 'unreadable'. */
+  readonly pdfText?: (bytes: Buffer) => Promise<string | null>
 }
+
+/** Types read as text as they are. */
+const TEXT_TYPES =
+  /^(text\/(?!html)|application\/(json|xml|ics|csv|x-csv|x-sh|javascript|x-yaml|yaml|ld\+json)$)/
+const TEXT_NAMES = /\.(txt|csv|tsv|ics|vcs|vcf|json|xml|md|log|yaml|yml|ini|conf)$/i
+const HTML_NAMES = /\.html?$/i
+/** At most this much of an attachment is turned into text. */
+export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 
 export class MailStore {
   #schema: Schema | null = null
@@ -684,12 +721,153 @@ export class MailStore {
     return null
   }
 
-  async read(id: number, maxChars: number = DEFAULT_BODY_CHARS): Promise<MessageDetail> {
+  async read(id: number, maxChars: number = DEFAULT_BODY_CHARS, offset = 0): Promise<MessageDetail> {
     return this.#guard(async () => {
       const schema = await this.schema()
       const boxes = await this.#mailboxes(schema)
-      return this.#detail(id, schema, boxes, maxChars)
+      return this.#detail(id, schema, boxes, maxChars, offset)
     })
+  }
+
+  /**
+   * One attachment's text, from `offset`: text and calendar files as they are, HTML as text, a
+   * forwarded message as its headers and text, a PDF through `pdfText`. Others come back with no
+   * text and reason 'binary'. `index` is 1-based, as mail_read lists them.
+   */
+  async readAttachment(
+    id: number,
+    index: number,
+    maxChars: number = DEFAULT_BODY_CHARS,
+    offset = 0,
+  ): Promise<AttachmentText> {
+    return this.#guard(async () => {
+      const schema = await this.schema()
+      const boxes = await this.#mailboxes(schema)
+      const row = await this.#row(id, schema, boxes)
+      const box = boxes.find((b) => b.id === (num(row?.['mailbox']) ?? -1))
+      if (row === null || box === undefined) throw new MailStoreError('not-found')
+      const found = await this.#findFile(id, box)
+      if (found === null) throw new MailStoreError('not-found')
+      const parsed = parseMessage(parseEmlx(found.bytes, found.partial).message)
+      const part = parsed.attachmentParts[index - 1]
+      if (part === undefined) throw new MailStoreError('not-found')
+      const base = { index, name: part.name, contentType: part.contentType, size: part.size }
+      const empty = (reason: NonNullable<AttachmentText['reason']>): AttachmentText => ({
+        ...base,
+        text: null,
+        offset: 0,
+        nextOffset: null,
+        reason,
+      })
+      let data = part.data
+      if (data.length === 0) {
+        const own = await this.#attachmentFile(id, box, part)
+        if (own === 'too-large') return empty('too-large')
+        if (own === null) return empty('not-downloaded')
+        data = own
+      }
+      const text = await this.#attachmentText(part, data)
+      if (text === 'binary' || text === 'unreadable') return empty(text)
+      const limit = Math.min(Math.max(100, Math.floor(maxChars)), MAX_BODY_CHARS)
+      const from = Math.min(Math.max(0, Math.floor(offset)), text.length)
+      const end = Math.min(text.length, from + limit)
+      return {
+        ...base,
+        text: text.slice(from, end),
+        offset: from,
+        nextOffset: end < text.length ? end : null,
+      }
+    })
+  }
+
+  async #attachmentText(part: AttachmentPart, data: Buffer): Promise<string | 'binary' | 'unreadable'> {
+    const type = part.contentType.toLowerCase()
+    if (type === 'text/html' || (type === 'application/octet-stream' && HTML_NAMES.test(part.name)))
+      return normaliseText(htmlToText(decodeCharset(data, part.charset)))
+    if (TEXT_TYPES.test(type) || TEXT_NAMES.test(part.name))
+      return normaliseText(decodeCharset(data, part.charset))
+    if (type === 'message/rfc822' || /\.eml$/i.test(part.name)) {
+      const inner = parseMessage(data)
+      const who = (list: readonly Address[]): string =>
+        list.map((a) => (a.name === null ? a.address : `${a.name} <${a.address}>`)).join(', ')
+      const lines = [
+        `From: ${who(inner.from)}`,
+        `To: ${who(inner.to)}`,
+        ...(inner.cc.length > 0 ? [`Cc: ${who(inner.cc)}`] : []),
+        `Subject: ${inner.subject ?? ''}`,
+        ...(inner.date === null ? [] : [`Date: ${inner.date}`]),
+        ...(inner.attachments.length > 0
+          ? [`Attachments: ${inner.attachments.map((a) => a.name).join(', ')}`]
+          : []),
+        '',
+        inner.text,
+      ]
+      return lines.join('\n')
+    }
+    if (type === 'application/pdf' || /\.pdf$/i.test(part.name)) {
+      if (this.options.pdfText === undefined) return 'unreadable'
+      try {
+        const text = await this.options.pdfText(data)
+        return text === null ? 'unreadable' : normaliseText(text)
+      } catch {
+        return 'unreadable'
+      }
+    }
+    return 'binary'
+  }
+
+  /**
+   * An attachment Mail keeps in a file of its own: <mailbox>/<folder>/Attachments/<id>/<section>/<name>.
+   * Null when it isn't there (Mail hasn't downloaded it).
+   */
+  async #attachmentFile(
+    id: number,
+    box: MailboxRow,
+    part: AttachmentPart,
+  ): Promise<Buffer | null | 'too-large'> {
+    let children: readonly { name: string; dir: boolean }[]
+    try {
+      children = await this.files.list(box.folder)
+    } catch {
+      return null
+    }
+    const roots = children
+      .filter((c) => c.dir && !c.name.endsWith('.mbox'))
+      .map((c) => `${box.folder}/${c.name}`)
+    for (const root of roots) {
+      const dir = `${root}/Attachments/${id}`
+      let sections: readonly { name: string; dir: boolean }[]
+      try {
+        sections = await this.files.list(dir)
+      } catch {
+        continue
+      }
+      const ordered = [
+        ...sections.filter((s) => s.dir && s.name === part.section),
+        ...sections.filter((s) => s.dir && s.name !== part.section),
+      ]
+      for (const section of ordered) {
+        let names: readonly { name: string; dir: boolean }[]
+        try {
+          names = await this.files.list(`${dir}/${section.name}`)
+        } catch {
+          continue
+        }
+        const files = names.filter((n) => !n.dir)
+        const pick =
+          files.find((f) => f.name === part.name) ??
+          (section.name === part.section && files.length === 1 ? files[0] : undefined)
+        if (pick === undefined) continue
+        try {
+          return await this.files.file(`${dir}/${section.name}/${pick.name}`)
+        } catch (error) {
+          if (error instanceof MailFilesError && error.code === 'too-large') return 'too-large'
+          if (error instanceof MailFilesError && error.code === 'unavailable') throw error
+          return null
+        }
+      }
+    }
+    return null
   }
 
   async #detail(
@@ -697,6 +875,7 @@ export class MailStore {
     schema: Schema,
     boxes: readonly MailboxRow[],
     maxChars: number,
+    offset = 0,
   ): Promise<MessageDetail> {
     const row = await this.#row(id, schema, boxes)
     const byId = new Map(boxes.map((b) => [b.id, b]))
@@ -728,13 +907,18 @@ export class MailStore {
         references: [],
         body: '',
         bodyTruncated: false,
+        bodyOffset: 0,
+        nextOffset: null,
+        links: [],
         downloaded: false,
         attachments: attachmentNames,
       }
     }
     const emlx = parseEmlx(found.bytes, found.partial)
     const parsed = parseMessage(emlx.message)
-    const body = parsed.text.length > limit ? parsed.text.slice(0, limit) : parsed.text
+    const from = Math.min(Math.max(0, Math.floor(offset)), parsed.text.length)
+    const end = Math.min(parsed.text.length, from + limit)
+    const body = parsed.text.slice(from, end)
     return {
       ...summary,
       preview: summary.preview ?? previewOf(parsed.text),
@@ -747,7 +931,10 @@ export class MailStore {
       inReplyTo: parsed.inReplyTo,
       references: parsed.references,
       body,
-      bodyTruncated: parsed.text.length > limit,
+      bodyTruncated: end < parsed.text.length,
+      bodyOffset: from,
+      nextOffset: end < parsed.text.length ? end : null,
+      links: parsed.links,
       downloaded: emlx.complete,
       attachments: parsed.attachments.length > 0 ? parsed.attachments : attachmentNames,
     }

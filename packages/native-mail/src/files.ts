@@ -20,6 +20,24 @@ export class MailFilesError extends Error {
   }
 }
 
+/**
+ * A message file (.emlx), or an attachment Mail keeps beside messages
+ * (<mailbox>.mbox/…/Attachments/<row>/<part>/<name>); never MailData. The reader helper's rule too.
+ */
+export function isMailMessageFile(relative: string): boolean {
+  const parts = relative.split('/')
+  if (
+    parts[0] === 'MailData' ||
+    parts.includes('MailData') ||
+    parts.some((p) => p === '' || p === '.' || p === '..')
+  )
+    return false
+  if (relative.endsWith('.emlx')) return true
+  const at = parts.indexOf('Attachments')
+  if (at <= 0 || parts.length !== at + 4 || !/^\d+$/.test(parts[at + 1] ?? '')) return false
+  return parts.slice(0, at).some((p) => p.endsWith('.mbox'))
+}
+
 export interface ListEntry {
   readonly name: string
   readonly dir: boolean

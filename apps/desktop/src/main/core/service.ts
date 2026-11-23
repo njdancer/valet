@@ -417,6 +417,7 @@ export interface ServiceDeps {
     readonly drafts: Pick<MailDrafts, 'save'>
     /** Moves and marks messages through Mail; absent, agents can't organise mail. */
     readonly organizer?: Pick<MailOrganizer, 'apply'>
+    readonly pdfText?: (bytes: Buffer) => Promise<string | null>
   } | null
   /** This Mac's name, as a paired phone shows it. */
   readonly macName?: string
@@ -1101,6 +1102,7 @@ export class AppService {
         files: mail.files,
         drafts: mail.drafts,
         ...(mail.organizer === undefined ? {} : { organizer: mail.organizer }),
+        ...(mail.pdfText === undefined ? {} : { pdfText: mail.pdfText }),
         moved: (moves, call) => this.auditMailMoves(moves, call, null),
         audit: (call, result, durationMs) => this.auditNativeCall(call, result, durationMs),
         now: this.deps.now,
