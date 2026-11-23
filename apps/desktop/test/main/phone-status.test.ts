@@ -32,7 +32,7 @@ function parses(agents: unknown, recent: unknown): boolean {
 }
 
 describe('the phone’s Agents tab', () => {
-  it('lists local apps and remote connectors, most recently used first, and leaves out revoked apps', () => {
+  it('lists local apps and approved remote connectors, most recently used first, and leaves out revoked apps and unapproved registrations', () => {
     const records = [
       called('2026-11-22T10:00:00.000Z', 'remote:r_claude'),
       called('2026-11-22T10:05:00.000Z', 'local:c_code'),
@@ -43,8 +43,15 @@ describe('the phone’s Agents tab', () => {
         { id: 'c_old', name: 'Old app', revokedAt: '2026-11-01T00:00:00.000Z' },
       ],
       [
-        { id: 'r_claude', host: 'claude.ai', clientName: 'Claude' },
-        { id: 'r_idle', host: 'chatgpt.com', clientName: null },
+        {
+          id: 'r_claude',
+          host: 'claude.ai',
+          clientName: 'Claude',
+          grant: { tools: ['wikipedia.get_summary'] },
+        },
+        { id: 'r_idle', host: 'chatgpt.com', clientName: null, grant: { tools: [] } },
+        // Registered, never let in: the outside connector check leaves these on every run.
+        { id: 'r_check', host: 'claude.ai', clientName: 'Valet connector check', grant: null },
       ],
       records,
     )
@@ -71,6 +78,7 @@ describe('the phone’s Agents tab', () => {
       id: `r_${i}`,
       host: 'evil.example',
       clientName: `bad‮name\u0000${'x'.repeat(200)}`,
+      grant: { tools: [] },
     }))
     const agents = phoneAgents([{ id: 'c_x', name: '​', revokedAt: null }], remote, [])
     expect(agents).toHaveLength(PHONE_LIST_MAX)

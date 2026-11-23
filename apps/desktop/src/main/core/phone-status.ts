@@ -34,11 +34,15 @@ export interface RemoteAgent {
   readonly id: string
   readonly host: string
   readonly clientName: string | null
+  /** What the person granted it; null while it has only registered. */
+  readonly grant: { readonly tools: readonly string[] } | null
 }
 
 /**
  * The agents that can call this Mac: each app added here that isn't revoked, and each remote
- * connector kept (claude.ai and the like), the most recently used first.
+ * connector the person let in (claude.ai and the like), the most recently used first. A connector
+ * that only registered can call nothing (anyone may register, and the outside connector check does
+ * on every run), so it isn't listed until the person approves it.
  */
 export function phoneAgents(
   local: readonly LocalAgent[],
@@ -57,6 +61,7 @@ export function phoneAgents(
     agents.push({ clientId, label, transport: 'local', lastCallAt: iso(lastCall.get(clientId)) })
   }
   for (const c of remote) {
+    if (c.grant === null) continue
     const clientId = `remote:${c.id}`
     // The host is the claimed identity the Mac shows first; the self-chosen name only after it.
     const name = phoneText(c.clientName, 40)
