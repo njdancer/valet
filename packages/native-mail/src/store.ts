@@ -134,6 +134,21 @@ interface MailboxRow {
 
 const APPLE_EPOCH_SECONDS = 978_307_200
 
+/** How much of a message's body stands in for Mail's own summary. */
+export const PREVIEW_CHARS = 200
+/** At most this much of Mail's files is read for previews in one search. */
+const PREVIEW_BYTE_BUDGET = 8 * 1024 * 1024
+
+/** The start of a body as one line, cut at a word near PREVIEW_CHARS; null when there's no text. */
+export function previewOf(text: string): string | null {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  if (flat.length === 0) return null
+  if (flat.length <= PREVIEW_CHARS) return flat
+  const cut = flat.slice(0, PREVIEW_CHARS)
+  const space = cut.lastIndexOf(' ')
+  return `${(space > PREVIEW_CHARS * 0.6 ? cut.slice(0, space) : cut).trimEnd()}…`
+}
+
 /** `imap://ACCOUNT/INBOX/Sub` → account ACCOUNT, path INBOX/Sub, folder ACCOUNT/INBOX.mbox/Sub.mbox. */
 export function parseMailboxUrl(
   url: string,
@@ -460,7 +475,7 @@ export class MailStore {
       date: this.#toIso(num(row['date_received']), schema),
       unread: num(row['read']) === 0,
       flagged: (num(row['flagged']) ?? 0) !== 0,
-      preview: str(row['summary']),
+      preview: previewOf(str(row['summary']) ?? ''),
     }
   }
 
@@ -543,12 +558,47 @@ export class MailStore {
       params.push(limit + 1, offset)
       const rows = await this.files.query('envelope', sql, params)
       const byId = new Map(boxes.map((b) => [b.id, b]))
-      const messages = rows
-        .slice(0, limit)
-        .map((r) => this.#summary(r, byId, schema))
-        .filter((m): m is MessageSummary => m !== null)
+      const found: { message: MessageSummary; box: MailboxRow }[] = []
+      for (const r of rows.slice(0, limit)) {
+        const message = this.#summary(r, byId, schema)
+        const box = byId.get(num(r['mailbox']) ?? -1)
+        if (message !== null && box !== undefined) found.push({ message, box })
+      }
+      const messages = await this.#withPreviews(found)
       return { messages, nextOffset: rows.length > limit ? offset + limit : null }
     })
+  }
+
+  /**
+   * Mail often keeps no summary of its own (on recent macOS, hardly ever), so a message without one
+   * gets the start of its body instead. Reading stops once PREVIEW_BYTE_BUDGET of files have been
+   * read for one search; the rest keep a null preview. A file that can't be read or parsed is skipped.
+   */
+  async #withPreviews(
+    found: readonly { readonly message: MessageSummary; readonly box: MailboxRow }[],
+  ): Promise<MessageSummary[]> {
+    let budget = PREVIEW_BYTE_BUDGET
+    const out: MessageSummary[] = []
+    for (const { message, box } of found) {
+      if (message.preview !== null || budget <= 0) {
+        out.push(message)
+        continue
+      }
+      let preview: string | null = null
+      try {
+        const file = await this.#findFile(message.id, box)
+        if (file !== null) {
+          budget -= file.bytes.length
+          const parsed = parseMessage(parseEmlx(file.bytes, file.partial).message)
+          preview = previewOf(parsed.text)
+        }
+      } catch (error) {
+        if (error instanceof MailStoreError) throw error
+        if (error instanceof MailFilesError && error.code === 'unavailable') throw error
+      }
+      out.push(preview === null ? message : { ...message, preview })
+    }
+    return out
   }
 
   /** Message row ids whose file Spotlight matches, from the file names. */
@@ -687,6 +737,7 @@ export class MailStore {
     const body = parsed.text.length > limit ? parsed.text.slice(0, limit) : parsed.text
     return {
       ...summary,
+      preview: summary.preview ?? previewOf(parsed.text),
       subject: parsed.subject ?? summary.subject,
       from: parsed.from[0] ?? summary.from,
       to: parsed.to,
