@@ -223,6 +223,19 @@ function str(value: MailValue | undefined): string | null {
 export interface MailStoreOptions {
   /** Mail's account ids (accounts()'s `id`) the person allowed agents to read. */
   readonly allowedAccounts: () => ReadonlySet<string>
+  /**
+   * A message's whole source through Mail, for an attachment Mail hasn't downloaded: Mail fetches
+   * it from the server. Without it such attachments are 'not-downloaded'.
+   */
+  readonly fetchSource?: (message: {
+    readonly messageId: string | null
+    readonly accountId: string
+    readonly mailbox: string
+    readonly rowId: number
+    readonly subject: string
+    readonly sender: string | null
+    readonly date: string | null
+  }) => Promise<Buffer | null>
   /** A PDF's text (macOS's PDFKit in the app); without it PDFs are 'unreadable'. */
   readonly pdfText?: (bytes: Buffer) => Promise<string | null>
 }
@@ -763,8 +776,9 @@ export class MailStore {
       if (data.length === 0) {
         const own = await this.#attachmentFile(id, box, part)
         if (own === 'too-large') return empty('too-large')
-        if (own === null) return empty('not-downloaded')
-        data = own
+        const fetched = own === null ? await this.#fromMail(id, row, box, parsed, part, schema) : own
+        if (fetched === null) return empty('not-downloaded')
+        data = fetched
       }
       const text = await this.#attachmentText(part, data)
       if (text === 'binary' || text === 'unreadable') return empty(text)
@@ -778,6 +792,40 @@ export class MailStore {
         nextOffset: end < text.length ? end : null,
       }
     })
+  }
+
+  /** The attachment from the whole message as Mail gives it (downloading it if it must). */
+  async #fromMail(
+    id: number,
+    row: MailRow,
+    box: MailboxRow,
+    parsed: ReturnType<typeof parseMessage>,
+    part: AttachmentPart,
+    schema: Schema,
+  ): Promise<Buffer | null> {
+    if (this.options.fetchSource === undefined) return null
+    const summary = this.#summary(row, new Map([[box.id, box]]), schema)
+    if (summary === null) return null
+    let source: Buffer | null
+    try {
+      source = await this.options.fetchSource({
+        messageId: parsed.messageId,
+        accountId: box.accountId,
+        mailbox: box.path,
+        rowId: id,
+        subject: parsed.subject ?? summary.subject,
+        sender: parsed.from[0]?.address ?? summary.from?.address ?? null,
+        date: summary.date,
+      })
+    } catch {
+      return null
+    }
+    if (source === null) return null
+    const whole = parseMessage(source).attachmentParts
+    const same =
+      whole.find((p) => p.section === part.section && p.name === part.name) ??
+      whole.find((p) => p.name === part.name && p.contentType === part.contentType)
+    return same === undefined || same.data.length === 0 ? null : same.data
   }
 
   async #attachmentText(part: AttachmentPart, data: Buffer): Promise<string | 'binary' | 'unreadable'> {

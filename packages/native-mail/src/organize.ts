@@ -5,6 +5,7 @@
 //
 // The script is fixed; the request travels as one JSON argument, never as script text.
 
+import { execFile } from 'node:child_process'
 import { execRunner, type Runner } from './drafts'
 
 /**
@@ -34,6 +35,11 @@ export type OrganizeRequest =
       readonly items: readonly OrganizeItem[]
       /** The mailbox path to move to, in each item's own account. */
       readonly to: string
+    }
+  | {
+      /** One message's whole source (the first item only), to read an attachment Mail hasn't downloaded. */
+      readonly kind: 'source'
+      readonly items: readonly OrganizeItem[]
     }
   | {
       readonly kind: 'mark'
@@ -125,6 +131,10 @@ function run(argv) {
     var box = account === null ? null : boxAt(account, item.mailbox);
     var msg = box === null ? null : findIn(box, item);
     if (msg === null) { results.push('not-found'); continue; }
+    if (req.kind === 'source') {
+      // The whole message as Mail has it; Mail fetches what it hasn't downloaded from the server.
+      return JSON.stringify({ kind: 'source', source: String(msg.source()) });
+    }
     if (req.kind === 'move') {
       var dest = boxAt(account, req.to);
       if (dest === null) return JSON.stringify({ kind: 'no-mailbox' });
@@ -139,6 +149,26 @@ function run(argv) {
 }
 `
 
+export type SourceOutcome =
+  | { readonly kind: 'done'; readonly source: Buffer }
+  | { readonly kind: 'not-found' }
+  | { readonly kind: 'not-allowed' }
+  | { readonly kind: 'failed' }
+
+/** A whole message's source can be large: 25 MB of attachments, as base64 and JSON. */
+const sourceRunner: Runner = (file, args, timeoutMs) =>
+  new Promise((resolve) => {
+    execFile(
+      file,
+      [...args],
+      { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        const code = error === null ? 0 : typeof error.code === 'number' ? error.code : null
+        resolve({ code, stdout: String(stdout), stderr: String(stderr) })
+      },
+    )
+  })
+
 /** Mail's -1743: the person hasn't allowed this app to control Mail. */
 const NOT_ALLOWED = /-1743|not allowed to send Apple events|Not authorized/i
 
@@ -146,7 +176,32 @@ export class MailOrganizer {
   constructor(
     private readonly run: Runner = execRunner,
     private readonly timeoutMs = 120_000,
+    private readonly runSource: Runner = sourceRunner,
   ) {}
+
+  /** One message's whole source through Mail, which downloads it first if it must. Read-only. */
+  async source(item: OrganizeItem): Promise<SourceOutcome> {
+    const result = await this.runSource(
+      '/usr/bin/osascript',
+      ['-l', 'JavaScript', '-e', ORGANIZE_SCRIPT, JSON.stringify({ kind: 'source', items: [item] })],
+      this.timeoutMs,
+    )
+    if (result.code !== 0)
+      return NOT_ALLOWED.test(result.stderr) ? { kind: 'not-allowed' } : { kind: 'failed' }
+    try {
+      const parsed = JSON.parse(result.stdout.trim()) as {
+        kind?: unknown
+        source?: unknown
+        results?: unknown
+      }
+      if (parsed.kind === 'source' && typeof parsed.source === 'string' && parsed.source.length > 0)
+        return { kind: 'done', source: Buffer.from(parsed.source, 'utf8') }
+      if (parsed.kind === 'done') return { kind: 'not-found' }
+    } catch {
+      // Below.
+    }
+    return { kind: 'failed' }
+  }
 
   async apply(request: OrganizeRequest): Promise<OrganizeOutcome> {
     if (request.items.length === 0) return { kind: 'done', results: [] }

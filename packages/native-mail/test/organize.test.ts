@@ -203,6 +203,19 @@ describe('ORGANIZE_SCRIPT', () => {
     expect(a).toEqual({ id: 'a', readStatus: true, flaggedStatus: false })
   })
 
+  it('gives one message’s whole source, and nothing for a message it can’t find', () => {
+    const a = { id: 'a', source: () => 'From: x\r\n\r\nbody' }
+    const boxes = { INBOX: box('INBOX', [a as FakeMessage]) }
+    expect(run({ kind: 'source', items: [item('a')] }, boxes).out).toEqual({
+      kind: 'source',
+      source: 'From: x\r\n\r\nbody',
+    })
+    expect(run({ kind: 'source', items: [item('gone')] }, boxes).out).toEqual({
+      kind: 'done',
+      results: ['not-found'],
+    })
+  })
+
   it('starts Mail when it is closed', () => {
     expect(
       run({ kind: 'mark', items: [item('a')], read: true }, { INBOX: box('INBOX', [{ id: 'a' }]) }, false)
@@ -236,6 +249,26 @@ describe('MailOrganizer', () => {
     expect(
       await organizer(1, '', 'execution error: Not authorized to send Apple events (-1743)').apply(request),
     ).toEqual({ kind: 'not-allowed' })
+  })
+
+  it('reads a whole source, and treats an answer with none as not found', async () => {
+    const item = { messageId: 'a', accountId: ALLOWED, mailbox: 'INBOX' }
+    const withSource = (stdout: string, code = 0) =>
+      new MailOrganizer(
+        async () => ({ code: 0, stdout: '', stderr: '' }),
+        1_000,
+        async (_file, args) => {
+          expect(JSON.parse(args.at(-1) as string)).toEqual({ kind: 'source', items: [item] })
+          return { code, stdout, stderr: '' }
+        },
+      )
+    const got = await withSource('{"kind":"source","source":"From: x\\r\\n\\r\\nhi"}').source(item)
+    expect(got.kind === 'done' && got.source.toString()).toBe('From: x\r\n\r\nhi')
+    expect(await withSource('{"kind":"done","results":["not-found"]}').source(item)).toEqual({
+      kind: 'not-found',
+    })
+    expect(await withSource('nope').source(item)).toEqual({ kind: 'failed' })
+    expect(await withSource('', 1).source(item)).toEqual({ kind: 'failed' })
   })
 })
 

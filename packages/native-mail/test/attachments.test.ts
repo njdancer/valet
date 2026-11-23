@@ -120,13 +120,17 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
-function store(pdf?: (bytes: Buffer) => Promise<string | null>): MailStore {
+function store(
+  pdf?: (bytes: Buffer) => Promise<string | null>,
+  fetchSource?: ConstructorParameters<typeof MailStore>[1]['fetchSource'],
+): MailStore {
   const paths = buildLibrary(mkdtempSync(join(root, 'lib-')), {
     messages: [...MESSAGES, WITH_FILES, PARTIAL, PARTIAL_DEEP],
   })
   return new MailStore(new DirectMailFiles(paths), {
     allowedAccounts: () => new Set([ALLOWED]),
     ...(pdf === undefined ? {} : { pdfText: pdf }),
+    ...(fetchSource === undefined ? {} : { fetchSource }),
   })
 }
 
@@ -215,6 +219,32 @@ describe('reading an attachment', () => {
     expect(await s.readAttachment(502, 2)).toMatchObject({ text: null, reason: 'not-downloaded' })
     // Data/0/4/Attachments/40487/2/statement.csv, beside Data/0/4/Messages.
     expect((await s.readAttachment(40487, 1)).text).toBe('date,amount\n1 Nov,-4.50')
+  })
+
+  it('asks Mail for the whole message when the attachment isn’t on disk, and reads it from that', async () => {
+    const asked: unknown[] = []
+    const whole = (PARTIAL.raw as string)
+      .replace('X-Apple-Content-Length: 10\r\n\r\n\r\n', '\r\nfetched it\r\n')
+      .replace('X-Apple-Content-Length: 24\r\n', '')
+    const s = store(undefined, async (message) => {
+      asked.push(message)
+      return Buffer.from(whole)
+    })
+    expect((await s.readAttachment(502, 2)).text).toBe('fetched it')
+    expect(asked).toEqual([
+      {
+        messageId: null,
+        accountId: ALLOWED,
+        mailbox: 'INBOX',
+        rowId: 502,
+        subject: 'Statement',
+        sender: 'statements@bank.example',
+        date: expect.any(String),
+      },
+    ])
+    // Mail couldn't get it either.
+    const none = store(undefined, async () => null)
+    expect(await none.readAttachment(502, 2)).toMatchObject({ reason: 'not-downloaded' })
   })
 
   it('reads in chunks', async () => {

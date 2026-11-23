@@ -88,7 +88,9 @@ private temporary copy, removed afterwards). Images and other files give only na
 When Mail has only part of a message, it keeps the attachment beside it in
 `<mailbox>.mbox/<folder>/Attachments/<row>/<MIME section>/<name>`; the reader helper opens files
 there and `.emlx` files, nothing else (never MailData), checked again after following links. One it
-hasn't downloaded comes back as `reason: "not-downloaded"`.
+hasn't downloaded is fetched through Mail instead: the same fixed script returns the
+message's whole `source` (Mail downloads it if it must, read-only), and the attachment is read from
+that. Only when Mail can't give it either does it come back as `reason: "not-downloaded"`.
 
 `links` lists the web and mail links of the HTML part, each once, at most 100, even when the body
 comes from the plain-text part.
