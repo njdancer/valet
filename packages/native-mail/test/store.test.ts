@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DirectMailFiles } from '../src/direct-files'
 import { type MailFiles, MailFilesError } from '../src/files'
-import { MailStore, MailStoreError, parseMailboxUrl } from '../src/store'
+import { MailStore, MailStoreError, PREVIEW_CHARS, parseMailboxUrl, previewOf } from '../src/store'
 import {
   ALLOWED,
   buildLibrary,
@@ -123,6 +123,34 @@ describe('MailStore', () => {
       date: '2025-11-21T04:40:00.000Z',
       preview: 'The analytical engine weaves algebraic patterns',
     })
+  })
+
+  it('gives a message without a summary of Mail’s the start of its body as its preview', async () => {
+    const previews = new Map((await store().search({})).messages.map((m) => [m.id, m.preview]))
+    expect(previews.get(7)).toBe('The analytical engine weaves algebraic patterns')
+    expect(previews.get(8)).toBe('Thanks — lovely.')
+    expect(previews.get(1234)).toBe('Total: 42 £')
+    expect(previews.get(12)).toBe('Hidden word: zebra')
+    // No body text, and no file at all.
+    expect(previews.get(9)).toBeNull()
+    expect(previews.get(13)).toBeNull()
+  })
+
+  it('keeps Mail’s own summary short too', async () => {
+    const long = `${'Mail keeps the whole body here. '.repeat(30)}`
+    const messages = MESSAGES.map((m) => (m.id === 7 ? { ...m, summary: long } : m))
+    const seven = (await store({ messages }).search({})).messages.find((m) => m.id === 7)
+    expect(seven?.preview?.length).toBeLessThanOrEqual(PREVIEW_CHARS + 1)
+    expect(seven?.preview?.startsWith('Mail keeps the whole body here.')).toBe(true)
+  })
+
+  it('cuts a long body to one line near the preview length, at a word', () => {
+    const long = `${'word '.repeat(100)}\n\n  end`
+    const p = previewOf(long) as string
+    expect(p.length).toBeLessThanOrEqual(PREVIEW_CHARS + 1)
+    expect(p.endsWith('word…')).toBe(true)
+    expect(previewOf('  two\r\n  lines ')).toBe('two lines')
+    expect(previewOf(' \n ')).toBeNull()
   })
 
   it('pages', async () => {
