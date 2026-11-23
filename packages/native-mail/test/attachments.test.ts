@@ -4,8 +4,8 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DirectMailFiles } from '../src/direct-files'
 import { htmlLinks } from '../src/mime'
-import { pdfText } from '../src/pdf'
-import { renderPictures } from '../src/render'
+import { PDF_TEXT_SCRIPT, pdfText } from '../src/pdf'
+import { RENDER_SCRIPT, renderPictures } from '../src/render'
 import { MailStore, MailStoreError } from '../src/store'
 import { callMailTool, mailOutputs } from '../src/tools'
 import { ALLOWED, buildLibrary, type FixtureMessage, MESSAGES } from './fixture-library'
@@ -367,6 +367,12 @@ describe('mail_read handing over pictures and files', () => {
       reason: 'not-downloaded',
       sent: null,
     })
+  })
+})
+
+describe('the fixed JXA scripts', () => {
+  it('are each valid JavaScript as osascript gets them', () => {
+    for (const script of [PDF_TEXT_SCRIPT, RENDER_SCRIPT]) expect(() => new Function(script)).not.toThrow()
   })
 })
 

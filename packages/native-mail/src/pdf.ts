@@ -18,9 +18,9 @@ function run(argv) {
     var text = doc.pageAtIndex(i).string;
     var words = text.isNil() ? '' : ObjC.unwrap(text);
     if (words.trim().length > 0) any = true;
-    parts.push('--- Page ' + (i + 1) + ' of ' + total + ' ---\n' + words);
+    parts.push('--- Page ' + (i + 1) + ' of ' + total + ' ---\\n' + words);
   }
-  return any ? parts.join('\n\n') : '';
+  return any ? parts.join('\\n\\n') : '';
 }
 `
 

@@ -40,7 +40,9 @@ function fit(width, height, edge, grow) {
   return [Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale))];
 }
 function run(argv) {
-  var req = JSON.parse(argv[0]);
+  try { return draw(JSON.parse(argv[0])); } catch (e) { return JSON.stringify({ error: String(e) }); }
+}
+function draw(req) {
   var pictures = [];
   if (req.kind === 'pdf') {
     var doc = $.PDFDocument.alloc.initWithURL($.NSURL.fileURLWithPath(req.file));
