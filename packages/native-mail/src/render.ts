@@ -47,14 +47,14 @@ function draw(req) {
   if (req.kind === 'pdf') {
     var doc = $.PDFDocument.alloc.initWithURL($.NSURL.fileURLWithPath(req.file));
     if (doc.isNil()) return JSON.stringify({ error: 'unreadable' });
-    var total = doc.pageCount;
+    var total = Number(doc.pageCount);
     for (var n = 0; n < req.pages.length; n++) {
       var i = req.pages[n];
       if (i >= total) continue;
       var page = doc.pageAtIndex(i);
       var bounds = page.boundsForBox(1);
-      var w = bounds.size.width, h = bounds.size.height;
-      if (page.rotation % 180 !== 0) { var t = w; w = h; h = t; }
+      var w = Number(bounds.size.width), h = Number(bounds.size.height);
+      if (Number(page.rotation) % 180 !== 0) { var t = w; w = h; h = t; }
       var size = fit(w, h, req.edge, true);
       var thumb = page.thumbnailOfSizeForBox($.NSMakeSize(size[0], size[1]), 1);
       var made = thumb.isNil() ? null : encode(thumb, size[0], size[1], req.out + '/page-' + i, req.limit);
@@ -67,7 +67,7 @@ function draw(req) {
   var image = $.NSImage.alloc.initWithContentsOfFile(req.file);
   if (image.isNil() || image.representations.count === 0) return JSON.stringify({ error: 'unreadable' });
   var first = image.representations.objectAtIndex(0);
-  var pw = first.pixelsWide, ph = first.pixelsHigh;
+  var pw = Number(first.pixelsWide), ph = Number(first.pixelsHigh);
   if (!(pw > 0 && ph > 0)) { pw = image.size.width; ph = image.size.height; }
   var dims = fit(pw, ph, req.edge, false);
   var picture = encode(image, dims[0], dims[1], req.out + '/image', req.limit);

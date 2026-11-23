@@ -13,7 +13,7 @@ ObjC.import('PDFKit');
 function run(argv) {
   var doc = $.PDFDocument.alloc.initWithURL($.NSURL.fileURLWithPath(argv[0]));
   if (doc.isNil()) return '';
-  var total = doc.pageCount, parts = [], any = false;
+  var total = Number(doc.pageCount), parts = [], any = false;
   for (var i = 0; i < total; i++) {
     var text = doc.pageAtIndex(i).string;
     var words = text.isNil() ? '' : ObjC.unwrap(text);
