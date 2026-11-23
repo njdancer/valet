@@ -7,10 +7,21 @@
 
 import { execRunner, type Runner } from './drafts'
 
-/** One message as Mail's scripting finds it: by Message-ID, in the mailbox Mail's files name. */
+/**
+ * One message as Mail's scripting finds it, in the mailbox Mail's files name: by Message-ID; for
+ * a message without one (some test tools and old mail), by Mail's own id with its subject checked,
+ * then by subject, sender and date, only when exactly one message matches.
+ */
 export interface OrganizeItem {
-  /** The Message-ID header, without angle brackets. */
-  readonly messageId: string
+  /** The Message-ID header, without angle brackets; null when the message has none. */
+  readonly messageId: string | null
+  /** Mail's id for the message (its row in Mail's files), where it is now. */
+  readonly rowId?: number
+  readonly subject?: string
+  /** The sender's address. */
+  readonly sender?: string | null
+  /** When it was received (ISO). */
+  readonly date?: string | null
   /** Mail's id for the account (its folder name in the library). */
   readonly accountId: string
   /** The mailbox it is in now, as a folder path ("INBOX", "Archive/2025"). */
@@ -71,18 +82,48 @@ function run(argv) {
     try { var whole = account.mailboxes.byName(path); whole.name(); return whole; } catch (e) {}
     return null;
   };
+  var sameMessage = function (m, item) {
+    try {
+      if (typeof item.subject === 'string' && m.subject() !== item.subject) return false;
+      if (typeof item.sender === 'string' && String(m.sender()).toLowerCase().indexOf(item.sender.toLowerCase()) < 0)
+        return false;
+      if (typeof item.date === 'string') {
+        var when = Date.parse(item.date);
+        if (!isNaN(when) && Math.abs(m.dateReceived().getTime() - when) > 2000) return false;
+      }
+      return true;
+    } catch (e) { return false; }
+  };
+  var findIn = function (box, item) {
+    if (typeof item.messageId === 'string' && item.messageId.length > 0) {
+      try {
+        var byHeader = box.messages.whose({ messageId: item.messageId })();
+        if (byHeader.length > 0) return byHeader[0];
+      } catch (e) {}
+      return null;
+    }
+    // No Message-ID: Mail's own id, then subject, sender and date. Never a guess between two.
+    if (typeof item.subject !== 'string') return null;
+    if (typeof item.rowId === 'number') {
+      try {
+        var own = box.messages.byId(item.rowId);
+        if (sameMessage(own, item)) return own;
+      } catch (e) {}
+    }
+    try {
+      var named = box.messages.whose({ subject: item.subject })();
+      var hits = [];
+      for (var h = 0; h < named.length && hits.length < 2; h++) if (sameMessage(named[h], item)) hits.push(named[h]);
+      if (hits.length === 1) return hits[0];
+    } catch (e) {}
+    return null;
+  };
   var results = [];
   for (var k = 0; k < req.items.length; k++) {
     var item = req.items[k];
     var account = accountFor(item.accountId);
     var box = account === null ? null : boxAt(account, item.mailbox);
-    var msg = null;
-    if (box !== null) {
-      try {
-        var found = box.messages.whose({ messageId: item.messageId })();
-        if (found.length > 0) msg = found[0];
-      } catch (e) {}
-    }
+    var msg = box === null ? null : findIn(box, item);
     if (msg === null) { results.push('not-found'); continue; }
     if (req.kind === 'move') {
       var dest = boxAt(account, req.to);

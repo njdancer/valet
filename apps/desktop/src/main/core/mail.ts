@@ -275,7 +275,15 @@ export class MailService implements NativeTools {
       const group = moves.filter((m) => m.from === back)
       const outcome = await this.deps.organizer.apply({
         kind: 'move',
-        items: group.map((m) => ({ messageId: m.messageId, accountId: m.accountId, mailbox: m.to })),
+        // Its id changed with the move, so a message without a Message-ID is found by what it is.
+        items: group.map((m) => ({
+          messageId: m.messageId,
+          accountId: m.accountId,
+          mailbox: m.to,
+          subject: m.subject,
+          sender: m.sender,
+          date: m.date,
+        })),
         to: back,
       })
       if (outcome.kind === 'not-allowed') return 'not-allowed'
