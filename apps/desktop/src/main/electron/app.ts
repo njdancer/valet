@@ -21,7 +21,7 @@ import { type AdapterManifest, DEFAULT_SANDBOX, rawEndpoints } from '@valet/core
 import { KeychainHelper, KeychainTokenSource, messagesHelperSocketPath } from '@valet/credentials'
 import { EgressBroker, type OpenTunnels } from '@valet/egress'
 import { startEndpoint } from '@valet/mcp-server'
-import { HelperMailFiles, MailDrafts } from '@valet/native-mail'
+import { HelperMailFiles, MailDrafts, MailOrganizer } from '@valet/native-mail'
 import { diskTarballStore, loadDependencies, nodeRuntimeProcess } from '@valet/node-runtime'
 import {
   HostMailReader,
@@ -578,6 +578,7 @@ async function main(): Promise<void> {
             reader: mailReader,
             files: new HelperMailFiles({ socketPath: mailReader.socketPath }),
             drafts: new MailDrafts(),
+            organizer: new MailOrganizer(),
           },
     version: app.getVersion(),
     demo: mode.demo,

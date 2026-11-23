@@ -8,7 +8,14 @@ import { createServer, type Server } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolCall } from '@valet/mcp-server'
-import { type DraftRequest, type MailFiles, MailFilesError } from '@valet/native-mail'
+import {
+  type DraftRequest,
+  type MailFiles,
+  MailFilesError,
+  type MailOrganizer,
+  type MoveRecord,
+  type OrganizeRequest,
+} from '@valet/native-mail'
 import type { ToolCallResult } from '@valet/runtime'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DirectMailFiles } from '../../../../packages/native-mail/src/direct-files'
@@ -56,7 +63,15 @@ interface Setup {
   changes: () => number
 }
 
-function setup(options: { files?: MailFiles | null; reader?: boolean; settings?: string } = {}): Setup {
+function setup(
+  options: {
+    files?: MailFiles | null
+    reader?: boolean
+    settings?: string
+    organizer?: Pick<MailOrganizer, 'apply'>
+    moved?: (moves: readonly MoveRecord[]) => Promise<void>
+  } = {},
+): Setup {
   const settingsPath = join(root, 'mail.json')
   if (options.settings !== undefined) writeFileSync(settingsPath, options.settings)
   const r = reader(join(root, 'r.sock'))
@@ -77,6 +92,8 @@ function setup(options: { files?: MailFiles | null; reader?: boolean; settings?:
         return { kind: 'saved' }
       },
     },
+    ...(options.organizer === undefined ? {} : { organizer: options.organizer }),
+    ...(options.moved === undefined ? {} : { moved: async (moves) => options.moved?.(moves) }),
     audit: async (call, result) => {
       audited.push({ call, result })
     },
@@ -245,6 +262,87 @@ describe('MailService', () => {
     await s.service.update({ enabled: true })
     await listening(s.reader.socketPath)
     expect((await s.service.status()).state).toBe('unsupported')
+  })
+})
+
+describe('organising mail', () => {
+  function organizing() {
+    const asked: OrganizeRequest[] = []
+    const moved: MoveRecord[] = []
+    const s = setup({
+      files: new DirectMailFiles(buildLibrary(mkdtempSync(join(root, 'lib-')), { withTrash: true })),
+      organizer: {
+        apply: async (request) => {
+          asked.push(request)
+          return { kind: 'done', results: request.items.map(() => 'done' as const) }
+        },
+      },
+      moved: async (moves) => {
+        moved.push(...moves)
+      },
+    })
+    return { ...s, asked, moved }
+  }
+
+  it('lists move and mark only with its own switch, and records every move', async () => {
+    const s = organizing()
+    await s.service.load()
+    await s.service.update({ enabled: true, accounts: [ALLOWED] })
+    expect(s.service.listTools().map((t) => t.declaration.name)).not.toContain('move')
+    expect((await s.service.call(call('move', { ids: [7], to: 'trash' }), signal)).status).toBe('failed')
+    await s.service.update({ organize: true })
+    expect(s.service.listTools().map((t) => t.declaration.name)).toEqual(
+      expect.arrayContaining(['move', 'mark']),
+    )
+    const result = await s.service.call(call('move', { ids: [7], to: 'trash' }), signal)
+    expect(result.status).toBe('ok')
+    expect(s.moved).toEqual([expect.objectContaining({ from: 'INBOX', to: 'Deleted Messages' })])
+    expect(s.audited.map((a) => [a.call.tool, a.result.status])).toEqual([
+      ['move', 'failed'],
+      ['move', 'ok'],
+    ])
+  })
+
+  it('stops at 500 moves an hour across agents', async () => {
+    let now = 0
+    const s = organizing()
+    ;(s.service as unknown as { deps: { now: () => number } }).deps.now = () => now
+    await s.service.load()
+    await s.service.update({ enabled: true, accounts: [ALLOWED], organize: true })
+    // The made-up Mail moves nothing, so the same two messages count again each time: 250 calls of two.
+    for (let i = 0; i < 250; i++)
+      expect((await s.service.call(call('move', { ids: [7, 8], to: 'trash' }), signal)).status).toBe('ok')
+    expect(await s.service.call(call('move', { ids: [7], to: 'archive' }), signal)).toMatchObject({
+      status: 'failed',
+      errorClass: 'rate-limited',
+    })
+    now += 3_600_001
+    expect((await s.service.call(call('move', { ids: [7], to: 'archive' }), signal)).status).toBe('ok')
+  })
+
+  it('puts moves back where they came from, as Undo asks', async () => {
+    const s = organizing()
+    await s.service.load()
+    expect(
+      await s.service.undoMoves([
+        {
+          accountId: ALLOWED,
+          messageId: 'engine-1@example.com',
+          from: 'INBOX',
+          to: 'Deleted Messages',
+          subject: 'Engine notes',
+          sender: null,
+          date: null,
+        },
+      ]),
+    ).toBe('done')
+    expect(s.asked).toEqual([
+      {
+        kind: 'move',
+        to: 'INBOX',
+        items: [{ messageId: 'engine-1@example.com', accountId: ALLOWED, mailbox: 'Deleted Messages' }],
+      },
+    ])
   })
 })
 

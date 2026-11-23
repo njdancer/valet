@@ -76,7 +76,14 @@ import {
   type ToolCall,
   type ToolCaller,
 } from '@valet/mcp-server'
-import { MAIL_ADAPTER_ID, type MailDrafts, type MailFiles, mailTools } from '@valet/native-mail'
+import {
+  MAIL_ADAPTER_ID,
+  type MailDrafts,
+  type MailFiles,
+  type MailOrganizer,
+  type MoveRecord,
+  mailTools,
+} from '@valet/native-mail'
 import { addDependency, diskTarballStore } from '@valet/node-runtime'
 import type { MailAccount } from '@valet/protocols'
 import {
@@ -116,6 +123,7 @@ import type {
   EndpointStatus,
   HashRoute,
   KeysChangedItem,
+  MailUndo,
   PendingReview,
   RemoteConsentItem,
   RemoteConsentRequest,
@@ -407,6 +415,8 @@ export interface ServiceDeps {
     readonly reader: ReaderControl | null
     readonly files: MailFiles | null
     readonly drafts: Pick<MailDrafts, 'save'>
+    /** Moves and marks messages through Mail; absent, agents can't organise mail. */
+    readonly organizer?: Pick<MailOrganizer, 'apply'>
   } | null
   /** This Mac's name, as a paired phone shows it. */
   readonly macName?: string
@@ -1090,6 +1100,8 @@ export class AppService {
         reader: mail.reader,
         files: mail.files,
         drafts: mail.drafts,
+        ...(mail.organizer === undefined ? {} : { organizer: mail.organizer }),
+        moved: (moves, call) => this.auditMailMoves(moves, call, null),
         audit: (call, result, durationMs) => this.auditNativeCall(call, result, durationMs),
         now: this.deps.now,
         changed: () => {
@@ -4043,6 +4055,52 @@ export class AppService {
    * accept, or an adapter that isn't installed, has nothing to attribute it to and isn't recorded.
    */
   /** A built-in tool's call (docs/mail.md), audited as the runtime audits an adapter's. */
+  /** One `mail-moved` record per message an agent moved (or the person put back: `undoOf`). */
+  private async auditMailMoves(
+    moves: readonly MoveRecord[],
+    call: ToolCall | null,
+    undoOf: number | null,
+  ): Promise<void> {
+    for (const move of moves)
+      await this.audit.append({
+        type: 'mail-moved',
+        callId: call !== null && CALL_ID.test(call.callId) ? call.callId : null,
+        ...(call?.identity === undefined ? {} : { clientId: identityLabel(call.identity) }),
+        accountId: move.accountId,
+        messageId: move.messageId,
+        from: move.from,
+        to: move.to,
+        subject: move.subject,
+        sender: move.sender,
+        date: move.date,
+        ...(undoOf === null ? {} : { undoOf }),
+      })
+  }
+
+  /** The person's Undo on a `mail-moved` record: the message goes back where the agent took it from. */
+  private async undoMailMove(seq: number): Promise<MailUndo> {
+    if (this.mailApp === null) return 'failed'
+    const records = await this.reader.records()
+    const record = records.find((r) => r.seq === seq)
+    if (record === undefined || record.event.type !== 'mail-moved' || record.event.undoOf !== undefined)
+      return 'not-found'
+    if (records.some((r) => r.event.type === 'mail-moved' && r.event.undoOf === seq)) return 'already'
+    const event = record.event
+    const move: MoveRecord = {
+      accountId: event.accountId,
+      messageId: event.messageId,
+      from: event.from,
+      to: event.to,
+      subject: event.subject,
+      sender: event.sender,
+      date: event.date,
+    }
+    const outcome = await this.mailApp.undoMoves([move])
+    if (outcome === 'done')
+      await this.auditMailMoves([{ ...move, from: event.to, to: event.from }], null, seq)
+    return outcome
+  }
+
   private async auditNativeCall(call: ToolCall, result: ToolCallResult, durationMs: number): Promise<void> {
     if (!CALL_ID.test(call.callId)) return
     await this.audit.append({
@@ -5334,6 +5392,7 @@ export class AppService {
         status: async () => this.mailStatus(),
         update: async (patch) => this.updateMail(patch),
         action: async (action) => this.mailAction(action),
+        undoMove: async (seq) => this.undoMailMove(seq),
       },
       updates: {
         status: async (): Promise<UpdateStatus> =>

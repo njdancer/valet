@@ -711,7 +711,13 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
   }
 
   // Mail on this Mac: the fake walks through setup as the buttons are pressed.
-  let mailSettings: MailSettings = { enabled: false, accounts: [], drafts: false, approveDrafts: false }
+  let mailSettings: MailSettings = {
+    enabled: false,
+    accounts: [],
+    drafts: false,
+    approveDrafts: false,
+    organize: false,
+  }
   let mailStage: 'not-running' | 'needs-access' | 'ready' = 'not-running'
   /** Mail's tools that are on for cloud agents (Connections › Remote). */
   const mailRemoteOn = new Set<string>()
@@ -721,6 +727,8 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     { tool: 'read', title: 'Read a message', sideEffect: 'read' as const },
     { tool: 'thread', title: 'Read a conversation', sideEffect: 'read' as const },
     { tool: 'create_draft', title: 'Save a draft', sideEffect: 'write' as const },
+    { tool: 'move', title: 'Move messages', sideEffect: 'write' as const },
+    { tool: 'mark', title: 'Mark messages', sideEffect: 'write' as const },
   ]
   const MAIL_ACCOUNTS = [
     { id: '0A1B2C3D-0000-4000-8000-000000000001', name: 'iCloud', address: 'someone@icloud.com' },
@@ -1732,6 +1740,10 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         emit({ type: 'adapters-changed' })
         return mailStatus()
       },
+      async undoMove(seq) {
+        enter('mail.undoMove', seq)
+        return 'done'
+      },
       async action(action) {
         enter('mail.action', action)
         if (action === 'start-reader' && mailStage === 'not-running') mailStage = 'needs-access'
@@ -1918,7 +1930,11 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         // Mail on this Mac's built-in tools come first, listed while Mail is on with an account picked.
         const mail =
           mailSettings.enabled && mailSettings.accounts.length > 0
-            ? FAKE_MAIL_TOOLS.filter((t) => t.tool !== 'create_draft' || mailSettings.drafts).map((t) => ({
+            ? FAKE_MAIL_TOOLS.filter(
+                (t) =>
+                  (t.tool !== 'create_draft' || mailSettings.drafts) &&
+                  ((t.tool !== 'move' && t.tool !== 'mark') || mailSettings.organize),
+              ).map((t) => ({
                 ref: `mail.${t.tool}`,
                 adapterId: 'mail',
                 adapterName: 'Mail',
@@ -2123,7 +2139,14 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
 }
 
 const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent['type'][]>> = {
-  'tool-calls': ['tool-called', 'call-waited', 'tool-finished', 'call-refused', 'refusals-dropped'],
+  'tool-calls': [
+    'tool-called',
+    'call-waited',
+    'tool-finished',
+    'call-refused',
+    'refusals-dropped',
+    'mail-moved',
+  ],
   logins: ['login-started', 'login-finished'],
   'secret-use': ['secret-used'],
   blocked: ['request-blocked', 'breaker-opened', 'breaker-closed'],
@@ -2277,6 +2300,22 @@ function buildAudit(ago: (minutes: number) => string): AuditRecord[] {
         cause: 'blocked-by-site',
         retryAt: ago(-4),
         callId: 'c_1c55e2',
+      },
+    ],
+    [
+      4806,
+      3,
+      {
+        type: 'mail-moved',
+        callId: 'c_4m1d9a',
+        clientId: 'remote:rcdemodemodemodemodemo',
+        accountId: '0A1B2C3D-0000-4000-8000-000000000001',
+        messageId: 'newsletter-1@example.com',
+        from: 'INBOX',
+        to: 'Deleted Messages',
+        subject: 'This week’s specials',
+        sender: 'news@example.com',
+        date: ago(60),
       },
     ],
     [

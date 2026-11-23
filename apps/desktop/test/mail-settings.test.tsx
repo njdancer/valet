@@ -55,7 +55,7 @@ describe('settings › Mail', () => {
         ...fake.mail,
         status: async () => ({
           state: 'not-running' as const,
-          settings: { enabled: true, accounts: [], drafts: false, approveDrafts: false },
+          settings: { enabled: true, accounts: [], drafts: false, approveDrafts: false, organize: false },
           accounts: [],
         }),
       },
@@ -103,6 +103,34 @@ describe('letting cloud agents read Mail', () => {
       ]),
     )
     expect((await api.remote.clients())[0]?.grant?.tools).toEqual(['woolworths.get_cart'])
+  })
+
+  it('lets agents organise mail with its own switch, and gives an agent move and mark', async () => {
+    const user = userEvent.setup()
+    const api = await ready()
+    await api.remote.approveConsent('ABCDEFGH', ['mail.search', 'mail.read'])
+    renderPage(api, <SettingsPage section="mail" />)
+    const organise = await screen.findByRole('switch', { name: 'Let agents archive, trash and mark mail' })
+    // Off: no per-agent switch to give.
+    expect(screen.queryByRole('switch', { name: /archive, trash and mark mail$/, hidden: false })).toBe(
+      organise,
+    )
+    await user.click(organise)
+    await waitFor(() => expect(called(api, 'mail.update').at(-1)).toEqual([{ organize: true }]))
+    const give = await screen.findByRole('switch', {
+      name: 'Let Claude (claude.ai) archive, trash and mark mail',
+    })
+    await user.click(give)
+    await waitFor(() =>
+      expect(called(api, 'remote.setClientTool')).toEqual([
+        ['rcdemodemodemodemodemo', 'mail', 'move', true],
+        ['rcdemodemodemodemodemo', 'mail', 'mark', true],
+      ]),
+    )
+    // Reading off takes every Mail tool away, organising ones too.
+    await user.click(screen.getByRole('switch', { name: 'Let Claude (claude.ai) search and read Mail' }))
+    await waitFor(() => expect((called(api, 'remote.setClientTool').at(-1) ?? [])[3]).toBe(false))
+    expect((await api.remote.clients())[0]?.grant?.tools).toEqual([])
   })
 
   it('says when no cloud agent is connected yet', async () => {

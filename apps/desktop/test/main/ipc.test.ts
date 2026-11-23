@@ -397,6 +397,7 @@ describe('every channel', () => {
     'mail.status': [],
     'mail.update': [{ enabled: true, accounts: ['A1B2'] }],
     'mail.action': ['full-disk-access'],
+    'mail.undoMove': [12],
     'updates.status': [],
     'updates.check': [],
     'health.sites': [],

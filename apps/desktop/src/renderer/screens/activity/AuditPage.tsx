@@ -41,7 +41,7 @@ import {
 } from '@valet/ui'
 import { ChevronLeft, ChevronRight, Download, FileSearch } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import type { AuditPage as AuditPageData, AuditQuery, ChainStatus } from '../../../shared/api'
+import type { AuditPage as AuditPageData, AuditQuery, ChainStatus, MailUndo } from '../../../shared/api'
 import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
 import { callRef, formatSeconds, formatTime } from '../../lib/format'
 import {
@@ -631,6 +631,9 @@ function Inspector({
             <a href={href.site(site)}>Open {siteName(site)}</a>
           </Button>
         ) : null}
+        {record.event.type === 'mail-moved' && record.event.undoOf === undefined ? (
+          <UndoMove seq={record.seq} from={record.event.from} />
+        ) : null}
         <Button loading={copy.busy} onClick={() => void copy.run(() => api.app.copyText(text))}>
           Copy record
         </Button>
@@ -675,5 +678,40 @@ function Inspector({
         Login records name the provider, never the 1Password item. Secret values are never written here.
       </Text>
     </Stack>
+  )
+}
+
+/** What each answer of an Undo says. */
+const UNDO_WORDS: Readonly<Record<MailUndo, string>> = {
+  done: 'Put back',
+  already: 'Already put back',
+  'not-found': 'Mail no longer has it where it was moved to',
+  'not-allowed':
+    'Valet isn’t allowed to control Mail: allow it in System Settings › Privacy & Security › Automation',
+  failed: 'Mail didn’t answer. Try again.',
+}
+
+/** A move an agent made in Mail, put back where it was. */
+function UndoMove({ seq, from }: { readonly seq: number; readonly from: string }) {
+  const api = useApi()
+  const action = useAction()
+  const [answer, setAnswer] = useState<MailUndo | null>(null)
+  return (
+    <>
+      <Button
+        loading={action.busy}
+        disabled={answer === 'done' || answer === 'already'}
+        onClick={() =>
+          void action.run(async () => {
+            setAnswer(await api.mail.undoMove(seq))
+          })
+        }
+      >
+        Put back in {from}
+      </Button>
+      {answer !== null ? (
+        <Text tone={answer === 'done' ? 'default' : 'muted'}>{UNDO_WORDS[answer]}</Text>
+      ) : null}
+    </>
   )
 }

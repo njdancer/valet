@@ -40,6 +40,12 @@ export const MAILBOXES: readonly (readonly [number, string])[] = [
   [5, 'local:///Notes'],
 ]
 
+/** The allowed account's Trash and Archive, for moves (FixtureOptions.withTrash). */
+export const TRASH_MAILBOXES: readonly (readonly [number, string])[] = [
+  [6, `imap://${ALLOWED}/Deleted%20Messages`],
+  [7, `imap://${ALLOWED}/Archive`],
+]
+
 const crlf = (lines: readonly string[]): string => lines.join('\r\n')
 
 export const MESSAGES: readonly FixtureMessage[] = [
@@ -181,6 +187,8 @@ export interface FixtureOptions {
   /** Leave a column out of messages, to see the store refuse. */
   readonly dropColumn?: string
   readonly messages?: readonly FixtureMessage[]
+  /** Give the allowed account a Trash ("Deleted Messages") and an Archive (ids 6 and 7). */
+  readonly withTrash?: boolean
   /**
    * How Internet Accounts names the accounts. `icloud` (the default) is how a real Mac lays out an
    * iCloud account: its mail row has no name or address and points at a parent row called "iCloud",
@@ -223,7 +231,8 @@ export function buildLibrary(
     CREATE TABLE summaries (ROWID INTEGER PRIMARY KEY, summary TEXT);
     CREATE TABLE attachments (ROWID INTEGER PRIMARY KEY, message INTEGER, attachment_id TEXT, name TEXT);
   `)
-  for (const [id, url] of MAILBOXES) db.prepare('INSERT INTO mailboxes VALUES (?, ?, 0, 0)').run(id, url)
+  for (const [id, url] of [...MAILBOXES, ...(options.withTrash === true ? TRASH_MAILBOXES : [])])
+    db.prepare('INSERT INTO mailboxes VALUES (?, ?, 0, 0)').run(id, url)
   const addresses = new Map<string, number>()
   const addressId = (name: string | null, address: string): number => {
     const key = `${name ?? ''}\u0000${address}`

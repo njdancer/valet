@@ -90,6 +90,7 @@ import { dataPaths } from '../../src/main/core/constants'
 import { type Credentials, disabledOtpReader } from '../../src/main/core/credentials'
 import { DEMO_ACCOUNT } from '../../src/main/core/demo'
 import type { EraseKind, EraseReport } from '../../src/main/core/erase'
+import type { MailService } from '../../src/main/core/mail'
 import type { AppNotification } from '../../src/main/core/notifications'
 import { builtinAdapter } from '../../src/main/core/registry'
 import type { RemoteAccess } from '../../src/main/core/remote'
@@ -2638,6 +2639,69 @@ describe('remote access', () => {
     expect((await (await remoteClient(port, agent.token)).listTools()).tools).toEqual([])
     await s.api.remote.setTool('mail', 'search', false)
     expect(s.service.remote.status().tools).toEqual([])
+  })
+
+  it('records each message an agent moves in Mail, and the person puts it back once', async () => {
+    const asked: unknown[] = []
+    const s = await setup({
+      mail: {
+        reader: null,
+        files: new DirectMailFiles(
+          buildLibrary(mkdtempSync(join(tmpdir(), 'sa-mail-')), { withTrash: true }),
+        ),
+        drafts: { save: async () => ({ kind: 'saved' }) },
+        organizer: {
+          apply: async (request) => {
+            asked.push(request)
+            return { kind: 'done', results: request.items.map(() => 'done' as const) }
+          },
+        },
+      },
+    })
+    await s.api.mail.update({ enabled: true, accounts: [MAIL_ALLOWED], organize: true })
+    const mail = (s.service as unknown as { mailApp: MailService }).mailApp
+    const moved = await mail.call(
+      {
+        adapterId: 'mail',
+        tool: 'move',
+        input: { ids: [7], to: 'trash' },
+        client: 'claude.ai',
+        callId: 'c-move-1',
+        identity: { origin: 'remote', clientId: 'rc1' },
+      },
+      new AbortController().signal,
+    )
+    expect(moved.status).toBe('ok')
+    const records = (await s.api.audit.page({})).records
+    const record = records.find((r) => r.event.type === 'mail-moved')
+    expect(record?.event).toEqual({
+      type: 'mail-moved',
+      callId: 'c-move-1',
+      clientId: 'remote:rc1',
+      accountId: MAIL_ALLOWED,
+      messageId: 'engine-1@example.com',
+      from: 'INBOX',
+      to: 'Deleted Messages',
+      subject: 'Engine notes',
+      sender: 'ada@example.com',
+      date: expect.any(String),
+    })
+    const seq = record?.seq as number
+    expect(await s.api.mail.undoMove(seq)).toBe('done')
+    expect(asked.at(-1)).toEqual({
+      kind: 'move',
+      to: 'INBOX',
+      items: [{ messageId: 'engine-1@example.com', accountId: MAIL_ALLOWED, mailbox: 'Deleted Messages' }],
+    })
+    expect(await s.api.mail.undoMove(seq)).toBe('already')
+    const back = (await s.api.audit.page({})).records.find(
+      (r) => r.event.type === 'mail-moved' && r.event.undoOf === seq,
+    )
+    expect(back?.event).toMatchObject({ from: 'Deleted Messages', to: 'INBOX', callId: null })
+    // An undo record, or any other record, isn't something to undo.
+    expect(await s.api.mail.undoMove(back?.seq as number)).toBe('not-found')
+    expect(await s.api.mail.undoMove(seq + 1)).toBe('not-found')
+    expect(asked).toHaveLength(2)
   })
 
   it('gives an approved agent a Mail tool from its page, and takes it away, keeping its approval', async () => {

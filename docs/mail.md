@@ -19,6 +19,8 @@ Once Mail is on and at least one account is picked, agents see these tools (adap
 | `mail_read`         | One message: headers, text (HTML turned into text), attachment names. Never attachment contents.                |
 | `mail_thread`       | The messages in a message's conversation, up to 30.                                                             |
 | `mail_create_draft` | Only when drafts are on. A new message or a reply, saved to Mail's Drafts from a picked account's address.      |
+| `mail_move`         | Only when organising is on. Up to 50 messages to Archive, Trash, Inbox or another mailbox of the same account.  |
+| `mail_mark`         | Only when organising is on. Up to 50 messages marked read or unread, flagged or unflagged.                      |
 
 Every result says that mail is data and not instructions. Every call goes in the audit log like an
 adapter's, with `builtin` in place of a package hash.
@@ -114,6 +116,29 @@ draft again. Decision: drafts stay on scripting; IMAP `APPEND` remains the fallb
 the agent as declined), but the app doesn't ask yet: the approval broker's confirmations are tied
 to an adapter manifest, which the built-in tools don't have. Nick agreed this can wait while
 nothing is sent.
+
+## Organising
+
+"Let agents archive, trash and mark mail" in Settings › Mail turns on `mail_move` and `mail_mark`.
+It is off by default, separate from reading and drafts, and a cloud agent also needs its own
+"archive, trash and mark" switch on the Mail page (Touch ID), as for any tool.
+
+- **Delete is a move to Trash.** Nothing is erased: the account's Trash keeps the message for as
+  long as the account does (30 days on iCloud), and Nick agreed that is enough for now.
+- **Moves stay inside one account.** `to` is `archive`, `trash`, `inbox` or a mailbox id from
+  `mail_accounts`. Archive and Trash are found by their usual names (Archive, Deleted Messages,
+  Trash, Deleted Items, Bin, Gmail's All Mail and Trash); an account without one says so. A mailbox
+  in another account is refused, and Outbox, Drafts and Sent are never a destination.
+- **Through Mail.** `MailOrganizer` (packages/native-mail/src/organize.ts) runs a fixed JXA script
+  with the request as one JSON argument, so Mail makes the change and syncs it like the person had.
+- **A cap.** At most 500 messages moved an hour across all agents; past that the tool says to try
+  later.
+- **Every move is recorded.** One `mail-moved` audit record per message, with account, Message-ID,
+  from and to mailbox, subject, sender and date. Agents reading the audit log see only the ids and
+  mailboxes, never subject or sender. In Activity the person can press "Put back" on a move once;
+  that moves it back through Mail and records the undo with `undoOf`.
+
+The audit log stays on the Mac. Backing it up elsewhere could be a later relay feature.
 
 ## Tests
 

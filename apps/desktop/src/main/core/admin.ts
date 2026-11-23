@@ -415,6 +415,8 @@ const EVENT_FIELDS: Readonly<Record<AuditEvent['type'], readonly string[]>> = {
   'update-installed': ['from', 'to'],
   'remote-state': ['state', 'revokedTokens'],
   'remote-tool': ['adapterId', 'tool', 'enabled', 'sideEffect', 'clientId'],
+  // Where a message went, never what it was: an agent that sees Valet may not hold Mail's tools.
+  'mail-moved': ['callId', 'clientId', 'accountId', 'from', 'to', 'undoOf'],
   'setting-changed': ['adapterId', 'setting', 'cleared'],
   'remote-consent': ['clientId', 'clientHost', 'tools', 'answer'],
   'remote-revoked': ['clientId', 'clients'],
