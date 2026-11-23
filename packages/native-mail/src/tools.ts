@@ -347,7 +347,8 @@ export interface MailToolDeps {
 /** One message moved, as the audit log keeps it so the person can review and undo it. */
 export interface MoveRecord {
   readonly accountId: string
-  readonly messageId: string
+  /** Null for a message without a Message-ID: subject, sender and date find it again. */
+  readonly messageId: string | null
   readonly from: string
   readonly to: string
   readonly subject: string
@@ -556,6 +557,19 @@ const organizeFailure = (kind: 'not-allowed' | 'no-mailbox' | 'failed'): MailToo
       ? fail('tool-input', 'not-found')
       : fail('tool-run', 'unavailable')
 
+/** How Mail's scripting finds a message: its Message-ID, else its id, subject, sender and date. */
+function organizeItem(d: MessageDetail): OrganizeItem {
+  return {
+    messageId: d.messageId,
+    accountId: d.accountId,
+    mailbox: d.mailbox,
+    rowId: d.id,
+    subject: d.subject,
+    sender: d.from?.address ?? null,
+    date: d.date,
+  }
+}
+
 async function moveMessages(
   deps: MailToolDeps,
   input: z.infer<(typeof mailInputs)['move']>,
@@ -565,7 +579,7 @@ async function moveMessages(
   const ids = [...new Set(input.ids)]
   const accounts = await deps.store.accounts()
   const found = await details(deps.store, ids)
-  const notFound = ids.filter((_, i) => found[i] === null || found[i]?.messageId === null)
+  const notFound = ids.filter((_, i) => found[i] === null)
   // Where each message goes, in its own account.
   let fixed: { readonly accountId: string; readonly path: string } | null = null
   if (typeof input.to === 'number') {
@@ -585,7 +599,7 @@ async function moveMessages(
   const plan: { id: number; detail: MessageDetail; to: string }[] = []
   const unchanged: number[] = []
   for (const [i, detail] of found.entries()) {
-    if (detail === null || detail.messageId === null) continue
+    if (detail === null) continue
     const to = destination(detail.accountId)
     // A mailbox id in another account, or an account with no Trash or Archive: nothing is moved.
     if (to === null) return fail('tool-input', fixed === null ? 'unsupported' : 'invalid')
@@ -599,11 +613,7 @@ async function moveMessages(
   // One request per destination: in practice one, or one per account for Archive and Trash.
   for (const to of new Set(plan.map((p) => p.to))) {
     const group = plan.filter((p) => p.to === to)
-    const items: OrganizeItem[] = group.map((p) => ({
-      messageId: p.detail.messageId as string,
-      accountId: p.detail.accountId,
-      mailbox: p.detail.mailbox,
-    }))
+    const items: OrganizeItem[] = group.map((p) => organizeItem(p.detail))
     const outcome = await organize.organizer.apply({ kind: 'move', items, to })
     if (outcome.kind !== 'done') {
       // What moved before this group still goes in the log.
@@ -618,7 +628,7 @@ async function moveMessages(
       moved.push({ id: p.id, subject: p.detail.subject, to })
       records.push({
         accountId: p.detail.accountId,
-        messageId: p.detail.messageId as string,
+        messageId: p.detail.messageId,
         from: p.detail.mailbox,
         to,
         subject: p.detail.subject,
@@ -653,8 +663,8 @@ async function markMessages(
   const targets: { id: number; item: OrganizeItem }[] = []
   for (const [i, d] of found.entries()) {
     const id = ids[i] as number
-    if (d === null || d.messageId === null) notFound.push(id)
-    else targets.push({ id, item: { messageId: d.messageId, accountId: d.accountId, mailbox: d.mailbox } })
+    if (d === null) notFound.push(id)
+    else targets.push({ id, item: organizeItem(d) })
   }
   const outcome = await organize.organizer.apply({
     kind: 'mark',

@@ -340,7 +340,13 @@ describe('organising mail', () => {
       {
         kind: 'move',
         to: 'INBOX',
-        items: [{ messageId: 'engine-1@example.com', accountId: ALLOWED, mailbox: 'Deleted Messages' }],
+        items: [
+          expect.objectContaining({
+            messageId: 'engine-1@example.com',
+            accountId: ALLOWED,
+            mailbox: 'Deleted Messages',
+          }),
+        ],
       },
     ])
   })

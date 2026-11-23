@@ -162,7 +162,7 @@ export interface MailServiceDeps {
   readonly files: MailFiles | null
   readonly drafts: Pick<MailDrafts, 'save'>
   /** Moves and marks messages through Mail. Absent: agents can't organise mail in this build. */
-  readonly organizer?: Pick<MailOrganizer, 'apply'>
+  readonly organizer?: Pick<MailOrganizer, 'apply'> & Partial<Pick<MailOrganizer, 'source'>>
   /** A PDF attachment's text. Absent: agents get PDFs' names only. */
   readonly pdfText?: (bytes: Buffer) => Promise<string | null>
   /** Records the messages a call moved (the audit log, which Undo reads). */
@@ -193,6 +193,14 @@ export class MailService implements NativeTools {
         : new MailStore(deps.files, {
             allowedAccounts: () => new Set(this.current.enabled ? this.current.accounts : []),
             ...(deps.pdfText === undefined ? {} : { pdfText: deps.pdfText }),
+            ...(deps.organizer?.source === undefined
+              ? {}
+              : {
+                  fetchSource: async (message) => {
+                    const outcome = await deps.organizer?.source?.(message)
+                    return outcome?.kind === 'done' ? outcome.source : null
+                  },
+                }),
           })
   }
 
@@ -275,7 +283,15 @@ export class MailService implements NativeTools {
       const group = moves.filter((m) => m.from === back)
       const outcome = await this.deps.organizer.apply({
         kind: 'move',
-        items: group.map((m) => ({ messageId: m.messageId, accountId: m.accountId, mailbox: m.to })),
+        // Its id changed with the move, so a message without a Message-ID is found by what it is.
+        items: group.map((m) => ({
+          messageId: m.messageId,
+          accountId: m.accountId,
+          mailbox: m.to,
+          subject: m.subject,
+          sender: m.sender,
+          date: m.date,
+        })),
         to: back,
       })
       if (outcome.kind === 'not-allowed') return 'not-allowed'

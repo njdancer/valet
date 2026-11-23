@@ -15,12 +15,20 @@ import { ALLOWED, buildLibrary, OTHER } from './fixture-library'
 describe('ORGANIZE_SCRIPT', () => {
   interface FakeMessage {
     id: string
+    /** Mail's own id. */
+    row?: number
+    subject?: () => string
+    sender?: () => string
+    dateReceived?: () => Date
     readStatus?: boolean
     flaggedStatus?: boolean
   }
   interface FakeBox {
     name: () => string
-    messages: { whose: (q: { messageId: string }) => () => FakeMessage[] }
+    messages: {
+      whose: (q: { messageId?: string; subject?: string }) => () => FakeMessage[]
+      byId: (n: number) => FakeMessage
+    }
     mailboxes: { byName: (n: string) => FakeBox }
     items: FakeMessage[]
   }
@@ -29,7 +37,19 @@ describe('ORGANIZE_SCRIPT', () => {
     return {
       name: () => name,
       items,
-      messages: { whose: (q) => () => items.filter((m) => m.id === q.messageId) },
+      messages: {
+        whose: (q) => () =>
+          items.filter((m) =>
+            q.messageId !== undefined
+              ? m.id === q.messageId
+              : m.subject !== undefined && m.subject() === q.subject,
+          ),
+        byId: (n) => {
+          const found = items.find((m) => m.row === n)
+          if (found === undefined) throw new Error('no such message')
+          return found
+        },
+      },
       mailboxes: { byName: (n) => children[n] ?? missing() },
     }
   }
@@ -40,7 +60,7 @@ describe('ORGANIZE_SCRIPT', () => {
     return {
       name: fail,
       items: [],
-      messages: { whose: () => fail },
+      messages: { whose: () => fail, byId: fail },
       mailboxes: { byName: () => missing() },
     }
   }
@@ -84,6 +104,80 @@ describe('ORGANIZE_SCRIPT', () => {
     ])
   })
 
+  describe('a message without a Message-ID', () => {
+    const when = '2026-04-11T06:41:20.000Z'
+    const bare = (
+      id: string,
+      row: number,
+      subject: string,
+      sender = 'test@glovebox.local',
+      at = when,
+    ): FakeMessage => ({
+      id,
+      row,
+      subject: () => subject,
+      sender: () => sender,
+      dateReceived: () => new Date(at),
+    })
+    const noHeader = (over: Partial<Record<string, unknown>> = {}) => ({
+      messageId: null,
+      accountId: ALLOWED,
+      mailbox: 'INBOX',
+      rowId: 34504,
+      subject: 'Session resume test',
+      sender: 'test@glovebox.local',
+      date: when,
+      ...over,
+    })
+    const trash = () => box('Deleted Messages')
+
+    it('is found by Mail’s own id when its subject matches', () => {
+      const boxes = {
+        INBOX: box('INBOX', [bare('x', 34504, 'Session resume test')]),
+        'Deleted Messages': trash(),
+      }
+      const { out, moves } = run({ kind: 'move', items: [noHeader()], to: 'Deleted Messages' }, boxes)
+      expect(out).toEqual({ kind: 'done', results: ['done'] })
+      expect(moves).toEqual([['x', 'Deleted Messages']])
+    })
+
+    it('is found by subject, sender and date when its id has changed (as after a move)', () => {
+      const boxes = {
+        INBOX: box('INBOX', [
+          bare('other', 34504, 'Something else'),
+          bare('x', 50001, 'Session resume test', 'Test <TEST@glovebox.local>', '2026-04-11T06:41:21.000Z'),
+        ]),
+        'Deleted Messages': trash(),
+      }
+      expect(run({ kind: 'move', items: [noHeader()], to: 'Deleted Messages' }, boxes).moves).toEqual([
+        ['x', 'Deleted Messages'],
+      ])
+    })
+
+    it('is never a guess: two that match, or a different sender or date, are not found', () => {
+      const twins = {
+        INBOX: box('INBOX', [bare('a', 1, 'Session resume test'), bare('b', 2, 'Session resume test')]),
+        'Deleted Messages': trash(),
+      }
+      expect(
+        run({ kind: 'move', items: [noHeader({ rowId: 99 })], to: 'Deleted Messages' }, twins).out,
+      ).toEqual({
+        kind: 'done',
+        results: ['not-found'],
+      })
+      const unlike = {
+        INBOX: box('INBOX', [
+          bare('a', 1, 'Session resume test', 'someone@else.example'),
+          bare('b', 34504, 'Session resume test', 'test@glovebox.local', '2026-05-01T00:00:00.000Z'),
+        ]),
+        'Deleted Messages': trash(),
+      }
+      const { out, moves } = run({ kind: 'move', items: [noHeader()], to: 'Deleted Messages' }, unlike)
+      expect(out).toEqual({ kind: 'done', results: ['not-found'] })
+      expect(moves).toEqual([])
+    })
+  })
+
   it('walks nested mailboxes, and says when the destination doesn’t exist', () => {
     const boxes = {
       INBOX: box('INBOX', [{ id: 'a' }]),
@@ -107,6 +201,19 @@ describe('ORGANIZE_SCRIPT', () => {
     expect(a).toEqual({ id: 'a', readStatus: true })
     run({ kind: 'mark', items: [item('a')], flagged: false }, boxes)
     expect(a).toEqual({ id: 'a', readStatus: true, flaggedStatus: false })
+  })
+
+  it('gives one message’s whole source, and nothing for a message it can’t find', () => {
+    const a = { id: 'a', source: () => 'From: x\r\n\r\nbody' }
+    const boxes = { INBOX: box('INBOX', [a as FakeMessage]) }
+    expect(run({ kind: 'source', items: [item('a')] }, boxes).out).toEqual({
+      kind: 'source',
+      source: 'From: x\r\n\r\nbody',
+    })
+    expect(run({ kind: 'source', items: [item('gone')] }, boxes).out).toEqual({
+      kind: 'done',
+      results: ['not-found'],
+    })
   })
 
   it('starts Mail when it is closed', () => {
@@ -142,6 +249,26 @@ describe('MailOrganizer', () => {
     expect(
       await organizer(1, '', 'execution error: Not authorized to send Apple events (-1743)').apply(request),
     ).toEqual({ kind: 'not-allowed' })
+  })
+
+  it('reads a whole source, and treats an answer with none as not found', async () => {
+    const item = { messageId: 'a', accountId: ALLOWED, mailbox: 'INBOX' }
+    const withSource = (stdout: string, code = 0) =>
+      new MailOrganizer(
+        async () => ({ code: 0, stdout: '', stderr: '' }),
+        1_000,
+        async (_file, args) => {
+          expect(JSON.parse(args.at(-1) as string)).toEqual({ kind: 'source', items: [item] })
+          return { code, stdout, stderr: '' }
+        },
+      )
+    const got = await withSource('{"kind":"source","source":"From: x\\r\\n\\r\\nhi"}').source(item)
+    expect(got.kind === 'done' && got.source.toString()).toBe('From: x\r\n\r\nhi')
+    expect(await withSource('{"kind":"done","results":["not-found"]}').source(item)).toEqual({
+      kind: 'not-found',
+    })
+    expect(await withSource('nope').source(item)).toEqual({ kind: 'failed' })
+    expect(await withSource('', 1).source(item)).toEqual({ kind: 'failed' })
   })
 })
 
@@ -229,8 +356,16 @@ describe('the move and mark tools', () => {
         kind: 'move',
         to: 'Deleted Messages',
         items: [
-          { messageId: 'engine-1@example.com', accountId: ALLOWED, mailbox: 'INBOX' },
-          { messageId: 'engine-2@example.com', accountId: ALLOWED, mailbox: 'Sent Messages' },
+          expect.objectContaining({
+            messageId: 'engine-1@example.com',
+            accountId: ALLOWED,
+            mailbox: 'INBOX',
+          }),
+          expect.objectContaining({
+            messageId: 'engine-2@example.com',
+            accountId: ALLOWED,
+            mailbox: 'Sent Messages',
+          }),
         ],
       },
     ])
@@ -305,6 +440,25 @@ describe('the move and mark tools', () => {
     })
   })
 
+  it('asks Mail for a message without a Message-ID by its id, subject, sender and date', async () => {
+    const s = setup()
+    await callMailTool(s.deps, 'mark', { ids: [13], flagged: false })
+    expect(s.asked[0]).toMatchObject({
+      kind: 'mark',
+      items: [
+        {
+          messageId: null,
+          rowId: 13,
+          subject: 'Never downloaded',
+          sender: 'nofile@example.com',
+          date: expect.any(String),
+          accountId: ALLOWED,
+          mailbox: 'INBOX',
+        },
+      ],
+    })
+  })
+
   it('marks messages, and needs read or flagged', async () => {
     const s = setup()
     const result = await callMailTool(s.deps, 'mark', { ids: [7, 404], read: true, flagged: true })
@@ -314,7 +468,9 @@ describe('the move and mark tools', () => {
     })
     expect(s.asked[0]).toEqual({
       kind: 'mark',
-      items: [{ messageId: 'engine-1@example.com', accountId: ALLOWED, mailbox: 'INBOX' }],
+      items: [
+        expect.objectContaining({ messageId: 'engine-1@example.com', accountId: ALLOWED, mailbox: 'INBOX' }),
+      ],
       read: true,
       flagged: true,
     })

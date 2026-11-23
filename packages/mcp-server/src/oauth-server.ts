@@ -28,7 +28,7 @@ import {
   RegistrationRefused,
   type RemoteClients,
 } from './oauth-clients'
-import { type ConsentRequest, type ConsentRequests } from './oauth-consent'
+import type { ConsentRequest, ConsentRequests } from './oauth-consent'
 import { type PageProblem, problemPage, sendPage, waitingPage } from './oauth-pages'
 import { SourceLimits as Limits, type SourceLimits, type WindowLimit } from './rate-limit'
 import {

@@ -2691,7 +2691,13 @@ describe('remote access', () => {
     expect(asked.at(-1)).toEqual({
       kind: 'move',
       to: 'INBOX',
-      items: [{ messageId: 'engine-1@example.com', accountId: MAIL_ALLOWED, mailbox: 'Deleted Messages' }],
+      items: [
+        expect.objectContaining({
+          messageId: 'engine-1@example.com',
+          accountId: MAIL_ALLOWED,
+          mailbox: 'Deleted Messages',
+        }),
+      ],
     })
     expect(await s.api.mail.undoMove(seq)).toBe('already')
     const back = (await s.api.audit.page({})).records.find(

@@ -232,7 +232,8 @@ export type AuditEvent =
       readonly callId: string | null
       readonly clientId?: string
       readonly accountId: string
-      readonly messageId: string
+      /** Null when the message has no Message-ID. */
+      readonly messageId: string | null
       readonly from: string
       readonly to: string
       readonly subject: string

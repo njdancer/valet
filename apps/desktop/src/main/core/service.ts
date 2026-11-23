@@ -416,7 +416,7 @@ export interface ServiceDeps {
     readonly files: MailFiles | null
     readonly drafts: Pick<MailDrafts, 'save'>
     /** Moves and marks messages through Mail; absent, agents can't organise mail. */
-    readonly organizer?: Pick<MailOrganizer, 'apply'>
+    readonly organizer?: Pick<MailOrganizer, 'apply'> & Partial<Pick<MailOrganizer, 'source'>>
     readonly pdfText?: (bytes: Buffer) => Promise<string | null>
   } | null
   /** This Mac's name, as a paired phone shows it. */
