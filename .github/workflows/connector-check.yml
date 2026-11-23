@@ -1,15 +1,11 @@
 # Adds Nick's Mac as a Claude.ai connector would (at its other name, tunnelAlias(macId, '2'):
 # claude.ai won't dial any name containing its macId since 2026-11-22), from the public internet, as far as it can go
-# without a person (.github/scripts/connector-check.mjs). Every 10 minutes, after each relay
-# deploy, and on demand. A red run means a connector added now would fail.
+# without a person (.github/scripts/connector-check.mjs). On demand only: Nick asked on 2026-11-23
+# that it stop running on a schedule or after deploys (it was for debugging the integration), and
+# it registers no client unless asked. A red run means a connector added now would fail.
 name: connector check
 
 on:
-  schedule:
-    - cron: "*/10 * * * *"
-  workflow_run:
-    workflows: ["Deploy blind relay"]
-    types: [completed]
   workflow_dispatch:
     inputs:
       mac_host:
@@ -19,9 +15,9 @@ on:
         description: Rounds of discovery
         default: "10"
       register:
-        description: Also register a client (expires within the hour)
+        description: Also register a client (it shows on the phone until it expires within the hour)
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: read
@@ -58,9 +54,5 @@ jobs:
       - name: Add the connector the way Claude does
         run: |
           flag=""
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            [ "${{ inputs.register }}" = "true" ] && flag="--register"
-          elif [ "$(date -u +%M)" -lt 10 ]; then
-            flag="--register" # once an hour on the schedule
-          fi
+          [ "${{ inputs.register }}" = "true" ] && flag="--register"
           node .github/scripts/connector-check.mjs "$MAC_HOST" "$ROUNDS" $flag
