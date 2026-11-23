@@ -1229,3 +1229,39 @@ describe('strict arguments', () => {
     expect(caller.calls).toHaveLength(1)
   })
 })
+
+describe('pictures and files beside the output', () => {
+  it('reach the client as image and resource blocks after the JSON text', async () => {
+    const caller = new FakeCaller([searchProducts])
+    const output = { products: [] }
+    caller.answer = async () => ({
+      status: 'ok',
+      output,
+      content: [
+        { kind: 'image', mimeType: 'image/jpeg', data: Buffer.from('jpeg') },
+        {
+          kind: 'file',
+          uri: 'valet-mail://message/1/attachment/1/a.pdf',
+          mimeType: 'application/pdf',
+          data: Buffer.from('%PDF'),
+        },
+      ],
+    })
+    const { client } = await connect(caller)
+    const result = await client.callTool({ name: 'woolworths_search_products', arguments: { query: 'milk' } })
+    expect(result.isError).toBeFalsy()
+    expect(result.structuredContent).toEqual(output)
+    expect(result.content).toEqual([
+      { type: 'text', text: JSON.stringify(output) },
+      { type: 'image', mimeType: 'image/jpeg', data: Buffer.from('jpeg').toString('base64') },
+      {
+        type: 'resource',
+        resource: {
+          uri: 'valet-mail://message/1/attachment/1/a.pdf',
+          mimeType: 'application/pdf',
+          blob: Buffer.from('%PDF').toString('base64'),
+        },
+      },
+    ])
+  })
+})

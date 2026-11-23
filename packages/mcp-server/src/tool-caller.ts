@@ -8,6 +8,7 @@ import type {
   InputIssue,
   NeedsUserReason,
   Stage,
+  ToolContent,
   ToolDeclaration,
 } from '@valet/core'
 import type { z } from 'zod'
@@ -78,7 +79,12 @@ export type NeedsYouHint =
  * setting title.
  */
 export type CallOutcome =
-  | { readonly status: 'ok'; readonly output: unknown }
+  | {
+      readonly status: 'ok'
+      readonly output: unknown
+      /** Pictures and files beside the output, from Valet's built-in tools only (core tool-content.ts). */
+      readonly content?: readonly ToolContent[]
+    }
   /**
    * The run stopped and the person has been asked to act in the app. Only the reason code crosses
    * this seam; a manifest's note for the person is shown in the app and never sent to the client.

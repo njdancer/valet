@@ -325,7 +325,12 @@ export function createMcpServer(
     if (outcome.status !== 'ok') return toolResult(outcome, structured, context)
     const checked = await checkedOutput(listed.output, outcome.output)
     if (!checked.valid) return failedResult('tool-output', 'invalid', context)
-    return toolResult({ status: 'ok', output: checked.output }, structured)
+    return toolResult(
+      outcome.content === undefined
+        ? { status: 'ok', output: checked.output }
+        : { status: 'ok', output: checked.output, content: outcome.content },
+      structured,
+    )
   }
 
   const register = ({ name, listed, schemas }: ExposedTool): RegisteredTool => {

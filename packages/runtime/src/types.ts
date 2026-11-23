@@ -12,6 +12,7 @@ import type {
   SessionDriver,
   SettingChoice,
   Stage,
+  ToolContent,
   ToolDeclaration,
 } from '@valet/core'
 import type { z } from 'zod'
@@ -178,7 +179,12 @@ export interface ConfirmationPrompt {
 }
 
 export type ToolCallResult =
-  | { readonly status: 'ok'; readonly output: unknown }
+  | {
+      readonly status: 'ok'
+      readonly output: unknown
+      /** Pictures and files beside the output, from Valet's built-in tools only (core tool-content.ts). */
+      readonly content?: readonly ToolContent[]
+    }
   /** Only the code: the app renders its own wording, and nothing adapter-authored reaches the client. */
   | { readonly status: 'needsUser'; readonly reason: NeedsUserReason }
   | {

@@ -1,6 +1,6 @@
 // Turns a runtime outcome into an MCP tool result, with text from fixed templates: nothing the
 // runtime returns is passed through except a declared output, and codes and numbers checked against
-// fixed vocabularies. failed, blocked and declined are tool errors, so the agent sees them and can act
+// fixed vocabularies, and a built-in tool's pictures and files checked by type and size. failed, blocked and declined are tool errors, so the agent sees them and can act
 // on them; needsUser is not an error, because nothing went wrong: the person has to do something.
 
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
@@ -13,17 +13,20 @@ import {
   inputIssue,
   inputIssueSentence,
   LOCKED_DOWN_RESULT,
+  MAX_TOOL_CONTENT_BYTES,
   missedTitle,
   NEEDS_USER_REASONS,
   type NeedsUserReason,
   needsYouTitle,
   ownCapLabel,
   PAUSED_RESULT,
+  PICTURE_TYPES,
   STAGES,
   type Stage,
   seeCallSentence,
   siteLimitingLabel,
   sitePausedResult,
+  type ToolContent,
 } from '@valet/core'
 import type { CallOutcome, NeedsYouHint } from './tool-caller'
 
@@ -61,7 +64,7 @@ export function toolResult(
 ): CallToolResult {
   switch (outcome.status) {
     case 'ok':
-      return okResult(outcome.output, structured)
+      return okResult(outcome.output, structured, outcome.content ?? [])
     case 'needsUser': {
       const named = needsYouText(outcome.reason, outcome.needsYou, context)
       if (named !== null) return textResult(named, structured)
@@ -286,12 +289,44 @@ function needsYouText(
   }
 }
 
-function okResult(output: unknown, structured: boolean): CallToolResult {
+function okResult(output: unknown, structured: boolean, extra: readonly ToolContent[]): CallToolResult {
   // undefined (a tool with nothing to say) still needs a JSON text block.
   const text = JSON.stringify(output) ?? 'null'
-  const result: CallToolResult = { content: [{ type: 'text', text }] }
+  const result: CallToolResult = { content: [{ type: 'text', text }, ...contentBlocks(extra)] }
   if (structured) result.structuredContent = output as Record<string, unknown>
   return result
+}
+
+/** A MIME type as a plain token pair; anything else is sent as application/octet-stream. */
+const MIME_TYPE = /^[a-z0-9][a-z0-9!#$&^_.+-]{0,63}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,127}$/
+/** A URI Valet makes itself: its own scheme and nothing that isn't printable ASCII. */
+const VALET_URI = /^valet-[a-z]+:\/\/[\x21-\x7e]{1,1024}$/
+
+/**
+ * A built-in tool's pictures and files as MCP content blocks, after the JSON text: images by the
+ * types every client shows, files as embedded resources. Whatever would take the result past
+ * MAX_TOOL_CONTENT_BYTES is left out; the output says what was meant to go with it.
+ */
+function contentBlocks(extra: readonly ToolContent[]): CallToolResult['content'] {
+  const blocks: CallToolResult['content'] = []
+  let total = 0
+  for (const item of extra) {
+    if (!Buffer.isBuffer(item.data) || item.data.length === 0) continue
+    if (total + item.data.length > MAX_TOOL_CONTENT_BYTES) continue
+    if (item.kind === 'image') {
+      if (!(PICTURE_TYPES as readonly string[]).includes(item.mimeType)) continue
+      blocks.push({ type: 'image', mimeType: item.mimeType, data: item.data.toString('base64') })
+    } else if (item.kind === 'file') {
+      if (!VALET_URI.test(item.uri)) continue
+      const mimeType = MIME_TYPE.test(item.mimeType) ? item.mimeType : 'application/octet-stream'
+      blocks.push({
+        type: 'resource',
+        resource: { uri: item.uri, mimeType, blob: item.data.toString('base64') },
+      })
+    } else continue
+    total += item.data.length
+  }
+  return blocks
 }
 
 function textResult(text: string, isError: boolean): CallToolResult {

@@ -192,6 +192,17 @@ describe('RuntimeToolCaller', () => {
     expect(finished).toEqual([])
   })
 
+  it('passes on pictures and files only from a built-in tool, never from an adapter’s run', () => {
+    const content = [{ kind: 'image' as const, mimeType: 'image/png' as const, data: Buffer.from('p') }]
+    expect(outcomeOf({ status: 'ok', output: 1, content })).toEqual({ status: 'ok', output: 1 })
+    expect(outcomeOf({ status: 'ok', output: 1, content }, true)).toEqual({
+      status: 'ok',
+      output: 1,
+      content,
+    })
+    expect(outcomeOf({ status: 'ok', output: 1, content: [] }, true)).toEqual({ status: 'ok', output: 1 })
+  })
+
   it('maps every runtime result onto the endpoint’s outcome', () => {
     expect(outcomeOf({ status: 'needsUser', reason: 'captcha' })).toEqual({
       status: 'needsUser',
