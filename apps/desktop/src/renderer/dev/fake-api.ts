@@ -713,6 +713,15 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
   // Mail on this Mac: the fake walks through setup as the buttons are pressed.
   let mailSettings: MailSettings = { enabled: false, accounts: [], drafts: false, approveDrafts: false }
   let mailStage: 'not-running' | 'needs-access' | 'ready' = 'not-running'
+  /** Mail's tools that are on for cloud agents (Connections › Remote). */
+  const mailRemoteOn = new Set<string>()
+  const FAKE_MAIL_TOOLS = [
+    { tool: 'accounts', title: 'Mail accounts', sideEffect: 'read' as const },
+    { tool: 'search', title: 'Search mail', sideEffect: 'read' as const },
+    { tool: 'read', title: 'Read a message', sideEffect: 'read' as const },
+    { tool: 'thread', title: 'Read a conversation', sideEffect: 'read' as const },
+    { tool: 'create_draft', title: 'Save a draft', sideEffect: 'write' as const },
+  ]
   const MAIL_ACCOUNTS = [
     { id: '0A1B2C3D-0000-4000-8000-000000000001', name: 'iCloud', address: 'someone@icloud.com' },
     { id: '0A1B2C3D-0000-4000-8000-000000000002', name: 'Work', address: 'someone@example.com' },
@@ -1719,6 +1728,8 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)),
         } as MailSettings
         if (mailSettings.enabled && !wasOn && mailStage === 'not-running') mailStage = 'needs-access'
+        // As the real one: what agents can be given changed.
+        emit({ type: 'adapters-changed' })
         return mailStatus()
       },
       async action(action) {
@@ -1888,6 +1899,8 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         const ref = `${adapterId}.${tool}`
         const tools = client.grant.tools.filter((t) => t !== ref)
         if (on) tools.push(ref)
+        // As the real one: a tool given to one agent goes on for cloud agents too.
+        if (on && adapterId === 'mail') mailRemoteOn.add(ref)
         remoteClients = remoteClients.map((c) =>
           c.id === id && c.grant !== null ? { ...c, grant: { ...c.grant, tools: tools.sort() } } : c,
         )
@@ -1902,7 +1915,20 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       },
       async setup() {
         enter('remote.setup')
-        return clone(remoteSetup)
+        // Mail on this Mac's built-in tools come first, listed while Mail is on with an account picked.
+        const mail =
+          mailSettings.enabled && mailSettings.accounts.length > 0
+            ? FAKE_MAIL_TOOLS.filter((t) => t.tool !== 'create_draft' || mailSettings.drafts).map((t) => ({
+                ref: `mail.${t.tool}`,
+                adapterId: 'mail',
+                adapterName: 'Mail',
+                tool: t.tool,
+                toolTitle: t.title,
+                sideEffect: t.sideEffect,
+                enabled: mailRemoteOn.has(`mail.${t.tool}`),
+              }))
+            : []
+        return clone({ ...remoteSetup, tools: [...mail, ...remoteSetup.tools] })
       },
       async setEnabled(enabled) {
         enter('remote.setEnabled', enabled)

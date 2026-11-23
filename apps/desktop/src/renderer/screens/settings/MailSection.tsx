@@ -13,14 +13,23 @@ import {
   Stepper,
   Switch,
   Text,
+  TextLink,
+  toast,
 } from '@valet/ui'
 import { useEffect, useState } from 'react'
-import type { MailAction, MailSettingsPatch, MailStatus } from '../../../shared/api'
+import type { MailAction, MailSettingsPatch, MailStatus, RemoteClientItem } from '../../../shared/api'
 import { useAction, useApi, useLoad } from '../../lib/api-context'
+import { href } from '../../lib/routes'
+import { clientLabel } from '../../lib/wording'
 import { Failed } from '../connections/shared'
 
 /** Mail's "On My Mac": mailboxes on this Mac only, outside any email account. */
 const LOCAL_HINT = 'Mailboxes kept only on this Mac, not in any email account'
+
+/** What "Search and read mail" gives a cloud agent: one Touch ID each. */
+const READ_TOOLS = ['search', 'read'] as const
+/** Every Mail tool an agent may hold, all taken away when its switch goes off. */
+const ALL_TOOLS = ['accounts', 'search', 'read', 'thread', 'create_draft'] as const
 
 /** How often the screen looks again while the person is in System Settings. */
 const RECHECK_MS = 2000
@@ -232,6 +241,73 @@ function Choices({
           </Field>
         </CardContent>
       </Card>
+      {allowed.size > 0 ? <CloudAgents /> : null}
     </>
+  )
+}
+
+/**
+ * Each approved cloud agent (Claude on claude.ai, say), with a switch that gives it Mail's search
+ * and read tools: the step that otherwise waits on the agent's own page in Connections. On asks for
+ * Touch ID for each tool; off takes every Mail tool away from it at once.
+ */
+function CloudAgents() {
+  const api = useApi()
+  const loaded = useLoad((a) => a.remote.clients(), [], ['remote-changed'])
+  const action = useAction()
+  if (loaded.status !== 'ready') return null
+  const agents = loaded.data.filter((c) => c.grant !== null)
+  const name = (agent: RemoteClientItem) =>
+    agent.clientName === null ? agent.host : `${clientLabel(agent.clientName)} (${agent.host})`
+  const reads = (agent: RemoteClientItem) =>
+    READ_TOOLS.every((t) => agent.grant?.tools.includes(`mail.${t}`) ?? false)
+  const set = (agent: RemoteClientItem, on: boolean) =>
+    void action
+      .run(async () => {
+        const held = new Set(agent.grant?.tools ?? [])
+        for (const tool of on ? READ_TOOLS : ALL_TOOLS)
+          if (held.has(`mail.${tool}`) !== on) await api.remote.setClientTool(agent.id, 'mail', tool, on)
+      })
+      .then((ok) => {
+        if (ok)
+          toast(on ? `${name(agent)} may search and read Mail` : `${name(agent)} can no longer read Mail`, {
+            description: 'Its tool list changes now. If it doesn’t see the change, start a new chat.',
+          })
+      })
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-4">
+        <Text weight="semibold">Cloud agents that may read Mail</Text>
+        <Failed failed={action.failed} what="change which agents may read Mail" />
+        {agents.length === 0 ? (
+          <Text tone="muted">
+            No cloud agent is connected yet. Once you approve one in Connections, you can let it read Mail
+            here.
+          </Text>
+        ) : (
+          <Stack gap={3}>
+            {agents.map((agent) => (
+              <Field
+                key={agent.id}
+                inline
+                label={name(agent)}
+                description="Search your mail and read messages in the accounts above. Turning this on asks for Touch ID once for each of the two tools."
+              >
+                <Switch
+                  aria-label={`Let ${name(agent)} search and read Mail`}
+                  checked={reads(agent)}
+                  onCheckedChange={(v) => set(agent, v)}
+                  disabled={action.busy}
+                />
+              </Field>
+            ))}
+          </Stack>
+        )}
+        <Text size="sm" tone="muted">
+          To give an agent single Mail tools, such as saving drafts, open it in{' '}
+          <TextLink href={href.connections()}>Connections</TextLink>.
+        </Text>
+      </CardContent>
+    </Card>
   )
 }

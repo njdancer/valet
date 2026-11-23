@@ -284,6 +284,7 @@ export class RemoteAccess {
       if (!this.clients.addTools(clientId, [`${adapter}.${declaration.name}`])) return false
       await this.auditClientTool(adapter, declaration, clientId, true)
       this.refresh()
+      await this.reopenAfterChange([clientId])
       this.deps.changed()
       return true
     })
@@ -303,6 +304,7 @@ export class RemoteAccess {
       if (!this.clients.removeTools(clientId, [`${adapter}.${declaration.name}`])) return false
       await this.auditClientTool(adapter, declaration, clientId, false)
       this.refresh()
+      await this.reopenAfterChange([clientId])
       this.deps.changed()
       return true
     })
@@ -515,8 +517,37 @@ export class RemoteAccess {
         })
         .catch(() => undefined)
       this.refresh()
+      // Every agent holding it in its grant gains or loses it.
+      const ref = `${adapter}.${declaration.name}`
+      await this.reopenAfterChange(
+        this.clients
+          .list()
+          .filter((c) => c.grant?.tools.includes(ref) ?? false)
+          .map((c) => c.id),
+      )
       this.deps.changed()
     })
+  }
+
+  /**
+   * After a change to what these clients may call: closes their sessions (tokens kept). A tool
+   * list change notice reaches only a client holding an event stream open, and claude.ai doesn't:
+   * it keeps using its session's first list. A closed session makes it start a new one and list
+   * again (MCP: a 404 for the session id means initialize afresh).
+   */
+  /** Reopens the sessions of every client holding one of this adapter's tools (it came or went). */
+  reopenHolding(adapter: string): Promise<void> {
+    const prefix = `${adapter}.`
+    return this.reopenAfterChange(
+      this.clients
+        .list()
+        .filter((c) => c.grant?.tools.some((t) => t.startsWith(prefix)) ?? false)
+        .map((c) => c.id),
+    )
+  }
+
+  private async reopenAfterChange(clientIds: readonly string[]): Promise<void> {
+    for (const id of clientIds) await this.listener?.reopenClient(id).catch(() => undefined)
   }
 
   /**

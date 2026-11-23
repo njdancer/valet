@@ -2616,16 +2616,17 @@ describe('remote access', () => {
     await s.service.remote.setEnabled(true)
     const port = Number(new URL(s.service.remote.status().url as string).port)
     const agent = approvedClient(s, ['mail.search'])
-    const client = await remoteClient(port, agent.token)
-    expect((await client.listTools()).tools).toEqual([])
+    const first = await remoteClient(port, agent.token)
+    expect((await first.listTools()).tools).toEqual([])
     // On for every cloud agent asks for Touch ID; a cancelled prompt changes nothing.
     s.presence.answer = false
     await expect(s.api.remote.setTool('mail', 'search', true)).rejects.toBeInstanceOf(ValetError)
-    expect((await client.listTools()).tools).toEqual([])
+    expect((await first.listTools()).tools).toEqual([])
     s.presence.answer = true
     const before = s.presence.prompts.length
     await s.api.remote.setTool('mail', 'search', true)
     expect(s.presence.prompts.length).toBe(before + 1)
+    const client = await remoteClient(port, agent.token)
     expect((await client.listTools()).tools.map((t) => t.name)).toEqual(['mail_search'])
     const found = await client.callTool({ name: 'mail_search', arguments: { from: 'ada' } })
     expect(found.isError).not.toBe(true)
@@ -2633,7 +2634,8 @@ describe('remote access', () => {
 
     // Turned off in Settings › Mail: gone for the agent, and still switchable off remotely.
     await s.api.mail.update({ enabled: false })
-    expect((await client.listTools()).tools).toEqual([])
+    await vi.waitFor(() => expect(client.listTools()).rejects.toThrow(/Session not found/))
+    expect((await (await remoteClient(port, agent.token)).listTools()).tools).toEqual([])
     await s.api.remote.setTool('mail', 'search', false)
     expect(s.service.remote.status().tools).toEqual([])
   })
@@ -2655,6 +2657,10 @@ describe('remote access', () => {
     const names = async () =>
       (await (await remoteClient(port, agent.token)).listTools()).tools.map((t) => t.name)
     expect(await names()).toEqual([])
+    // A session opened before the change, as claude.ai keeps one: it is closed, so the agent has to
+    // open a new one, which lists the new tools (claude.ai never reads the list-changed notice).
+    const before = await remoteClient(port, agent.token)
+    expect((await before.listTools()).tools).toEqual([])
     // Reading mail is a wide grant: on asks for Touch ID, and a cancelled prompt changes nothing.
     s.presence.answer = false
     await expect(s.api.remote.setClientTool(agent.id, 'mail', 'search', true)).rejects.toBeInstanceOf(
@@ -2663,14 +2669,15 @@ describe('remote access', () => {
     expect(await names()).toEqual([])
     expect(s.service.remote.status().tools).toEqual([])
     s.presence.answer = true
-    const before = s.presence.prompts.length
+    const prompts = s.presence.prompts.length
     await s.api.remote.setClientTool(agent.id, 'mail', 'search', true)
-    expect(s.presence.prompts.length).toBe(before + 1)
+    expect(s.presence.prompts.length).toBe(prompts + 1)
+    await expect(before.listTools()).rejects.toThrow()
     expect(await names()).toEqual(['mail_search'])
     // On for remote clients now, but another agent still needs it in its own grant.
     expect(s.service.remote.status().tools).toEqual(['mail.search'])
     await s.api.remote.setClientTool(agent.id, 'mail', 'search', false)
-    expect(s.presence.prompts.length).toBe(before + 1)
+    expect(s.presence.prompts.length).toBe(prompts + 1)
     expect(await names()).toEqual([])
     expect((await s.api.remote.clients()).find((c) => c.id === agent.id)?.grant?.tools).toEqual([])
     // A Mail tool that isn't offered (Mail off) can't be given.
@@ -2688,10 +2695,13 @@ describe('remote access', () => {
     expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/)
     const port = Number(new URL(url as string).port)
     const phone = approvedClient(s, ['shop.echo', 'shop.add'])
-    const client = await remoteClient(port, phone.token)
+    const first = await remoteClient(port, phone.token)
 
-    expect((await client.listTools()).tools).toEqual([])
+    expect((await first.listTools()).tools).toEqual([])
     await s.service.setRemoteTool('shop', 'echo', true)
+    // Its session was closed so that it lists again: a new one sees the tool.
+    await expect(first.listTools()).rejects.toThrow(/Session not found/)
+    const client = await remoteClient(port, phone.token)
     expect((await client.listTools()).tools.map((t) => t.name)).toEqual(['shop_echo'])
 
     const ok = await client.callTool({ name: 'shop_echo', arguments: { text: 'hi' } })
