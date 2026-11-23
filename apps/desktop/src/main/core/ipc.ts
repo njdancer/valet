@@ -286,6 +286,7 @@ const HANDLERS: Readonly<
   'mail.update': entry(z.tuple([mailSettingsPatchSchema]), (api, [patch]) =>
     api.mail.update(stripUndefined(patch)),
   ),
+  'mail.undoMove': entry(z.tuple([z.number().int().min(1)]), (api, [seq]) => api.mail.undoMove(seq)),
   'mail.action': entry(
     z.tuple([z.enum(['start-reader', 'full-disk-access', 'login-items', 'reveal-reader'])]),
     (api, [action]) => api.mail.action(action),

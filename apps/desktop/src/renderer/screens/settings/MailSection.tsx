@@ -28,8 +28,10 @@ const LOCAL_HINT = 'Mailboxes kept only on this Mac, not in any email account'
 
 /** What "Search and read mail" gives a cloud agent: one Touch ID each. */
 const READ_TOOLS = ['search', 'read'] as const
-/** Every Mail tool an agent may hold, all taken away when its switch goes off. */
-const ALL_TOOLS = ['accounts', 'search', 'read', 'thread', 'create_draft'] as const
+/** What "Archive, trash and mark" gives: one Touch ID each. */
+const ORGANIZE_TOOLS = ['move', 'mark'] as const
+/** Every Mail tool an agent may hold, all taken away when its read switch goes off. */
+const ALL_TOOLS = ['accounts', 'search', 'read', 'thread', 'create_draft', 'move', 'mark'] as const
 
 /** How often the screen looks again while the person is in System Settings. */
 const RECHECK_MS = 2000
@@ -239,19 +241,31 @@ function Choices({
               disabled={busy}
             />
           </Field>
+          <Field
+            inline
+            label="Let agents archive, trash and mark mail"
+            description="An agent can move messages to Archive, to Trash or to another mailbox of the same account, and mark them read or flagged. Trash is the only delete: you can take a message back out for 30 days. Every move is listed in Activity, where you can put it back."
+          >
+            <Switch
+              checked={status.settings.organize}
+              onCheckedChange={(v) => update({ organize: v })}
+              disabled={busy}
+            />
+          </Field>
         </CardContent>
       </Card>
-      {allowed.size > 0 ? <CloudAgents /> : null}
+      {allowed.size > 0 ? <CloudAgents organize={status.settings.organize} /> : null}
     </>
   )
 }
 
 /**
  * Each approved cloud agent (Claude on claude.ai, say), with a switch that gives it Mail's search
- * and read tools: the step that otherwise waits on the agent's own page in Connections. On asks for
- * Touch ID for each tool; off takes every Mail tool away from it at once.
+ * and read tools, and (while organising is on) one for moving and marking: the step that otherwise
+ * waits on the agent's own page in Connections. On asks for Touch ID for each tool; reading off
+ * takes every Mail tool away from it at once.
  */
-function CloudAgents() {
+function CloudAgents({ organize }: { readonly organize: boolean }) {
   const api = useApi()
   const loaded = useLoad((a) => a.remote.clients(), [], ['remote-changed'])
   const action = useAction()
@@ -259,47 +273,80 @@ function CloudAgents() {
   const agents = loaded.data.filter((c) => c.grant !== null)
   const name = (agent: RemoteClientItem) =>
     agent.clientName === null ? agent.host : `${clientLabel(agent.clientName)} (${agent.host})`
-  const reads = (agent: RemoteClientItem) =>
-    READ_TOOLS.every((t) => agent.grant?.tools.includes(`mail.${t}`) ?? false)
-  const set = (agent: RemoteClientItem, on: boolean) =>
+  const holds = (agent: RemoteClientItem, tools: readonly string[]) =>
+    tools.every((t) => agent.grant?.tools.includes(`mail.${t}`) ?? false)
+  const set = (agent: RemoteClientItem, tools: readonly string[], on: boolean, done: string) =>
     void action
       .run(async () => {
         const held = new Set(agent.grant?.tools ?? [])
-        for (const tool of on ? READ_TOOLS : ALL_TOOLS)
+        for (const tool of tools)
           if (held.has(`mail.${tool}`) !== on) await api.remote.setClientTool(agent.id, 'mail', tool, on)
       })
       .then((ok) => {
         if (ok)
-          toast(on ? `${name(agent)} may search and read Mail` : `${name(agent)} can no longer read Mail`, {
+          toast(done, {
             description: 'Its tool list changes now. If it doesn’t see the change, start a new chat.',
           })
       })
   return (
     <Card>
       <CardContent className="flex flex-col gap-4">
-        <Text weight="semibold">Cloud agents that may read Mail</Text>
-        <Failed failed={action.failed} what="change which agents may read Mail" />
+        <Text weight="semibold">Cloud agents that may use Mail</Text>
+        <Failed failed={action.failed} what="change which agents may use Mail" />
         {agents.length === 0 ? (
           <Text tone="muted">
             No cloud agent is connected yet. Once you approve one in Connections, you can let it read Mail
             here.
           </Text>
         ) : (
-          <Stack gap={3}>
+          <Stack gap={4}>
             {agents.map((agent) => (
-              <Field
-                key={agent.id}
-                inline
-                label={name(agent)}
-                description="Search your mail and read messages in the accounts above. Turning this on asks for Touch ID once for each of the two tools."
-              >
-                <Switch
-                  aria-label={`Let ${name(agent)} search and read Mail`}
-                  checked={reads(agent)}
-                  onCheckedChange={(v) => set(agent, v)}
-                  disabled={action.busy}
-                />
-              </Field>
+              <Stack key={agent.id} gap={2}>
+                <Field
+                  inline
+                  label={name(agent)}
+                  description="Search your mail and read messages in the accounts above. Turning this on asks for Touch ID once for each of the two tools."
+                >
+                  <Switch
+                    aria-label={`Let ${name(agent)} search and read Mail`}
+                    checked={holds(agent, READ_TOOLS)}
+                    onCheckedChange={(v) =>
+                      set(
+                        agent,
+                        v ? READ_TOOLS : ALL_TOOLS,
+                        v,
+                        v
+                          ? `${name(agent)} may search and read Mail`
+                          : `${name(agent)} can no longer use Mail`,
+                      )
+                    }
+                    disabled={action.busy}
+                  />
+                </Field>
+                {organize && holds(agent, READ_TOOLS) ? (
+                  <Field
+                    inline
+                    label="Archive, trash and mark"
+                    description="Move messages and mark them read or flagged. Touch ID once for each of the two tools."
+                  >
+                    <Switch
+                      aria-label={`Let ${name(agent)} archive, trash and mark mail`}
+                      checked={holds(agent, ORGANIZE_TOOLS)}
+                      onCheckedChange={(v) =>
+                        set(
+                          agent,
+                          ORGANIZE_TOOLS,
+                          v,
+                          v
+                            ? `${name(agent)} may archive, trash and mark mail`
+                            : `${name(agent)} can no longer move or mark mail`,
+                        )
+                      }
+                      disabled={action.busy}
+                    />
+                  </Field>
+                ) : null}
+              </Stack>
             ))}
           </Stack>
         )}

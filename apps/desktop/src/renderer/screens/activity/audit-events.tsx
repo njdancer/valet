@@ -48,6 +48,7 @@ export const EVENT_WORDS = {
   'update-installed': { label: 'App updated', tone: 'neutral' },
   'remote-state': { label: 'Remote access changed', tone: 'neutral' },
   'remote-tool': { label: 'Cloud agent tool changed', tone: 'neutral' },
+  'mail-moved': { label: 'Mail moved', tone: 'neutral' },
   'setting-changed': { label: 'Setting changed', tone: 'neutral' },
   'remote-consent': { label: 'Cloud agent connection', tone: 'neutral' },
   'remote-revoked': { label: 'Cloud agent removed', tone: 'neutral' },
@@ -392,6 +393,14 @@ export function details(event: AuditEvent, now: number): ReactNode {
           {event.revokedTokens > 0 ? ` · ${event.revokedTokens} tokens revoked` : ''}
         </Quiet>
       )
+    case 'mail-moved':
+      return (
+        <>
+          {event.undoOf !== undefined ? <Quiet>Put back · </Quiet> : null}“{event.subject}”
+          {event.sender !== null ? <Quiet> from {event.sender}</Quiet> : null} · <Code>{event.from}</Code> →{' '}
+          <Code>{event.to}</Code>
+        </>
+      )
     case 'remote-tool':
       return (
         <>
@@ -610,6 +619,19 @@ export const EVENT_FIELDS = {
   'update-installed': ['type', 'from', 'to'],
   'remote-state': ['type', 'state', 'revokedTokens'],
   'remote-tool': ['type', 'adapterId', 'tool', 'enabled', 'sideEffect', 'clientId'],
+  'mail-moved': [
+    'type',
+    'callId',
+    'clientId',
+    'accountId',
+    'messageId',
+    'from',
+    'to',
+    'subject',
+    'sender',
+    'date',
+    'undoOf',
+  ],
   'setting-changed': ['type', 'adapterId', 'setting', 'cleared'],
   'remote-consent': ['type', 'clientId', 'clientHost', 'source', 'tools', 'answer'],
   'remote-revoked': ['type', 'clientId', 'clients'],

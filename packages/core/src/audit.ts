@@ -223,6 +223,24 @@ export type AuditEvent =
       readonly revokedTokens: number
     }
   | {
+      /**
+       * An agent moved one message in Mail (docs/mail.md#organising), or the person undid such a
+       * move. Who sent it, its subject and date are kept so the person can see what moved, and
+       * where from and to so it can be put back. `undoOf` is the seq of the move undone.
+       */
+      readonly type: 'mail-moved'
+      readonly callId: string | null
+      readonly clientId?: string
+      readonly accountId: string
+      readonly messageId: string
+      readonly from: string
+      readonly to: string
+      readonly subject: string
+      readonly sender: string | null
+      readonly date: string | null
+      readonly undoOf?: number
+    }
+  | {
       /** The person turned a tool on or off for remote clients. Off is the default. */
       readonly type: 'remote-tool'
       readonly adapterId: string

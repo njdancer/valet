@@ -691,3 +691,16 @@ describe('the audit log', () => {
     expect(document.documentElement.innerHTML).not.toContain(CANARY)
   })
 })
+
+describe('a Mail move in the audit log', () => {
+  it('shows what moved, and puts it back where it was', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    renderAt('#/activity/audit/4806', api)
+    const back = await screen.findByRole('button', { name: 'Put back in INBOX' })
+    expect(screen.getAllByText(/This week’s specials/).length).toBeGreaterThan(0)
+    await user.click(back)
+    expect(await screen.findByText('Put back')).toBeTruthy()
+    expect(api.fake.calls.filter((c) => c.method === 'mail.undoMove').map((c) => c.args)).toEqual([[4806]])
+  })
+})

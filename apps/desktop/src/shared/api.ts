@@ -1516,6 +1516,8 @@ export interface MailSettings {
   readonly drafts: boolean
   /** Ask the person before each draft is saved. */
   readonly approveDrafts: boolean
+  /** Whether agents may move messages (Archive, Trash, other mailboxes) and mark them. */
+  readonly organize: boolean
 }
 
 export interface MailSettingsPatch {
@@ -1523,7 +1525,10 @@ export interface MailSettingsPatch {
   readonly accounts?: readonly string[]
   readonly drafts?: boolean
   readonly approveDrafts?: boolean
+  readonly organize?: boolean
 }
+
+export type MailUndo = 'done' | 'already' | 'not-found' | 'not-allowed' | 'failed'
 
 export interface MailStatus {
   readonly state: MailSetupState
@@ -1742,6 +1747,12 @@ export interface ValetApi {
     status(): Promise<MailStatus | null>
     update(patch: MailSettingsPatch): Promise<MailStatus | null>
     action(action: MailAction): Promise<void>
+    /**
+     * Puts a message an agent moved back where it was (an Activity record's Undo): `seq` is the
+     * `mail-moved` record. `already`: it was undone before; `not-found`: Mail no longer has it
+     * where the move put it.
+     */
+    undoMove(seq: number): Promise<MailUndo>
   }
   readonly updates: {
     status(): Promise<UpdateStatus>

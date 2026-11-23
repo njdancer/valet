@@ -16,8 +16,10 @@ import {
   type MailDrafts,
   type MailFiles,
   MailFilesError,
+  type MailOrganizer,
   MailStore,
   MailStoreError,
+  type MoveRecord,
   mailTools,
 } from '@valet/native-mail'
 import type { ToolCallResult } from '@valet/runtime'
@@ -31,7 +33,11 @@ export const DEFAULT_MAIL_SETTINGS: MailSettings = {
   accounts: [],
   drafts: false,
   approveDrafts: false,
+  organize: false,
 }
+
+/** Messages agents may move in an hour, all agents together: a confused one can't empty a mailbox. */
+export const MOVES_PER_HOUR = 500
 
 const accountId = z.string().regex(/^(local|[A-Za-z0-9-]{1,64})$/)
 
@@ -41,6 +47,7 @@ const mailSettingsSchema = z
     accounts: z.array(accountId).max(100),
     drafts: z.boolean(),
     approveDrafts: z.boolean().default(false),
+    organize: z.boolean().default(false),
   })
   .strict()
 
@@ -50,6 +57,7 @@ export const mailSettingsPatchSchema = z
     accounts: z.array(accountId).max(100).optional(),
     drafts: z.boolean().optional(),
     approveDrafts: z.boolean().optional(),
+    organize: z.boolean().optional(),
   })
   .strict()
 
@@ -153,6 +161,10 @@ export interface MailServiceDeps {
   readonly reader: ReaderControl | null
   readonly files: MailFiles | null
   readonly drafts: Pick<MailDrafts, 'save'>
+  /** Moves and marks messages through Mail. Absent: agents can't organise mail in this build. */
+  readonly organizer?: Pick<MailOrganizer, 'apply'>
+  /** Records the messages a call moved (the audit log, which Undo reads). */
+  readonly moved?: (moves: readonly MoveRecord[], call: ToolCall) => Promise<void>
   /** Audits a call and its end, as the runtime does for an adapter's tools. */
   readonly audit: (call: ToolCall, result: ToolCallResult, durationMs: number) => Promise<void>
   readonly now: () => number
@@ -169,6 +181,8 @@ export class MailService implements NativeTools {
   readonly adapterId = MAIL_ADAPTER_ID
   private current: MailSettings = DEFAULT_MAIL_SETTINGS
   private readonly store: MailStore | null
+  /** When each move of the last hour happened, oldest first. */
+  private moves: number[] = []
 
   constructor(private readonly deps: MailServiceDeps) {
     this.store =
@@ -187,7 +201,7 @@ export class MailService implements NativeTools {
 
   listTools(): readonly ListedTool[] {
     if (!this.current.enabled || this.current.accounts.length === 0 || this.store === null) return []
-    return mailTools({ drafts: this.current.drafts }).map((tool) => ({
+    return mailTools({ drafts: this.current.drafts, organize: this.organizing() }).map((tool) => ({
       adapterId: MAIL_ADAPTER_ID,
       adapterName: MAIL_ADAPTER_NAME,
       declaration: tool.declaration,
@@ -213,6 +227,18 @@ export class MailService implements NativeTools {
             approve === undefined
               ? null
               : () => (this.current.approveDrafts ? (draft) => approve(draft, call) : null),
+          ...(this.deps.organizer === undefined
+            ? {}
+            : {
+                organize: {
+                  organizer: this.deps.organizer,
+                  enabled: () => this.organizing(),
+                  spend: (count: number) => this.spendMoves(count),
+                  moved: async (moves: readonly MoveRecord[]) => {
+                    await this.deps.moved?.(moves, call)
+                  },
+                },
+              }),
         },
         call.tool,
         call.input,
@@ -220,6 +246,40 @@ export class MailService implements NativeTools {
     }
     await this.deps.audit(call, result, Math.max(0, this.deps.now() - started)).catch(() => undefined)
     return result
+  }
+
+  /** Whether agents may move and mark messages now: the person's switch, in a build that can. */
+  private organizing(): boolean {
+    return this.current.organize && this.deps.organizer !== undefined
+  }
+
+  private spendMoves(count: number): boolean {
+    const now = this.deps.now()
+    this.moves = this.moves.filter((t) => now - t < 3_600_000)
+    if (this.moves.length + count > MOVES_PER_HOUR) return false
+    for (let i = 0; i < count; i++) this.moves.push(now)
+    return true
+  }
+
+  /**
+   * Moves messages back where an earlier move took them from (the person's Undo in Activity), as
+   * recorded. Not an agent's tool, and not counted against the hour's moves.
+   */
+  async undoMoves(moves: readonly MoveRecord[]): Promise<'done' | 'not-found' | 'not-allowed' | 'failed'> {
+    if (this.deps.organizer === undefined || moves.length === 0) return 'failed'
+    let all = true
+    for (const back of new Set(moves.map((m) => m.from))) {
+      const group = moves.filter((m) => m.from === back)
+      const outcome = await this.deps.organizer.apply({
+        kind: 'move',
+        items: group.map((m) => ({ messageId: m.messageId, accountId: m.accountId, mailbox: m.to })),
+        to: back,
+      })
+      if (outcome.kind === 'not-allowed') return 'not-allowed'
+      if (outcome.kind !== 'done') return 'failed'
+      if (outcome.results.some((r) => r !== 'done')) all = false
+    }
+    return all ? 'done' : 'not-found'
   }
 
   async status(): Promise<MailStatus> {
@@ -259,6 +319,7 @@ export class MailService implements NativeTools {
     if (
       before.enabled !== this.current.enabled ||
       before.drafts !== this.current.drafts ||
+      before.organize !== this.current.organize ||
       before.accounts.join() !== this.current.accounts.join()
     )
       this.deps.changed()

@@ -78,6 +78,7 @@ export const INVOKE_METHODS = [
   'mail.status',
   'mail.update',
   'mail.action',
+  'mail.undoMove',
   'updates.status',
   'updates.check',
   'health.sites',

@@ -8,12 +8,15 @@
 import type { ErrorClass, NeedsUserReason, Stage, ToolDeclaration } from '@valet/core'
 import { z } from 'zod'
 import type { DraftOutcome, DraftRequest, MailDrafts } from './drafts'
+import type { MailOrganizer, OrganizeItem } from './organize'
 import {
   DEFAULT_SEARCH_LIMIT,
   MAX_BODY_CHARS,
   MAX_SEARCH_LIMIT,
+  type MailAccount,
   type MailStore,
   MailStoreError,
+  type MessageDetail,
 } from './store'
 
 export const MAIL_ADAPTER_ID = 'mail'
@@ -70,6 +73,9 @@ const isoTime = z
   .string()
   .max(40)
   .refine((s) => !Number.isNaN(Date.parse(s)), 'an ISO date or time')
+
+/** Messages one move or mark may name; a change touches no more. */
+export const MAX_ORGANIZE = 50
 
 export const mailInputs = {
   accounts: z.object({}).strict(),
@@ -134,6 +140,33 @@ export const mailInputs = {
       replyAll: z.boolean().optional().describe('With replyToId: reply to everyone on the message.'),
     })
     .strict(),
+  move: z
+    .object({
+      ids: z
+        .array(z.number().int().min(0))
+        .min(1)
+        .max(MAX_ORGANIZE)
+        .describe(`Message ids from mail_search, at most ${MAX_ORGANIZE}.`),
+      to: z
+        .union([z.enum(['archive', 'trash', 'inbox']), z.number().int().min(0)])
+        .describe(
+          '"archive", "trash" (the only way to delete: the person can take it back out for 30 days), ' +
+            '"inbox", or a mailbox id from mail_accounts in the same account as the messages.',
+        ),
+    })
+    .strict(),
+  mark: z
+    .object({
+      ids: z
+        .array(z.number().int().min(0))
+        .min(1)
+        .max(MAX_ORGANIZE)
+        .describe(`Message ids from mail_search, at most ${MAX_ORGANIZE}.`),
+      read: z.boolean().optional().describe('true marks them read, false unread.'),
+      flagged: z.boolean().optional().describe('true flags them, false clears the flag.'),
+    })
+    .strict()
+    .refine((v) => v.read !== undefined || v.flagged !== undefined, 'read or flagged'),
 } as const
 
 export const mailOutputs = {
@@ -160,6 +193,13 @@ export const mailOutputs = {
   read: z.object({ message: detail, note: z.string() }),
   thread: z.object({ messages: z.array(detail), note: z.string() }),
   create_draft: z.object({ saved: z.boolean(), note: z.string() }),
+  move: z.object({
+    moved: z.array(z.object({ id: z.number().int(), subject: z.string(), to: z.string() })),
+    unchanged: z.array(z.number().int()),
+    notFound: z.array(z.number().int()),
+    note: z.string(),
+  }),
+  mark: z.object({ marked: z.number().int(), notFound: z.array(z.number().int()), note: z.string() }),
 } as const
 
 export type MailToolName = keyof typeof mailInputs
@@ -200,11 +240,37 @@ const DECLARATIONS: Readonly<Record<MailToolName, Omit<ToolDeclaration, 'name'>>
     destructive: false,
     idempotent: false,
   },
+  move: {
+    title: 'Move messages',
+    description:
+      'Move up to 50 messages to Archive, to Trash, back to the inbox, or to another mailbox of the same ' +
+      'account. Moving to Trash is the only way to delete: nothing is erased, and the person can take ' +
+      'it back out for 30 days. Every move is recorded for the person to review and undo in Valet. ' +
+      'Mail opens if it is closed.',
+    sideEffect: 'write',
+    destructive: false,
+    idempotent: true,
+  },
+  mark: {
+    title: 'Mark messages',
+    description:
+      'Mark up to 50 messages read or unread, and flag or unflag them. Mail opens if it is closed.',
+    sideEffect: 'write',
+    destructive: false,
+    idempotent: true,
+  },
 }
 
-export function mailTools(options: { readonly drafts: boolean }): readonly MailToolDef[] {
+/** The tools that change mail other than drafts: listed only while the person lets agents organise. */
+export const ORGANIZE_TOOLS: readonly MailToolName[] = ['move', 'mark']
+
+export function mailTools(options: {
+  readonly drafts: boolean
+  readonly organize?: boolean
+}): readonly MailToolDef[] {
   return (Object.keys(mailInputs) as MailToolName[])
     .filter((name) => options.drafts || name !== 'create_draft')
+    .filter((name) => options.organize === true || !ORGANIZE_TOOLS.includes(name))
     .map((name) => ({
       declaration: { name, ...DECLARATIONS[name] },
       input: mailInputs[name],
@@ -230,6 +296,27 @@ export interface MailToolDeps {
   readonly approveDraft:
     | (() => ((draft: DraftApproval) => Promise<'approved' | 'declined' | 'timed-out'>) | null)
     | null
+  /** Moving and marking. Absent: those tools answer not-found. */
+  readonly organize?: {
+    readonly organizer: Pick<MailOrganizer, 'apply'>
+    /** Whether the person lets agents organise mail now. */
+    readonly enabled: () => boolean
+    /** Takes `count` moves from the hour's allowance; false when that would go over it. */
+    readonly spend: (count: number) => boolean
+    /** Every message moved, for the audit log (and Undo). Called before the result is returned. */
+    readonly moved: (moves: readonly MoveRecord[]) => Promise<void>
+  }
+}
+
+/** One message moved, as the audit log keeps it so the person can review and undo it. */
+export interface MoveRecord {
+  readonly accountId: string
+  readonly messageId: string
+  readonly from: string
+  readonly to: string
+  readonly subject: string
+  readonly sender: string | null
+  readonly date: string | null
 }
 
 const fail = (stage: Stage, errorClass: ErrorClass): MailToolResult => ({
@@ -313,6 +400,10 @@ export async function callMailTool(
       }
       case 'create_draft':
         return await createDraft(deps, mailInputs.create_draft.parse(input))
+      case 'move':
+        return await moveMessages(deps, mailInputs.move.parse(input))
+      case 'mark':
+        return await markMessages(deps, mailInputs.mark.parse(input))
     }
   } catch (error) {
     return storeFailure(error)
@@ -377,4 +468,168 @@ async function createDraft(
     if (answer === 'timed-out') return { status: 'declined', timedOut: true }
   }
   return draftFailure(await deps.drafts.save(draft))
+}
+
+/** Mailbox names an account's Trash goes by, in the order looked for. */
+const TRASH_NAMES = [
+  'Deleted Messages',
+  'Trash',
+  'Deleted Items',
+  'Bin',
+  '[Gmail]/Trash',
+  '[Google Mail]/Bin',
+]
+const ARCHIVE_NAMES = ['Archive', 'Archives', '[Gmail]/All Mail', '[Google Mail]/All Mail']
+/**
+ * Never a destination: a message moved into the Outbox could be sent, and Drafts or Sent would
+ * misfile what the person wrote.
+ */
+const NOT_A_DESTINATION =
+  /^(outbox|drafts|sent|sent messages|sent items|sent mail|\[gmail\]\/(sent mail|drafts))$/i
+
+function findBox(account: MailAccount, names: readonly string[]): string | null {
+  for (const name of names) {
+    const hit = account.mailboxes.find((m) => m.path.toLowerCase() === name.toLowerCase())
+    if (hit !== undefined) return hit.path
+  }
+  return null
+}
+
+/** Each message's details, in order; missing ones (another account, gone) leave null. */
+async function details(store: MailStore, ids: readonly number[]): Promise<(MessageDetail | null)[]> {
+  const out: (MessageDetail | null)[] = []
+  for (const id of ids) {
+    try {
+      out.push(await store.read(id, 100))
+    } catch (error) {
+      if (error instanceof MailStoreError && error.code === 'not-found') out.push(null)
+      else throw error
+    }
+  }
+  return out
+}
+
+const organizeFailure = (kind: 'not-allowed' | 'no-mailbox' | 'failed'): MailToolResult =>
+  kind === 'not-allowed'
+    ? { status: 'needsUser', reason: 'other' }
+    : kind === 'no-mailbox'
+      ? fail('tool-input', 'not-found')
+      : fail('tool-run', 'unavailable')
+
+async function moveMessages(
+  deps: MailToolDeps,
+  input: z.infer<(typeof mailInputs)['move']>,
+): Promise<MailToolResult> {
+  const organize = deps.organize
+  if (organize === undefined || !organize.enabled()) return fail('tool-input', 'not-found')
+  const ids = [...new Set(input.ids)]
+  const accounts = await deps.store.accounts()
+  const found = await details(deps.store, ids)
+  const notFound = ids.filter((_, i) => found[i] === null || found[i]?.messageId === null)
+  // Where each message goes, in its own account.
+  let fixed: { readonly accountId: string; readonly path: string } | null = null
+  if (typeof input.to === 'number') {
+    for (const account of accounts) {
+      const box = account.mailboxes.find((m) => m.id === input.to)
+      if (box !== undefined) fixed = { accountId: account.id, path: box.path }
+    }
+    if (fixed === null) return fail('tool-input', 'not-found')
+  }
+  const destination = (accountId: string): string | null => {
+    if (fixed !== null) return fixed.accountId === accountId ? fixed.path : null
+    const account = accounts.find((a) => a.id === accountId)
+    if (account === undefined) return null
+    if (input.to === 'inbox') return findBox(account, ['INBOX'])
+    return findBox(account, input.to === 'trash' ? TRASH_NAMES : ARCHIVE_NAMES)
+  }
+  const plan: { id: number; detail: MessageDetail; to: string }[] = []
+  const unchanged: number[] = []
+  for (const [i, detail] of found.entries()) {
+    if (detail === null || detail.messageId === null) continue
+    const to = destination(detail.accountId)
+    // A mailbox id in another account, or an account with no Trash or Archive: nothing is moved.
+    if (to === null) return fail('tool-input', fixed === null ? 'unsupported' : 'invalid')
+    if (NOT_A_DESTINATION.test(to)) return fail('tool-input', 'invalid')
+    if (to === detail.mailbox) unchanged.push(ids[i] as number)
+    else plan.push({ id: ids[i] as number, detail, to })
+  }
+  if (plan.length > 0 && !organize.spend(plan.length)) return fail('tool-run', 'rate-limited')
+  const moved: { id: number; subject: string; to: string }[] = []
+  const records: MoveRecord[] = []
+  // One request per destination: in practice one, or one per account for Archive and Trash.
+  for (const to of new Set(plan.map((p) => p.to))) {
+    const group = plan.filter((p) => p.to === to)
+    const items: OrganizeItem[] = group.map((p) => ({
+      messageId: p.detail.messageId as string,
+      accountId: p.detail.accountId,
+      mailbox: p.detail.mailbox,
+    }))
+    const outcome = await organize.organizer.apply({ kind: 'move', items, to })
+    if (outcome.kind !== 'done') {
+      // What moved before this group still goes in the log.
+      if (records.length > 0) await organize.moved(records)
+      return organizeFailure(outcome.kind)
+    }
+    for (const [j, p] of group.entries()) {
+      if (outcome.results[j] !== 'done') {
+        notFound.push(p.id)
+        continue
+      }
+      moved.push({ id: p.id, subject: p.detail.subject, to })
+      records.push({
+        accountId: p.detail.accountId,
+        messageId: p.detail.messageId as string,
+        from: p.detail.mailbox,
+        to,
+        subject: p.detail.subject,
+        sender: p.detail.from?.address ?? null,
+        date: p.detail.date,
+      })
+    }
+  }
+  if (records.length > 0) await organize.moved(records)
+  return {
+    status: 'ok',
+    output: {
+      moved,
+      unchanged,
+      notFound,
+      note:
+        'Moved messages get new ids: search again before using them. The person can review and undo ' +
+        `every move in Valet. ${MAIL_DATA_NOTE}`,
+    },
+  }
+}
+
+async function markMessages(
+  deps: MailToolDeps,
+  input: z.infer<(typeof mailInputs)['mark']>,
+): Promise<MailToolResult> {
+  const organize = deps.organize
+  if (organize === undefined || !organize.enabled()) return fail('tool-input', 'not-found')
+  const ids = [...new Set(input.ids)]
+  const found = await details(deps.store, ids)
+  const notFound: number[] = []
+  const targets: { id: number; item: OrganizeItem }[] = []
+  for (const [i, d] of found.entries()) {
+    const id = ids[i] as number
+    if (d === null || d.messageId === null) notFound.push(id)
+    else targets.push({ id, item: { messageId: d.messageId, accountId: d.accountId, mailbox: d.mailbox } })
+  }
+  const outcome = await organize.organizer.apply({
+    kind: 'mark',
+    items: targets.map((t) => t.item),
+    ...(input.read === undefined ? {} : { read: input.read }),
+    ...(input.flagged === undefined ? {} : { flagged: input.flagged }),
+  })
+  if (outcome.kind !== 'done') return organizeFailure(outcome.kind)
+  const missed = targets.filter((_, j) => outcome.results[j] !== 'done').map((t) => t.id)
+  return {
+    status: 'ok',
+    output: {
+      marked: targets.length - missed.length,
+      notFound: [...notFound, ...missed],
+      note: MAIL_DATA_NOTE,
+    },
+  }
 }
