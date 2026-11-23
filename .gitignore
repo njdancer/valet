@@ -24,3 +24,7 @@ swift-bridge/apps/Generated/
 apps/desktop/.node-runtime/
 # cloudflared for "My Cloudflare account" and its verified archives (apps/desktop/scripts/cloudflared.mjs)
 apps/desktop/.cloudflared/
+
+# Test and local Worker runtimes (apps/relay is gone, but old checkouts still hold these)
+.test-runtime/
+.wrangler/
