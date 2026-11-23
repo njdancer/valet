@@ -19,11 +19,17 @@ export function parseEmlx(bytes: Buffer, partial: boolean): Emlx {
   return { message: bytes, complete: !partial }
 }
 
+/** Where Mail keeps a message's attachments when it stores them apart: beside its Messages folder. */
+export function attachmentFolder(rowId: number): string {
+  return messageFolder(rowId).replace(/Messages$/, 'Attachments')
+}
+
 /**
  * The folders under a mailbox's own folder where Mail keeps message `rowId`: Data/, then the
  * thousands of the row id digit by digit from the lowest, then Messages/. 123456 is in
  * Data/3/2/1/Messages, 999 in Data/Messages.
  */
+
 export function messageFolder(rowId: number): string {
   const thousands = Math.floor(rowId / 1000)
   const digits = thousands === 0 ? [] : [...String(thousands)].reverse()
