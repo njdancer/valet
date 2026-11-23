@@ -3,8 +3,8 @@
 
 import { deflateSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
-import { pdfText } from '../src/pdf'
-import { renderPictures } from '../src/render'
+import { PDF_TEXT_SCRIPT, pdfText } from '../src/pdf'
+import { RENDER_SCRIPT, renderPictures } from '../src/render'
 
 /** A PDF of `pages` A4 pages, each saying "Valet page <n>", with a correct cross-reference table. */
 function makePdf(pages: number): Buffer {
@@ -73,6 +73,26 @@ const isPicture = (data: Buffer): boolean =>
   data.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))
 
 describe.runIf(process.platform === 'darwin')('on macOS', () => {
+  it('runs both scripts without an error from osascript', async () => {
+    const { execFileSync } = await import('node:child_process')
+    const { mkdtempSync, writeFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'valet-render-test-'))
+    const file = join(dir, 'a.pdf')
+    writeFileSync(file, makePdf(2))
+    const run = (args: string[]): string => {
+      try {
+        return execFileSync('/usr/bin/osascript', args, { encoding: 'utf8', stdio: 'pipe' })
+      } catch (error) {
+        return `failed: ${String((error as { stderr?: unknown }).stderr)}`
+      }
+    }
+    expect(run(['-l', 'JavaScript', '-e', PDF_TEXT_SCRIPT, file])).toContain('--- Page 2 of 2 ---')
+    const request = JSON.stringify({ kind: 'pdf', file, out: dir, pages: [0], edge: 100, limit: 1_000_000 })
+    expect(run(['-l', 'JavaScript', '-e', RENDER_SCRIPT, request])).toContain('"pageCount":2')
+  })
+
   it('reads a PDF’s text, each page after its marker', async () => {
     const text = await pdfText(makePdf(2))
     expect(text).toMatch(/^--- Page 1 of 2 ---\nValet page 1\s*\n\n--- Page 2 of 2 ---\nValet page 2\s*$/)
