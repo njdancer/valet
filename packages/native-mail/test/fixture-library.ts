@@ -5,7 +5,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { messageFolder } from '../src/emlx'
+import { attachmentFolder, messageFolder } from '../src/emlx'
 
 export const ALLOWED = 'A1B2C3D4-0000-4000-8000-000000000001'
 export const OTHER = 'A1B2C3D4-0000-4000-8000-000000000002'
@@ -302,7 +302,7 @@ export function buildLibrary(
         : join(folder, 'UUID-1', messageFolder(m.id))
     mkdirSync(dir, { recursive: true })
     for (const [where, contents] of Object.entries(m.attachmentFiles ?? {})) {
-      const file = join(folder, 'UUID-1', 'Attachments', String(m.id), where)
+      const file = join(folder, 'UUID-1', attachmentFolder(m.id), String(m.id), where)
       mkdirSync(dirname(file), { recursive: true })
       writeFileSync(file, contents)
     }

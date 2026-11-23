@@ -109,6 +109,9 @@ const PARTIAL: FixtureMessage = {
   attachmentFiles: { '2/statement.csv': 'date,amount\n1 Nov,-4.50' },
 }
 
+/** Like a real Mac: a row id past 1000, so the attachment folder is Data/<digits>/Attachments. */
+const PARTIAL_DEEP: FixtureMessage = { ...PARTIAL, id: 40487, received: 1_763_820_000 }
+
 let root: string
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'valet-mail-att-'))
@@ -119,7 +122,7 @@ afterEach(() => {
 
 function store(pdf?: (bytes: Buffer) => Promise<string | null>): MailStore {
   const paths = buildLibrary(mkdtempSync(join(root, 'lib-')), {
-    messages: [...MESSAGES, WITH_FILES, PARTIAL],
+    messages: [...MESSAGES, WITH_FILES, PARTIAL, PARTIAL_DEEP],
   })
   return new MailStore(new DirectMailFiles(paths), {
     allowedAccounts: () => new Set([ALLOWED]),
@@ -210,6 +213,8 @@ describe('reading an attachment', () => {
     ])
     expect((await s.readAttachment(502, 1)).text).toBe('date,amount\n1 Nov,-4.50')
     expect(await s.readAttachment(502, 2)).toMatchObject({ text: null, reason: 'not-downloaded' })
+    // Data/0/4/Attachments/40487/2/statement.csv, beside Data/0/4/Messages.
+    expect((await s.readAttachment(40487, 1)).text).toBe('date,amount\n1 Nov,-4.50')
   })
 
   it('reads in chunks', async () => {

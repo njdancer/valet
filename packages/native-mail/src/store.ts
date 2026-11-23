@@ -6,7 +6,7 @@
 //
 // Only accounts the person allowed are ever read: every query names their mailboxes.
 
-import { messageFolder, parseEmlx } from './emlx'
+import { attachmentFolder, messageFolder, parseEmlx } from './emlx'
 import { type MailFiles, MailFilesError, type MailRow, type MailValue } from './files'
 import {
   type Address,
@@ -817,7 +817,8 @@ export class MailStore {
   }
 
   /**
-   * An attachment Mail keeps in a file of its own: <mailbox>/<folder>/Attachments/<id>/<section>/<name>.
+   * An attachment Mail keeps in a file of its own: beside the message's Messages folder, in
+   * <mailbox>/<folder>/Data/…/Attachments/<id>/<section>/<name>.
    * Null when it isn't there (Mail hasn't downloaded it).
    */
   async #attachmentFile(
@@ -834,8 +835,11 @@ export class MailStore {
     const roots = children
       .filter((c) => c.dir && !c.name.endsWith('.mbox'))
       .map((c) => `${box.folder}/${c.name}`)
-    for (const root of roots) {
-      const dir = `${root}/Attachments/${id}`
+    const places = roots.flatMap((root) => [
+      `${root}/${attachmentFolder(id)}/${id}`,
+      `${root}/Attachments/${id}`,
+    ])
+    for (const dir of places) {
       let sections: readonly { name: string; dir: boolean }[]
       try {
         sections = await this.files.list(dir)
