@@ -19,6 +19,7 @@ import {
   type MailOrganizer,
   MailStore,
   MailStoreError,
+  type MailToolDeps,
   type MoveRecord,
   mailTools,
 } from '@valet/native-mail'
@@ -165,6 +166,8 @@ export interface MailServiceDeps {
   readonly organizer?: Pick<MailOrganizer, 'apply'> & Partial<Pick<MailOrganizer, 'source'>>
   /** A PDF attachment's text. Absent: agents get PDFs' names only. */
   readonly pdfText?: (bytes: Buffer) => Promise<string | null>
+  /** Pictures of PDF pages and images for agents to see. Absent: images as they are, PDFs as text. */
+  readonly render?: MailToolDeps['render']
   /** Records the messages a call moved (the audit log, which Undo reads). */
   readonly moved?: (moves: readonly MoveRecord[], call: ToolCall) => Promise<void>
   /** Audits a call and its end, as the runtime does for an adapter's tools. */
@@ -233,6 +236,7 @@ export class MailService implements NativeTools {
         {
           store: this.store,
           drafts: this.deps.drafts,
+          ...(this.deps.render === undefined ? {} : { render: this.deps.render }),
           draftsEnabled: () => this.current.drafts,
           approveDraft:
             approve === undefined

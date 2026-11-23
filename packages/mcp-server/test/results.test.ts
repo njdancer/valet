@@ -298,3 +298,61 @@ describe('input refusals and logins in progress', () => {
     ).toContain('Valet is still logging in to the site,')
   })
 })
+
+describe('a built-in tool’s pictures and files', () => {
+  it('go after the JSON text as image and resource blocks, never in the structured output', () => {
+    const output = { attachment: { sent: 'picture' } }
+    const result = toolResult(
+      {
+        status: 'ok',
+        output,
+        content: [
+          { kind: 'image', mimeType: 'image/png', data: Buffer.from('png') },
+          {
+            kind: 'file',
+            uri: 'valet-mail://message/1/attachment/2/a%20b.pdf',
+            mimeType: 'application/pdf',
+            data: Buffer.from('%PDF'),
+          },
+        ],
+      },
+      true,
+    )
+    expect(result.content).toEqual([
+      { type: 'text', text: JSON.stringify(output) },
+      { type: 'image', mimeType: 'image/png', data: Buffer.from('png').toString('base64') },
+      {
+        type: 'resource',
+        resource: {
+          uri: 'valet-mail://message/1/attachment/2/a%20b.pdf',
+          mimeType: 'application/pdf',
+          blob: Buffer.from('%PDF').toString('base64'),
+        },
+      },
+    ])
+    expect(result.structuredContent).toEqual(output)
+  })
+
+  it('drop an unknown picture type, a URI not Valet’s own, and whatever goes past the size limit', () => {
+    const big = Buffer.alloc(5 * 1024 * 1024, 1)
+    const result = toolResult(
+      {
+        status: 'ok',
+        output: {},
+        content: [
+          // biome-ignore lint/suspicious/noExplicitAny: a type the checks must refuse.
+          { kind: 'image', mimeType: 'image/svg+xml' as any, data: Buffer.from('<svg/>') },
+          { kind: 'file', uri: 'file:///etc/passwd', mimeType: 'text/plain', data: Buffer.from('x') },
+          { kind: 'file', uri: 'valet-mail://m/1', mimeType: 'text/html; x=<y>', data: Buffer.from('x') },
+          { kind: 'image', mimeType: 'image/jpeg', data: big },
+          { kind: 'image', mimeType: 'image/jpeg', data: big },
+        ],
+      },
+      false,
+    )
+    const kinds = (result.content as { type: string; resource?: { mimeType: string } }[]).map(
+      (c) => c.resource?.mimeType ?? c.type,
+    )
+    expect(kinds).toEqual(['text', 'application/octet-stream', 'image'])
+  })
+})

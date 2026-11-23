@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DirectMailFiles } from '../src/direct-files'
 import { htmlLinks } from '../src/mime'
 import { pdfText } from '../src/pdf'
+import { renderPictures } from '../src/render'
 import { MailStore, MailStoreError } from '../src/store'
 import { callMailTool, mailOutputs } from '../src/tools'
 import { ALLOWED, buildLibrary, type FixtureMessage, MESSAGES } from './fixture-library'
@@ -272,6 +273,152 @@ describe('reading an attachment', () => {
     const out = mailOutputs.read.parse(result.output)
     expect(out.message).toBeUndefined()
     expect(out.attachment?.text).toBe('item,qty\ntea,2')
+  })
+})
+
+describe('mail_read handing over pictures and files', () => {
+  const drafts = { save: async () => ({ kind: 'failed' as const }) }
+  const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47])
+  const drawn = (n: number, of: number, from = 1) => ({
+    pageCount: of,
+    pictures: Array.from({ length: n }, (_, i) => ({
+      mimeType: 'image/png' as const,
+      data: Buffer.from(`page ${i}`),
+      width: 10,
+      height: 10,
+      page: from + i,
+    })),
+  })
+  // biome-ignore lint/suspicious/noExplicitAny: only the store and render are used here.
+  const call = (deps: object, input: object) => callMailTool({ drafts, ...deps } as any, 'read', input)
+
+  it('sends an image as a picture, drawn when it can be and as it is when not', async () => {
+    const s = store()
+    const plain = await call({ store: s }, { id: 501, attachment: 4 })
+    expect(plain.status).toBe('ok')
+    if (plain.status !== 'ok') return
+    expect(mailOutputs.read.parse(plain.output).attachment?.sent).toBe('picture')
+    expect(plain.content).toEqual([{ kind: 'image', mimeType: 'image/png', data: PNG }])
+    // The bytes are beside the output, never in it.
+    expect(JSON.stringify(plain.output)).not.toContain(PNG.toString('base64'))
+
+    const asked: unknown[] = []
+    const render = async (bytes: Buffer, request: unknown) => {
+      asked.push([bytes, request])
+      return drawn(1, 1)
+    }
+    const redrawn = await call({ store: s, render }, { id: 501, attachment: 4 })
+    expect(asked).toEqual([[PNG, { kind: 'image' }]])
+    expect(redrawn.status === 'ok' && redrawn.content).toEqual([
+      { kind: 'image', mimeType: 'image/png', data: Buffer.from('page 0') },
+    ])
+  })
+
+  it('gives a PDF’s text by default, and pictures of the pages asked for instead', async () => {
+    const asked: unknown[] = []
+    const render = async (_bytes: Buffer, request: unknown) => {
+      asked.push(request)
+      return drawn(2, 12, 6)
+    }
+    const s = store(async () => '--- Page 1 of 12 ---\nInvoice total $4')
+    const text = await call({ store: s, render }, { id: 501, attachment: 3 })
+    expect(text.status === 'ok' && text.content).toBeUndefined()
+    expect(text.status === 'ok' && mailOutputs.read.parse(text.output).attachment?.text).toBe(
+      '--- Page 1 of 12 ---\nInvoice total $4',
+    )
+    expect(asked).toEqual([])
+
+    const pages = await call({ store: s, render }, { id: 501, attachment: 3, pages: [6, 7] })
+    expect(pages.status).toBe('ok')
+    if (pages.status !== 'ok') return
+    const out = mailOutputs.read.parse(pages.output).attachment
+    expect(out).toMatchObject({ text: null, sent: 'pages', pages: [6, 7], pageCount: 12 })
+    expect(asked).toEqual([{ kind: 'pdf', pages: [6, 7], edge: 1400 }])
+    expect(pages.content).toHaveLength(2)
+
+    const failed = await call({ store: s, render: async () => null }, { id: 501, attachment: 3, pages: [1] })
+    expect(failed.status === 'ok' && mailOutputs.read.parse(failed.output).attachment?.sent).toBeNull()
+    const tooMany = await call({ store: s, render }, { id: 501, attachment: 3, pages: [1, 2, 3, 4, 5, 6] })
+    expect(tooMany.status).toBe('failed')
+  })
+
+  it('sends the file itself with as: file, under a URI of Valet’s own', async () => {
+    const s = store()
+    const result = await call({ store: s }, { id: 501, attachment: 3, as: 'file' })
+    expect(result.status).toBe('ok')
+    if (result.status !== 'ok') return
+    expect(mailOutputs.read.parse(result.output).attachment?.sent).toBe('file')
+    expect(result.content).toEqual([
+      {
+        kind: 'file',
+        uri: 'valet-mail://message/501/attachment/3/invoice.pdf',
+        mimeType: 'application/pdf',
+        data: Buffer.from('%PDF-1.4 fake invoice'),
+      },
+    ])
+  })
+
+  it('sends nothing for an attachment that isn’t downloaded', async () => {
+    const result = await call({ store: store() }, { id: 502, attachment: 2, as: 'file' })
+    expect(result.status).toBe('ok')
+    if (result.status !== 'ok') return
+    expect(result.content).toBeUndefined()
+    expect(mailOutputs.read.parse(result.output).attachment).toMatchObject({
+      reason: 'not-downloaded',
+      sent: null,
+    })
+  })
+})
+
+describe('renderPictures', () => {
+  it('draws on a private copy, reads back only its own files, and removes them', async () => {
+    const { existsSync } = await import('node:fs')
+    const { writeFile } = await import('node:fs/promises')
+    let dir = ''
+    const rendered = await renderPictures(
+      Buffer.from('%PDF-1.7 x'),
+      { kind: 'pdf', pages: [3, 3, 0, 9] },
+      async (args) => {
+        expect(args.slice(0, 2)).toEqual(['-l', 'JavaScript'])
+        const req = JSON.parse(args[args.length - 1] as string)
+        expect(req).toMatchObject({ kind: 'pdf', pages: [2, 8], edge: 1568 })
+        dir = req.out
+        await writeFile(join(dir, 'page-2'), 'png bytes')
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            pageCount: 4,
+            pictures: [{ file: join(dir, 'page-2'), mimeType: 'image/png', width: 3, height: 4, page: 3 }],
+          }),
+        }
+      },
+    )
+    expect(rendered).toEqual({
+      pageCount: 4,
+      pictures: [{ mimeType: 'image/png', data: Buffer.from('png bytes'), width: 3, height: 4, page: 3 }],
+    })
+    expect(existsSync(dir)).toBe(false)
+  })
+
+  it('refuses a file outside its folder, an odd type, a failed run, and a PDF that isn’t one', async () => {
+    const answer = (picture: object) => async () => ({
+      code: 0,
+      stdout: JSON.stringify({ pageCount: 1, pictures: [picture] }),
+    })
+    const png = Buffer.from('x')
+    expect(
+      await renderPictures(png, { kind: 'image' }, answer({ file: '/etc/passwd', mimeType: 'image/png' })),
+    ).toBeNull()
+    expect(
+      await renderPictures(png, { kind: 'image' }, async (args) => {
+        const out = JSON.parse(args[args.length - 1] as string).out
+        return answer({ file: `${out}/image`, mimeType: 'text/html' })()
+      }),
+    ).toBeNull()
+    expect(await renderPictures(png, { kind: 'image' }, async () => ({ code: 1, stdout: '' }))).toBeNull()
+    expect(
+      await renderPictures(Buffer.from('hello'), { kind: 'pdf' }, async () => ({ code: 0, stdout: '' })),
+    ).toBeNull()
   })
 })
 

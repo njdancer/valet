@@ -228,6 +228,7 @@ import {
 import { createAuthRunner, Handoffs, isBlockedPage, SessionTracker } from './login'
 import {
   MailService,
+  type MailServiceDeps,
   type MailSettingsPatch,
   MailSettingsStore,
   type MailStatus,
@@ -418,6 +419,7 @@ export interface ServiceDeps {
     /** Moves and marks messages through Mail; absent, agents can't organise mail. */
     readonly organizer?: Pick<MailOrganizer, 'apply'> & Partial<Pick<MailOrganizer, 'source'>>
     readonly pdfText?: (bytes: Buffer) => Promise<string | null>
+    readonly render?: MailServiceDeps['render']
   } | null
   /** This Mac's name, as a paired phone shows it. */
   readonly macName?: string
@@ -1103,6 +1105,7 @@ export class AppService {
         drafts: mail.drafts,
         ...(mail.organizer === undefined ? {} : { organizer: mail.organizer }),
         ...(mail.pdfText === undefined ? {} : { pdfText: mail.pdfText }),
+        ...(mail.render === undefined ? {} : { render: mail.render }),
         moved: (moves, call) => this.auditMailMoves(moves, call, null),
         audit: (call, result, durationMs) => this.auditNativeCall(call, result, durationMs),
         now: this.deps.now,

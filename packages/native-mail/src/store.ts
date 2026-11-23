@@ -106,6 +106,17 @@ export interface AttachmentText {
   readonly reason?: 'binary' | 'not-downloaded' | 'too-large' | 'unreadable'
 }
 
+/** One attachment's bytes, as attachmentData finds them. */
+export interface AttachmentData {
+  readonly index: number
+  readonly name: string
+  readonly contentType: string
+  readonly size: number
+  readonly charset: string | null
+  readonly data: Buffer | null
+  readonly reason?: 'not-downloaded' | 'too-large'
+}
+
 export interface SearchQuery {
   /** Words anywhere: subject, sender, Mail's preview, and the body as Spotlight finds it. */
   readonly text?: string
@@ -753,6 +764,43 @@ export class MailStore {
     maxChars: number = DEFAULT_BODY_CHARS,
     offset = 0,
   ): Promise<AttachmentText> {
+    return this.attachmentTextOf(await this.attachmentData(id, index), maxChars, offset)
+  }
+
+  /** The text of an attachment attachmentData found, from `offset`, as readAttachment gives it. */
+  async attachmentTextOf(
+    found: AttachmentData,
+    maxChars: number = DEFAULT_BODY_CHARS,
+    offset = 0,
+  ): Promise<AttachmentText> {
+    const { data } = found
+    const base = { index: found.index, name: found.name, contentType: found.contentType, size: found.size }
+    const empty = (reason: NonNullable<AttachmentText['reason']>): AttachmentText => ({
+      ...base,
+      text: null,
+      offset: 0,
+      nextOffset: null,
+      reason,
+    })
+    if (data === null) return empty(found.reason ?? 'not-downloaded')
+    const text = await this.#attachmentText(found, data)
+    if (text === 'binary' || text === 'unreadable') return empty(text)
+    const limit = Math.min(Math.max(100, Math.floor(maxChars)), MAX_BODY_CHARS)
+    const from = Math.min(Math.max(0, Math.floor(offset)), text.length)
+    const end = Math.min(text.length, from + limit)
+    return {
+      ...base,
+      text: text.slice(from, end),
+      offset: from,
+      nextOffset: end < text.length ? end : null,
+    }
+  }
+
+  /**
+   * One attachment's bytes, from the message, Mail's own file of it, or Mail itself. Null data
+   * when it can't be had; `reason` says why.
+   */
+  async attachmentData(id: number, index: number): Promise<AttachmentData> {
     return this.#guard(async () => {
       const schema = await this.schema()
       const boxes = await this.#mailboxes(schema)
@@ -764,33 +812,18 @@ export class MailStore {
       const parsed = parseMessage(parseEmlx(found.bytes, found.partial).message)
       const part = parsed.attachmentParts[index - 1]
       if (part === undefined) throw new MailStoreError('not-found')
-      const base = { index, name: part.name, contentType: part.contentType, size: part.size }
-      const empty = (reason: NonNullable<AttachmentText['reason']>): AttachmentText => ({
-        ...base,
-        text: null,
-        offset: 0,
-        nextOffset: null,
-        reason,
-      })
-      let data = part.data
-      if (data.length === 0) {
-        const own = await this.#attachmentFile(id, box, part)
-        if (own === 'too-large') return empty('too-large')
-        const fetched = own === null ? await this.#fromMail(id, row, box, parsed, part, schema) : own
-        if (fetched === null) return empty('not-downloaded')
-        data = fetched
+      const base = {
+        index,
+        name: part.name,
+        contentType: part.contentType,
+        size: part.size,
+        charset: part.charset,
       }
-      const text = await this.#attachmentText(part, data)
-      if (text === 'binary' || text === 'unreadable') return empty(text)
-      const limit = Math.min(Math.max(100, Math.floor(maxChars)), MAX_BODY_CHARS)
-      const from = Math.min(Math.max(0, Math.floor(offset)), text.length)
-      const end = Math.min(text.length, from + limit)
-      return {
-        ...base,
-        text: text.slice(from, end),
-        offset: from,
-        nextOffset: end < text.length ? end : null,
-      }
+      if (part.data.length > 0) return { ...base, data: part.data }
+      const own = await this.#attachmentFile(id, box, part)
+      if (own === 'too-large') return { ...base, data: null, reason: 'too-large' }
+      const fetched = own === null ? await this.#fromMail(id, row, box, parsed, part, schema) : own
+      return fetched === null ? { ...base, data: null, reason: 'not-downloaded' } : { ...base, data: fetched }
     })
   }
 
@@ -828,7 +861,10 @@ export class MailStore {
     return same === undefined || same.data.length === 0 ? null : same.data
   }
 
-  async #attachmentText(part: AttachmentPart, data: Buffer): Promise<string | 'binary' | 'unreadable'> {
+  async #attachmentText(
+    part: Pick<AttachmentPart, 'name' | 'contentType' | 'charset'>,
+    data: Buffer,
+  ): Promise<string | 'binary' | 'unreadable'> {
     const type = part.contentType.toLowerCase()
     if (type === 'text/html' || (type === 'application/octet-stream' && HTML_NAMES.test(part.name)))
       return normaliseText(htmlToText(decodeCharset(data, part.charset)))

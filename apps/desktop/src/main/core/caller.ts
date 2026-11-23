@@ -180,7 +180,7 @@ export class RuntimeToolCaller implements ToolCaller {
         result = { status: 'failed', stage: 'tool-run', errorClass: 'internal' }
       }
       this.hooks.finished(call, result)
-      return outcomeOf(result)
+      return outcomeOf(result, true)
     }
     const result = await this.host.call({
       adapterId: call.adapterId,
@@ -206,10 +206,13 @@ export class RuntimeToolCaller implements ToolCaller {
   }
 }
 
-export function outcomeOf(result: ToolCallResult): CallOutcome {
+/** `content`: pass on a built-in tool's pictures and files; an adapter's run never carries any. */
+export function outcomeOf(result: ToolCallResult, content = false): CallOutcome {
   switch (result.status) {
     case 'ok':
-      return { status: 'ok', output: result.output }
+      return content && result.content !== undefined && result.content.length > 0
+        ? { status: 'ok', output: result.output, content: result.content }
+        : { status: 'ok', output: result.output }
     case 'needsUser':
       return { status: 'needsUser', reason: result.reason }
     case 'failed':

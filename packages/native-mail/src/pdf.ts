@@ -1,5 +1,6 @@
-// A PDF attachment's text through macOS's own PDFKit, from a fixed JXA script (no library of our
-// own). The bytes go to a private temporary file that is removed straight after; the script only
+// A PDF attachment's text through macOS's own PDFKit, each page after a "--- Page N of M ---"
+// line so an agent can ask for pictures of the pages it needs (render.ts), from a fixed JXA script
+// (no library of our own). The bytes go to a private temporary file that is removed straight after; the script only
 // reads it. Valet itself runs this, not the reader helper: the bytes are already out of Mail's files.
 
 import { execFile } from 'node:child_process'
@@ -12,8 +13,14 @@ ObjC.import('PDFKit');
 function run(argv) {
   var doc = $.PDFDocument.alloc.initWithURL($.NSURL.fileURLWithPath(argv[0]));
   if (doc.isNil()) return '';
-  var text = doc.string;
-  return text.isNil() ? '' : ObjC.unwrap(text);
+  var total = doc.pageCount, parts = [], any = false;
+  for (var i = 0; i < total; i++) {
+    var text = doc.pageAtIndex(i).string;
+    var words = text.isNil() ? '' : ObjC.unwrap(text);
+    if (words.trim().length > 0) any = true;
+    parts.push('--- Page ' + (i + 1) + ' of ' + total + ' ---\n' + words);
+  }
+  return any ? parts.join('\n\n') : '';
 }
 `
 

@@ -82,8 +82,23 @@ Anyone who may read a message may read its attachments (Nick, 2026-11-23): no sw
 `mail_read` with `attachment: n` (from 1, in the order the message lists them) returns that
 attachment as text: text, CSV, calendar and other text files as they are, HTML as text, a forwarded
 message as its headers and text, and a PDF through macOS's PDFKit (`pdf.ts`, a fixed JXA script on a
-private temporary copy, removed afterwards). Images and other files give only name, type and size
-(`reason: "binary"`). Long text comes in chunks: pass `nextOffset` back as `offset`, for the body too.
+private temporary copy, removed afterwards), each page after a `--- Page N of M ---` line. Long
+text comes in chunks: pass `nextOffset` back as `offset`, for the body too.
+
+Agents should see files as they would on disk, and clients only take some shapes from a tool
+(researched 2026-11-23: Claude Code, Desktop and claude.ai show MCP `image` blocks to the model; none
+passes a PDF from a tool to it, claude.ai refuses one and Claude Code saves it to disk). So the bytes
+go as MCP content after the JSON text, never in the output (so never in the audit log or structured
+content), checked by type and capped at 8 MB in all (`results.ts`):
+
+- An image comes as an `image` block, drawn by AppKit (`render.ts`, a fixed JXA script) as PNG or
+  JPEG with its longest side at most 1568 px, so HEIC and TIFF photos work too.
+- A PDF gives its text by default; `pages: [n, …]` (up to five) gives pictures of those pages
+  instead, drawn by PDFKit at 1400 px, for layout, tables and scans.
+- `as: "file"` gives any attachment itself as an embedded `resource` with a `valet-mail://` URI,
+  which Claude Code saves to disk for the agent to open; other clients may refuse it.
+
+The output's `sent` says which went with it: `picture`, `pages`, `file` or null.
 
 When Mail has only part of a message, it keeps the attachment beside it in
 `<mailbox>.mbox/<folder>/Attachments/<row>/<MIME section>/<name>`; the reader helper opens files
