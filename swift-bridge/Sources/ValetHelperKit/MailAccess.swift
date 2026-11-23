@@ -8,7 +8,8 @@
 // - mail.query      one read-only SELECT (or PRAGMA table_info) against Mail's Envelope Index or the
 //                   Internet Accounts database. An authorizer allows reading only Mail's message
 //                   tables (or the account table), one statement, nothing written, nothing attached.
-// - mail.file       the bytes of one .emlx file inside the library
+// - mail.file       the bytes of one .emlx file, or of an attachment Mail keeps beside it
+//                   (<mailbox>.mbox/<folder>/Attachments/<row>/<part>/<name>), inside the library
 // - mail.list       the names in one folder inside the library
 // - mail.spotlight  the .emlx files Spotlight finds for a word, inside the library
 //
@@ -174,8 +175,14 @@ public func answerMail(_ request: MailRequest, roots: MailRoots) -> [String: Any
       return ["columns": columns, "rows": rows]
     case .file(let relative):
       guard let library = mailLibrary(roots) else { throw MailFailure.unavailable }
+      guard isMailMessageFile(relative) else { throw MailFailure.invalid }
       let path = try inside(library: library, relative: relative)
-      guard path.hasSuffix(".emlx") else { throw MailFailure.invalid }
+      // Checked again where a link leads, so a link can't reach the databases.
+      guard let root = realpath(library, nil) else { throw MailFailure.unavailable }
+      let rootPath = String(cString: root)
+      free(root)
+      guard path.hasPrefix(rootPath + "/"), isMailMessageFile(String(path.dropFirst(rootPath.count + 1)))
+      else { throw MailFailure.invalid }
       var info = stat()
       guard stat(path, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else { throw MailFailure.notFound }
       guard info.st_size <= maxFileBytes else { throw MailFailure.tooLarge }
@@ -206,6 +213,18 @@ public func answerMail(_ request: MailRequest, roots: MailRoots) -> [String: Any
   } catch {
     return ["error": ((error as? MailFailure) ?? .unavailable).rawValue]
   }
+}
+
+/// A message file (.emlx) or an attachment file inside a mailbox's Attachments folder; never the
+/// databases in MailData or anything else in the library.
+public func isMailMessageFile(_ relative: String) -> Bool {
+  let parts = relative.split(separator: "/").map(String.init)
+  guard let first = parts.first, first != "MailData", !relative.contains("/MailData/") else { return false }
+  if relative.hasSuffix(".emlx") { return true }
+  guard let at = parts.firstIndex(of: "Attachments"), at > 0, parts[at - 1] != "MailData" else { return false }
+  // Attachments/<row>/<part>/<name>: exactly three more parts, the row a number.
+  guard parts.count == at + 4, Int(parts[at + 1]) != nil else { return false }
+  return parts[..<at].contains { $0.hasSuffix(".mbox") }
 }
 
 /// `relative` resolved inside `library`, symlinks followed; anything that leaves it is refused.

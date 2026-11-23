@@ -64,7 +64,7 @@ describe('mail tools', () => {
     if (search.status !== 'ok') return
     expect(mailOutputs.search.parse(search.output).note).toBe(MAIL_DATA_NOTE)
     const read = await callMailTool(d, 'read', { id: 7 })
-    expect(read.status === 'ok' && mailOutputs.read.parse(read.output).message.body).toContain(
+    expect(read.status === 'ok' && mailOutputs.read.parse(read.output).message?.body).toContain(
       'analytical engine',
     )
     const thread = await callMailTool(d, 'thread', { id: 7 })

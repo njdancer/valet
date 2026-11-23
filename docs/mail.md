@@ -16,7 +16,7 @@ Once Mail is on and at least one account is picked, agents see these tools (adap
 | ------------------- | --------------------------------------------------------------------------------------------------------------- |
 | `mail_accounts`     | The picked accounts, their mailboxes, ids and unread counts.                                                    |
 | `mail_search`       | Messages by words, sender, recipient, subject, mailbox, dates, unread, flagged, attachments. At most 50 a page. |
-| `mail_read`         | One message: headers, text (HTML turned into text), attachment names. Never attachment contents.                |
+| `mail_read`         | One message: headers, text (HTML turned into text), links, attachments; in chunks. Or one attachment as text.   |
 | `mail_thread`       | The messages in a message's conversation, up to 30.                                                             |
 | `mail_create_draft` | Only when drafts are on. A new message or a reply, saved to Mail's Drafts from a picked account's address.      |
 | `mail_move`         | Only when organising is on. Up to 50 messages to Archive, Trash, Inbox or another mailbox of the same account.  |
@@ -75,6 +75,23 @@ and nothing is read.
 The app side is `apps/desktop/src/main/core/mail.ts`: the settings (`mail.json`, unreadable reads
 as off), the reader's controls, and `MailService`, which the tool caller lists beside adapters
 (`NativeTools` in `caller.ts`). An installed adapter can't take the id `mail`.
+
+## Attachments and links
+
+Anyone who may read a message may read its attachments (Nick, 2026-11-23): no switch of its own.
+`mail_read` with `attachment: n` (from 1, in the order the message lists them) returns that
+attachment as text: text, CSV, calendar and other text files as they are, HTML as text, a forwarded
+message as its headers and text, and a PDF through macOS's PDFKit (`pdf.ts`, a fixed JXA script on a
+private temporary copy, removed afterwards). Images and other files give only name, type and size
+(`reason: "binary"`). Long text comes in chunks: pass `nextOffset` back as `offset`, for the body too.
+
+When Mail has only part of a message, it keeps the attachment beside it in
+`<mailbox>.mbox/<folder>/Attachments/<row>/<MIME section>/<name>`; the reader helper opens files
+there and `.emlx` files, nothing else (never MailData), checked again after following links. One it
+hasn't downloaded comes back as `reason: "not-downloaded"`.
+
+`links` lists the web and mail links of the HTML part, each once, at most 100, even when the body
+comes from the plain-text part.
 
 ## Drafts
 
