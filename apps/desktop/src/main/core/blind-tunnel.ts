@@ -271,17 +271,13 @@ export function blindRelaySetup(
 
 /**
  * Whether this run signs with the Secure Enclave helper. A release always does. A dev build does
- * unless it names a local relay in the environment (the phones' or a blind one), which signs in
- * software so its tests need no Touch ID. Valet's own blind relay, on by default, keeps the helper:
+ * unless it names a local blind relay in the environment, which signs in software so its tests
+ * need no Touch ID. Valet's own blind relay, on by default, keeps the helper:
  * other keys would make this a new Mac, and nothing the old keys approved would count.
  */
-export function approverWanted(run: {
-  readonly release: boolean
-  readonly devRelay: boolean
-  readonly env: NodeJS.ProcessEnv
-}): boolean {
+export function approverWanted(run: { readonly release: boolean; readonly env: NodeJS.ProcessEnv }): boolean {
   if (run.release) return true
-  return !run.devRelay && blindRelayFromEnv(run.env) === null
+  return blindRelayFromEnv(run.env) === null
 }
 
 /** A blind relay named in the environment (see blindRelaySetup), or null. */

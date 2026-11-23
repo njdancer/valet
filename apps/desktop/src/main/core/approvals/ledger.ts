@@ -116,9 +116,8 @@ export const ledgerSchema = z
       .max(500)
       .optional(),
     /**
-     * The account's device list this Mac pinned (approvals/roster-keeper.ts): its first change,
-     * which this Mac signed, and the latest it saw, so a hub can't swap the list or roll it back.
-     * Absent while the Mac is on no account, or on one whose list it didn't start.
+     * The old Valet hub's account device list this Mac pinned. The hub is gone and nothing reads
+     * this any more; it stays in the schema only so a ledger written while it existed still reads.
      */
     roster: z
       .object({
@@ -129,11 +128,7 @@ export const ledgerSchema = z
       })
       .strict()
       .optional(),
-    /**
-     * Set when the person just added this Mac to an account with the code it showed (step 4c):
-     * until then, and only for that account, the Mac may pin a list another device started, once
-     * a device on it adds this Mac. Cleared when it pins one or leaves.
-     */
+    /** Also the old hub's (see roster): kept only so older ledgers still read. */
     rosterJoin: z
       .object({
         account: z.string().regex(/^[A-Za-z0-9_-]{16,64}$/),

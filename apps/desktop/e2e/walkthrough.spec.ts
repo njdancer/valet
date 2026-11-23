@@ -1,9 +1,13 @@
 // The pairing and approval walkthrough (docs/phone-channel.md#the-walkthrough): the real Mac app,
-// the real relay in a local Workers runtime, and the iPhone app's dev build in the simulator, all
-// on one macOS runner. Nothing here is a fake of the channel: the Mac pairs the phone, an agent
-// asks over MCP, the card is sealed to the phone through the relay, and the phone's Face ID
-// signature comes back the same way. The fakes are the sites (a made-up library adapter's draft)
-// and the Mac's Touch ID, which a test build answers itself.
+// the real blind relay with a test CA, and the iPhone app's dev build in the simulator, all on one
+// macOS runner. Nothing here is a fake of the channel: the Mac pairs the phone, an agent asks over
+// MCP, the card is sealed to the phone at the Mac's own address, and the phone's Face ID signature
+// comes back the same way. The fakes are the sites (a made-up library adapter's draft), the CA, and
+// the Mac's Touch ID, which a test build answers itself.
+//
+// The phone dials the Mac's own name on port 443, as a real phone does: the blind relay listens on
+// 127.0.0.1:443 (macOS lets any user bind it), /etc/hosts points the Mac's name there (sudo, as
+// on GitHub's runners), and the test CA is a root the simulator trusts.
 //
 //   VALET_E2E_WALKTHROUGH=1 SIMULATOR=<udid> XCTESTRUN=<path> WALKTHROUGH_OUT=<dir> \
 //     pnpm exec playwright test -c e2e/playwright.config.ts walkthrough --trace off
@@ -13,10 +17,14 @@
 // showcase/walkthrough-video.mjs turns into one side-by-side video.
 
 import { type ChildProcess, execFile, spawn } from 'node:child_process'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { join } from 'node:path'
+import { createSecureContext } from 'node:tls'
 import { type Page, test } from '@playwright/test'
+import { generateP256, privateKeyPem, selfSignedCertificate, toPem } from '@valet/acme'
+import { type RunningBlindRelay, startBlindRelay } from '@valet/blind-relay'
+import { type FakeAcme, startFakeAcme } from '@valet/fake-acme'
 import {
   appDir,
   CONTROL,
@@ -35,9 +43,9 @@ test.setTimeout(30 * 60_000)
 
 const OUT = process.env['WALKTHROUGH_OUT'] ?? join(appDir, 'test-results/walkthrough')
 const SIMULATOR = process.env['SIMULATOR'] ?? 'booted'
-const RELAY_PORT = 8787
 const CUES_PORT = 9911
-const RELAY_ORIGIN = 'https://relay.valet.test'
+const CONTROL_HOST = 'blind.valet.test'
+const MAC_DOMAIN = 'macs.valet.test'
 
 interface Timeline {
   macStartedAt: number | null
@@ -134,6 +142,17 @@ function run(command: string, args: string[]): Promise<string> {
   return new Promise((resolve) => {
     execFile(command, args, (_error, stdout, stderr) => resolve(`${stdout}${stderr}`))
   })
+}
+
+/** Polls until `check` gives a value. */
+async function until<T>(check: () => Promise<T | null>, ms: number): Promise<T> {
+  const deadline = Date.now() + ms
+  for (;;) {
+    const value = await check()
+    if (value !== null) return value
+    if (Date.now() > deadline) throw new Error('timed out')
+    await sleep(250)
+  }
 }
 
 /** Starts a child and resolves once a line of its output matches. */
@@ -253,6 +272,8 @@ const CASES = JSON.stringify({
 })
 
 let launched: Launched | null = null
+let blind: RunningBlindRelay | null = null
+let acme: FakeAcme | null = null
 
 test.afterAll(async () => {
   if (ticker !== null) clearInterval(ticker)
@@ -261,15 +282,35 @@ test.afterAll(async () => {
   for (const child of children.reverse()) child.kill('SIGINT')
   await sleep(4000)
   await launched?.close()
+  await blind?.close()
+  await acme?.close()
 })
 
 test('pairing an iPhone, and approving an agent’s requests on it', async () => {
   mkdirSync(OUT, { recursive: true })
-  await startUntil(
-    'node',
-    [join(appDir, '../relay/scripts/local.mjs'), '--port', String(RELAY_PORT)],
-    /relay listening/,
+  // The blind relay, on the port a phone dials, with a control certificate the Mac trusts.
+  const controlKeys = generateP256()
+  const controlPem = toPem(
+    selfSignedCertificate(controlKeys, { names: [CONTROL_HOST], ips: ['127.0.0.1'] }),
+    'CERTIFICATE',
   )
+  const relay = await startBlindRelay({
+    controlHost: CONTROL_HOST,
+    macDomain: MAC_DOMAIN,
+    controlCertificate: () => createSecureContext({ key: privateKeyPem(controlKeys), cert: controlPem }),
+    port: 443,
+    host: '127.0.0.1',
+  })
+  blind = relay
+  const ca = await startFakeAcme({ validationPort: relay.port })
+  acme = ca
+  const caDir = tempDir('walkthrough-ca')
+  rmSync(caDir, { recursive: true, force: true })
+  mkdirSync(caDir, { recursive: true })
+  writeFileSync(join(caDir, 'control.pem'), controlPem)
+  writeFileSync(join(caDir, 'root.pem'), ca.rootPem)
+  // The phone trusts the test CA, as a real phone trusts Let's Encrypt.
+  console.log(await run('xcrun', ['simctl', 'keychain', SIMULATOR, 'add-root-cert', join(caDir, 'root.pem')]))
   const cues = new Cues()
   cues.onMark = (name) => {
     if (name === 'faceid') void sleep(1200).then(matchFace)
@@ -280,13 +321,25 @@ test('pairing an iPhone, and approving an agent’s requests on it', async () =>
   const userData = tempDir('walkthrough')
   launched = await launch(userData, appDir, {
     env: {
-      VALET_RELAY_ORIGIN: RELAY_ORIGIN,
-      VALET_RELAY_CONNECT: `http://127.0.0.1:${RELAY_PORT}`,
+      VALET_BLIND_RELAY: CONTROL_HOST,
+      VALET_BLIND_MAC_DOMAIN: MAC_DOMAIN,
+      VALET_BLIND_RELAY_CONNECT: `wss://127.0.0.1:${relay.port}`,
+      VALET_ACME_DIRECTORY: ca.directoryUrl,
+      NODE_EXTRA_CA_CERTS: join(caDir, 'control.pem'),
       VALET_MAC_NAME: 'Nick’s MacBook Pro',
     },
   })
   // A cold macOS runner can take longer than the default to open the first window.
   const control = await windowWithTitle(launched.app, CONTROL, 90_000)
+  // The Mac's own name, once it is at the relay with a certificate: the phone dials it there.
+  const macHost = await until(async () => {
+    const macId = relay.macs()[0]
+    return macId !== undefined && ca.validations.some((v) => v.ok) ? `${macId}.${MAC_DOMAIN}` : null
+  }, 120_000)
+  console.log(
+    `mac host: ${macHost}`,
+    await run('sudo', ['-n', 'sh', '-c', `echo "127.0.0.1 ${macHost}" >> /etc/hosts`]),
+  )
   await launched.app.evaluate(({ BrowserWindow }) => {
     for (const w of BrowserWindow.getAllWindows())
       if (w.getTitle().includes('[control]')) {
@@ -377,7 +430,11 @@ test('pairing an iPhone, and approving an agent’s requests on it', async () =>
       join(OUT, 'phone.xcresult'),
     ],
     {
-      env: { ...process.env, TEST_RUNNER_VALET_WALKTHROUGH_CUES: `http://127.0.0.1:${CUES_PORT}` },
+      env: {
+        ...process.env,
+        TEST_RUNNER_VALET_WALKTHROUGH_CUES: `http://127.0.0.1:${CUES_PORT}`,
+        TEST_RUNNER_VALET_WALKTHROUGH_RELAY: `https://${macHost}`,
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   )
@@ -388,15 +445,13 @@ test('pairing an iPhone, and approving an agent’s requests on it', async () =>
   // ---- J1: pairing ----
   await go('#/settings/devices')
   caption(
-    'Valet on the Mac, and the iPhone app in the Simulator. Both talk through Valet’s relay, running locally here.',
+    'Valet on the Mac, and the iPhone app in the Simulator. The phone reaches the Mac at its own address through Valet’s relay, running locally here.',
   )
   await cues.mark('launched')
   await sleep(4000)
-  caption(
-    'To sign an iPhone in with a code, open Settings › Devices on the Mac and choose Show a sign-in code.',
-  )
+  caption('To pair an iPhone, open Settings › Devices on the Mac and choose Pair an iPhone.')
   await sleep(2500)
-  await control.getByRole('button', { name: 'Show a sign-in code' }).click()
+  await control.getByRole('button', { name: 'Pair an iPhone' }).click()
   const qr = control.locator('svg[data-pairing-qr]')
   await qr.waitFor({ timeout: 30_000 })
   cues.qr = await qr.getAttribute('data-pairing-qr')
@@ -467,7 +522,9 @@ test('pairing an iPhone, and approving an agent’s requests on it', async () =>
     note: 'Looks up one book’s title and whether it is on the shelf.',
   })
   cues.signal('install-asked')
-  caption('Installing it needs your approval. The request is sealed to the phone and sent through the relay.')
+  caption(
+    'Installing it needs your approval. The request is sealed to the phone and sent to it at the Mac’s own address.',
+  )
   await go('#/needs-you')
   await cues.mark('card-open')
   caption('The card on the phone says what the adapter can reach and who asked. Approve asks for Face ID.')

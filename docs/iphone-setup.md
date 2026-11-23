@@ -5,12 +5,11 @@ Developer account. A free account has no TestFlight and no push notifications, a
 stops opening after 7 days. So the phone doesn't buzz: open Valet on the phone and it fetches
 whatever is waiting for you.
 
-The design is in [ios-app.md](ios-app.md) and the relay in [relay-worker.md](relay-worker.md).
+The design is in [ios-app.md](ios-app.md) and the relay in [blind-relay.md](blind-relay.md).
 
 ## What you need
 
 - A Mac with Xcode, and Valet running on it.
-- A deployed relay, and its host name (for example `valet-relay.<your-subdomain>.workers.dev`).
 - An iPhone on iOS 18 or later, with a cable for the first install.
 
 ## 1. Sign in to Xcode (once)
@@ -84,10 +83,10 @@ lockdown or the phone as unpaired. Then pair the iPhone again (Settings › Devi
 
 Approve the Touch ID prompt when it starts: the Mac signs its relay key with it.
 
-## 6. Point the Mac at the relay
+## 6. Check the Mac is at the relay
 
-In Valet on the Mac: Settings › Devices › **Relay**, type the relay's host name, and **Save**. The
-line under it should say "Connected to the relay".
+Valet connects to its relay by itself. In Valet on the Mac, Settings › Devices should say
+"Connected to the relay". The phone reaches the Mac at the Mac's own address there.
 
 ## 7. Pair with the QR code
 

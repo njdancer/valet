@@ -180,14 +180,9 @@ jobs:
         run: |
           pnpm --filter @valet/browser-electron typecheck:e2e
           pnpm --filter @valet/browser-electron test:e2e --trace off
-      - name: Chromium, the person's browser in the hub's tests
+      - name: Chromium, the person's browser in the blind relay's tests
         if: matrix.part == 'fast'
         run: pnpm --filter @valet/desktop exec playwright install chromium
-      - name: the hub's pages in a real browser (apps/relay/test/hub-browser.test.ts)
-        if: matrix.part == 'fast'
-        env:
-          VALET_HUB_BROWSER: "1"
-        run: pnpm --filter @valet/relay exec vitest run test/hub-browser.test.ts
       - name: desktop end to end, without journey and update (apps/desktop/e2e/playwright.config.ts)
         if: matrix.part == 'fast'
         env:

@@ -17,9 +17,7 @@ import { clientIdSchema, consentCodeSchema, DECISION_REFUSALS, requestIdSchema }
 import { canRevokeDevice, keyIdSchema } from './devices'
 import { displayText } from './display-text'
 import { sha256Hex } from './hash'
-import { hubClientIdSchema, hubConsentIdSchema, signedHubGrantSchema } from './hub-grant'
 import { sealedSchema } from './pairing'
-import { ROSTER_MAX_CHANGES, rosterPasskeySchema, signedRosterChangeSchema } from './roster'
 import {
   keyId,
   p256PublicKeySchema,
@@ -411,59 +409,6 @@ export function parsePhoneToMac(raw: unknown, macId: string): PhoneToMacMessage 
   return message
 }
 
-/** Agents' sign-ins waiting at once, and grants an account holds, at most. */
-export const HUB_MAX_OPEN_CONSENTS = 20
-export const HUB_MAX_GRANTS = 100
-
-/** A node's name as the person sees it at the hub, e.g. "MacBook Pro". */
-export const hubNodeNameSchema = z
-  .string()
-  .min(1)
-  .max(64)
-  .regex(/^[^\p{Cc}\p{Cf}]+$/u)
-
-/**
- * A node's short name in tool names (`<slug>__<adapter>_<tool>`, relay-hub.md "Tool naming"):
- * lower-case letters and digits, with single hyphens inside, at most 16 characters.
- */
-export const hubNodeSlugSchema = z.string().regex(/^[a-z0-9](?:-?[a-z0-9]){0,15}$/)
-
-export const hubStatusSchema = z.discriminatedUnion('state', [
-  /** This relay has no hub. */
-  z.object({ state: z.literal('off') }).strict(),
-  z
-    .object({
-      state: z.literal('unlinked'),
-      /** The hub's address, e.g. https://valet.example. */
-      url: z.url({ protocol: /^https?$/ }),
-      /** Why the last hub-link-start didn't open a code. */
-      problem: z.enum(['too-many', 'unavailable']).optional(),
-    })
-    .strict(),
-  z
-    .object({
-      state: z.literal('linking'),
-      url: z.url({ protocol: /^https?$/ }),
-      /** Typed on the hub's page by someone signed in to the account. Never put in a link. */
-      code: consentCodeSchema,
-      expiresAt: z.iso.datetime(),
-    })
-    .strict(),
-  z
-    .object({
-      state: z.literal('linked'),
-      url: z.url({ protocol: /^https?$/ }),
-      /** The account's id at the hub, which every change to its device list names (roster.ts). */
-      accountId: z.string().regex(/^[A-Za-z0-9_-]{16,64}$/),
-      /** How the hub names the account, for "Connected to …". */
-      account: z.string().min(1).max(254),
-      slug: hubNodeSlugSchema,
-      name: hubNodeNameSchema,
-    })
-    .strict(),
-])
-export type HubStatus = z.infer<typeof hubStatusSchema>
-
 export const macToRelaySchema = z.discriminatedUnion('type', [
   relayHelloSchema,
   z
@@ -524,47 +469,6 @@ export const macToRelaySchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('recovery-register'), codeHash: z.string().regex(/^[0-9a-f]{64}$/) }).strict(),
   /** Wake a phone. The relay sends a push with fixed text and no content; see pushPayloadSchema. */
   z.object({ type: z.literal('push'), deviceId: keyIdSchema, kind: z.enum(['needs-you', 'alert']) }).strict(),
-  /**
-   * Add this Mac to a Valet account at the hub (relay-hub.md, "Adding a node"). The relay answers
-   * with hub-status in state `linking` and a code the person types on the hub's page, signed in.
-   */
-  z.object({ type: z.literal('hub-link-start'), name: hubNodeNameSchema }).strict(),
-  /** Leave the account. The hub forgets the node at once. */
-  z.object({ type: z.literal('hub-unlink') }).strict(),
-  /**
-   * Append changes to the account's device list (roster.ts), in order, each signed by a device on
-   * it: several when a Mac starts the list with the phones it already paired. The hub keeps them
-   * all, or none, only if the whole chain still checks; every node then hears `hub-roster`.
-   */
-  z
-    .object({
-      type: z.literal('hub-roster-append'),
-      changes: z
-        .array(signedRosterChangeSchema)
-        .min(1)
-        .max(RELAY_LIMITS.maxDevicesPerMac + 1),
-    })
-    .strict(),
-  /**
-   * The person approved an agent's sign-in at the hub on this Mac (hub-grant.ts): the grant, signed
-   * by this Mac's approval key. The hub keeps it only if the signer is on the account's list.
-   */
-  z.object({ type: z.literal('hub-grant'), grant: signedHubGrantSchema }).strict(),
-  /** The person declined an agent's sign-in at the hub. */
-  z.object({ type: z.literal('hub-consent-decline'), consentId: hubConsentIdSchema }).strict(),
-  /**
-   * The person removed an agent that signed in at the hub: the hub deletes its grant and the agent's
-   * tokens at once, and every node hears the account's grants without it. Any node on the account
-   * may ask; taking access away needs no signature.
-   */
-  z.object({ type: z.literal('hub-grant-revoke'), grantId: z.string().regex(/^[0-9a-f]{64}$/) }).strict(),
-  /**
-   * Ask to join the account's device list when another device started it (relay-hub.md, step 4c):
-   * this Mac's own device record, signed by its approval key, so a phone on the list can check the
-   * three keys it would add are this Mac's. The hub keeps it for the account's phones to read; a
-   * phone signs the add.
-   */
-  z.object({ type: z.literal('hub-roster-join'), record: signedTextSchema }).strict(),
 ])
 export type MacToRelay = z.infer<typeof macToRelaySchema>
 
@@ -584,15 +488,6 @@ export const relayToMacSchema = z.discriminatedUnion('type', [
       headers: headers(RELAY_FORWARDED_HEADERS),
       body: z.string().max(RELAY_LIMITS.maxRequestBodyBytes),
       source: z.string().max(64),
-      /**
-       * From the hub, for an agent signed in there (relay-hub.md, step 2): the grant it holds. The
-       * hub sends no credential; the Mac serves the request only if it checked that grant itself,
-       * and supplies its own.
-       */
-      hub: z
-        .object({ grantId: z.string().regex(/^[0-9a-f]{64}$/) })
-        .strict()
-        .optional(),
     })
     .strict(),
   z.object({ type: z.literal('http-cancel'), id: requestId }).strict(),
@@ -619,59 +514,6 @@ export const relayToMacSchema = z.discriminatedUnion('type', [
       by: z.enum(['phone', 'recovery', 'mac']),
       phonesUnregistered: z.boolean(),
     })
-    .strict(),
-  /** Where this Mac stands with the hub: after ready, and whenever that changes. */
-  z.object({ type: z.literal('hub-status'), hub: hubStatusSchema }).strict(),
-  /**
-   * The account's whole device list, as the hub holds it: after ready, after this Mac joins, and
-   * after any change. The Mac checks it against the genesis it pinned before trusting anyone on it.
-   * `refused`: this Mac's last hub-roster-append wasn't kept, and why.
-   */
-  z
-    .object({
-      type: z.literal('hub-roster'),
-      changes: z.array(signedRosterChangeSchema).max(ROSTER_MAX_CHANGES),
-      refused: z.enum(['not-linked', 'conflict', 'invalid']).optional(),
-      /**
-       * The account's passkeys at the hub that can sign (P-256 ones), for the Mac to put on the
-       * list so the account's iPhones can sign in with them (step 4d). The hub's word: the Mac
-       * shows each one in Settings › Devices, and only a device's signature puts it on the list.
-       */
-      passkeys: z.array(rosterPasskeySchema).max(20).optional(),
-    })
-    .strict(),
-  /**
-   * Agents' sign-ins at the hub waiting for the person (relay-hub.md, step 3): every one still
-   * open, after ready and whenever one opens or ends. `code` is what the agent's browser shows;
-   * the Mac asks the person to type it and compares, as for its own consents.
-   */
-  z
-    .object({
-      type: z.literal('hub-consents'),
-      consents: z
-        .array(
-          z
-            .object({
-              id: hubConsentIdSchema,
-              clientId: hubClientIdSchema,
-              clientName: displayText(60),
-              host: z.string().regex(/^[a-z0-9.-]{1,253}$/),
-              source: z.string().max(64),
-              code: consentCodeSchema,
-              expiresAt: z.iso.datetime(),
-            })
-            .strict(),
-        )
-        .max(HUB_MAX_OPEN_CONSENTS),
-    })
-    .strict(),
-  /**
-   * Every grant the account's agents hold, as the hub keeps them: after ready and after any change.
-   * The Mac serves an agent only for a grant it checked against the list itself; one missing here
-   * is taken away (that needs no signature).
-   */
-  z
-    .object({ type: z.literal('hub-grants'), grants: z.array(signedHubGrantSchema).max(HUB_MAX_GRANTS) })
     .strict(),
 ])
 export type RelayToMac = z.infer<typeof relayToMacSchema>

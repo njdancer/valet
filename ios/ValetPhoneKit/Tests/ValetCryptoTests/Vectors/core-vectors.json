@@ -251,37 +251,5 @@
     "runtime",
     "private-network",
     "credential"
-  ],
-  "roster": {
-    "account": "acct_0123456789abcdef",
-    "chain": [
-      {
-        "payload": "{\"v\":1,\"account\":\"acct_0123456789abcdef\",\"seq\":0,\"prev\":null,\"at\":\"2026-11-17T00:00:00.000Z\",\"by\":\"199537159ca9221b38bfd7cd7069f815\",\"change\":{\"op\":\"add\",\"device\":{\"deviceId\":\"199537159ca9221b38bfd7cd7069f815\",\"role\":\"mac\",\"platform\":\"macos\",\"name\":\"Studio\",\"approvalKey\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEPDEAui2nkEll1n_OGGbThh9P2wr6XXtyFqxKKOR4OkwDaS5YVC4Fn8PyAnk4_4TC-HLGtCgNNXJPz_0mZwxKrA\",\"transportKey\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEUeHl5xVE9FcAYc0Ffl-oKXiLhF2p8e3arC2U2zdHjicbBuLPyCqptGg-Vig1T9zYkz60Kz9umvaVHVLtA_HDNw\",\"agreementKey\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEBoJoQ1PIkteO3-ZTogPFiQFdc9zhxx6MasRYhNGzjBzNO_b99MAsFNJcjMxhADtdADApHW4nQ2QaRJE31-lEfQ\"}}}",
-        "signature": "3cWo3hsqFt1b8qGFhnc3uuILp93khDmqQVukmxT92_lPjotWWG44MpIqxtE90b-v2iyNo78c5mdlqxUP3s6pOw"
-      },
-      {
-        "payload": "{\"v\":1,\"account\":\"acct_0123456789abcdef\",\"seq\":1,\"prev\":\"1de20e4dbbda1d5878c9d4a4cddc9194a0d4afbd43228d32f6c2716b1b1a0969\",\"at\":\"2026-11-17T00:00:00.000Z\",\"by\":\"199537159ca9221b38bfd7cd7069f815\",\"change\":{\"op\":\"add\",\"device\":{\"deviceId\":\"527e879ba5940b71aede7b5659bc114c\",\"role\":\"phone\",\"platform\":\"ios\",\"name\":\"iPhone\",\"approvalKey\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEP-lhno3xnS-mgGcqCj_K0VMWjoPxT7TUTGWSAp8dORuq657uslOl8Iro9p9siD-io-TnWagn0gy7O8TJGTq6xA\",\"transportKey\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEDa3iq_4HIHCT3xoc3eCj852udnu2gngPcU0ZcqHBZp7ik2SbaGOwCZwRg9W5o_6aEbSox-UQlFi7913lWC2t5w\",\"agreementKey\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEwtjrpHJwFJtDcILe01h_pcZblI417-BbWZ32FBd78l8e5SukU7QqtbiVOLjvuBRNygnd59J88FI8LBcAKhvtlw\"}}}",
-        "signature": "5MR4lH2o530X4Gspz_LAaQk_2SHSAX-cQzM4GJq1y4gNqFnT9RFigp4Mh622vB1Pa2hgRVjj8smGqtV7cBZDaw"
-      }
-    ],
-    "genesis": "1de20e4dbbda1d5878c9d4a4cddc9194a0d4afbd43228d32f6c2716b1b1a0969",
-    "head": "c63fadd4db2a526c99aeb70a158539260adee454d82de71a0abef15cd9ee87fa",
-    "devices": ["199537159ca9221b38bfd7cd7069f815", "527e879ba5940b71aede7b5659bc114c"],
-    "join": {
-      "macId": "459d3427c51803c8e0487fef56710c41",
-      "record": {
-        "payload": "{\"v\":1,\"deviceId\":\"459d3427c51803c8e0487fef56710c41\",\"role\":\"mac\",\"platform\":\"macos\",\"name\":\"Laptop\",\"approvalKey\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEVXswH2eg_SU2_lX_B-cd3Qailn92o676wW27ySg0l2ECGEY1SqIwX66e78NrS6m_vTH3KS4mqocu1G7K_VQKDw\",\"transportKey\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEf2L4A1l3gzes4QpI9iZZwBqdqxtu9X_Gy6VS3-7qtnbeUu1IizB-8drIcqmVwf5XN0sdVmLkjripEuCqLiXIKw\",\"agreementKey\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEcOAFES2e4Fdi-X2T1iPp2mlOxSFBJjzFG11aGeg0nz6ewvFjkEUZdedCjrd0OsLwDLtmYF7dgwvuJqnE52Bc6g\",\"macId\":\"459d3427c51803c8e0487fef56710c41\",\"pairedAt\":\"2026-11-17T00:00:00.000Z\"}",
-        "signature": "-1BNf2ZmbKZqVMkE3ByjFOgw7a2eZwhzhZTjCf3DzNgUAuXj--Cl1VFgXwvdfNtwCBDrAlnbRLbXYmJJXxj2Ew"
-      },
-      "device": {
-        "deviceId": "459d3427c51803c8e0487fef56710c41",
-        "role": "mac",
-        "platform": "macos",
-        "name": "Laptop",
-        "approvalKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEVXswH2eg_SU2_lX_B-cd3Qailn92o676wW27ySg0l2ECGEY1SqIwX66e78NrS6m_vTH3KS4mqocu1G7K_VQKDw",
-        "transportKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEf2L4A1l3gzes4QpI9iZZwBqdqxtu9X_Gy6VS3-7qtnbeUu1IizB-8drIcqmVwf5XN0sdVmLkjripEuCqLiXIKw",
-        "agreementKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEcOAFES2e4Fdi-X2T1iPp2mlOxSFBJjzFG11aGeg0nz6ewvFjkEUZdedCjrd0OsLwDLtmYF7dgwvuJqnE52Bc6g"
-      }
-    }
-  }
+  ]
 }

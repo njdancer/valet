@@ -33,7 +33,6 @@ import {
   startRig,
   type TestMac,
 } from '../../../blind-relay/test/helpers'
-import { Phone } from '../../../relay/test/phone'
 import {
   AnchoredFile,
   ApprovalBroker,
@@ -52,6 +51,7 @@ import {
   PhoneDoor,
   routeByRequest,
 } from '../../src/main/core/approvals/phone-door'
+import { Phone } from '../phone'
 
 const cleanup: Array<() => Promise<void> | void> = []
 afterEach(async () => {

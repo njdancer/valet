@@ -163,7 +163,7 @@ export function needsYouView(
       return {
         ...base,
         title: needsYouTitle({ kind: 'remote-consent' }),
-        description: `${item.clientName === null ? 'A cloud agent' : `Something calling itself “${item.clientName}” (not verified)`} at ${item.clientHost}${item.via === 'hub' ? ', through your Valet account' : item.source === null ? '' : `, from ${item.source}`}. Type the code its browser shows.`,
+        description: `${item.clientName === null ? 'A cloud agent' : `Something calling itself “${item.clientName}” (not verified)`} at ${item.clientHost}${item.source === null ? '' : `, from ${item.source}`}. Type the code its browser shows.`,
         adapterId: null,
         adapterName: null,
         callId: null,

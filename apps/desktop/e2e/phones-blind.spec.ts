@@ -1,20 +1,17 @@
-// Phones at the Mac's own address, end to end (docs/blind-relay.md#phones): the built app with both
-// relays, the old Worker relay in a local Workers runtime and the blind relay with a CA that really
-// checks TLS-ALPN-01, and the phone the relay suites use, speaking the iPhone app's frames.
+// Phones at the Mac's own address, end to end (docs/blind-relay.md#phones): the built app with the
+// blind relay and a CA that really checks TLS-ALPN-01, and a test phone speaking the iPhone app's
+// frames. There is no other way for a phone to reach the Mac: no hub, no Worker relay.
 //
 //   1. The Mac gets its certificate through the blind relay, and phones reach it there over TLS
 //      that ends on the Mac, with remote access off.
 //   2. A new phone pairs from the QR code, which names the Mac's own address, and approves an
 //      agent's request there.
-//   3. The same phone through the old relay still gets its cards (a phone that hasn't moved), and
-//      back at the Mac's own address it gets them there.
-//   4. A request made while the phone is closed is there when it opens at the Mac's own address.
-//   5. A cloud agent's sign-in is a card on the phone: the browser's code typed there and approved
+//   3. A request made while the phone is closed is there when it opens at the Mac's own address.
+//   4. A cloud agent's sign-in is a card on the phone: the browser's code typed there and approved
 //      with the phone's key signs the agent in, with the Mac left alone. Answered at the Mac
 //      instead, the phone's card goes.
-//   6. The Mac removes the phone: it is shut out at once.
+//   5. The Mac removes the phone: it is shut out at once.
 
-import { type ChildProcess, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { rmSync, writeFileSync } from 'node:fs'
 import { request as httpsRequest } from 'node:https'
@@ -27,7 +24,7 @@ import { type RunningBlindRelay, startBlindRelay } from '@valet/blind-relay'
 import { pairingCode, pairingOfferId, pairingSealKey } from '@valet/core'
 import { type FakeAcme, startFakeAcme } from '@valet/fake-acme'
 import { WebSocket as WsWebSocket } from 'ws'
-import { Phone } from '../../relay/test/phone'
+import { Phone } from '../test/phone'
 import {
   appDir,
   CONTROL,
@@ -42,13 +39,10 @@ import {
 
 test.describe.configure({ mode: 'serial' })
 
-const WORKER_PORT = 8798
-const WORKER_ORIGIN = 'https://relay.valet.test'
 const CONTROL_HOST = 'blind.valet.test'
 const MAC_DOMAIN = 'macs.valet.test'
 const PREFIX = 'valet-pair:'
 
-let worker: ChildProcess
 let blind: RunningBlindRelay
 let blindPort = 0
 let acme: FakeAcme
@@ -98,13 +92,6 @@ function atOwnAddress(p: Phone): void {
       lookup,
     }) as unknown as WebSocket
   }
-}
-
-/** The phone through the old Worker relay, as a phone that hasn't moved dials it. */
-function throughWorker(p: Phone): void {
-  p.url = `http://127.0.0.1:${WORKER_PORT}`
-  p.origin = WORKER_ORIGIN
-  p.connect = (url) => new WebSocket(url)
 }
 
 function closeCode(p: Phone): Promise<number> {
@@ -196,12 +183,6 @@ async function startSignIn(name: string): Promise<{ code: string; wait: string; 
 }
 
 test.beforeAll(async () => {
-  worker = spawn('node', [join(appDir, '../relay/scripts/local.mjs'), '--port', String(WORKER_PORT)], {
-    stdio: ['ignore', 'pipe', 'inherit'],
-  })
-  await new Promise<void>((resolve) =>
-    worker.stdout?.on('data', (c) => /relay listening/.test(String(c)) && resolve()),
-  )
   blind = await startBlindRelay({
     controlHost: CONTROL_HOST,
     macDomain: MAC_DOMAIN,
@@ -216,8 +197,6 @@ test.beforeAll(async () => {
   writeFileSync(caFile, controlPem)
   launched = await launch(userData, appDir, {
     env: {
-      VALET_RELAY_ORIGIN: WORKER_ORIGIN,
-      VALET_RELAY_CONNECT: `http://127.0.0.1:${WORKER_PORT}`,
       VALET_BLIND_RELAY: CONTROL_HOST,
       VALET_BLIND_MAC_DOMAIN: MAC_DOMAIN,
       VALET_BLIND_RELAY_CONNECT: `wss://127.0.0.1:${blindPort}`,
@@ -236,7 +215,6 @@ test.afterAll(async () => {
   await launched?.close()
   await blind?.close()
   await acme?.close()
-  worker?.kill('SIGINT')
   if (userData !== undefined) rmSync(userData, { recursive: true, force: true })
 })
 
@@ -280,7 +258,7 @@ test('a new phone pairs from the QR code, which names the Mac’s own address', 
     window.location.hash = '#/settings/devices'
   })
   await expect(control.getByText(/Connected to the relay/)).toBeVisible({ timeout: 30_000 })
-  await control.getByRole('button', { name: 'Show a sign-in code' }).click()
+  await control.getByRole('button', { name: 'Pair an iPhone' }).click()
   const qr = control.locator('svg[data-pairing-qr]')
   await qr.waitFor()
   const text = (await qr.getAttribute('data-pairing-qr')) ?? ''
@@ -322,35 +300,6 @@ test('an agent’s request reaches the phone at the Mac’s own address, and its
   await expect
     .poll(async () => (await callToolOnce(client, 'valet_get_approval', {})).text, { timeout: 20_000 })
     .toMatch(/approved/i)
-})
-
-test('through the old relay the phone still gets its cards, and back at the Mac’s address it gets them there', async () => {
-  phone.socket?.close()
-  throughWorker(phone)
-  // The old relay's ready, saying the Mac is there too.
-  expect(await reconnect(phone)).toEqual({ type: 'ready', macOnline: true })
-  const before = phone.messages.length
-  const viaWorker = await cardFor('messagesOtpEnabled', true, before)
-  await phone.send({ type: 'ack', ackSeq: viaWorker['seq'] })
-  const request = JSON.parse(String(viaWorker['requestText'])) as { id: string }
-  await phone.send({ type: 'approval-decline', requestId: request.id, note: 'Not now' })
-  await expect
-    .poll(async () => (await callToolOnce(client, 'valet_get_approval', {})).text, { timeout: 20_000 })
-    .toMatch(/declined/i)
-
-  // Back at its own address; the old connection closed, the next card comes this way.
-  phone.socket?.close()
-  atOwnAddress(phone)
-  await reconnect(phone)
-  const after = phone.messages.length
-  const here = await cardFor('traceRetentionDays', 3, after)
-  await phone.send({ type: 'ack', ackSeq: here['seq'] })
-  await phone.send({ type: 'approval-decision', decision: phone.approve(String(here['requestText']), macId) })
-  await expect
-    .poll(async () => (await control.evaluate(() => window.valet?.settings.get()))?.traceRetentionDays, {
-      timeout: 20_000,
-    })
-    .toBe(3)
 })
 
 test('a request made while the phone is closed is there when it opens at the Mac’s own address', async () => {

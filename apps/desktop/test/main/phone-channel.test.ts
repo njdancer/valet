@@ -26,7 +26,7 @@ import {
   verifyDeviceRecord,
   verifyPairingChallenge,
 } from '@valet/core'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import {
   AnchoredFile,
   ApprovalBroker,
@@ -342,60 +342,6 @@ describe('the phone channel', () => {
     const statuses = resent.filter((m) => m['type'] === 'status')
     expect(statuses.map((m) => m['at'])).not.toContain('2026-11-12T00:00:01.000Z')
     expect(resent.some((m) => m['type'] === 'approval-request')).toBe(true)
-  })
-
-  it('serves a phone on the account’s list without pairing, and lets it go when the list drops it', async () => {
-    const t = await setup()
-    const p = phone()
-    const stale = phone()
-    // The relay still lets in a phone the Mac doesn't know: not stopped at once, since the account's
-    // list may name it a moment later.
-    t.channel.handle({ type: 'ready', devices: [stale.deviceId] })
-    expect(t.frames.filter((f) => f.type === 'device-unregister')).toEqual([])
-
-    const device = {
-      deviceId: p.deviceId,
-      role: 'phone' as const,
-      platform: 'ios' as const,
-      name: 'Account iPhone',
-      approvalKey: p.approval.spki,
-      transportKey: p.transport.spki,
-      agreementKey: p.agreement.spki,
-    }
-    t.devices.setAccountPhones([{ device, addedAt: '2026-11-17T00:00:00.000Z' }])
-    expect(t.devices.isAccountPhone(p.deviceId)).toBe(true)
-    expect(t.devices.device(p.deviceId)).toMatchObject({ name: 'Account iPhone', macId: t.devices.macId })
-    t.channel.devicesChanged()
-    expect(t.frames).toContainEqual({
-      type: 'device-register',
-      deviceId: p.deviceId,
-      transportKey: p.transport.spki,
-    })
-    expect(t.frames).toContainEqual({ type: 'device-unregister', deviceId: stale.deviceId })
-    // Its messages are taken: a lock-down command from it is heard.
-    await fromPhone(t, p, { type: 'command', seq: 1, command: { kind: 'lockdown' } })
-    expect(lastEnvelopes(t, p.deviceId).length).toBeGreaterThan(0)
-
-    // Dropped from the list: no longer trusted, and the relay stops letting it in.
-    t.devices.setAccountPhones([])
-    t.channel.devicesChanged()
-    expect(t.devices.device(p.deviceId)).toBeNull()
-    expect(t.frames.at(-1)).toEqual({ type: 'device-unregister', deviceId: p.deviceId })
-  })
-
-  it('lets go of a phone the relay knows and the Mac doesn’t, once the account’s list had time', async () => {
-    const t = await setup()
-    const stranger = phone()
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    try {
-      t.channel.handle({ type: 'ready', devices: [stranger.deviceId] })
-      vi.advanceTimersByTime(29_000)
-      expect(t.frames.filter((f) => f.type === 'device-unregister')).toEqual([])
-      vi.advanceTimersByTime(1_000)
-      expect(t.frames).toContainEqual({ type: 'device-unregister', deviceId: stranger.deviceId })
-    } finally {
-      vi.useRealTimers()
-    }
   })
 
   it('ignores envelopes from phones that are not paired', async () => {

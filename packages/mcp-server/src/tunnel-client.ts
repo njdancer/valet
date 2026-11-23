@@ -23,9 +23,22 @@ import {
   tunnelReadySchema,
 } from '@valet/core'
 import type { AcceptedConnection } from './http'
-import type { RelayBinding, TransportSigner } from './relay-client'
 
 export const ACME_TLS_ALPN = 'acme-tls/1'
+
+/** Signs with this Mac's transport key, which the relay knows it by. */
+export interface TransportSigner {
+  /** base64url SPKI DER, P-256. */
+  readonly publicKey: string
+  /** A base64url raw r||s signature over the relay-auth domain and this payload. */
+  sign(payload: string): Promise<string>
+}
+
+/** The Mac's approval key vouching for its transport key (verifyRelayBinding). */
+export interface RelayBinding {
+  readonly approvalKey: string
+  readonly signature: string
+}
 
 export type TunnelClientStatus =
   | { readonly state: 'connecting' }

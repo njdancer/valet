@@ -9,7 +9,6 @@
     "adapters/*/test",
     "fakes/*/src",
     "fakes/*/test",
-    "apps/relay/test",
     "vitest.config.ts"
   ]
 }

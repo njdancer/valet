@@ -347,45 +347,6 @@ describe('approve a connection', () => {
     await act(async () => undefined)
   })
 
-  it('says what an agent signing in through the Valet account gets, with no tools to tick', async () => {
-    const fake = createFakeApi({ now: NOW })
-    const approved: unknown[][] = []
-    const api = {
-      ...fake,
-      remote: {
-        ...fake.remote,
-        consents: async () => ({
-          requests: [
-            {
-              id: 'hub:consent_0123456789',
-              clientId: 'hc0123456789abcdef',
-              clientHost: 'claude.ai',
-              clientName: 'Claude',
-              source: null,
-              requestedAt: new Date(NOW).toISOString(),
-              expiresAt: new Date(NOW + 600_000).toISOString(),
-              via: 'hub' as const,
-            },
-          ],
-          tools: (await fake.remote.consents()).tools,
-        }),
-        approveConsent: async (...args: unknown[]) => {
-          approved.push(args)
-          return 'approved' as const
-        },
-      },
-    }
-    const user = userEvent.setup()
-    renderPage(api, <ApproveConnectionSheet armDelayMs={0} />)
-    expect(await screen.findByText('Your Valet account (all your Macs)')).toBeTruthy()
-    expect(screen.getByText(/It signs in through your Valet account/)).toBeTruthy()
-    expect(screen.queryByText('Tools it may use')).toBeNull()
-    expect(screen.queryByText('Let it ask for changes')).toBeNull()
-    await user.type(screen.getByRole('textbox', { name: 'Code from your browser' }), 'ABCD-EFGH')
-    await user.click(screen.getByRole('button', { name: 'Approve' }))
-    await waitFor(() => expect(approved).toEqual([['ABCD-EFGH', [], []]]))
-  })
-
   it('reads codes the way the Mac’s check does', () => {
     expect(codeReady('abcd-efgh')).toBe(true)
     expect(codeReady('ABCD EFGH')).toBe(true)

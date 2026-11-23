@@ -79,7 +79,7 @@ import {
 import { agentReader, bundleReader, type ReaderControl } from '../core/mail'
 import { devHelperPath } from '../core/native-helpers'
 import { addOwnPort, ownPorts, recordOwnPorts } from '../core/own-ports'
-import { macName, relayFromEnv } from '../core/phones'
+import { macName } from '../core/phones'
 import { protocolHostScript, sftpHostScript } from '../core/protocol-host'
 import { nodeRuntimeBinary, rawPaths } from '../core/raw-runtime'
 import { AppService } from '../core/service'
@@ -457,9 +457,6 @@ async function main(): Promise<void> {
   // nothing weaker. A build that carries demo mode is never a release (launch.ts).
   const strictApprovals = app.isPackaged && !mode.demo
   const keychainHelper = credentialDeps.keychainHelper
-  // A relay for paired phones (docs/phone-channel.md): the one in Settings › Devices. A dev build
-  // can name a local one in the environment instead, and then signs in software.
-  const devRelay = strictApprovals ? null : relayFromEnv(process.env)
   // The blind relay (docs/blind-relay.md): Valet's own, unless a development build names another
   // (or a demo or e2e run names one at all). Its certificate's keys go in Valet's own Keychain
   // item, or a file in this data folder when there's no helper (a dev or e2e run).
@@ -514,7 +511,7 @@ async function main(): Promise<void> {
         }
   const approverKeys = await macApprovalKeys({
     packaged: strictApprovals,
-    approverPath: approverWanted({ release: strictApprovals, devRelay: devRelay !== null, env: process.env })
+    approverPath: approverWanted({ release: strictApprovals, env: process.env })
       ? nativeHelper('valet-approver')
       : null,
     // A demo launch keeps its anchor in its own data folder, never the Keychain.
@@ -669,7 +666,6 @@ async function main(): Promise<void> {
           ),
     credentials: demoSite === null ? realCredentials(credentialDeps) : demoSite.credentials,
     approvalKeys,
-    relay: devRelay,
     blindRelay,
     cloudflare,
     // Agents' reports to the Valet team (docs/feedback.md), filed with a token only the Keychain

@@ -1,8 +1,8 @@
 # The blind relay
 
 Nick decided on 2026-11-21 that the relay must not be able to read traffic: it is a dumb proxy, so
-people can trust it without trusting whoever runs it. This replaces the Cloudflare hub
-([relay-hub.md](relay-hub.md)) once Nick's Mac has moved over. Design note with the decisions:
+people can trust it without trusting whoever runs it. It replaced the Cloudflare hub
+([relay-hub.md](relay-hub.md)), which closed on 2026-11-22. Design note with the decisions:
 "Valet blind relay: design note" (claude.ai doc).
 
 ## Shape
@@ -26,7 +26,7 @@ Claude / ChatGPT / phone ──TLS for <macId>.<mac domain>──▶ relay :443 
 - **Names.** A Mac's name is its macId, which is the id of its approval key. The relay checks the
   sign-in against the key itself, so it needs no registry and loses nothing on restart. For now the
   Mac domain is `valet.dncr.me`: a wildcard `*.valet.dncr.me` DNS record (DNS only, not proxied)
-  points at the relay's Fly addresses, while `valet.dncr.me` itself stays on the hub until the move.
+  points at the relay's Fly addresses. `valet.dncr.me` itself was the hub's, deleted with it (`.github/workflows/retire-hub.yml`).
 
 ## Signing in
 
@@ -60,7 +60,7 @@ read back with Node's `X509Certificate`).
 
 `apps/desktop/src/main/core/blind-tunnel.ts` runs the tunnel and the certificate together. Phones
 starts it once the Mac's keys and relay binding are ready (the same sign-in the Worker relay
-takes), beside the Worker relay until Nick's Mac has moved. Remote access serves the Mac's name
+took). Remote access serves the Mac's name
 from then on, and offers `https://<macId>.<mac domain>/mcp` as the connector address once the
 certificate is there. The certificate and its keys stay in Valet's own Keychain item
 (`valet.relay-certificate`), or a 0600 file in a development build without the helper.
@@ -82,8 +82,8 @@ dialled by address) is answered as the control host.
 
 The iPhone reaches each Mac at the Mac's own address too: `wss://<macId>.<mac domain>/v1/phone/<macId>`,
 TLS ended on the Mac like an agent's connection. The Mac answers that path itself
-(`apps/desktop/src/main/core/approvals/phone-door.ts`) with exactly the frames the Worker relay
-uses for phones ([relay-worker.md](relay-worker.md#connections)), so the phone app and the phone
+(`apps/desktop/src/main/core/approvals/phone-door.ts`) with exactly the frames the old Worker relay
+used for phones ([relay-worker.md](relay-worker.md#connections)), so the phone app and the phone
 channel above it are the same whichever way a phone comes in:
 
 - a challenge naming the Mac's own origin (`https://<macId>.<mac domain>`), answered by a hello
@@ -91,7 +91,7 @@ channel above it are the same whichever way a phone comes in:
 - then sealed envelopes both ways, each checked to be from that phone to this Mac;
 - or, before a hello, one sealed pairing reply to an offer the Mac opened.
 
-What the Worker relay checks because it is a stranger, the Mac checks against its own device list:
+What the old Worker relay checked because it was a stranger, the Mac checks against its own device list:
 a phone it paired, or one on the account's list. There is no registration, and a phone removed
 there is shut out at once (4403). A stranger and a wrong signature get the same refusal (4401). A
 second connection from the same phone replaces the first (4409). Phones are served whether or not
@@ -108,9 +108,8 @@ relay, it names whichever the Mac has.
 account sign-in and no fallback: a paired phone dials only `https://<macId>.valet.dncr.me`
 (`PhoneModel.valetMacDomain`, the same as the Mac's `VALET_RELAY`), and pairing by the Mac's QR
 code is the only way in. A phone an older build signed in to the account (`viaAccount`) forgets
-that state at launch and asks to pair, with a word on why. The Mac sends each phone's envelopes
-the way that phone is connected (`Phones.route`), so it keeps serving paired phones at the door
-whether or not the Worker relay is still there.
+that state at launch and asks to pair, with a word on why. The Mac sends every phone's frames
+through the door (`Phones` has no other way out), and trusts only phones paired with it.
 
 ## Deploying
 

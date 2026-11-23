@@ -9,7 +9,7 @@ import { panelOnlyRoute, parseRoute } from '../../renderer/lib/routes'
 import type { HashRoute, ValetApi } from '../../shared/api'
 import { CHANNEL_PREFIX, INVOKE_METHODS, type InvokeMethod } from './channels'
 import { mailSettingsPatchSchema } from './mail'
-import { onePasswordAccountSchema, relayHostSchema, traceRetentionDaysSchema } from './settings'
+import { onePasswordAccountSchema, traceRetentionDaysSchema } from './settings'
 
 /** Which of the app's windows sent a request. The main process assigns it when it opens the window. */
 export type WindowRole = 'control' | 'tray' | 'confirmation' | 'needs-user'
@@ -76,8 +76,6 @@ const ISO_TIME = z.iso.datetime({ offset: true })
 /** `<adapterId>.<tool>`, as the consent window grants tools. */
 const REMOTE_TOOL = z.string().regex(/^[a-z][a-z0-9-]{1,63}\.[a-z][a-z0-9_]{0,63}$/)
 const TOOL_NAME = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)
-/** A waiting connection: the Mac's own request id, or `hub:<id>` for a sign-in through the hub. */
-const CONSENT_ID = z.union([OPAQUE_ID, z.string().regex(/^hub:[A-Za-z0-9_-]{10,40}$/)])
 const REMOTE_CLIENT_ID = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/)
 
 const CREDENTIAL = z.string().regex(/^[a-z][a-z0-9_]{0,39}$/)
@@ -138,8 +136,6 @@ const settingsPatch = z
     onePasswordAccount: onePasswordAccountSchema.nullable().optional(),
     traceRetentionDays: traceRetentionDaysSchema.optional(),
     notifications: z.boolean().optional(),
-    relayHost: relayHostSchema.nullable().optional(),
-    relayMacHost: relayHostSchema.nullable().optional(),
   })
   .strict()
 
@@ -311,14 +307,10 @@ const HANDLERS: Readonly<
     ]),
     (api, [code, tools, capabilities]) => api.remote.approveConsent(code, tools, capabilities ?? []),
   ),
-  'remote.declineConsent': entry(z.tuple([CONSENT_ID]), (api, [id]) => api.remote.declineConsent(id)),
+  'remote.declineConsent': entry(z.tuple([OPAQUE_ID]), (api, [id]) => api.remote.declineConsent(id)),
   'remote.declineAllConsents': entry(none, (api) => api.remote.declineAllConsents()),
   'remote.clients': entry(none, (api) => api.remote.clients()),
   'remote.revokeClient': entry(z.tuple([REMOTE_CLIENT_ID]), (api, [id]) => api.remote.revokeClient(id)),
-  'remote.hubAgents': entry(none, (api) => api.remote.hubAgents()),
-  'remote.revokeHubAgent': entry(z.tuple([z.string().regex(/^[0-9a-f]{64}$/)]), (api, [id]) =>
-    api.remote.revokeHubAgent(id),
-  ),
   'remote.revokeAllClients': entry(none, (api) => api.remote.revokeAllClients()),
   'remote.setAskForChanges': entry(z.tuple([REMOTE_CLIENT_ID, z.boolean()]), (api, [id, on]) =>
     api.remote.setAskForChanges(id, on),
@@ -380,22 +372,6 @@ const HANDLERS: Readonly<
   'phones.renewKeys': entry(none, (api, _args, sender) => {
     if (sender.role !== 'control') throw new IpcRefused()
     return api.phones.renewKeys()
-  }),
-  'phones.joinHub': entry(none, (api, _args, sender) => {
-    if (sender.role !== 'control') throw new IpcRefused()
-    return api.phones.joinHub()
-  }),
-  'phones.openHub': entry(none, (api, _args, sender) => {
-    if (sender.role !== 'control') throw new IpcRefused()
-    return api.phones.openHub()
-  }),
-  'phones.leaveHub': entry(none, (api, _args, sender) => {
-    if (sender.role !== 'control') throw new IpcRefused()
-    return api.phones.leaveHub()
-  }),
-  'phones.retryRoster': entry(none, (api, _args, sender) => {
-    if (sender.role !== 'control') throw new IpcRefused()
-    return api.phones.retryRoster()
   }),
   // Settings lives in the control panel, and nowhere else may ask: a confirmation panel or a
   // hand-off banner shows adapter text. The main process's own dialog still decides.
