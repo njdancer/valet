@@ -117,7 +117,9 @@ async function setup(app: EventKitApp = 'reminders') {
     kit,
     audit: async (call, result) => void audited.push({ call, result }),
     now: () => now,
-    changed: () => void (changed += 1),
+    changed: () => {
+      changed += 1
+    },
     openSettings: async (url) => void opened.push(url),
   })
   await service.load()
@@ -131,7 +133,9 @@ async function setup(app: EventKitApp = 'reminders') {
     socketPath,
     started: () => started,
     changed: () => changed,
-    tick: (ms: number) => void (now += ms),
+    tick: (ms: number) => {
+      now += ms
+    },
   }
 }
 
