@@ -31,7 +31,7 @@ import {
   smtpBackend,
 } from '@valet/protocols'
 import { createLocalAccess } from '@valet/sandbox'
-import { app, BrowserWindow, clipboard, dialog, protocol, session, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, powerMonitor, protocol, session, shell } from 'electron'
 import { href } from '../../renderer/lib/routes'
 import type { HashRoute } from '../../shared/api'
 import { builtinPackages } from '../adapters'
@@ -53,6 +53,7 @@ import {
   nativeNames,
 } from '../core/constants'
 import { checkOpBinary, defaultOpCheckDeps, realCredentials } from '../core/credentials'
+import { setDevLoginAgent } from '../core/dev-login-agent'
 import {
   afterCrash,
   createDiagnosticsLog,
@@ -271,6 +272,9 @@ async function finishErase(report: EraseReport, windows: AppWindows, userData: s
   }
   app.exit(0)
 }
+
+/** Why Valet is quitting, set by whatever asked first; logged on the way out. */
+let quitReason: string | null = null
 
 async function main(): Promise<void> {
   // A menu-bar app: closing every window doesn't quit.
@@ -768,12 +772,32 @@ async function main(): Promise<void> {
       closeConfirmation: (id) => windows.closeConfirmation(id),
       showNeedsUser: (adapterId) => windows.showNeedsUser(adapterId),
       closeNeedsUser: (adapterId) => windows.closeNeedsUser(adapterId),
-      // Only a packaged, normal launch registers itself; a dev or demo run would register Electron.
+      // A packaged, normal launch registers itself as a login item. A development run would register
+      // bare Electron, so it writes a LaunchAgent that starts this same run instead. Demo and e2e
+      // runs never start at login.
       setLaunchAtLogin: (enabled) => {
-        if (app.isPackaged && !mode.demo) app.setLoginItemSettings({ openAtLogin: enabled })
+        if (mode.demo || mode.e2e) return
+        if (app.isPackaged) {
+          app.setLoginItemSettings({ openAtLogin: enabled })
+          return
+        }
+        const home = app.getPath('home')
+        void setDevLoginAgent(enabled, {
+          home,
+          electron: process.execPath,
+          appPath: app.getAppPath(),
+          logFile: join(home, 'Library', 'Logs', 'Valet', 'valet-dev-unpackaged.log'),
+          path: process.env['PATH'],
+        })
+          .then(() => log(`start at login ${enabled ? 'on' : 'off'} (LaunchAgent)`))
+          .catch((error: unknown) => diagnostics?.writeError('start at login', error))
       },
-      quit: () => app.quit(),
+      quit: () => {
+        quitReason ??= 'Quit chosen in Valet'
+        app.quit()
+      },
       relaunch: () => {
+        quitReason ??= 'relaunching'
         app.relaunch()
         app.quit()
       },
@@ -868,7 +892,11 @@ async function main(): Promise<void> {
   app.on('will-quit', (event) => {
     if (stopping) return
     stopping = true
-    log('stopping')
+    // Every quit says why, so one nobody expected can be traced. A quit macOS asks for (logout,
+    // restart, shutdown, Force Quit's polite quit, Cmd-Q) arrives with no reason of Valet's own.
+    log(
+      `stopping: ${quitReason ?? 'asked to quit by macOS or the app menu (Cmd-Q, logout, restart or an update)'}`,
+    )
     event.preventDefault()
     // Pending confirmations are declined and the endpoint closed; a step that hangs doesn't keep
     // the app (and its endpoint port) alive past the bound.
@@ -887,7 +915,15 @@ async function main(): Promise<void> {
         done()
       })
   })
-  for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, () => app.quit())
+  for (const signal of ['SIGTERM', 'SIGINT'] as const)
+    process.once(signal, () => {
+      quitReason ??= `${signal} from another process`
+      app.quit()
+    })
+  // Fires on macOS before a logout, restart or shutdown quits the app.
+  powerMonitor.on('shutdown', () => {
+    quitReason ??= 'the Mac is logging out, restarting or shutting down'
+  })
 
   // Until setup is finished or skipped, every launch opens it (AC2). Otherwise demo and e2e open the
   // control panel, as does anything waiting for the person.
