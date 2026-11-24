@@ -1,7 +1,6 @@
 // Settings › Calendar and Settings › Reminders (#/settings/calendar, docs/calendar.md): turning one
 // on walks through what it needs. Start the reader helper, let it use Calendar (or Reminders) when
-// macOS asks, then pick what agents may see and whether they may add and change things. Nothing is
-// ever deleted, and nobody is sent anything.
+// macOS asks, then pick what agents may see and whether they may add, change and delete things.
 
 import {
   Button,
@@ -56,13 +55,13 @@ const WORDS: Readonly<Record<EventKitApp, Words>> = {
     on: 'Let agents see your calendars on this Mac',
     onDetail:
       'Agents see the events in the calendars you pick, from every account the Calendar app has. The Calendar app doesn’t need to be open.',
-    writes: 'Let agents add and change events',
+    writes: 'Let agents add, change and delete events',
     writesDetail:
-      'An agent can add an event to a calendar you picked, or change one’s title, time, place or notes. It can’t delete events, invite anyone, or change an event other people are on.',
+      'An agent can add an event to a calendar you picked, or change one’s title, time, place or notes. It can also delete events, and change or delete ones other people are on, which may tell them. It can’t invite anyone. Every call is in Activity.',
     readTools: ['calendars', 'events'],
-    writeTools: ['create_event', 'update_event'],
+    writeTools: ['create_event', 'update_event', 'delete_event'],
     agentRead: 'See the events in the calendars above. Touch ID once for each of the two tools.',
-    agentWrite: 'Add events and change them. Touch ID once for each of the two tools.',
+    agentWrite: 'Add, change and delete events. Touch ID once for each of the three tools.',
   },
   reminders: {
     name: 'Reminders',
@@ -72,13 +71,13 @@ const WORDS: Readonly<Record<EventKitApp, Words>> = {
     on: 'Let agents see your reminders on this Mac',
     onDetail:
       'Agents see the reminders in the lists you pick, from every account the Reminders app has. The Reminders app doesn’t need to be open.',
-    writes: 'Let agents add, change and complete reminders',
+    writes: 'Let agents add, change, complete and delete reminders',
     writesDetail:
-      'An agent can add a reminder to a list you picked, change one, or mark it done. It can’t delete reminders.',
+      'An agent can add a reminder to a list you picked, change one, mark it done, or delete it. Every call is in Activity.',
     readTools: ['lists', 'search'],
-    writeTools: ['create', 'update'],
+    writeTools: ['create', 'update', 'delete'],
     agentRead: 'See the reminders in the lists above. Touch ID once for each of the two tools.',
-    agentWrite: 'Add, change and complete reminders. Touch ID once for each of the two tools.',
+    agentWrite: 'Add, change, complete and delete reminders. Touch ID once for each of the three tools.',
   },
 }
 

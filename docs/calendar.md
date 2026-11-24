@@ -19,6 +19,7 @@ Calendar (adapter id `calendar`):
 | `calendar_events`       | Events between two days or times (a week from today by default, at most 366 days), by words.    |
 | `calendar_create_event` | Only when writes are on. A timed or all-day event in a picked, writable calendar. No attendees. |
 | `calendar_update_event` | Only when writes are on. Title, times, location, notes or link; one occurrence of a recurring.  |
+| `calendar_delete_event` | Only when writes are on. Deletes an event, or one occurrence of a recurring one.                |
 
 Reminders (adapter id `reminders`):
 
@@ -29,14 +30,15 @@ Reminders (adapter id `reminders`):
 | `reminders_create` | Only when writes are on. A reminder with an optional due day or time and priority. |
 | `reminders_update` | Only when writes are on. Title, notes, due date, priority, or done / not done.     |
 
-What agents can never do:
+What agents can and can't do:
 
-- **Delete.** There is no delete tool, and the helper has no delete request.
-- **Involve anyone else.** No tool adds attendees, and an event with an organizer or attendees
-  (an invitation or a meeting) is never changed, because saving it would send other people an
-  update. Such events come back with `editable: false`.
-- **See or touch a calendar or list that isn't picked.** The picks are read on every call; ids
-  outside them read as not found.
+- **Delete** events and reminders, while writes are on (Nick, 2026-11-24: calendars and reminders
+  aren't a store of record like mail; every call is audited). A recurring event's id names one
+  occurrence, and only that one is changed or deleted.
+- **Change or delete events other people are on.** That may send them an update, as it would from
+  the Calendar app. No tool adds attendees.
+- **See or touch a calendar or list that isn't picked.** Never: the picks are read on every call;
+  ids outside them read as not found.
 
 Changes are capped at 100 an hour for each of Calendar and Reminders, all agents together. Every
 call is in the audit log like any built-in tool's. Results say that titles, notes and invitations
@@ -62,7 +64,7 @@ Connections, or from the "Cloud agents that may use Calendar/Reminders" switches
 
 `swift-bridge/Sources/ValetHelperKit/EventKitAccess.swift` answers `eventkit.*` requests on the
 helper's socket: access status, asking for access (answered at once; Valet polls), the calendars,
-events in a range, reminders, and saving an event or a reminder. Every request names the
+events in a range, reminders, and saving or removing an event or a reminder. Every request names the
 calendars, and the helper refuses unknown keys. `packages/native-calendar` declares the tools,
 checks their input and output, and enforces the picks and the write switch;
 `apps/desktop/src/main/core/calendar.ts` holds the settings (`calendar.json`, `reminders.json`,

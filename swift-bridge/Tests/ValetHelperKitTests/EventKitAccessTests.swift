@@ -77,7 +77,7 @@ final class EventKitAccessTests: XCTestCase {
     refused(
       #"{"v":1,"op":"eventkit.saveEvent","calendar":"C","title":"x","start":{"day":"2026-12-01"},"end":{"ms":2}}"#)
     refused(#"{"v":1,"op":"eventkit.saveEvent","calendar":"C","title":"x","start":{"day":"2026-13-01"},"end":{"day":"2026-12-01"}}"#)
-    // An occurrence only of an existing event; nothing else is accepted (no attendees, no deleting).
+    // An occurrence only of an existing event; nothing else is accepted (no attendees).
     refused(#"{"v":1,"op":"eventkit.saveEvent","calendar":"C","title":"x","start":{"ms":1},"end":{"ms":2},"occurrenceMs":1}"#)
     refused(#"{"v":1,"op":"eventkit.saveEvent","calendar":"C","id":"E","attendees":["a@b.c"]}"#)
     XCTAssertEqual(
@@ -94,6 +94,17 @@ final class EventKitAccessTests: XCTestCase {
       .saveReminder(calendar: "L", id: "R", fields: ReminderFields(due: .some(nil))))
     refused(#"{"v":1,"op":"eventkit.saveReminder","calendar":"L","notes":"no title"}"#)
     refused(#"{"v":1,"op":"eventkit.saveReminder","calendar":"L","title":"x","priority":12}"#)
+  }
+
+  func testRemove() throws {
+    XCTAssertEqual(
+      try parse(#"{"v":1,"op":"eventkit.removeEvent","calendar":"C","id":"E","occurrenceMs":5}"#),
+      .removeEvent(calendar: "C", id: "E", occurrenceMs: 5))
+    XCTAssertEqual(
+      try parse(#"{"v":1,"op":"eventkit.removeReminder","calendar":"L","id":"R"}"#),
+      .removeReminder(calendar: "L", id: "R"))
+    refused(#"{"v":1,"op":"eventkit.removeEvent","calendar":"C"}"#)
+    refused(#"{"v":1,"op":"eventkit.removeReminder","calendar":"L","id":"R","occurrenceMs":5}"#)
   }
 
   func testDayComponents() {

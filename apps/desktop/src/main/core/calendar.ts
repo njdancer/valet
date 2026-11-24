@@ -3,7 +3,7 @@
 // the reader helper (@valet/native-calendar talks to it); this file decides what is on.
 //
 // Each is off until the person turns it on and picks calendars (or lists). Adding and changing is a
-// second switch. Nothing is ever deleted, and nothing is sent to anyone.
+// second switch, which also allows deleting (Nick, 2026-11-24). Every call is audited.
 
 import { lstat } from 'node:fs/promises'
 import type { ListedTool, ToolCall } from '@valet/mcp-server'
