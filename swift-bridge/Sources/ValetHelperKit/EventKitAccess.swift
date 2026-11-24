@@ -13,9 +13,11 @@
 // - eventkit.reminders  the reminders in some lists, open or done, optionally due in a range
 // - eventkit.saveEvent  creates an event, or changes one (one occurrence of a recurring one)
 // - eventkit.saveReminder  creates a reminder, or changes or completes one
+// - eventkit.removeEvent   deletes an event (one occurrence of a recurring one)
+// - eventkit.removeReminder  deletes a reminder
 //
-// Nothing is ever deleted. An event with attendees is never changed: that would send updates to
-// other people.
+// No request adds attendees. Changing or deleting an event other people are on may send them an
+// update, as it would from the Calendar app (Nick, 2026-11-24: allowed, audited).
 
 import EventKit
 import Foundation
@@ -69,6 +71,8 @@ public enum EventKitRequest: Equatable {
   /// id nil: a new event in `calendar`. occurrenceMs: which occurrence of a recurring one.
   case saveEvent(calendar: String, id: String?, occurrenceMs: Int64?, fields: EventFields)
   case saveReminder(calendar: String, id: String?, fields: ReminderFields)
+  case removeEvent(calendar: String, id: String, occurrenceMs: Int64?)
+  case removeReminder(calendar: String, id: String)
 }
 
 let maxEventKitResults = 500
@@ -237,6 +241,19 @@ public func parseEventKitRequest(_ data: Data) throws -> EventKitRequest {
     }
     if id == nil && fields.title == nil { throw EventKitFailure.invalid }
     return .saveReminder(calendar: calendar, id: id, fields: fields)
+  case "eventkit.removeEvent", "eventkit.removeReminder":
+    let event = op == "eventkit.removeEvent"
+    try only(event ? ["calendar", "id", "occurrenceMs"] : ["calendar", "id"], required: ["calendar", "id"])
+    guard let calendar = text(object["calendar"], max: 200), !calendar.isEmpty,
+      let id = text(object["id"], max: 400), !id.isEmpty
+    else { throw EventKitFailure.invalid }
+    if !event { return .removeReminder(calendar: calendar, id: id) }
+    var occurrence: Int64?
+    if let value = object["occurrenceMs"] {
+      guard let n = int64(value) else { throw EventKitFailure.invalid }
+      occurrence = n
+    }
+    return .removeEvent(calendar: calendar, id: id, occurrenceMs: occurrence)
   default:
     throw EventKitFailure.invalid
   }
@@ -567,8 +584,6 @@ public func answerEventKit(_ request: EventKitRequest) -> [String: Any] {
         guard let found = findEvent(id, occurrenceMs: occurrenceMs, in: calendar, store) else {
           throw EventKitFailure.notFound
         }
-        // Changing an event with other people on it sends them an update: never.
-        if !(found.attendees ?? []).isEmpty || found.organizer != nil { throw EventKitFailure.hasAttendees }
         event = found
       } else {
         event = EKEvent(eventStore: store)
@@ -616,6 +631,36 @@ public func answerEventKit(_ request: EventKitRequest) -> [String: Any] {
         throw EventKitFailure.unavailable
       }
       return ["reminder": reminderJSON(reminder)]
+    case .removeEvent(let calendarId, let id, let occurrenceMs):
+      guard hasFullAccess(.events) else { throw EventKitFailure.denied }
+      let store = eventKitStores.get()
+      guard let calendar = calendars([calendarId], .events, store).first else { throw EventKitFailure.notFound }
+      guard calendar.allowsContentModifications else { throw EventKitFailure.readOnly }
+      guard let found = findEvent(id, occurrenceMs: occurrenceMs, in: calendar, store) else {
+        throw EventKitFailure.notFound
+      }
+      let removed = eventJSON(found)
+      do {
+        try store.remove(found, span: .thisEvent, commit: true)
+      } catch {
+        throw EventKitFailure.unavailable
+      }
+      return ["event": removed]
+    case .removeReminder(let calendarId, let id):
+      guard hasFullAccess(.reminders) else { throw EventKitFailure.denied }
+      let store = eventKitStores.get()
+      guard let calendar = calendars([calendarId], .reminders, store).first else { throw EventKitFailure.notFound }
+      guard calendar.allowsContentModifications else { throw EventKitFailure.readOnly }
+      guard let found = store.calendarItem(withIdentifier: id) as? EKReminder,
+        found.calendar?.calendarIdentifier == calendar.calendarIdentifier
+      else { throw EventKitFailure.notFound }
+      let removed = reminderJSON(found)
+      do {
+        try store.remove(found, commit: true)
+      } catch {
+        throw EventKitFailure.unavailable
+      }
+      return ["reminder": removed]
     }
   } catch let failure as EventKitFailure {
     return ["error": failure.rawValue]

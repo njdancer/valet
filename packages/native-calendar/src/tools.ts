@@ -2,8 +2,9 @@
 // calendars and reminder lists, through EventKit in the reader helper. Agents see only the calendars
 // and lists the person picked, and change anything only while the person lets them.
 //
-// Nothing here deletes. An event with other people on it is never changed (that would send them an
-// update), and no tool adds attendees, so nothing here sends anything to anyone.
+// Deleting, and changing or deleting events other people are on, are allowed while writes are on
+// (Nick, 2026-11-24: calendars aren't a store of record; every call is audited). No tool adds
+// attendees.
 
 import type { ErrorClass, NeedsUserReason, Stage, ToolDeclaration } from '@valet/core'
 import { z } from 'zod'
@@ -192,6 +193,12 @@ export const calendarInputs = {
       url: url.nullable().optional().describe('null clears it.'),
     })
     .strict(),
+  delete_event: z
+    .object({
+      id: id.describe('An event id from calendar_events; a recurring event’s deletes only that occurrence.'),
+      calendarId: id.describe('Its calendarId from calendar_events.'),
+    })
+    .strict(),
 } as const
 
 export const calendarOutputs = {
@@ -199,6 +206,7 @@ export const calendarOutputs = {
   events: z.object({ events: z.array(event), more: z.boolean(), note: z.string() }),
   create_event: z.object({ event, note: z.string() }),
   update_event: z.object({ event, note: z.string() }),
+  delete_event: z.object({ deleted: event, note: z.string() }),
 } as const
 
 type CalendarToolName = keyof typeof calendarInputs
@@ -231,15 +239,23 @@ const CALENDAR_DECLARATIONS: Readonly<Record<CalendarToolName, Omit<ToolDeclarat
     title: 'Change an event',
     description:
       'Change an event’s title, times, location, notes or link; for a recurring event, only the ' +
-      'occurrence its id names. Events with other people on them (invitations, meetings) can’t be ' +
-      'changed: that would send them an update. Nothing is deleted.',
+      'occurrence its id names. Changing an event other people are on may send them an update.',
     sideEffect: 'write',
     destructive: false,
     idempotent: true,
   },
+  delete_event: {
+    title: 'Delete an event',
+    description:
+      'Delete an event from one of the person’s calendars; for a recurring event, only the occurrence ' +
+      'its id names. Deleting an event other people are on may tell them. Only when the person asked.',
+    sideEffect: 'write',
+    destructive: true,
+    idempotent: true,
+  },
 }
 
-const CALENDAR_WRITES: readonly CalendarToolName[] = ['create_event', 'update_event']
+const CALENDAR_WRITES: readonly CalendarToolName[] = ['create_event', 'update_event', 'delete_event']
 
 export function calendarTools(options: { readonly writes: boolean }): readonly EventKitToolDef[] {
   return (Object.keys(calendarInputs) as CalendarToolName[])
@@ -291,6 +307,12 @@ export const reminderInputs = {
       completed: z.boolean().optional().describe('true completes it, false opens it again.'),
     })
     .strict(),
+  delete: z
+    .object({
+      id: id.describe('A reminder id from reminders_search.'),
+      listId: id.describe('Its listId from reminders_search.'),
+    })
+    .strict(),
 } as const
 
 export const reminderOutputs = {
@@ -298,6 +320,7 @@ export const reminderOutputs = {
   search: z.object({ reminders: z.array(reminder), more: z.boolean(), note: z.string() }),
   create: z.object({ reminder, note: z.string() }),
   update: z.object({ reminder, note: z.string() }),
+  delete: z.object({ deleted: reminder, note: z.string() }),
 } as const
 
 type ReminderToolName = keyof typeof reminderInputs
@@ -326,15 +349,21 @@ const REMINDER_DECLARATIONS: Readonly<Record<ReminderToolName, Omit<ToolDeclarat
   },
   update: {
     title: 'Change a reminder',
-    description:
-      'Change a reminder’s title, notes, due date or priority, or mark it done (or not done). Nothing is deleted.',
+    description: 'Change a reminder’s title, notes, due date or priority, or mark it done (or not done).',
     sideEffect: 'write',
     destructive: false,
     idempotent: true,
   },
+  delete: {
+    title: 'Delete a reminder',
+    description: 'Delete a reminder from one of the person’s lists. To finish one, mark it done instead.',
+    sideEffect: 'write',
+    destructive: true,
+    idempotent: true,
+  },
 }
 
-const REMINDER_WRITES: readonly ReminderToolName[] = ['create', 'update']
+const REMINDER_WRITES: readonly ReminderToolName[] = ['create', 'update', 'delete']
 
 export function reminderTools(options: { readonly writes: boolean }): readonly EventKitToolDef[] {
   return (Object.keys(reminderInputs) as ReminderToolName[])
@@ -391,7 +420,6 @@ function parseRef(ref: string): { id: string; occurrenceMs?: number } {
 }
 
 function shownEvent(e: EventInfo, editable: boolean, notesMax = NOTES_IN_LISTS): z.infer<typeof event> {
-  const withOthers = e.organizer !== null || e.attendees.length > 0
   return event.parse({
     id: eventRef(e),
     calendarId: e.calendarId,
@@ -406,7 +434,7 @@ function shownEvent(e: EventInfo, editable: boolean, notesMax = NOTES_IN_LISTS):
     status: e.status,
     organizer: e.organizer,
     attendees: e.attendees,
-    editable: editable && !withOthers,
+    editable,
   })
 }
 
@@ -575,7 +603,20 @@ export async function callCalendarTool(
         )
         return {
           status: 'ok',
-          output: { event: shownEvent(saved, true), note: 'Changed. Nobody was sent an update.' },
+          output: { event: shownEvent(saved, true), note: 'Changed.' },
+        }
+      }
+      case 'delete_event': {
+        const q = calendarInputs.delete_event.parse(input)
+        const refused = mayChange(deps, q.calendarId)
+        if (refused !== null) return refused
+        const ref = parseRef(q.id)
+        const deleted = await deps.kit.removeEvent(
+          defined({ calendar: q.calendarId, id: ref.id, occurrenceMs: ref.occurrenceMs }),
+        )
+        return {
+          status: 'ok',
+          output: { deleted: shownEvent(deleted, false), note: 'Deleted from the calendar.' },
         }
       }
     }
@@ -670,6 +711,13 @@ export async function callReminderTool(
           }),
         )
         return { status: 'ok', output: { reminder: shownReminder(saved), note: 'Changed.' } }
+      }
+      case 'delete': {
+        const q = reminderInputs.delete.parse(input)
+        const refused = mayChange(deps, q.listId)
+        if (refused !== null) return refused
+        const deleted = await deps.kit.removeReminder({ calendar: q.listId, id: q.id })
+        return { status: 'ok', output: { deleted: shownReminder(deleted), note: 'Deleted from the list.' } }
       }
     }
   } catch (error) {

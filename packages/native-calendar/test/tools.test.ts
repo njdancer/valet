@@ -113,6 +113,15 @@ class FakeKit implements EventKit {
     this.savedReminders.push(request)
     return rem({ id: request.id ?? 'NEW', listId: request.calendar, completed: request.completed ?? false })
   }
+  removed: unknown[] = []
+  async removeEvent(request: { calendar: string; id: string; occurrenceMs?: number }) {
+    this.removed.push(request)
+    return ev({ id: request.id, calendarId: request.calendar })
+  }
+  async removeReminder(request: { calendar: string; id: string }) {
+    this.removed.push(request)
+    return rem({ id: request.id, listId: request.calendar })
+  }
 }
 
 function setup(options: { writes?: boolean; allowance?: number } = {}) {
@@ -147,10 +156,14 @@ describe('listing', () => {
       'events',
       'create_event',
       'update_event',
+      'delete_event',
     ])
     expect(reminderTools({ writes: false }).map((t) => t.declaration.name)).toEqual(['lists', 'search'])
     for (const t of [...calendarTools({ writes: true }), ...reminderTools({ writes: true })])
-      expect(t.declaration.sideEffect === 'read' || t.declaration.destructive === false).toBe(true)
+      expect(
+        t.declaration.sideEffect === 'read' ||
+          t.declaration.destructive === t.declaration.name.startsWith('delete'),
+      ).toBe(true)
   })
 })
 
@@ -199,13 +212,13 @@ describe('calendar', () => {
     expect(query.endMs - query.startMs).toBe(86_400_000)
   })
 
-  it('marks events with other people as not editable, and recurring ids name the occurrence', async () => {
+  it('marks events in writable calendars editable, with others on them too, and recurring ids name the occurrence', async () => {
     const { kit, calendar } = setup({ writes: true })
     kit.events_.push(ev({ id: 'E3', recurring: true, occurrenceMs: 1_800_000_000_000 }))
     const out = calendarOutputs.events.parse(
       ((await callCalendarTool(calendar, 'events', {})) as { output: unknown }).output,
     )
-    expect(out.events.find((e) => e.title === 'Standup')?.editable).toBe(false)
+    expect(out.events.find((e) => e.title === 'Standup')?.editable).toBe(true)
     expect(out.events.find((e) => e.id === 'E1')?.editable).toBe(true)
     expect(out.events.some((e) => e.id === 'E3#1800000000000')).toBe(true)
   })
@@ -307,10 +320,28 @@ describe('calendar', () => {
       occurrenceMs: 1_800_000_000_000,
       notes: null,
     })
-    kit.fail = new EventKitError('has-attendees')
+    kit.fail = new EventKitError('read-only')
     expect(
       await callCalendarTool(calendar, 'update_event', { id: 'E2', calendarId: 'work', title: 'Z' }),
     ).toMatchObject({ errorClass: 'not-granted' })
+  })
+
+  it('deletes one occurrence in a picked calendar, only while writes are on', async () => {
+    const off = setup({ writes: false })
+    expect(
+      await callCalendarTool(off.calendar, 'delete_event', { id: 'E1', calendarId: 'home' }),
+    ).toMatchObject({
+      errorClass: 'not-found',
+    })
+    const { kit, calendar } = setup({ writes: true })
+    const only = { ...calendar, allowed: () => new Set(['home']) }
+    const done = await callCalendarTool(only, 'delete_event', { id: 'E3#1800000000000', calendarId: 'home' })
+    expect(calendarOutputs.delete_event.parse((done as { output: unknown }).output).deleted.id).toBe('E3')
+    expect(kit.removed).toEqual([{ calendar: 'home', id: 'E3', occurrenceMs: 1_800_000_000_000 }])
+    expect(await callCalendarTool(only, 'delete_event', { id: 'E2', calendarId: 'work' })).toMatchObject({
+      errorClass: 'not-found',
+    })
+    expect(kit.removed).toHaveLength(1)
   })
 
   it('asks the person when macOS access is not given', async () => {
@@ -366,6 +397,11 @@ describe('reminders', () => {
     })
     expect(reminderOutputs.update.parse((done as { output: unknown }).output).reminder.completed).toBe(true)
     expect(kit.savedReminders[1]).toEqual({ calendar: 'todo', id: 'R1', due: null, completed: true })
+    const gone = await callReminderTool(reminders, 'delete', { id: 'R1', listId: 'todo' })
+    expect(reminderOutputs.delete.parse((gone as { output: unknown }).output).deleted.id).toBe('R1')
+    expect(await callReminderTool(reminders, 'delete', { id: 'R9', listId: 'secret' })).toMatchObject({
+      errorClass: 'not-found',
+    })
     expect(
       await callReminderTool(reminders, 'update', { id: 'R9', listId: 'secret', completed: true }),
     ).toMatchObject({ errorClass: 'not-found' })

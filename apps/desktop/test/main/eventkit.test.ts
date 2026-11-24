@@ -73,6 +73,12 @@ function fakeKit(access: { value: EventKitAccess }) {
     saveEvent: async () => {
       throw new Error('not here')
     },
+    removeEvent: async () => {
+      throw new Error('not here')
+    },
+    removeReminder: async () => {
+      throw new Error('not here')
+    },
     saveReminder: async (r) => {
       saved.push(r)
       return {
@@ -160,6 +166,7 @@ describe('EventKitService', () => {
       'search',
       'create',
       'update',
+      'delete',
     ])
     expect(s.changed()).toBe(3)
   })
@@ -229,6 +236,7 @@ describe('EventKitService', () => {
       'events',
       'create_event',
       'update_event',
+      'delete_event',
     ])
   })
 })

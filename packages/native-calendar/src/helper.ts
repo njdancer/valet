@@ -126,6 +126,13 @@ export interface EventKit {
   ): Promise<{ readonly reminders: readonly ReminderInfo[]; readonly more: boolean }>
   saveEvent(request: SaveEvent): Promise<EventInfo>
   saveReminder(request: SaveReminder): Promise<ReminderInfo>
+  /** Deletes an event (one occurrence of a recurring one); answers what it was. */
+  removeEvent(request: {
+    readonly calendar: string
+    readonly id: string
+    readonly occurrenceMs?: number
+  }): Promise<EventInfo>
+  removeReminder(request: { readonly calendar: string; readonly id: string }): Promise<ReminderInfo>
 }
 
 const ACCESS: ReadonlySet<string> = new Set(['full', 'write-only', 'denied', 'restricted', 'not-determined'])
@@ -210,6 +217,22 @@ export class HelperEventKit implements EventKit {
 
   async saveReminder(request: SaveReminder): Promise<ReminderInfo> {
     const answer = await this.#ask({ op: 'eventkit.saveReminder', ...request })
+    if (!isObject(answer['reminder'])) throw new EventKitError('unavailable')
+    return answer['reminder'] as unknown as ReminderInfo
+  }
+
+  async removeEvent(request: {
+    readonly calendar: string
+    readonly id: string
+    readonly occurrenceMs?: number
+  }) {
+    const answer = await this.#ask({ op: 'eventkit.removeEvent', ...request })
+    if (!isObject(answer['event'])) throw new EventKitError('unavailable')
+    return answer['event'] as unknown as EventInfo
+  }
+
+  async removeReminder(request: { readonly calendar: string; readonly id: string }) {
+    const answer = await this.#ask({ op: 'eventkit.removeReminder', ...request })
     if (!isObject(answer['reminder'])) throw new EventKitError('unavailable')
     return answer['reminder'] as unknown as ReminderInfo
   }

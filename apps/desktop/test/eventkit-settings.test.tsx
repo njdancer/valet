@@ -31,7 +31,7 @@ describe('settings › Calendar and Reminders', () => {
     await waitFor(() =>
       expect(called(api, 'eventKit.update').at(-1)).toEqual(['calendar', { calendars: ['CAL-HOME'] }]),
     )
-    await user.click(screen.getByRole('switch', { name: 'Let agents add and change events' }))
+    await user.click(screen.getByRole('switch', { name: 'Let agents add, change and delete events' }))
     await waitFor(() => expect(called(api, 'eventKit.update').at(-1)).toEqual(['calendar', { writes: true }]))
     expect(screen.queryByText(/delete/i, { selector: 'button' })).toBeNull()
   })
