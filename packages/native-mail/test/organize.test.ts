@@ -341,6 +341,66 @@ describe('the move and mark tools', () => {
     })
   })
 
+  describe('a batch bigger than one Mail run', () => {
+    const INBOX_IDS = [7, 9, 10, 12, 13]
+    function chunked(answers: (OrganizeOutcome | null)[], now?: () => number) {
+      const s = setup()
+      const organize = s.deps.organize
+      if (organize === undefined) throw new Error('no organize')
+      let n = 0
+      const deps: MailToolDeps = {
+        ...s.deps,
+        organize: {
+          ...organize,
+          ...(now === undefined ? {} : { now }),
+          organizer: {
+            apply: async (request) => {
+              s.asked.push(request)
+              const answer = answers[n++] ?? null
+              return answer ?? { kind: 'done', results: request.items.map(() => 'done' as const) }
+            },
+          },
+        },
+      }
+      return { ...s, deps }
+    }
+
+    it('runs four at a time, and reports a run that failed partway as uncertain, keeping what moved', async () => {
+      const s = chunked([null, { kind: 'failed' }])
+      const result = await callMailTool(s.deps, 'move', { ids: INBOX_IDS, to: 'trash' })
+      expect(s.asked.map((r) => r.items.length)).toEqual([4, 1])
+      expect(result.status).toBe('ok')
+      const output = mailOutputs.move.parse((result as { output: unknown }).output)
+      expect(output.moved.map((m) => m.id)).toEqual([7, 9, 10, 12])
+      expect(output.uncertain).toEqual([13])
+      expect(output.notDone).toEqual([])
+      expect(output.note).toContain('uncertain may or may not have changed')
+      expect(s.recorded).toHaveLength(4)
+    })
+
+    it('starts no run after its time is up, and says which ids to send again', async () => {
+      let t = 0
+      const s = chunked([], () => {
+        const now = t
+        t += 100_000
+        return now
+      })
+      const result = await callMailTool(s.deps, 'mark', { ids: INBOX_IDS, read: true })
+      expect(result.status).toBe('ok')
+      const output = mailOutputs.mark.parse((result as { output: unknown }).output)
+      expect(output.marked).toBe(4)
+      expect(output.notDone).toEqual([13])
+      expect(s.asked).toHaveLength(1)
+    })
+
+    it('still fails as before when Mail refuses the first run', async () => {
+      const s = chunked([{ kind: 'failed' }])
+      const result = await callMailTool(s.deps, 'move', { ids: INBOX_IDS, to: 'trash' })
+      expect(result).toMatchObject({ status: 'failed', errorClass: 'unavailable' })
+      expect(s.recorded).toEqual([])
+    })
+  })
+
   it('moves to the account’s Trash, records each message for Undo, and answers in its shape', async () => {
     const s = setup()
     const result = await callMailTool(s.deps, 'move', { ids: [7, 8, 404], to: 'trash' })

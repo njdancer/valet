@@ -17,7 +17,7 @@ import {
 } from '@valet/core'
 import { z } from 'zod'
 import type { DraftOutcome, DraftRequest, MailDrafts } from './drafts'
-import type { MailOrganizer, OrganizeItem } from './organize'
+import type { MailOrganizer, OrganizeItem, OrganizeRequest } from './organize'
 import type { Rendered, RenderRequest } from './render'
 import {
   type AttachmentText,
@@ -268,9 +268,19 @@ export const mailOutputs = {
     moved: z.array(z.object({ id: z.number().int(), subject: z.string(), to: z.string() })),
     unchanged: z.array(z.number().int()),
     notFound: z.array(z.number().int()),
+    notDone: z.array(z.number().int()).describe('Not tried before time ran out: call again with these.'),
+    uncertain: z
+      .array(z.number().int())
+      .describe('Mail stopped partway: these may or may not have moved. Search before trying again.'),
     note: z.string(),
   }),
-  mark: z.object({ marked: z.number().int(), notFound: z.array(z.number().int()), note: z.string() }),
+  mark: z.object({
+    marked: z.number().int(),
+    notFound: z.array(z.number().int()),
+    notDone: z.array(z.number().int()),
+    uncertain: z.array(z.number().int()),
+    note: z.string(),
+  }),
 } as const
 
 export type MailToolName = keyof typeof mailInputs
@@ -322,7 +332,8 @@ const DECLARATIONS: Readonly<Record<MailToolName, Omit<ToolDeclaration, 'name'>>
       'Move up to 50 messages to Archive, to Trash, back to the inbox, or to another mailbox of the same ' +
       'account. Moving to Trash is the only way to delete: nothing is erased, and the person can take ' +
       'it back out for 30 days. Every move is recorded for the person to review and undo in Valet. ' +
-      'Mail opens if it is closed.',
+      'Mail opens if it is closed. Mail can take seconds per message: a big batch may come back with ' +
+      'notDone ids to send again.',
     sideEffect: 'write',
     destructive: false,
     idempotent: true,
@@ -381,6 +392,8 @@ export interface MailToolDeps {
     readonly spend: (count: number) => boolean
     /** Every message moved, for the audit log (and Undo). Called before the result is returned. */
     readonly moved: (moves: readonly MoveRecord[]) => Promise<void>
+    /** For the time budget; Date.now when absent. */
+    readonly now?: () => number
   }
   /** Pictures of PDF pages and images (render.ts). Absent: images go as they are, PDFs as text. */
   readonly render?: (bytes: Buffer, request: RenderRequest) => Promise<Rendered | null>
@@ -711,6 +724,50 @@ const organizeFailure = (kind: 'not-allowed' | 'no-mailbox' | 'failed'): MailToo
       ? fail('tool-input', 'not-found')
       : fail('tool-run', 'unavailable')
 
+/** Messages per Mail scripting run: finding one can take Mail several seconds in a big mailbox. */
+const ORGANIZE_CHUNK = 4
+/** No new run starts after this long, so a call answers well before a client gives up on it. */
+const ORGANIZE_BUDGET_MS = 75_000
+
+type ChunkResult = 'done' | 'not-found' | 'uncertain' | 'not-done'
+
+/**
+ * Runs `request` over `items` a few at a time, so a slow Mail moves what it can and says so.
+ * 'uncertain': the run they were in failed partway, so they may or may not have changed;
+ * 'not-done': not tried, time ran out first. A refusal before anything ran is returned as such.
+ */
+async function applyInChunks(
+  organize: NonNullable<MailToolDeps['organize']>,
+  items: readonly OrganizeItem[],
+  request: (items: OrganizeItem[]) => OrganizeRequest,
+): Promise<{ kind: 'done'; results: ChunkResult[] } | { kind: 'not-allowed' | 'no-mailbox' | 'failed' }> {
+  const now = organize.now ?? Date.now
+  const started = now()
+  const results: ChunkResult[] = []
+  for (let from = 0; from < items.length; from += ORGANIZE_CHUNK) {
+    const chunk = items.slice(from, from + ORGANIZE_CHUNK)
+    if (from > 0 && now() - started > ORGANIZE_BUDGET_MS) {
+      results.push(...chunk.map((): ChunkResult => 'not-done'))
+      continue
+    }
+    const outcome = await organize.organizer.apply(request(chunk))
+    if (outcome.kind === 'done') {
+      results.push(...outcome.results)
+      continue
+    }
+    if (from === 0) return outcome
+    results.push(...chunk.map((): ChunkResult => 'uncertain'))
+    // Mail is in trouble: try nothing more this call.
+    results.push(...items.slice(from + ORGANIZE_CHUNK).map((): ChunkResult => 'not-done'))
+    break
+  }
+  return { kind: 'done', results }
+}
+
+const UNFINISHED_NOTE =
+  'notDone were not tried before time ran out: call again with them. uncertain may or may not have ' +
+  'changed, as Mail stopped partway: search before trying them again.'
+
 /** How Mail's scripting finds a message: its Message-ID, else its id, subject, sender and date. */
 function organizeItem(d: MessageDetail): OrganizeItem {
   return {
@@ -764,19 +821,29 @@ async function moveMessages(
   if (plan.length > 0 && !organize.spend(plan.length)) return fail('tool-run', 'rate-limited')
   const moved: { id: number; subject: string; to: string }[] = []
   const records: MoveRecord[] = []
+  const notDone: number[] = []
+  const uncertain: number[] = []
   // One request per destination: in practice one, or one per account for Archive and Trash.
   for (const to of new Set(plan.map((p) => p.to))) {
     const group = plan.filter((p) => p.to === to)
     const items: OrganizeItem[] = group.map((p) => organizeItem(p.detail))
-    const outcome = await organize.organizer.apply({ kind: 'move', items, to })
+    const outcome =
+      notDone.length + uncertain.length > 0
+        ? { kind: 'done' as const, results: group.map((): ChunkResult => 'not-done') }
+        : await applyInChunks(organize, items, (chunk) => ({ kind: 'move', items: chunk, to }))
     if (outcome.kind !== 'done') {
       // What moved before this group still goes in the log.
       if (records.length > 0) await organize.moved(records)
-      return organizeFailure(outcome.kind)
+      if (moved.length === 0) return organizeFailure(outcome.kind)
+      uncertain.push(...group.map((p) => p.id))
+      continue
     }
     for (const [j, p] of group.entries()) {
-      if (outcome.results[j] !== 'done') {
-        notFound.push(p.id)
+      const result = outcome.results[j]
+      if (result === 'not-done') notDone.push(p.id)
+      else if (result === 'uncertain') uncertain.push(p.id)
+      if (result !== 'done') {
+        if (result === 'not-found') notFound.push(p.id)
         continue
       }
       moved.push({ id: p.id, subject: p.detail.subject, to })
@@ -798,9 +865,11 @@ async function moveMessages(
       moved,
       unchanged,
       notFound,
+      notDone,
+      uncertain,
       note:
         'Moved messages get new ids: search again before using them. The person can review and undo ' +
-        `every move in Valet. ${MAIL_DATA_NOTE}`,
+        `every move in Valet. ${notDone.length + uncertain.length > 0 ? `${UNFINISHED_NOTE} ` : ''}${MAIL_DATA_NOTE}`,
     },
   }
 }
@@ -820,20 +889,29 @@ async function markMessages(
     if (d === null) notFound.push(id)
     else targets.push({ id, item: organizeItem(d) })
   }
-  const outcome = await organize.organizer.apply({
-    kind: 'mark',
-    items: targets.map((t) => t.item),
-    ...(input.read === undefined ? {} : { read: input.read }),
-    ...(input.flagged === undefined ? {} : { flagged: input.flagged }),
-  })
+  const outcome = await applyInChunks(
+    organize,
+    targets.map((t) => t.item),
+    (chunk) => ({
+      kind: 'mark',
+      items: chunk,
+      ...(input.read === undefined ? {} : { read: input.read }),
+      ...(input.flagged === undefined ? {} : { flagged: input.flagged }),
+    }),
+  )
   if (outcome.kind !== 'done') return organizeFailure(outcome.kind)
-  const missed = targets.filter((_, j) => outcome.results[j] !== 'done').map((t) => t.id)
+  const which = (result: ChunkResult): number[] =>
+    targets.filter((_, j) => outcome.results[j] === result).map((t) => t.id)
+  const notDone = which('not-done')
+  const uncertain = which('uncertain')
   return {
     status: 'ok',
     output: {
-      marked: targets.length - missed.length,
-      notFound: [...notFound, ...missed],
-      note: MAIL_DATA_NOTE,
+      marked: which('done').length,
+      notFound: [...notFound, ...which('not-found')],
+      notDone,
+      uncertain,
+      note: `${notDone.length + uncertain.length > 0 ? `${UNFINISHED_NOTE} ` : ''}${MAIL_DATA_NOTE}`,
     },
   }
 }
