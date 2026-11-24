@@ -21,7 +21,7 @@ let package = Package(
     .target(
       name: "ValetHelperKit",
       path: "Sources/ValetHelperKit",
-      linkerSettings: [.linkedLibrary("sqlite3")]
+      linkerSettings: [.linkedLibrary("sqlite3"), .linkedFramework("EventKit")]
     ),
     .executableTarget(
       name: "valet-keychain",

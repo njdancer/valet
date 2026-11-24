@@ -18,6 +18,8 @@ const SECTION_LABEL: Record<SettingsSection, string> = {
   updates: 'Updates',
   devices: 'Devices',
   mail: 'Mail',
+  calendar: 'Calendar',
+  reminders: 'Reminders',
   reset: 'Reset and uninstall',
 }
 

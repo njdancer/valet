@@ -1,0 +1,78 @@
+# Calendar and Reminders on this Mac
+
+Valet's built-in Calendar and Reminders tools let agents see the calendars and reminder lists the
+person picks, and, if the person allows it, add and change events and reminders. They work like
+the built-in [Mail tools](mail.md): fixed tools, not an adapter an agent wrote, off until the person
+turns them on in Settings › Calendar and Settings › Reminders.
+
+They read the Mac's own store through EventKit, so every account the Calendar and Reminders apps
+show (iCloud, Google, Exchange, On My Mac) is there, recurring events are expanded, and neither app
+needs to be open.
+
+## What agents get
+
+Calendar (adapter id `calendar`):
+
+| Tool                    | What it does                                                                                    |
+| ----------------------- | ----------------------------------------------------------------------------------------------- |
+| `calendar_calendars`    | The picked calendars, with ids and whether agents may add to them.                              |
+| `calendar_events`       | Events between two days or times (a week from today by default, at most 366 days), by words.    |
+| `calendar_create_event` | Only when writes are on. A timed or all-day event in a picked, writable calendar. No attendees. |
+| `calendar_update_event` | Only when writes are on. Title, times, location, notes or link; one occurrence of a recurring.  |
+
+Reminders (adapter id `reminders`):
+
+| Tool               | What it does                                                                       |
+| ------------------ | ---------------------------------------------------------------------------------- |
+| `reminders_lists`  | The picked lists.                                                                  |
+| `reminders_search` | Open (default), done or all reminders, by list, due dates and words.               |
+| `reminders_create` | Only when writes are on. A reminder with an optional due day or time and priority. |
+| `reminders_update` | Only when writes are on. Title, notes, due date, priority, or done / not done.     |
+
+What agents can never do:
+
+- **Delete.** There is no delete tool, and the helper has no delete request.
+- **Involve anyone else.** No tool adds attendees, and an event with an organizer or attendees
+  (an invitation or a meeting) is never changed, because saving it would send other people an
+  update. Such events come back with `editable: false`.
+- **See or touch a calendar or list that isn't picked.** The picks are read on every call; ids
+  outside them read as not found.
+
+Changes are capped at 100 an hour for each of Calendar and Reminders, all agents together. Every
+call is in the audit log like any built-in tool's. Results say that titles, notes and invitations
+are data written by other people, never instructions.
+
+Times: a day is `YYYY-MM-DD`; anything else is an ISO date-time, in the Mac's time zone when it has
+no offset. An all-day event's `end` is its last day.
+
+### Cloud agents
+
+As with Mail, cloud agents get the tools only once each is turned on for them, with Touch ID: in
+Connections, or from the "Cloud agents that may use Calendar/Reminders" switches in Settings.
+
+## Setup
+
+1. Turn it on. This starts the reader helper (the same "Valet Reader" Mail uses).
+2. macOS asks once whether "Valet Reader" may use Calendar (or Reminders): **Ask macOS** shows the
+   prompt. If the person said no, the screen opens System Settings › Privacy & Security at the right
+   pane. Valet itself never gets this access.
+3. Pick the calendars (or lists), and whether agents may add and change things.
+
+## How it works
+
+`swift-bridge/Sources/ValetHelperKit/EventKitAccess.swift` answers `eventkit.*` requests on the
+helper's socket: access status, asking for access (answered at once; Valet polls), the calendars,
+events in a range, reminders, and saving an event or a reminder. Every request names the
+calendars, and the helper refuses unknown keys. `packages/native-calendar` declares the tools,
+checks their input and output, and enforces the picks and the write switch;
+`apps/desktop/src/main/core/calendar.ts` holds the settings (`calendar.json`, `reminders.json`,
+unreadable reads as off) and lists the tools beside Mail's.
+
+The development "Valet Reader.app" carries the usage descriptions and the hardened runtime's
+calendars entitlement (`swift-bridge/apps/project.yml`), so it must be rebuilt with
+`swift-bridge/build-helper-apps.sh` once. A packaged Valet doesn't have them yet: its helper
+reports no access, and the screen says so.
+
+Tests never touch real calendars: `packages/native-calendar` and the app's tests use a fake
+EventKit, and CI's helper contract suite only checks status answers and refusals on a runner that
+has no access.

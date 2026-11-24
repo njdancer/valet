@@ -73,7 +73,17 @@ describe('parseRoute', () => {
       secret: 'login',
     })
     expect(parseRoute('#/settings')).toEqual({ page: 'settings', section: 'general' })
-    for (const section of ['general', 'notifications', 'data', 'updates', 'devices', 'mail', 'reset']) {
+    for (const section of [
+      'general',
+      'notifications',
+      'data',
+      'updates',
+      'devices',
+      'mail',
+      'calendar',
+      'reminders',
+      'reset',
+    ]) {
       expect(parseRoute(`#/settings/${section}`)).toEqual({ page: 'settings', section })
     }
     expect(parseRoute('#/confirm/cf_1')).toEqual({ page: 'confirm', confirmationId: 'cf_1' })

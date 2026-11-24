@@ -26,6 +26,9 @@ import type {
   CredentialGrantInfo,
   DraftPage,
   EndpointStatus,
+  EventKitApp,
+  EventKitSettings,
+  EventKitStatus,
   GrantInfo,
   GrantRequest,
   LoginMissingItem,
@@ -719,6 +722,40 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     organize: false,
   }
   let mailStage: 'not-running' | 'needs-access' | 'ready' = 'not-running'
+  // Calendar and Reminders: macOS asks once, then the picks.
+  const eventKitSettings: Record<EventKitApp, EventKitSettings> = {
+    calendar: { enabled: false, calendars: [], writes: false },
+    reminders: { enabled: false, calendars: [], writes: false },
+  }
+  const eventKitStage: Record<EventKitApp, 'needs-access' | 'ready'> = {
+    calendar: 'needs-access',
+    reminders: 'needs-access',
+  }
+  const EVENTKIT_CALENDARS: Record<
+    EventKitApp,
+    readonly { id: string; title: string; account: string | null; writable: boolean }[]
+  > = {
+    calendar: [
+      { id: 'CAL-HOME', title: 'Home', account: 'iCloud', writable: true },
+      { id: 'CAL-WORK', title: 'Work', account: 'iCloud', writable: true },
+      { id: 'CAL-HOLIDAYS', title: 'Australian Holidays', account: 'Subscribed', writable: false },
+    ],
+    reminders: [
+      { id: 'LIST-TODO', title: 'Reminders', account: 'iCloud', writable: true },
+      { id: 'LIST-SHOP', title: 'Shopping', account: 'iCloud', writable: true },
+    ],
+  }
+  const eventKitStatus = (app: EventKitApp): EventKitStatus => {
+    const settings = clone(eventKitSettings[app])
+    if (!settings.enabled) return { state: 'off', settings, calendars: [] }
+    if (eventKitStage[app] !== 'ready') return { state: eventKitStage[app], settings, calendars: [] }
+    const allowed = new Set(settings.calendars)
+    return {
+      state: 'ready',
+      settings,
+      calendars: EVENTKIT_CALENDARS[app].map((c) => ({ ...c, allowed: allowed.has(c.id) })),
+    }
+  }
   /** Mail's tools that are on for cloud agents (Connections › Remote). */
   const mailRemoteOn = new Set<string>()
   const FAKE_MAIL_TOOLS = [
@@ -1721,6 +1758,25 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         settings = { ...settings, opPath: null }
         emit({ type: 'settings-changed' })
         return clone(settings)
+      },
+    },
+    eventKit: {
+      async status(app) {
+        enter('eventKit.status', app)
+        return eventKitStatus(app)
+      },
+      async update(app, patch) {
+        enter('eventKit.update', app, patch)
+        eventKitSettings[app] = {
+          ...eventKitSettings[app],
+          ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)),
+        } as EventKitSettings
+        emit({ type: 'adapters-changed' })
+        return eventKitStatus(app)
+      },
+      async action(app, action) {
+        enter('eventKit.action', app, action)
+        if (action === 'request-access') eventKitStage[app] = 'ready'
       },
     },
     mail: {

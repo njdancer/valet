@@ -31,6 +31,8 @@ export const SETTINGS_SECTIONS = [
   'updates',
   'devices',
   'mail',
+  'calendar',
+  'reminders',
   'reset',
 ] as const
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]

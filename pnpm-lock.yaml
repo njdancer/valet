@@ -163,6 +163,9 @@ importers:
       '@valet/mcp-server':
         specifier: workspace:*
         version: link:../../packages/mcp-server
+      '@valet/native-calendar':
+        specifier: workspace:*
+        version: link:../../packages/native-calendar
       '@valet/native-mail':
         specifier: workspace:*
         version: link:../../packages/native-mail
@@ -465,6 +468,15 @@ importers:
       '@valet/adapter-woolworths':
         specifier: workspace:*
         version: link:../../adapters/woolworths
+
+  packages/native-calendar:
+    dependencies:
+      '@valet/core':
+        specifier: workspace:*
+        version: link:../core
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
 
   packages/native-mail:
     dependencies:

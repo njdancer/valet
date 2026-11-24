@@ -1,5 +1,5 @@
 // valet-messages-helper: the only Valet process that holds Full Disk Access (D8), for Messages and
-// Mail. People see it as "Valet Reader".
+// Mail, and the only one macOS lets use Calendar and Reminders. People see it as "Valet Reader".
 //
 //   valet-messages-helper serve <label>   the launch agent (launchd runs this; see the plist)
 //   valet-messages-helper register        SMAppService: register the agent with launchd
@@ -160,6 +160,19 @@ func serve(label: String, socketPath: String?, databasePath: String, mail: MailR
         answer = answerMail(try parseMailRequest(line), roots: mail)
       } catch {
         answer = ["error": MailFailure.invalid.rawValue]
+      }
+      sendData(client, mailResponseLine(answer))
+      continue
+    }
+    if isEventKitRequest(line) {
+      // Calendar and Reminders (EventKitAccess.swift, docs/calendar.md).
+      var longer = timeval(tv_sec: 15, tv_usec: 0)
+      setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &longer, socklen_t(MemoryLayout<timeval>.size))
+      let answer: [String: Any]
+      do {
+        answer = answerEventKit(try parseEventKitRequest(line))
+      } catch {
+        answer = ["error": EventKitFailure.invalid.rawValue]
       }
       sendData(client, mailResponseLine(answer))
       continue

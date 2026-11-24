@@ -32,6 +32,7 @@
     "@valet/credentials": "workspace:*",
     "@valet/egress": "workspace:*",
     "@valet/mcp-server": "workspace:*",
+    "@valet/native-calendar": "workspace:*",
     "@valet/native-mail": "workspace:*",
     "@valet/node-runtime": "workspace:*",
     "@valet/protocols": "workspace:*",

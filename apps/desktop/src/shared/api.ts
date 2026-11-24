@@ -1545,6 +1545,43 @@ export interface MailStatus {
 /** The setup screen's buttons: start the reader, open System Settings, show the reader in Finder. */
 export type MailAction = 'start-reader' | 'full-disk-access' | 'login-items' | 'reveal-reader'
 
+/** Calendar or Reminders on this Mac (docs/calendar.md). */
+export type EventKitApp = 'calendar' | 'reminders'
+
+export interface EventKitSettings {
+  readonly enabled: boolean
+  /** The calendars (or reminder lists) agents may see, by EventKit id. */
+  readonly calendars: readonly string[]
+  /** Whether agents may add and change events (or reminders). */
+  readonly writes: boolean
+}
+
+export interface EventKitSettingsPatch {
+  readonly enabled?: boolean
+  readonly calendars?: readonly string[]
+  readonly writes?: boolean
+}
+
+/**
+ * Where setup is: `needs-access` macOS hasn't been asked yet (or gave only "add events"),
+ * `denied` the person said no and must allow it in System Settings.
+ */
+export type EventKitSetupState = 'off' | 'no-reader' | 'not-running' | 'needs-access' | 'denied' | 'ready'
+
+export interface EventKitStatus {
+  readonly state: EventKitSetupState
+  readonly settings: EventKitSettings
+  readonly calendars: readonly {
+    readonly id: string
+    readonly title: string
+    readonly account: string | null
+    readonly writable: boolean
+    readonly allowed: boolean
+  }[]
+}
+
+export type EventKitAction = 'start-reader' | 'request-access' | 'privacy-settings'
+
 export interface ValetApi {
   readonly phones: {
     status(): Promise<PhonesStatus>
@@ -1753,6 +1790,12 @@ export interface ValetApi {
      * where the move put it.
      */
     undoMove(seq: number): Promise<MailUndo>
+  }
+  /** Calendar and Reminders on this Mac. Null answers: this build has none. */
+  readonly eventKit: {
+    status(app: EventKitApp): Promise<EventKitStatus | null>
+    update(app: EventKitApp, patch: EventKitSettingsPatch): Promise<EventKitStatus | null>
+    action(app: EventKitApp, action: EventKitAction): Promise<void>
   }
   readonly updates: {
     status(): Promise<UpdateStatus>

@@ -7,6 +7,7 @@
 import { z } from 'zod'
 import { panelOnlyRoute, parseRoute } from '../../renderer/lib/routes'
 import type { HashRoute, ValetApi } from '../../shared/api'
+import { EVENTKIT_KINDS, eventKitSettingsPatchSchema } from './calendar'
 import { CHANNEL_PREFIX, INVOKE_METHODS, type InvokeMethod } from './channels'
 import { mailSettingsPatchSchema } from './mail'
 import { onePasswordAccountSchema, traceRetentionDaysSchema } from './settings'
@@ -56,6 +57,7 @@ const SECRET = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)
 /** A setting's name in a manifest: the same alphabet as a secret's. */
 const SETTING = SECRET
 /** Call, confirmation and client ids: the runtime's call-id alphabet. */
+const EVENTKIT_APP = z.enum(EVENTKIT_KINDS)
 const OPAQUE_ID = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)
 const PROVIDER = z.enum([
   'keychain-copy',
@@ -290,6 +292,14 @@ const HANDLERS: Readonly<
   'mail.action': entry(
     z.tuple([z.enum(['start-reader', 'full-disk-access', 'login-items', 'reveal-reader'])]),
     (api, [action]) => api.mail.action(action),
+  ),
+  'eventKit.status': entry(z.tuple([EVENTKIT_APP]), (api, [app]) => api.eventKit.status(app)),
+  'eventKit.update': entry(z.tuple([EVENTKIT_APP, eventKitSettingsPatchSchema]), (api, [app, patch]) =>
+    api.eventKit.update(app, stripUndefined(patch)),
+  ),
+  'eventKit.action': entry(
+    z.tuple([EVENTKIT_APP, z.enum(['start-reader', 'request-access', 'privacy-settings'])]),
+    (api, [app, action]) => api.eventKit.action(app, action),
   ),
   'updates.status': entry(none, (api) => api.updates.status()),
   'updates.check': entry(none, (api) => api.updates.check()),

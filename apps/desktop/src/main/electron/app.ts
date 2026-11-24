@@ -21,6 +21,7 @@ import { type AdapterManifest, DEFAULT_SANDBOX, rawEndpoints } from '@valet/core
 import { KeychainHelper, KeychainTokenSource, messagesHelperSocketPath } from '@valet/credentials'
 import { EgressBroker, type OpenTunnels } from '@valet/egress'
 import { startEndpoint } from '@valet/mcp-server'
+import { HelperEventKit } from '@valet/native-calendar'
 import { HelperMailFiles, MailDrafts, MailOrganizer, pdfText, renderPictures } from '@valet/native-mail'
 import { diskTarballStore, loadDependencies, nodeRuntimeProcess } from '@valet/node-runtime'
 import {
@@ -586,6 +587,8 @@ async function main(): Promise<void> {
             pdfText: (bytes) => pdfText(bytes),
             render: (bytes, request) => renderPictures(bytes, request),
           },
+    // Calendar and Reminders (docs/calendar.md): EventKit in the same reader helper.
+    eventKit: mailReader === null ? null : new HelperEventKit({ socketPath: mailReader.socketPath }),
     version: app.getVersion(),
     demo: mode.demo,
     now: () => Date.now(),
