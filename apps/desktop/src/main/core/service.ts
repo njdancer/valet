@@ -76,6 +76,7 @@ import {
   type ToolCall,
   type ToolCaller,
 } from '@valet/mcp-server'
+import type { EventKit } from '@valet/native-calendar'
 import {
   MAIL_ADAPTER_ID,
   type MailDrafts,
@@ -182,7 +183,16 @@ import {
 } from './audit-view'
 import { type BlindRelaySetup, BlindTunnel } from './blind-tunnel'
 import { BlockedAudit, LoginSecrets } from './blocked'
-import { type AppRefusal, RefusalBudget, RuntimeToolCaller } from './caller'
+import {
+  EVENTKIT_KINDS,
+  type EventKitAction,
+  type EventKitApp,
+  EventKitService,
+  type EventKitSettingsPatch,
+  EventKitSettingsStore,
+  type EventKitStatus,
+} from './calendar'
+import { type AppRefusal, type NativeTools, RefusalBudget, RuntimeToolCaller } from './caller'
 import { addToDesktopConfig } from './claude-desktop'
 import { ClientRegistry, capabilityNames, shownTransport } from './clients'
 import { CloudflareRemote, type CloudflareTunnelStore } from './cloudflare-remote'
@@ -421,6 +431,11 @@ export interface ServiceDeps {
     readonly pdfText?: (bytes: Buffer) => Promise<string | null>
     readonly render?: MailServiceDeps['render']
   } | null
+  /**
+   * Calendar and Reminders on this Mac (docs/calendar.md), through the same reader helper as Mail
+   * (mail.reader). None: this build has no built-in Calendar or Reminders tools.
+   */
+  readonly eventKit?: EventKit | null
   /** This Mac's name, as a paired phone shows it. */
   readonly macName?: string
   /**
@@ -689,6 +704,8 @@ export class AppService {
   private caller: RuntimeToolCaller | null = null
   /** Valet's built-in Mail tools, when this build has them. */
   private mailApp: MailService | null = null
+  /** Valet's built-in Calendar and Reminders tools, when this build has them. */
+  private eventKitApps = new Map<EventKitApp, EventKitService>()
   private endpoint: SessionReportingEndpoint | null = null
   /** The remote listener, its policy and the kill switch (relay.md). Off unless the person turns it on. */
   readonly remote: RemoteAccess
@@ -1119,6 +1136,27 @@ export class AppService {
       })
       await this.mailApp.load().catch(() => undefined)
     }
+    const kit = this.deps.eventKit ?? null
+    if (kit !== null) {
+      for (const app of EVENTKIT_KINDS) {
+        const service: EventKitService = new EventKitService({
+          app,
+          settings: new EventKitSettingsStore(paths[app]),
+          reader: mail?.reader ?? null,
+          kit,
+          audit: (call, result, durationMs) => this.auditNativeCall(call, result, durationMs),
+          now: this.deps.now,
+          changed: () => {
+            void this.refreshTools()
+              .then(() => this.remote.reopenHolding(service.adapterId))
+              .catch(() => undefined)
+            this.emit('adapters-changed')
+          },
+        })
+        await service.load().catch(() => undefined)
+        this.eventKitApps.set(app, service)
+      }
+    }
     this.caller = new RuntimeToolCaller(
       host,
       {
@@ -1144,7 +1182,7 @@ export class AppService {
         refused: (call, refusal) => this.auditRefusal(call, refusal),
         protocolRefused: (refusal) => this.auditProtocolRefusal(refusal),
       },
-      this.mailApp === null ? [] : [this.mailApp],
+      this.natives(),
     )
     await this.caller.refresh()
     await this.reapplyInstalls()
@@ -1203,6 +1241,13 @@ export class AppService {
       if (enabled || known === undefined) throw new ValetError('config', 'not-found')
       return known
     }
+    const app = [...this.eventKitApps.values()].find((a) => a.adapterId === adapterId)
+    if (app !== undefined) {
+      // Calendar or Reminders, off now: likewise only turned off.
+      const known = app.allTools().find((t) => t.declaration.name === tool)?.declaration
+      if (enabled || known === undefined) throw new ValetError('config', 'not-found')
+      return known
+    }
     const adapter = this.adapter(adapterId)
     const declaration = adapter?.definition.manifest.tools.find((t) => t.name === tool)
     if (adapter === null || declaration === undefined) throw new ValetError('config', 'not-found')
@@ -1215,10 +1260,16 @@ export class AppService {
     return declaration
   }
 
-  /** A built-in tool as the app lists it now (Mail on this Mac), or null. */
+  /** The built-in tool sources this build has: Mail, Calendar and Reminders on this Mac. */
+  private natives(): NativeTools[] {
+    return [...(this.mailApp === null ? [] : [this.mailApp]), ...this.eventKitApps.values()]
+  }
+
+  /** A built-in tool as the app lists it now (Mail, Calendar, Reminders on this Mac), or null. */
   private nativeDeclaration(adapterId: string, tool: string): ToolDeclaration | null {
-    if (adapterId !== MAIL_ADAPTER_ID || this.mailApp === null) return null
-    return this.mailApp.listTools().find((t) => t.declaration.name === tool)?.declaration ?? null
+    const source = this.natives().find((n) => n.adapterId === adapterId)
+    if (source === undefined) return null
+    return source.listTools().find((t) => t.declaration.name === tool)?.declaration ?? null
   }
 
   /** Remote access as set up now: its state, names, and every tool of each approved adapter. */
@@ -1227,7 +1278,7 @@ export class AppService {
     const on = new Set(status.tools)
     const tools: RemoteSetupTool[] = []
     // Built-in tools first (Mail on this Mac), while the person has them on.
-    for (const listed of this.mailApp?.listTools() ?? []) {
+    for (const listed of this.natives().flatMap((n) => n.listTools())) {
       const ref = `${listed.adapterId}.${listed.declaration.name}`
       tools.push({
         ref,
@@ -5392,6 +5443,15 @@ export class AppService {
           return this.afterSettings(await this.settings.setOpPath(chosen))
         },
         clearOpPath: async () => this.afterSettings(await this.settings.setOpPath(null)),
+      },
+      eventKit: {
+        status: async (app: EventKitApp): Promise<EventKitStatus | null> =>
+          (await this.eventKitApps.get(app)?.status()) ?? null,
+        update: async (app: EventKitApp, patch: EventKitSettingsPatch): Promise<EventKitStatus | null> =>
+          (await this.eventKitApps.get(app)?.update(patch)) ?? null,
+        action: async (app: EventKitApp, action: EventKitAction) => {
+          await this.eventKitApps.get(app)?.action(action)
+        },
       },
       mail: {
         status: async () => this.mailStatus(),

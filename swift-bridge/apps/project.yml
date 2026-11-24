@@ -77,8 +77,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: me.dncr.valet.dev.keychain
   # The reader helper (valet-messages-helper) as an app of its own for development builds, so Full
   # Disk Access names "Valet Reader" and not the Terminal or Electron that starts Valet. Valet opens
-  # it through LaunchServices (`open -a`), which makes it responsible for itself. No entitlements: it
-  # only reads Mail's and Messages' files, which Full Disk Access alone allows.
+  # it through LaunchServices (`open -a`), which makes it responsible for itself. Mail's and Messages'
+  # files need Full Disk Access alone; Calendar and Reminders need the one entitlement below.
   ValetReader:
     type: application
     platform: macOS
@@ -87,12 +87,23 @@ targets:
     dependencies:
       - target: ValetHelperKit
       - sdk: ServiceManagement.framework
+      - sdk: EventKit.framework
       - sdk: libsqlite3.tbd
     info:
       path: Generated/Info-ValetReader.plist
       properties:
         CFBundleExecutable: valet-messages-helper
         LSBackgroundOnly: true
+        # Calendar and Reminders (docs/calendar.md): macOS shows these when it asks the person.
+        NSCalendarsUsageDescription: Valet Reader lets your agents see the calendars you pick in Valet.
+        NSCalendarsFullAccessUsageDescription: Valet Reader lets your agents see the calendars you pick in Valet, and add or change events if you allow it there.
+        NSRemindersUsageDescription: Valet Reader lets your agents see the reminder lists you pick in Valet.
+        NSRemindersFullAccessUsageDescription: Valet Reader lets your agents see the reminder lists you pick in Valet, and add, change or complete reminders if you allow it there.
+    # The hardened runtime lets a process use Calendar and Reminders only with this entitlement.
+    entitlements:
+      path: Generated/ValetReader.entitlements
+      properties:
+        com.apple.security.personal-information.calendars: true
     settings:
       base:
         PRODUCT_NAME: Valet Reader

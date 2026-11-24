@@ -32,6 +32,7 @@ import { href, type SettingsSection } from '../../lib/router'
 import { updatesOffWording } from '../../lib/wording'
 import { Failed } from '../connections/shared'
 import { DevicesSection } from './DevicesSection'
+import { EventKitSection } from './EventKitSection'
 import { MailSection } from './MailSection'
 
 const SECTIONS: readonly { readonly id: SettingsSection; readonly label: string }[] = [
@@ -41,6 +42,8 @@ const SECTIONS: readonly { readonly id: SettingsSection; readonly label: string 
   { id: 'updates', label: 'Updates' },
   { id: 'devices', label: 'Devices' },
   { id: 'mail', label: 'Mail' },
+  { id: 'calendar', label: 'Calendar' },
+  { id: 'reminders', label: 'Reminders' },
   { id: 'reset', label: 'Reset and uninstall' },
 ]
 
@@ -71,6 +74,8 @@ export function SettingsPage({ section }: { readonly section: SettingsSection })
         {section === 'updates' ? <Updates settings={s} set={set} /> : null}
         {section === 'devices' ? <DevicesSection /> : null}
         {section === 'mail' ? <MailSection /> : null}
+        {section === 'calendar' ? <EventKitSection app="calendar" /> : null}
+        {section === 'reminders' ? <EventKitSection app="reminders" /> : null}
         {section === 'reset' ? <Reset /> : null}
       </PageBody>
     </Page>

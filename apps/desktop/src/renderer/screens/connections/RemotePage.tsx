@@ -486,8 +486,14 @@ function SiteTools({
     <Stack gap={2}>
       <Inline gap={2}>
         <SiteAvatar id={siteId} name={name} size="xs" />
-        {/* Mail on this Mac is built in, not a site: its page is Settings › Mail. */}
-        <ObjectLink href={siteId === 'mail' ? href.settings('mail') : href.site(siteId, 'tools')}>
+        {/* Mail, Calendar and Reminders on this Mac are built in, not sites: their pages are in Settings. */}
+        <ObjectLink
+          href={
+            siteId === 'mail' || siteId === 'calendar' || siteId === 'reminders'
+              ? href.settings(siteId)
+              : href.site(siteId, 'tools')
+          }
+        >
           {name}
         </ObjectLink>
         <Text size="sm" tone="muted">

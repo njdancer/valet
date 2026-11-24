@@ -93,6 +93,9 @@ export interface DataPaths {
   readonly settings: string
   /** Mail on this Mac: on or off, the accounts agents may read, drafts (docs/mail.md). */
   readonly mail: string
+  /** Calendar and Reminders on this Mac: on or off, what agents see, writes (docs/calendar.md). */
+  readonly calendar: string
+  readonly reminders: string
   /** What the person chose for each adapter's settings (D69). */
   readonly adapterSettings: string
   readonly clients: string
@@ -147,6 +150,8 @@ export function dataPaths(dir: string): DataPaths {
     budgets: join(dir, 'budgets.json'),
     settings: join(dir, 'settings.json'),
     mail: join(dir, 'mail.json'),
+    calendar: join(dir, 'calendar.json'),
+    reminders: join(dir, 'reminders.json'),
     adapterSettings: join(dir, 'adapter-settings.json'),
     clients: join(dir, 'clients.json'),
     clientConfigs: join(dir, 'client-configs'),
