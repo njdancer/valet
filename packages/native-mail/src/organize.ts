@@ -9,9 +9,10 @@ import { execFile } from 'node:child_process'
 import { execRunner, type Runner } from './drafts'
 
 /**
- * One message as Mail's scripting finds it, in the mailbox Mail's files name: by Message-ID; for
- * a message without one (some test tools and old mail), by Mail's own id with its subject checked,
- * then by subject, sender and date, only when exactly one message matches.
+ * One message as Mail's scripting finds it, in the mailbox Mail's files name: by Mail's own id,
+ * checked against its Message-ID (or, without one, its subject, sender and date); else by
+ * Message-ID; else, for a message without one (some test tools and old mail), by subject, sender
+ * and date, only when exactly one message matches.
  */
 export interface OrganizeItem {
   /** The Message-ID header, without angle brackets; null when the message has none. */
@@ -101,7 +102,17 @@ function run(argv) {
     } catch (e) { return false; }
   };
   var findIn = function (box, item) {
-    if (typeof item.messageId === 'string' && item.messageId.length > 0) {
+    var hasHeader = typeof item.messageId === 'string' && item.messageId.length > 0;
+    // Mail's own id first: straight to the message, where a search of a big mailbox can take Mail
+    // many seconds. Checked against its Message-ID, else its subject, sender and date.
+    if (typeof item.rowId === 'number') {
+      try {
+        var direct = box.messages.byId(item.rowId);
+        if (hasHeader ? direct.messageId() === item.messageId : typeof item.subject === 'string' && sameMessage(direct, item))
+          return direct;
+      } catch (e) {}
+    }
+    if (hasHeader) {
       try {
         var byHeader = box.messages.whose({ messageId: item.messageId })();
         if (byHeader.length > 0) return byHeader[0];
@@ -110,12 +121,6 @@ function run(argv) {
     }
     // No Message-ID: Mail's own id, then subject, sender and date. Never a guess between two.
     if (typeof item.subject !== 'string') return null;
-    if (typeof item.rowId === 'number') {
-      try {
-        var own = box.messages.byId(item.rowId);
-        if (sameMessage(own, item)) return own;
-      } catch (e) {}
-    }
     try {
       var named = box.messages.whose({ subject: item.subject })();
       var hits = [];

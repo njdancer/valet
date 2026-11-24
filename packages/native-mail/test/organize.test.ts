@@ -47,7 +47,7 @@ describe('ORGANIZE_SCRIPT', () => {
         byId: (n) => {
           const found = items.find((m) => m.row === n)
           if (found === undefined) throw new Error('no such message')
-          return found
+          return Object.assign(found, { messageId: () => found.id })
         },
       },
       mailboxes: { byName: (n) => children[n] ?? missing() },
@@ -87,6 +87,31 @@ describe('ORGANIZE_SCRIPT', () => {
   }
 
   const item = (messageId: string, mailbox = 'INBOX') => ({ messageId, accountId: ALLOWED, mailbox })
+
+  it('finds a message by Mail’s own id without searching the mailbox, if its Message-ID matches', () => {
+    const inbox = box('INBOX', [
+      { id: 'a', row: 41 },
+      { id: 'b', row: 42 },
+    ])
+    inbox.messages.whose = () => {
+      throw new Error('searched')
+    }
+    const boxes = { INBOX: inbox, Archive: box('Archive') }
+    const { out, moves } = run(
+      {
+        kind: 'move',
+        items: [
+          { ...item('a'), rowId: 41 },
+          // Row 42 holds another message now: not this one, and the search finds nothing either.
+          { ...item('c'), rowId: 42 },
+        ],
+        to: 'Archive',
+      },
+      boxes,
+    )
+    expect(out).toEqual({ kind: 'done', results: ['done', 'not-found'] })
+    expect(moves).toEqual([['a', 'Archive']])
+  })
 
   it('moves each message found in its mailbox to the destination of the same account', () => {
     const boxes = {
@@ -365,17 +390,17 @@ describe('the move and mark tools', () => {
       return { ...s, deps }
     }
 
-    it('runs four at a time, and reports a run that failed partway as uncertain, keeping what moved', async () => {
+    it('runs three at a time, and reports a run that failed partway as uncertain, keeping what moved', async () => {
       const s = chunked([null, { kind: 'failed' }])
       const result = await callMailTool(s.deps, 'move', { ids: INBOX_IDS, to: 'trash' })
-      expect(s.asked.map((r) => r.items.length)).toEqual([4, 1])
+      expect(s.asked.map((r) => r.items.length)).toEqual([3, 2])
       expect(result.status).toBe('ok')
       const output = mailOutputs.move.parse((result as { output: unknown }).output)
-      expect(output.moved.map((m) => m.id)).toEqual([7, 9, 10, 12])
-      expect(output.uncertain).toEqual([13])
+      expect(output.moved.map((m) => m.id)).toEqual([7, 9, 10])
+      expect(output.uncertain).toEqual([12, 13])
       expect(output.notDone).toEqual([])
       expect(output.note).toContain('uncertain may or may not have changed')
-      expect(s.recorded).toHaveLength(4)
+      expect(s.recorded).toHaveLength(3)
     })
 
     it('starts no run after its time is up, and says which ids to send again', async () => {
@@ -388,8 +413,8 @@ describe('the move and mark tools', () => {
       const result = await callMailTool(s.deps, 'mark', { ids: INBOX_IDS, read: true })
       expect(result.status).toBe('ok')
       const output = mailOutputs.mark.parse((result as { output: unknown }).output)
-      expect(output.marked).toBe(4)
-      expect(output.notDone).toEqual([13])
+      expect(output.marked).toBe(3)
+      expect(output.notDone).toEqual([12, 13])
       expect(s.asked).toHaveLength(1)
     })
 

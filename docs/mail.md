@@ -166,7 +166,9 @@ It is off by default, separate from reading and drafts, and a cloud agent also n
 - **Through Mail.** `MailOrganizer` (packages/native-mail/src/organize.ts) runs a fixed JXA script
   with the request as one JSON argument, so Mail makes the change and syncs it like the person had.
 - **A few at a time.** Mail can take seconds to find each message in a big mailbox, so a call runs
-  the script on four messages at a time and starts no new run after 75 seconds. Ids it didn't get
+  the script on three messages at a time and starts no new run after 30 seconds (Claude Code gives
+  up on a call at 60). The script finds each message by Mail's own id first, checked against its
+  Message-ID, which is quick; searching a big mailbox by Message-ID took Mail ~10 s a message. Ids it didn't get
   to come back as `notDone` (send them again); a run that failed partway puts its ids in
   `uncertain` (search first), and what moved before it is still recorded. Only a failure on the
   first run fails the call (agent feedback #7).

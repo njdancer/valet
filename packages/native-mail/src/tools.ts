@@ -725,9 +725,9 @@ const organizeFailure = (kind: 'not-allowed' | 'no-mailbox' | 'failed'): MailToo
       : fail('tool-run', 'unavailable')
 
 /** Messages per Mail scripting run: finding one can take Mail several seconds in a big mailbox. */
-const ORGANIZE_CHUNK = 4
-/** No new run starts after this long, so a call answers well before a client gives up on it. */
-const ORGANIZE_BUDGET_MS = 75_000
+const ORGANIZE_CHUNK = 3
+/** No new run starts after this long, so a call answers before a client gives up (Claude Code: 60 s). */
+const ORGANIZE_BUDGET_MS = 30_000
 
 type ChunkResult = 'done' | 'not-found' | 'uncertain' | 'not-done'
 
