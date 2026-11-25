@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { decodeWords, htmlToText, parseAddresses, parseMessage, parseParams } from '../src/mime'
+import {
+  decodeWords,
+  htmlToText,
+  normaliseText,
+  parseAddresses,
+  parseMessage,
+  parseParams,
+} from '../src/mime'
 
 describe('mime', () => {
   it('decodes encoded words, joining adjacent ones', () => {
@@ -47,6 +54,50 @@ describe('mime', () => {
       '--zz--',
     ].join('\r\n')
     expect(parseMessage(Buffer.from(raw)).text).toBe('plain')
+  })
+
+  it('reads the HTML part when the plain one leaves its values out, as a retailer invoice did', () => {
+    const alt = (plain: string, html: string) =>
+      [
+        'Content-Type: multipart/alternative; boundary=zz',
+        '',
+        '--zz',
+        'Content-Type: text/plain',
+        '',
+        plain,
+        '--zz',
+        'Content-Type: text/html',
+        '',
+        html,
+        '--zz--',
+      ].join('\r\n')
+    const rows =
+      '<table><tr><th>Item</th><th>Qty</th><th>Price</th></tr>' +
+      '<tr><td><img src="x.jpg" alt="Anko Kids Wooden Train Set 40 Piece"></td><td>2</td><td>$5.00</td></tr>' +
+      '<tr><td><img src="y.jpg" alt="Anko Glitter Slime Kit"></td><td>1</td><td>$12.00</td></tr></table>' +
+      '<p>Subtotal $22.00</p>'
+    const templated = alt(
+      'Item Qty Price\n# $\nSubtotal $22.00 ( http://link.example/ls/click?upn=abcdefghijklmnopqrstuvwxyz0123456789 )',
+      rows,
+    )
+    const text = parseMessage(Buffer.from(templated)).text
+    expect(text).toContain('Anko Kids Wooden Train Set 40 Piece 2 $5.00')
+    expect(text).toContain('Anko Glitter Slime Kit')
+    // A plain part that says as much keeps winning, even with its links spelt out.
+    const full = alt(
+      'Anko Kids Wooden Train Set 40 Piece 2 $5.00 ( http://link.example/a )\nAnko Glitter Slime Kit 1 $12.00\nSubtotal $22.00',
+      rows,
+    )
+    expect(parseMessage(Buffer.from(full)).text).toContain('( http://link.example/a )')
+  })
+
+  it('gives a picture’s alt text, else its title, and nothing for one without', () => {
+    expect(htmlToText('<p>a<img src="t.gif" alt="">b<img alt=\'Logo\'>c<img title="Tea">d</p>')).toBe(
+      '\nab Logo c Tea d\n',
+    )
+    // A table comes out a row to a line, its cells side by side.
+    const table = '<table><tr><td>Tea</td><td>2</td></tr><tr><td>Cups</td><td>1</td></tr></table>'
+    expect(normaliseText(htmlToText(table))).toBe('Tea 2\nCups 1')
   })
 
   it('turns HTML into text in one pass, even when it is hostile', () => {

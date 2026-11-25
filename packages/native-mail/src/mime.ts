@@ -40,13 +40,18 @@ export interface ParsedMessage {
   readonly messageId: string | null
   readonly inReplyTo: string | null
   readonly references: readonly string[]
-  /** The plain-text body: the text/plain part, or the HTML part as text. Empty when there is none. */
+  /**
+   * The plain-text body: the text/plain part, or the HTML part as text when there is none or it
+   * says clearly more (pictures' alt text included). Empty when there is neither.
+   */
   readonly text: string
   readonly attachments: readonly Attachment[]
   /** The same attachments in order, with their bytes; never handed to agents as such. */
   readonly attachmentParts: readonly AttachmentPart[]
   /** Web and mail links from the HTML part, whether or not there is a plain-text part. */
   readonly links: readonly Link[]
+  /** The text/html part as it is, null when there is none. */
+  readonly html: string | null
 }
 
 const MAX_DEPTH = 8
@@ -364,13 +369,30 @@ function walk(raw: Buffer, depth: number, found: Collected, section = '1'): void
   }
 }
 
+/** Letters and digits, leaving out web addresses (a plain part spells its links out; HTML doesn't). */
+function content(text: string): number {
+  return text.replace(/\bhttps?:\/\/\S+/gi, '').replace(/[^\p{L}\p{N}]/gu, '').length
+}
+
+/**
+ * The text/plain part, unless the HTML part says clearly more: some senders' plain part is a
+ * template with the values left out (agent feedback #12, a retailer's invoice with empty item
+ * rows), while the HTML has them.
+ */
+function bodyText(plain: string | null, html: string | null): string {
+  if (html === null) return plain ?? ''
+  const fromHtml = htmlToText(html)
+  if (plain === null) return fromHtml
+  return content(fromHtml) > content(plain) * 1.2 + 20 ? fromHtml : plain
+}
+
 export function parseMessage(raw: Buffer): ParsedMessage {
   const { head } = splitMessage(raw)
   const headers = parseHeaders(head)
   const first = (key: string): string | undefined => headers.get(key)?.[0]
   const found: Collected = { plain: null, html: null, attachments: [], parts: 0 }
   walk(raw, 0, found)
-  const text = found.plain ?? (found.html === null ? '' : htmlToText(found.html))
+  const text = bodyText(found.plain, found.html)
   const subject = first('subject')
   return {
     headers,
@@ -387,6 +409,7 @@ export function parseMessage(raw: Buffer): ParsedMessage {
     attachments: found.attachments.map(({ name, contentType, size }) => ({ name, contentType, size })),
     attachmentParts: found.attachments,
     links: found.html === null ? [] : htmlLinks(found.html),
+    html: found.html,
   }
 }
 
@@ -471,8 +494,19 @@ export function htmlToText(html: string): string {
       i = endGt < 0 ? html.length : endGt + 1
       continue
     }
-    if (BLOCK_TAGS.has(tag)) out += '\n'
+    // A table row is a line of its own: a break before it, none after, so rows sit together.
+    if (BLOCK_TAGS.has(tag) && !(tag === 'tr' && closing)) out += '\n'
     else if (tag === 'td' || tag === 'th') out += ' '
+    else if (tag === 'img' && !closing) {
+      // A picture's words: retailers often name the product only in its picture's alt (or title).
+      const tagText = html.slice(lt, gt + 1)
+      const attr = (name: string): string => {
+        const m = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'i').exec(tagText)
+        return (m?.[1] ?? m?.[2] ?? '').trim()
+      }
+      const words = attr('alt') || attr('title')
+      if (words.length > 0 && words.length <= 300) out += ` ${words} `
+    }
   }
   return decodeEntities(out)
 }

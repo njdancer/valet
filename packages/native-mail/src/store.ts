@@ -77,6 +77,8 @@ export interface MessageDetail extends MessageSummary {
   readonly inReplyTo: string | null
   readonly references: readonly string[]
   readonly body: string
+  /** 'html' when `body` is the HTML part's markup (mail_read as: html); plain text otherwise. */
+  readonly bodyFormat?: 'html'
   readonly bodyTruncated: boolean
   /** Where `body` starts in the whole text, and where the next chunk starts; null at the end. */
   readonly bodyOffset: number
@@ -745,11 +747,17 @@ export class MailStore {
     return null
   }
 
-  async read(id: number, maxChars: number = DEFAULT_BODY_CHARS, offset = 0): Promise<MessageDetail> {
+  /** `html`: the body is the HTML part's markup (scripts and styles out), where there is one. */
+  async read(
+    id: number,
+    maxChars: number = DEFAULT_BODY_CHARS,
+    offset = 0,
+    html = false,
+  ): Promise<MessageDetail> {
     return this.#guard(async () => {
       const schema = await this.schema()
       const boxes = await this.#mailboxes(schema)
-      return this.#detail(id, schema, boxes, maxChars, offset)
+      return this.#detail(id, schema, boxes, maxChars, offset, html)
     })
   }
 
@@ -964,6 +972,7 @@ export class MailStore {
     boxes: readonly MailboxRow[],
     maxChars: number,
     offset = 0,
+    html = false,
   ): Promise<MessageDetail> {
     const row = await this.#row(id, schema, boxes)
     const byId = new Map(boxes.map((b) => [b.id, b]))
@@ -1004,9 +1013,11 @@ export class MailStore {
     }
     const emlx = parseEmlx(found.bytes, found.partial)
     const parsed = parseMessage(emlx.message)
-    const from = Math.min(Math.max(0, Math.floor(offset)), parsed.text.length)
-    const end = Math.min(parsed.text.length, from + limit)
-    const body = parsed.text.slice(from, end)
+    const markup = html && parsed.html !== null ? cleanHtml(parsed.html) : null
+    const whole = markup ?? parsed.text
+    const from = Math.min(Math.max(0, Math.floor(offset)), whole.length)
+    const end = Math.min(whole.length, from + limit)
+    const body = whole.slice(from, end)
     return {
       ...summary,
       preview: summary.preview ?? previewOf(parsed.text),
@@ -1019,9 +1030,10 @@ export class MailStore {
       inReplyTo: parsed.inReplyTo,
       references: parsed.references,
       body,
-      bodyTruncated: end < parsed.text.length,
+      ...(markup === null ? {} : { bodyFormat: 'html' as const }),
+      bodyTruncated: end < whole.length,
       bodyOffset: from,
-      nextOffset: end < parsed.text.length ? end : null,
+      nextOffset: end < whole.length ? end : null,
       links: parsed.links,
       downloaded: emlx.complete,
       attachments: parsed.attachments.length > 0 ? parsed.attachments : attachmentNames,
@@ -1072,4 +1084,40 @@ export class MailStore {
     const detail = await this.read(id, 100)
     return { accountId: detail.accountId, mailbox: detail.mailbox, messageId: detail.messageId }
   }
+}
+
+/**
+ * An HTML part to hand an agent as markup: scripts, styles, comments and event handlers out, every
+ * other tag and attribute (alt and title included) as it was. Nothing is fetched from it.
+ */
+export function cleanHtml(html: string): string {
+  // One pass with indexOf, as htmlToText: hostile markup can't make it slow.
+  const lower = html.toLowerCase()
+  let out = ''
+  let i = 0
+  while (i < html.length) {
+    const lt = html.indexOf('<', i)
+    if (lt < 0) {
+      out += html.slice(i)
+      break
+    }
+    out += html.slice(i, lt)
+    if (lower.startsWith('<!--', lt)) {
+      const end = lower.indexOf('-->', lt + 4)
+      i = end < 0 ? html.length : end + 3
+      continue
+    }
+    const tag = /^<([a-z]+)/.exec(lower.slice(lt, lt + 10))?.[1]
+    if (tag === 'script' || tag === 'style') {
+      const end = lower.indexOf(`</${tag}`, lt)
+      const endGt = end < 0 ? -1 : lower.indexOf('>', end)
+      i = endGt < 0 ? html.length : endGt + 1
+      continue
+    }
+    const gt = html.indexOf('>', lt + 1)
+    const end = gt < 0 ? html.length : gt + 1
+    out += html.slice(lt, end).replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    i = end
+  }
+  return out
 }
