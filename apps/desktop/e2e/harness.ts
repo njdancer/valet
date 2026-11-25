@@ -555,9 +555,10 @@ export async function clickClosing(button: Locator): Promise<void> {
 }
 
 /**
- * The site tools in a listing: everything but Valet's own read-only admin tools (valet_*), which
- * every local client lists from the start (docs/admin-tools.md).
+ * The site tools in a listing: everything but Valet's own read-only admin tools (valet_*) and the
+ * agents' built-in browser (browser_*), which every local client lists from the start
+ * (docs/admin-tools.md, docs/agent-browser.md).
  */
 export function siteTools<T extends { readonly name: string }>(tools: readonly T[]): T[] {
-  return tools.filter((tool) => !tool.name.startsWith('valet_'))
+  return tools.filter((tool) => !tool.name.startsWith('valet_') && !tool.name.startsWith('browser_'))
 }
