@@ -12,6 +12,10 @@ A draft is a package: \`manifest.json\`, code under \`src/\` (entry \`src/tools.
 \`test/*.json\` and saved pages and answers under \`fixtures/\`. \`manifestSchema\` in this answer is
 the manifest's JSON Schema; valet_check_draft says what any file gets wrong.
 
+The valet_browser_ tools are your draft's scratch browser: they take a \`draftId\`, open only the
+manifest's domains, and feed valet_network_log and valet_capture_fixture. The browser_ tools (no
+\`valet_\`) are a general web browser for using the web, with no draft, network log or fixtures.
+
 ## Worked examples
 
 \`valet_create_draft\` with \`from: "example"\` and an \`example\` name copies one of these, with your id
