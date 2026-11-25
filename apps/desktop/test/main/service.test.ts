@@ -2077,6 +2077,17 @@ describe('endpoint, settings, audit and the app', () => {
     })
   })
 
+  it('writes start at login again at every start while it is on, and never while it is off', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sa-service-'))
+    dirs.push(dir)
+    const first = await setup({ dir })
+    expect(first.ui.loginItem).toEqual([])
+    await first.api.settings.set({ launchAtLogin: true })
+    expect(first.ui.loginItem).toEqual([true])
+    const again = await setup({ dir })
+    expect(again.ui.loginItem).toEqual([true])
+  })
+
   it('changes settings only through the patch and the main process’s own op dialog', async () => {
     const s = await approved()
     expect((await s.api.settings.set({ launchAtLogin: true })).launchAtLogin).toBe(true)
