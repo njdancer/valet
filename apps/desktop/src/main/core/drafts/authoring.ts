@@ -14,6 +14,7 @@ import {
   dependencyLockSchema,
   EMPTY_LOCK,
   homeUnreachable,
+  isDisplayText,
   needsYouTitle,
   type PackageFiles,
   type PermissionChange,
@@ -132,6 +133,12 @@ export interface SessionRequest {
   readonly requester: { readonly clientId: string; readonly clientName: string }
 }
 
+/** An agent's ask for a browser grant (docs/browser-grants.md): signed-in, read-only browsing. */
+export interface GrantRequest extends SessionRequest {
+  /** The agent's own words for why, shown as theirs. */
+  readonly purpose: string
+}
+
 export type AskOutcome =
   | { readonly ok: true; readonly requestId: string; readonly ref: string; readonly expiresAt: string }
   | { readonly ok: false; readonly sentence: string }
@@ -179,6 +186,8 @@ export interface AuthoringDeps {
    * (B's authoring-session kind, D81).
    */
   readonly askSession?: (request: SessionRequest) => Promise<AskOutcome>
+  /** Asks for a browser grant: the draft's scratch browser signed in, read only. */
+  readonly askGrant?: (request: GrantRequest) => Promise<AskOutcome>
   /** The draft's approved signed-in session, while it lasts; null for none. */
   readonly sessionFor?: (draftId: string) => { readonly adapterId: string; readonly until: number } | null
   readonly requestState: (requestId: string) => RequestState
@@ -388,35 +397,10 @@ export class DraftAuthoring implements Authoring {
   // ---------- Signed-in sessions ----------
 
   async requestSession(viewer: ClientIdentity, draftId: string, minutes: number): Promise<AskReport> {
-    const record = await this.own(viewer, draftId)
-    // Signed-in trials stay local-only until a remote one has been red-teamed (B, F's design).
-    if (viewer.origin !== 'local') throw new AuthoringRefusal(REMOTE_SIGNED_IN)
     const ask = this.deps.askSession
-    const trials = this.deps.trials
-    if (ask === undefined || trials === undefined)
+    if (ask === undefined || this.deps.trials === undefined)
       throw new AuthoringRefusal('This build of Valet can’t lend a signed-in session.')
-    const installed = record.basedOn === null ? null : await this.deps.installed(record.adapterId)
-    if (installed === null)
-      throw new AuthoringRefusal(
-        'A signed-in session is for updating or repairing an installed adapter: start the draft from "installed".',
-      )
-    const signedIn = await trials.signedIn().catch(() => new Map<string, readonly string[]>())
-    if (!signedIn.has(record.adapterId))
-      throw new AuthoringRefusal(`The person isn’t signed in to ${installed.manifest.name} in Valet.`)
-    const origins = [
-      ...new Set(
-        [installed.manifest.home, ...installed.manifest.navigation]
-          .map((o) => {
-            try {
-              const url = new URL(o)
-              return url.protocol === 'https:' ? url.origin : null
-            } catch {
-              return null
-            }
-          })
-          .filter((o): o is string => o !== null),
-      ),
-    ].slice(0, 10)
+    const { record, installed, origins } = await this.sessionSite(viewer, draftId)
     const span = Math.min(60, Math.max(1, Math.round(minutes)))
     const asked = await ask({
       draftId,
@@ -434,6 +418,81 @@ export class DraftAuthoring implements Authoring {
         `I’ve asked Valet to let my live trials of the ${installed.manifest.name} draft use your signed-in ` +
         `session for ${span} minutes. I never see the session itself. Approve it on your phone or Mac (${asked.ref}).`,
     }
+  }
+
+  /**
+   * A browser grant (docs/browser-grants.md): the draft's scratch browser opens signed in to the
+   * installed adapter's site, read only, for up to two hours. The agent studies the signed-in
+   * pages it is building tools for; it never sees the password or the session.
+   */
+  async requestGrant(
+    viewer: ClientIdentity,
+    draftId: string,
+    minutes: number,
+    purpose: string,
+  ): Promise<AskReport> {
+    const ask = this.deps.askGrant
+    if (ask === undefined || this.deps.research === undefined)
+      throw new AuthoringRefusal('This build of Valet can’t open a signed-in browser.')
+    const why = purpose.replace(/\s+/g, ' ').trim()
+    if (why.length < 3 || why.length > 200 || !isDisplayText(why))
+      throw new AuthoringRefusal(
+        'Say in a short plain sentence (up to 200 characters) why you need the site signed in.',
+      )
+    const { record, installed, origins } = await this.sessionSite(viewer, draftId)
+    const span = Math.min(120, Math.max(1, Math.round(minutes)))
+    const asked = await ask({
+      draftId,
+      adapterId: record.adapterId,
+      origins,
+      minutes: span,
+      purpose: why,
+      requester: { clientId: clientKey(viewer), clientName: this.deps.clientName(viewer).slice(0, 100) },
+    })
+    if (!asked.ok) throw new AuthoringRefusal(`Not asked: ${asked.sentence}`)
+    return {
+      requestId: asked.requestId,
+      ref: asked.ref,
+      expiresAt: asked.expiresAt,
+      tellThePerson:
+        `I’ve asked Valet to let me browse ${installed.manifest.name} signed in as you, read only, for ` +
+        `${span} minutes, to build tools for it. I never see your password or session, and payment and ` +
+        `security pages stay closed. Approve it on your phone or Mac (${asked.ref}); you can end it any time.`,
+    }
+  }
+
+  /** The installed site a signed-in session or grant would be for, or a refusal saying why not. */
+  private async sessionSite(viewer: ClientIdentity, draftId: string) {
+    const record = await this.own(viewer, draftId)
+    // Signed-in sessions stay local-only until a remote one has been red-teamed (B, F's design).
+    if (viewer.origin !== 'local') throw new AuthoringRefusal(REMOTE_SIGNED_IN)
+    const trials = this.deps.trials
+    const installed = record.basedOn === null ? null : await this.deps.installed(record.adapterId)
+    if (installed === null)
+      throw new AuthoringRefusal(
+        'A signed-in session is for updating or repairing an installed adapter: start the draft from "installed".',
+      )
+    const signedIn =
+      trials === undefined
+        ? new Map<string, readonly string[]>()
+        : await trials.signedIn().catch(() => new Map<string, readonly string[]>())
+    if (!signedIn.has(record.adapterId))
+      throw new AuthoringRefusal(`The person isn’t signed in to ${installed.manifest.name} in Valet.`)
+    const origins = [
+      ...new Set(
+        [installed.manifest.home, ...installed.manifest.navigation]
+          .map((o) => {
+            try {
+              const url = new URL(o)
+              return url.protocol === 'https:' ? url.origin : null
+            } catch {
+              return null
+            }
+          })
+          .filter((o): o is string => o !== null),
+      ),
+    ].slice(0, 10)
+    return { record, installed, origins }
   }
 
   // ---------- Repairs ----------
@@ -1384,6 +1443,11 @@ export class DraftAuthoring implements Authoring {
     } finally {
       this.trialing.delete(draftId)
     }
+  }
+
+  /** A grant began or ended: the draft's scratch browser closes, to open again as it now may. */
+  closeBrowser(draftId: string): void {
+    this.deps.research?.close(draftId)
   }
 
   /** On lockdown or pause: every scratch browser closes. */

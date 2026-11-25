@@ -150,6 +150,33 @@ describe('scratch browser rules', () => {
     expect(opened.every((o) => o.handle.isClosed())).toBe(true)
   })
 
+  it('opens signed in, read only, under a running browser grant, and closes when it ends', async () => {
+    let until = Date.parse('2026-11-12T00:30:00Z')
+    const { s, opened, notices, timers, advance } = await sessions({
+      grantFor: (draftId) =>
+        draftId === 'dr-aaaaaaaaaa' ? { adapterId: 'quotes', cookieDomains: ['example.com'], until } : null,
+    })
+    await s.browser('dr-aaaaaaaaaa', 'local:c1', 'Claude Code', 'quotes', MANIFEST)
+    expect(opened[0]?.rules.signedIn).toEqual({ adapterId: 'quotes', cookieDomains: ['example.com'] })
+    expect(notices).toEqual([
+      'Claude Code is browsing example.com signed in, read only. End it from the draft’s page.',
+    ])
+    const ends = timers.find((t) => t.ms === 30 * 60_000)
+    expect(ends).toBeDefined()
+    ends?.run()
+    expect(opened[0]?.handle.isClosed()).toBe(true)
+    // Another draft, or a grant for another adapter, or one that has ended: signed out.
+    await s.browser('dr-bbbbbbbbbb', 'local:c2', 'B', 'quotes', MANIFEST)
+    expect(opened[1]?.rules.signedIn).toBeUndefined()
+    advance(31 * 60_000)
+    await s.browser('dr-aaaaaaaaaa', 'local:c1', 'Claude Code', 'quotes', MANIFEST)
+    expect(opened[2]?.rules.signedIn).toBeUndefined()
+    until = Number.POSITIVE_INFINITY
+    s.close('dr-aaaaaaaaaa')
+    await s.browser('dr-aaaaaaaaaa', 'local:c1', 'Claude Code', 'shop', MANIFEST)
+    expect(opened[3]?.rules.signedIn).toBeUndefined()
+  })
+
   it('needs a manifest it can read', async () => {
     const { s } = await sessions()
     await expect(s.browser('dr-aaaaaaaaaa', 'local:c1', 'A', 'quotes', null)).rejects.toThrow(/manifest/)

@@ -213,6 +213,7 @@ import type { Credentials } from './credentials'
 import {
   type AskOutcome,
   DraftAuthoring,
+  type GrantRequest,
   type PrivateNetworkRequest,
   type RequestState,
   type SessionRequest,
@@ -745,6 +746,11 @@ export class AppService {
     string,
     { readonly adapterId: string; readonly until: number }
   >()
+  /**
+   * Browser grants (docs/browser-grants.md), by draft id: the draft's scratch browser opens signed
+   * in to the installed adapter's site, read only, until `until`.
+   */
+  private readonly browserGrants = new Map<string, { readonly adapterId: string; readonly until: number }>()
   /** Repair tickets for installed adapters (docs/authoring-tools.md#repairs-pr-3), from the audit log. */
   private readonly repairTickets = new RepairTickets()
   /** Drafts agents are writing (docs/authoring-tools.md), and the tools over them once started. */
@@ -1857,6 +1863,7 @@ export class AppService {
     this.authoring?.closeBrowsers()
     // Lockdown ends every lent session and private address (B).
     this.authoringSessions.clear()
+    this.browserGrants.clear()
     this.privateNetwork.clear()
     const ledger = this.approvalBroker?.lockdown().catch(() => undefined)
     this.dropAgentAsks(null)
@@ -2287,6 +2294,31 @@ export class AppService {
           const name = this.adapter(subject.adapterId)?.definition.manifest.name ?? subject.adapterId
           this.notifier.draftActivity(
             `An agent’s draft may try ${name} with your session for ${subject.minutes} minutes. End it from the draft’s page.`,
+          )
+          this.emit('drafts-changed')
+        },
+      },
+      // A draft's scratch browser opens signed in, read only, for a while (docs/browser-grants.md).
+      'browser-grant': {
+        precheck: async (subject) => {
+          const record = await this.drafts.record(subject.draftId).catch(() => null)
+          return (
+            record !== null &&
+            record.status === 'editing' &&
+            record.adapterId === subject.adapterId &&
+            this.adapter(subject.adapterId) !== null
+          )
+        },
+        apply: async (subject) => {
+          this.browserGrants.set(subject.draftId, {
+            adapterId: subject.adapterId,
+            until: this.deps.now() + subject.minutes * 60_000,
+          })
+          // A browser already open is signed out: the agent opens it again, signed in.
+          this.authoring?.closeBrowser(subject.draftId)
+          const name = this.adapter(subject.adapterId)?.definition.manifest.name ?? subject.adapterId
+          this.notifier.draftActivity(
+            `An agent may browse ${name} signed in, read only, for ${subject.minutes} minutes. End it from the draft’s page.`,
           )
           this.emit('drafts-changed')
         },
@@ -3433,6 +3465,7 @@ export class AppService {
       submit: (request) => this.submitDraft(request),
       askPrivateNetwork: (request) => this.askPrivateNetwork(request),
       askSession: (request) => this.askSession(request),
+      askGrant: (request) => this.askGrant(request),
       sessionFor: (draftId) => {
         const lent = this.authoringSessions.get(draftId)
         return lent === undefined || lent.until <= this.deps.now() ? null : lent
@@ -3643,16 +3676,83 @@ export class AppService {
     return { ok: true, requestId: asked.requestId, ref: asked.ref, expiresAt: asked.expiresAt }
   }
 
-  /** The draft's lent session for the Mac, while it runs. */
-  private lentSession(draftId: string): { readonly until: string } | null {
-    const lent = this.authoringSessions.get(draftId)
-    if (lent === undefined || lent.until <= this.deps.now()) return null
-    return { until: new Date(lent.until).toISOString() }
+  /** An agent asks to browse its draft's site signed in, read only (docs/browser-grants.md). */
+  private async askGrant(request: GrantRequest): Promise<AskOutcome> {
+    const broker = this.approvalBroker
+    if (broker === null) return { ok: false, sentence: 'Valet can’t ask for approvals right now.' }
+    if (this.lockedDown) return { ok: false, sentence: 'Valet is locked down.' }
+    const requester: Requester = {
+      kind: 'agent',
+      clientId: request.requester.clientId,
+      clientName: request.requester.clientName,
+    }
+    const asked = await broker.request(
+      'browser-grant',
+      {
+        adapterId: request.adapterId,
+        draftId: request.draftId,
+        origins: [...request.origins],
+        purpose: request.purpose,
+        mode: 'read',
+        minutes: request.minutes,
+      },
+      requester,
+      {
+        agentNote: null,
+        context: { kind: 'draft', draftId: request.draftId },
+        display: {
+          client: {
+            label: request.requester.clientName,
+            badge: request.requester.clientId.startsWith('remote:') ? 'remote' : 'local',
+          },
+        },
+      },
+    )
+    if (!asked.ok)
+      return { ok: false, sentence: submitRefusal(asked.reason, asked.until).replace(/^Not submitted: /, '') }
+    this.emit('approvals-changed')
+    this.emit('attention-changed')
+    return { ok: true, requestId: asked.requestId, ref: asked.ref, expiresAt: asked.expiresAt }
   }
 
-  /** The person ends a draft's signed-in session early, from the draft's page. */
+  /** The draft's running grant, for its scratch browser: the adapter's cookie domains, until when. */
+  private grantFor(draftId: string): {
+    readonly adapterId: string
+    readonly cookieDomains: readonly string[]
+    readonly until: number
+  } | null {
+    const grant = this.browserGrants.get(draftId)
+    if (grant === undefined) return null
+    const adapter = this.adapter(grant.adapterId)
+    if (grant.until <= this.deps.now() || adapter === null) {
+      this.browserGrants.delete(draftId)
+      return null
+    }
+    return { ...grant, cookieDomains: adapter.definition.manifest.session.cookieDomains }
+  }
+
+  /** The draft's lent session or browser grant for the Mac, while either runs: the later end. */
+  private lentSession(draftId: string): { readonly until: string } | null {
+    const now = this.deps.now()
+    const ends = [this.authoringSessions.get(draftId)?.until, this.browserGrants.get(draftId)?.until].filter(
+      (t): t is number => t !== undefined && t > now,
+    )
+    if (ends.length === 0) return null
+    return { until: new Date(Math.max(...ends)).toISOString() }
+  }
+
+  /** The person ends a draft's signed-in session and browser grant early, from the draft's page. */
   endAuthoringSession(draftId: string): void {
-    if (this.authoringSessions.delete(draftId)) this.emit('drafts-changed')
+    const lent = this.authoringSessions.delete(draftId)
+    const granted = this.endGrant(draftId)
+    if (lent || granted) this.emit('drafts-changed')
+  }
+
+  /** Ends a draft's browser grant and closes its signed-in browser at once. */
+  private endGrant(draftId: string): boolean {
+    if (!this.browserGrants.delete(draftId)) return false
+    this.authoring?.closeBrowser(draftId)
+    return true
   }
 
   /** An agent asks for one private address for its draft (docs/authoring-tools.md, R21). */
@@ -3696,6 +3796,7 @@ export class AppService {
   private scratchSessions(open: NonNullable<ServiceDeps['scratch']>): ScratchSessions {
     return new ScratchSessions({
       open: (draftId, rules) => open(draftId, rules, this.privateAllowance(draftId)),
+      grantFor: (draftId) => this.grantFor(draftId),
       signedIn: () => this.signedInDomains(),
       secretIn: (text) => this.knownSecretIn([text]),
       blocked: (host) => {
@@ -3716,6 +3817,8 @@ export class AppService {
    * the agent's, so its status and a decline's note go back to it.
    */
   private async submitDraft(request: SubmitRequest): Promise<SubmitOutcome> {
+    // The tools are written: the wide access they were built with ends now (docs/browser-grants.md).
+    if (this.endGrant(request.draftId)) this.emit('drafts-changed')
     const broker = this.approvalBroker
     const packages = this.packages
     if (broker === null || packages === null)

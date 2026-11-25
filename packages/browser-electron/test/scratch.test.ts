@@ -291,3 +291,78 @@ describe('the scratch browser', () => {
     await flush()
   })
 })
+
+describe('a signed-in scratch browser (a browser grant)', () => {
+  const ACCOUNT = `<!doctype html><html><head><title>Orders</title></head><body>
+    <h1>Your orders</h1><p>Order 1234, delivered.</p><a href="/account/orders/1234">Details</a>
+    <form action="/search"><input name="q"></form></body></html>`
+
+  async function openSignedIn(html: string, url = 'https://shop.example.com/account') {
+    const platform = new FakePlatform()
+    const live = platform.session('persist:tool:shop')
+    live.cookies = [
+      { name: 'sid', value: 'session-value-123456', domain: '.shop.example.com', path: '/', sameSite: 'lax' },
+      {
+        name: 'other',
+        value: 'not-for-this-site-999',
+        domain: '.elsewhere.test',
+        path: '/',
+        sameSite: 'lax',
+      },
+    ]
+    const frame = jsdomFrame(html.replace('Order 1234', 'Order 1234 session-value-123456'), url)
+    platform.makeSurface = (partition) => new FakeSurface(partition, [frame as unknown as FakeFrame])
+    const r = rules({ signedIn: { adapterId: 'shop', cookieDomains: ['shop.example.com'] } })
+    const browser = await ScratchBrowser.open({ platform, partition: 'scratch:dr-abcdefghij', rules: r })
+    const session = platform.session('scratch:dr-abcdefghij')
+    return { browser, session, live }
+  }
+
+  it('starts with the adapter’s cookies for its own domains only, copied one way, and never shows them', async () => {
+    const { browser, session, live } = await openSignedIn(ACCOUNT)
+    expect(session.setCalls.map((c) => c.name)).toEqual(['sid'])
+    expect(live.setCalls).toEqual([])
+    const snap = await browser.snapshot()
+    const text = snap.nodes.map((n) => n.text).join(' ')
+    expect(text).toContain('Your orders')
+    expect(text).not.toContain('session-value-123456')
+    expect(text).toContain('[cookie]')
+  })
+
+  it('lets only reads leave: GET, HEAD and OPTIONS', async () => {
+    const { browser, session } = await openSignedIn(ACCOUNT)
+    const filter = session.filter as NonNullable<typeof session.filter>
+    expect(await filter({ url: 'https://shop.example.com/api/o', method: 'GET', resourceType: 'xhr' })).toBe(
+      true,
+    )
+    expect(await filter({ url: 'https://shop.example.com/api/o', method: 'HEAD', resourceType: 'xhr' })).toBe(
+      true,
+    )
+    expect(
+      await filter({ url: 'https://shop.example.com/api/cart', method: 'POST', resourceType: 'xhr' }),
+    ).toBe(false)
+    expect(
+      await filter({ url: 'https://shop.example.com/api/cart', method: 'delete', resourceType: 'fetch' }),
+    ).toBe(false)
+    expect(browser.writesRefused).toBe(2)
+  })
+
+  it('closes on a page with a card or password field, or a payment address, and says why', async () => {
+    const card = await openSignedIn(
+      '<html><body><form><input name="cardnumber" autocomplete="cc-number"></form></body></html>',
+    )
+    await expect(card.browser.snapshot()).rejects.toThrow(/looks like a payment page/)
+    expect(card.browser.isClosed()).toBe(true)
+
+    const password = await openSignedIn('<html><body><input type="password" name="new"></body></html>')
+    await expect(password.browser.query('input')).rejects.toThrow(/password or security page/)
+
+    const checkout = await openSignedIn(ACCOUNT, 'https://shop.example.com/checkout/review')
+    await expect(checkout.browser.document()).rejects.toThrow(/payment page/)
+  })
+
+  it('leaves a signed-out browser alone: a password field there is just a field', async () => {
+    const { browser } = await open()
+    await expect(browser.navigate('https://finance.example.com/')).resolves.toBeDefined()
+  })
+})

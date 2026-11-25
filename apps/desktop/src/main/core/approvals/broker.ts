@@ -51,6 +51,7 @@ export const AGENT_KINDS: readonly ApprovalKind[] = [
   'tool-enable',
   'setting',
   'authoring-session',
+  'browser-grant',
   'private-network',
 ]
 /** Kinds only the person may ask for, at the Mac. */
@@ -663,7 +664,7 @@ export class ApprovalBroker {
             // brings none of them back.
             draft.evidence = draft.evidence.filter((e) => {
               const kind = parseRequestText(e.requestText)?.request.kind
-              return kind !== 'remote-client' && kind !== 'authoring-session'
+              return kind !== 'remote-client' && kind !== 'authoring-session' && kind !== 'browser-grant'
             })
           },
           { tightening: true },

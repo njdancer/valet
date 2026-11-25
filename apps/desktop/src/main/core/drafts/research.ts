@@ -57,6 +57,15 @@ export interface ResearchDeps {
   readonly signedIn: () => Promise<ReadonlyMap<string, readonly string[]>>
   /** True when the text holds a login secret or session value Valet knows of: never typed. */
   readonly secretIn: (text: string) => Promise<boolean>
+  /**
+   * The draft's running browser grant (docs/browser-grants.md), if any: the browser then opens
+   * signed in with the installed adapter's session, read only, until `until`.
+   */
+  readonly grantFor?: (draftId: string) => {
+    readonly adapterId: string
+    readonly cookieDomains: readonly string[]
+    readonly until: number
+  } | null
   /** The site refused a scratch browser: trip its breaker, tell the person. */
   readonly blocked: (host: string, status: number) => void
   readonly notify: (text: string) => void
@@ -71,6 +80,8 @@ interface Open {
   readonly handle: ScratchHandle
   readonly client: string
   idle: unknown
+  /** A signed-in browser closes when its grant ends. */
+  ends: unknown
 }
 
 /** A refusal for the agent; the authoring layer turns it into AuthoringRefusal. */
@@ -159,6 +170,9 @@ export class ScratchSessions {
     manifest: AdapterManifest,
   ): Promise<ScratchHandle> {
     const domains = draftDomains(manifest)
+    const grant = this.deps.grantFor?.(draftId) ?? null
+    const granted =
+      grant !== null && grant.adapterId === adapterId && grant.until > this.deps.now() ? grant : null
     const signedIn = await this.deps.signedIn()
     const refused = new Set<string>()
     let ownSignedIn = false
@@ -175,18 +189,29 @@ export class ScratchSessions {
       pace: (host) => this.pace(siteDomain(host)),
       blocked: (host, status) => this.deps.blocked(host, status),
       mayType: async (text) => !(await this.deps.secretIn(text).catch(() => true)),
+      ...(granted === null
+        ? {}
+        : { signedIn: { adapterId: granted.adapterId, cookieDomains: [...granted.cookieDomains] } }),
     }
     const handle = await this.deps.open(draftId, rules)
-    const entry: Open = { handle, client, idle: null }
+    const entry: Open = { handle, client, idle: null, ends: null }
+    const timers = this.deps.timers
+    if (granted !== null && timers !== undefined)
+      entry.ends = timers.setTimeout(() => handle.close(), Math.max(0, granted.until - this.deps.now()))
     this.open.set(draftId, entry)
     handle.onClosed(() => {
       const timers = this.deps.timers
       if (entry.idle !== null && timers !== undefined) timers.clearTimeout(entry.idle)
+      if (entry.ends !== null && timers !== undefined) timers.clearTimeout(entry.ends)
       if (this.open.get(draftId) === entry) this.open.delete(draftId)
     })
     this.touch(draftId)
+    if (granted !== null)
+      this.deps.notify(
+        `${clientName} is browsing ${domains[0] ?? 'the site'} signed in, read only. End it from the draft’s page.`,
+      )
     // A site the person is signed in to scores this Mac's address; a signed-out look still counts.
-    if (ownSignedIn)
+    else if (ownSignedIn)
       this.deps.notify(`${clientName} is looking at ${domains[0] ?? 'the site'} in a signed-out browser.`)
     return handle
   }

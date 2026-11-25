@@ -19,6 +19,7 @@ const ACTIONS: Readonly<Record<ApprovalKind, string>> = {
   'remote-client': 'let a remote agent connect',
   setting: 'change a setting',
   'authoring-session': 'let an agent use a signed-in session',
+  'browser-grant': 'let an agent browse a site signed in',
   'private-network': "let an agent's scratch browser reach your home network",
   'irreversible-call': "confirm something that can't be undone",
   resume: 'resume Valet',
@@ -57,6 +58,11 @@ function detail(serialized: SerializedRequest): string {
       return request.subject.capabilities?.includes('ask-for-changes') === true
         ? ' and ask for changes, such as new adapters'
         : ''
+    case 'browser-grant':
+      return ` (${request.subject.origins
+        .map(hostOf)
+        .filter((h) => h !== null)
+        .join(', ')}, read only, ${request.subject.minutes} minutes)`
     case 'private-network': {
       const { address, port } = request.subject
       return ` (${address}${port === null ? '' : ` port ${port}`})`

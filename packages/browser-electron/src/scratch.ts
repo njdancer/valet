@@ -5,6 +5,8 @@
 // pages for the agent through the scripts in scratch-scripts.ts.
 
 import type { Socket } from 'node:net'
+import { cookieSetDetails, cookiesForDomains } from './cookies'
+import { partitionName } from './partitions'
 import type {
   BrowserPlatform,
   BrowserSurface,
@@ -25,7 +27,11 @@ import {
   snapshotScript,
 } from './scratch-scripts'
 import { focusScript, pointScript } from './scripts'
+import { type PageField, pageFieldsScript, sensitivePage } from './sensitive-page'
 import { chromeUserAgentOverride, cleanChromeUserAgent, LANGUAGES } from './user-agent'
+
+/** What a signed-in (granted) browser may send: reads only. */
+const READ_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD', 'OPTIONS'])
 
 export const SCRATCH_LIMITS = {
   requestsPerLoad: 300,
@@ -54,6 +60,13 @@ export interface ScratchRules {
   readonly blocked: (host: string, status: number) => void
   /** False for text the browser must not type (a login secret or session value Valet knows). */
   readonly mayType: (text: string) => boolean | Promise<boolean>
+  /**
+   * A browser grant (docs/browser-grants.md): the browser starts with the installed adapter's
+   * tool-partition cookies on these domains, copied in one way, and is read only. Only GET, HEAD
+   * and OPTIONS requests leave it, and a page that looks like payment, bank, password or security
+   * settings closes the browser. Cookie values never reach the agent, as always.
+   */
+  readonly signedIn?: { readonly adapterId: string; readonly cookieDomains: readonly string[] }
 }
 
 export interface ScratchOptions {
@@ -108,6 +121,7 @@ export class ScratchBrowser {
   private refusal: string | null = null
   /** Main-frame requests seen, so settle() can tell an input started a navigation. */
   private mainFrames = 0
+  private refusedWrites = 0
 
   private constructor(
     private readonly options: ScratchOptions,
@@ -128,6 +142,20 @@ export class ScratchBrowser {
     session.onCookieChanged((cookie) => {
       if (cookie.value.length >= 6) self?.cookieValues.add(cookie.value)
     })
+    // Seeded before the first request, and never copied back.
+    const seeded: string[] = []
+    const grant = options.rules.signedIn
+    if (grant !== undefined) {
+      try {
+        const live = platform.session(partitionName('tool', grant.adapterId))
+        for (const cookie of cookiesForDomains(await live.getCookies(), grant.cookieDomains)) {
+          if (cookie.value.length >= 6) seeded.push(cookie.value)
+          await session.setCookie(cookieSetDetails(cookie))
+        }
+      } catch {
+        throw new ScratchError('Valet could not sign the browser in.')
+      }
+    }
     session.watchResponses((response) => {
       if (self === null || response.resourceType !== 'mainFrame') return
       const html = (response.contentType ?? '').includes('html')
@@ -148,6 +176,7 @@ export class ScratchBrowser {
     await session.useProxy(proxy)
     const surface = platform.openSurface(options.partition)
     const browser = new ScratchBrowser(options, session, surface, proxy)
+    for (const value of seeded) browser.cookieValues.add(value)
     self = browser
     try {
       const { chromeVersion, os, systemVersion, arch } = platform
@@ -217,6 +246,8 @@ export class ScratchBrowser {
     if (result === null || typeof result !== 'object') throw new ScratchError('The page could not be read.')
     if (result.error === 'invalid-selector') throw new ScratchError('That root isn’t a valid selector.')
     if (result.error === 'not-found') throw new ScratchError('Nothing on the page matches that root.')
+    if (this.options.rules.signedIn !== undefined)
+      await this.guardPage(String(result.url ?? this.surface.url()))
     this.refs.clear()
     const nodes = (Array.isArray(result.nodes) ? result.nodes : []).map((node, index) => {
       const ref = `e${index + 1}`
@@ -243,6 +274,7 @@ export class ScratchBrowser {
     selector: string,
   ): Promise<{ readonly count: number; readonly matches: readonly QueryMatch[] }> {
     this.open()
+    if (this.options.rules.signedIn !== undefined) await this.guardPage(this.surface.url())
     const raw = (await this.run(queryScript(selector))) as {
       error?: string
       count?: number
@@ -329,6 +361,7 @@ export class ScratchBrowser {
   /** The current document, cookie values replaced: a page fixture. */
   async document(): Promise<string> {
     this.open()
+    if (this.options.rules.signedIn !== undefined) await this.guardPage(this.surface.url())
     const html = await this.run(documentScript())
     if (typeof html !== 'string') throw new ScratchError('The page could not be read.')
     return this.scrub(html)
@@ -336,6 +369,33 @@ export class ScratchBrowser {
 
   url(): string {
     return this.scrub(this.surface.url())
+  }
+
+  /** Requests a signed-in browser refused for not being reads, since it opened. */
+  get writesRefused(): number {
+    return this.refusedWrites
+  }
+
+  /** A signed-in page the agent must not see: the browser closes and says why. */
+  private async guardPage(url: string): Promise<void> {
+    const raw = (await this.run(pageFieldsScript).catch(() => null)) as {
+      readonly url?: unknown
+      readonly fields?: unknown
+    } | null
+    const list = Array.isArray(raw?.fields) ? (raw.fields as Partial<PageField>[]) : []
+    const fields = list.map((f) => ({
+      type: String(f.type ?? ''),
+      autocomplete: String(f.autocomplete ?? ''),
+      name: String(f.name ?? ''),
+    }))
+    const where = typeof raw?.url === 'string' ? raw.url : url
+    const what = sensitivePage(where, fields)
+    if (what === null) return
+    this.close()
+    throw new ScratchError(
+      `Valet closed the signed-in browser: this looks like ${what}, which a browser grant never shows. ` +
+        'Open it again with valet_browser_open and stay away from that page.',
+    )
   }
 
   /** Replaces every cookie value the partition has held, so none reaches the agent or a fixture. */
@@ -352,6 +412,11 @@ export class ScratchBrowser {
     if (url.protocol === 'data:' || url.protocol === 'blob:' || url.protocol === 'about:') return true
     if (url.protocol !== 'https:' && url.protocol !== 'wss:') return false
     if (!this.options.rules.mayRequest(url)) return false
+    // Read only: nothing that could change something on the site leaves a signed-in browser.
+    if (this.options.rules.signedIn !== undefined && !READ_METHODS.has(request.method.toUpperCase())) {
+      this.refusedWrites++
+      return false
+    }
     if (request.resourceType === 'webSocket') {
       const page = parseUrl(this.surface.url())
       if (page === null || page.hostname !== url.hostname) return false

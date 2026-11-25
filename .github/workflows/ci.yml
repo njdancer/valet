@@ -327,6 +327,10 @@ jobs:
           print(next(d["udid"] for k in ios for d in devices[k] if d["name"].startswith("iPhone")))')
           echo "SIMULATOR=$id" >> "$GITHUB_ENV"
           xcrun simctl list devices | grep "$id"
+          # Booted before the tests: a cold boot during the first test's launch timed out on a busy
+          # runner ("Timed out while launching application via Xcode").
+          xcrun simctl boot "$id" || true
+          xcrun simctl bootstatus "$id" -b
       - name: journeys on the simulator (fakes build)
         if: needs.changes.outputs.ios_app == 'true'
         # The screenshots for review only take pictures, so they wait for the full suite or the

@@ -1092,6 +1092,52 @@ describe('live trials', () => {
       )
     }, 60_000)
 
+    it('asks for a browser grant with the agent’s reason, for an installed site the person is signed in to', async () => {
+      const grants: unknown[] = []
+      const grantDeps: Partial<AuthoringDeps> = {
+        ...deps,
+        // Only its presence counts here: the browser itself is research.test.ts's.
+        research: {} as NonNullable<AuthoringDeps['research']>,
+        askGrant: async (request) => {
+          grants.push(request)
+          return { ok: true, requestId: 'g'.repeat(22), ref: 'G7XY', expiresAt: '2026-11-13T00:00:00.000Z' }
+        },
+      }
+      const out = await trialHarness(item, { deps: grantDeps, installed: INSTALLED })
+      await expect(
+        out.authoring.requestGrant(AGENT, out.draftId, 30, 'To see my orders page'),
+      ).rejects.toThrow(/isn’t signed in to Shop/)
+      const h = await trialHarness(item, {
+        deps: grantDeps,
+        installed: INSTALLED,
+        signedIn: new Map([['shop', ['example.com']]]),
+      })
+      await expect(h.authoring.requestGrant(AGENT, h.draftId, 30, '  ')).rejects.toThrow(/why you need/)
+      const report = await h.authoring.requestGrant(
+        AGENT,
+        h.draftId,
+        500,
+        'To build a tool  that lists my orders',
+      )
+      expect(report.tellThePerson).toMatch(/browse Shop signed in as you, read only, for 120 minutes/)
+      expect(grants.at(-1)).toMatchObject({
+        adapterId: 'shop',
+        origins: ['https://www.example.com'],
+        minutes: 120,
+        purpose: 'To build a tool that lists my orders',
+      })
+      const cloud: ClientIdentity = { origin: 'remote', clientId: 'rcagent' }
+      const { draft } = await h.authoring.createDraft(cloud, {
+        adapterId: 'shop',
+        from: 'installed',
+        name: 'Shop',
+      })
+      await expect(h.authoring.requestGrant(cloud, draft.draftId, 30, 'To look around')).rejects.toThrow(
+        /for agents on the person’s Mac only/,
+      )
+      expect(grants).toHaveLength(1)
+    }, 60_000)
+
     it('gives a cloud agent no signed-in session or trial, while its signed-out work goes on', async () => {
       const h = await trialHarness(item, {
         deps,

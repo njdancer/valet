@@ -208,6 +208,24 @@ const subjects = {
     })
     .strict(),
   /**
+   * A browser grant (docs/browser-grants.md): the draft's scratch browser runs signed in to the
+   * site for a while, so the agent can study the signed-in pages it is building tools for. Read
+   * only: nothing but page loads and reads reach the site. The agent never sees the password or
+   * the session; payment, password and security pages are closed on sight. Ends at `minutes`, when
+   * the person ends it, on lockdown, or when the draft built under it is installed.
+   */
+  'browser-grant': z
+    .object({
+      adapterId,
+      draftId: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/),
+      origins: z.array(origin).min(1).max(10),
+      /** The agent's own words for why, shown as theirs. */
+      purpose: displayText(200),
+      mode: z.literal('read'),
+      minutes: z.number().int().min(1).max(120),
+    })
+    .strict(),
+  /**
    * A draft's scratch browser or live trial reaching one private address (A's Private network
    * card, R21). Without it both refuse every private, loopback, link-local and tailnet address,
    * by relay.md's fetch rules. Lasts for one authoring session's length at most.
@@ -316,6 +334,7 @@ export const KIND_TIER: Readonly<Record<ApprovalKind, 'approve' | 'approve-each-
   'remote-client': 'approve',
   setting: 'approve',
   'authoring-session': 'approve',
+  'browser-grant': 'approve',
   'private-network': 'approve',
   'irreversible-call': 'approve-each-use',
   resume: 'approve',
@@ -331,6 +350,7 @@ export const APPROVAL_TTL_MS: Readonly<Record<ApprovalKind, number>> = {
   'remote-client': 10 * 60_000,
   setting: 24 * 3600_000,
   'authoring-session': 30 * 60_000,
+  'browser-grant': 30 * 60_000,
   'private-network': 30 * 60_000,
   'irreversible-call': 2 * 60_000,
   resume: 10 * 60_000,
@@ -444,6 +464,7 @@ export const approvalRequestSchema = z
     requestOf('remote-client'),
     requestOf('setting'),
     requestOf('authoring-session'),
+    requestOf('browser-grant'),
     requestOf('private-network'),
     requestOf('irreversible-call'),
     requestOf('resume'),

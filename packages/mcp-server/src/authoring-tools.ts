@@ -407,6 +407,7 @@ export interface Authoring {
     signedIn?: boolean,
   ): Promise<TrialReport>
   requestSession(viewer: ClientIdentity, draftId: string, minutes: number): Promise<AskReport>
+  requestGrant(viewer: ClientIdentity, draftId: string, minutes: number, purpose: string): Promise<AskReport>
 }
 
 // ---------- Tools ----------
@@ -982,6 +983,34 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
         s.viewer,
         args['draftId'] as string,
         typeof args['minutes'] === 'number' ? args['minutes'] : 30,
+      ),
+  },
+  {
+    name: 'valet_request_signed_in_browser',
+    title: 'Ask to browse a site signed in',
+    description:
+      'Asks the person for a browser grant: your draft’s scratch browser (valet_browser_open and the other ' +
+      'valet_browser_ tools) opens signed in to the installed adapter’s site as the person, read only, for up to ' +
+      '120 minutes, so you can study the signed-in pages you are building tools for. You never see the password ' +
+      'or the session: cookie values are replaced with [cookie]. Only page loads and reads (GET, HEAD) reach the ' +
+      'site; anything that would change something is refused. Payment, bank, password and security pages close ' +
+      'the browser. Say why in `purpose`, in a plain sentence the person reads as yours. It ends at its time, ' +
+      'when the person ends it, or when your draft is installed: build narrow tools, then submit them. Tell the ' +
+      'person the sentence in tellThePerson. Once approved, close and open the scratch browser again.',
+    input: z.object({
+      draftId: draftIdInput,
+      purpose: z.string().min(3).max(200),
+      minutes: z.number().int().min(1).max(120).default(30),
+    }),
+    output: askReportSchema,
+    needs: 'ask',
+    annotations: { ...EDITS, idempotentHint: false },
+    run: (a, args, s) =>
+      a.requestGrant(
+        s.viewer,
+        args['draftId'] as string,
+        typeof args['minutes'] === 'number' ? args['minutes'] : 30,
+        args['purpose'] as string,
       ),
   },
 ]

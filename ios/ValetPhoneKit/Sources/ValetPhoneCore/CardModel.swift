@@ -258,6 +258,16 @@ public enum CardModel {
       row("Opens", "your signed-in \(s.adapterId) for \(s.minutes) minutes", .strong)
       row("On", s.origins.joined(separator: ", "), .strong)
       details.append(CardDetail(label: "Draft", value: s.draftId, isClaim: false))
+    case let .browserGrant(s):
+      kindWord = "Browser grant"
+      title = "Let \(agent.name) browse \(site(s.adapterId)) signed in, read only"
+      faceIDReason = "Let an agent browse \(site(s.adapterId)) signed in"
+      risks.append((.caution, "\(agent.name) can read your signed-in pages on \(s.origins.joined(separator: ", ")) for \(s.minutes) minutes."))
+      risks.append((.neutral, "Only reads reach the site. Payment, password and security pages close. It never sees your password."))
+      row("Reads", "your signed-in \(site(s.adapterId)) for \(s.minutes) minutes", .caution)
+      row("On", s.origins.joined(separator: ", "), .caution)
+      details.append(CardDetail(label: "Its reason", value: s.purpose, isClaim: true))
+      details.append(CardDetail(label: "Draft", value: s.draftId, isClaim: false))
     case let .privateNetwork(s):
       kindWord = "Private network"
       let target = s.port.map { "\(s.address):\($0)" } ?? s.address

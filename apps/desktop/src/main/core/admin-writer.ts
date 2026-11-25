@@ -705,6 +705,7 @@ const TITLE_BY_KIND: Readonly<Record<ApprovalKind, string>> = {
   'remote-client': 'Let a remote agent connect',
   setting: 'Change a setting',
   'authoring-session': 'Use a signed-in session',
+  'browser-grant': 'Browse a site signed in',
   'private-network': 'Reach the home network',
   'irreversible-call': 'Confirm a call',
   resume: 'Resume Valet',
