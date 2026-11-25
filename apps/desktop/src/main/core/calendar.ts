@@ -143,6 +143,8 @@ export class EventKitService implements NativeTools {
     else if (kit === null || !this.current.enabled)
       result = { status: 'failed', stage: 'config', errorClass: 'not-found' }
     else {
+      // A calendar or list added since the last call shows now; an older reader can't, which is fine.
+      await kit.refresh().catch(() => undefined)
       const deps = {
         kit,
         allowed: () => new Set(this.current.enabled ? this.current.calendars : []),
@@ -193,6 +195,7 @@ export class EventKitService implements NativeTools {
     if (access === 'not-determined' || access === 'write-only') return off('needs-access')
     if (access !== 'full') return off('denied')
     try {
+      await this.deps.kit.refresh().catch(() => undefined)
       const all = await this.deps.kit.calendars(this.kind)
       const allowed = new Set(settings.calendars)
       return {

@@ -38,8 +38,12 @@ async function listening(path: string): Promise<void> {
 function fakeKit(access: { value: EventKitAccess }) {
   const saved: SaveReminder[] = []
   const asked: string[] = []
+  const refreshed = { count: 0 }
   const kit: EventKit = {
     access: async () => access.value,
+    refresh: async () => {
+      refreshed.count += 1
+    },
     requestAccess: async (kind) => {
       asked.push(kind)
       return access.value
@@ -94,13 +98,13 @@ function fakeKit(access: { value: EventKitAccess }) {
       }
     },
   }
-  return { kit, saved, asked }
+  return { kit, saved, asked, refreshed }
 }
 
 async function setup(app: EventKitApp = 'reminders') {
   const socketPath = join(root, 'helper.sock')
   const access = { value: 'full' as EventKitAccess }
-  const { kit, saved, asked } = fakeKit(access)
+  const { kit, saved, asked, refreshed } = fakeKit(access)
   const audited: { call: ToolCall; result: ToolCallResult }[] = []
   let started = 0
   let changed = 0
@@ -134,6 +138,7 @@ async function setup(app: EventKitApp = 'reminders') {
     access,
     saved,
     asked,
+    refreshed,
     audited,
     opened,
     socketPath,
@@ -198,7 +203,10 @@ describe('EventKitService', () => {
     const s = await setup()
     await s.service.update({ enabled: true, calendars: ['L1'], writes: true })
     const signal = new AbortController().signal
+    const before = s.refreshed.count
     const found = await s.service.call(call('search', {}), signal)
+    // Each agent call sees lists added since the last one; nothing polls in the background.
+    expect(s.refreshed.count).toBe(before + 1)
     expect(found).toMatchObject({ status: 'ok' })
     expect(await s.service.call(call('search', { listIds: ['L2'] }), signal)).toMatchObject({
       errorClass: 'not-found',
