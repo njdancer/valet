@@ -165,6 +165,7 @@ async function setup(
     mailReader?: ServiceDeps['mailReader']
     mail?: ServiceDeps['mail']
     raw?: ServiceDeps['raw']
+    scratch?: ServiceDeps['scratch']
   } = {},
 ) {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'sa-service-'))
@@ -252,6 +253,7 @@ async function setup(
     ...(options.mailReader === undefined ? {} : { mailReader: options.mailReader }),
     ...(options.mail === undefined ? {} : { mail: options.mail }),
     ...(options.raw === undefined ? {} : { raw: options.raw }),
+    ...(options.scratch === undefined ? {} : { scratch: options.scratch }),
     createDriver: async (_manifest, reporters) => {
       driver.reporters = reporters
       return driver
@@ -2650,6 +2652,66 @@ describe('remote access', () => {
     expect((await (await remoteClient(port, agent.token)).listTools()).tools).toEqual([])
     await s.api.remote.setTool('mail', 'search', false)
     expect(s.service.remote.status().tools).toEqual([])
+  })
+
+  it('offers the agents’ browser to cloud agents, audits each call, and closes it on pause', async () => {
+    const opened: { key: string; closed: boolean; mayPrivate: boolean }[] = []
+    const s = await setup({
+      scratch: async (key, rules, allowPrivate) => {
+        const entry = { key, closed: false, mayPrivate: allowPrivate('10.0.0.1', 443) }
+        opened.push(entry)
+        const listeners: (() => void)[] = []
+        // The rules the service gave: a site signed in through Valet is never reached.
+        expect(rules.mayNavigate(new URL('https://news.example.com/'))).toBe(true)
+        expect(await rules.mayType('weather')).toBe(true)
+        rules.blocked('news.example.com', 429)
+        return {
+          navigate: async (url: string) => ({ url, title: 'News', nodes: [], cut: false }),
+          click: async () => ({ url: '', title: '', nodes: [], cut: false }),
+          type: async () => ({ url: '', title: '', nodes: [], cut: false }),
+          snapshot: async () => ({ url: '', title: '', nodes: [], cut: false }),
+          query: async () => ({ count: 0, matches: [] }),
+          entries: () => [],
+          body: async () => null,
+          document: async () => '',
+          isClosed: () => entry.closed,
+          onClosed: (l: () => void) => void listeners.push(l),
+          close: () => {
+            entry.closed = true
+            for (const l of listeners.splice(0)) l()
+          },
+        }
+      },
+    })
+    const tools = (await s.api.remote.setup()).tools.filter((t) => t.adapterId === 'browser')
+    expect(tools.map((t) => [t.tool, t.enabled])).toEqual([
+      ['open', false],
+      ['snapshot', false],
+      ['click', false],
+      ['type', false],
+      ['query', false],
+      ['close', false],
+    ])
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    const port = Number(new URL(s.service.remote.status().url as string).port)
+    const agent = approvedClient(s, ['browser.open'])
+    await s.api.remote.setTool('browser', 'open', true)
+    const client = await remoteClient(port, agent.token)
+    expect((await client.listTools()).tools.map((t) => t.name)).toEqual(['browser_open'])
+    const result = await client.callTool({
+      name: 'browser_open',
+      arguments: { url: 'https://news.example.com/' },
+    })
+    expect(result.isError).not.toBe(true)
+    expect(result.structuredContent).toMatchObject({ page: { title: { fromSite: 'News' } }, problem: null })
+    // Public addresses only, whatever a draft was allowed.
+    expect(opened).toEqual([{ key: 'agent-browser', closed: false, mayPrivate: false }])
+    expect(
+      readAudit(s.paths.audit).some((e) => e.type === 'tool-called' && e['adapterId'] === 'browser'),
+    ).toBe(true)
+    await s.api.app.setPaused(true)
+    expect(opened[0]?.closed).toBe(true)
   })
 
   it('records each message an agent moves in Mail, and the person puts it back once', async () => {
