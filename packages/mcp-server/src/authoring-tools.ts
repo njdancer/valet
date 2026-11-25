@@ -776,8 +776,9 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
   },
   {
     name: 'valet_browser_open',
-    title: 'Open a page in the draft’s scratch browser',
+    title: 'Draft: open a page in the scratch browser',
     description:
+      'Only for building or repairing a Valet adapter draft; to just use the web, use browser_open. ' +
       'Opens https `url` in your draft’s scratch browser and returns what is on the page: text and the ' +
       'things you can click or type into, each with a ref. The browser is signed out and kept in memory ' +
       'only, so it holds nothing of the person’s. It opens pages only under the domains in your draft’s ' +
@@ -791,8 +792,9 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
   },
   {
     name: 'valet_browser_close',
-    title: 'Close the scratch browser',
+    title: 'Draft: close the scratch browser',
     description:
+      'Only for building or repairing a Valet adapter draft; to just use the web, use browser_open. ' +
       'Closes your draft’s scratch browser, so another of your drafts can open one. It closes by itself ' +
       'after a while unused.',
     input: z.object({ draftId: draftIdInput }),
@@ -803,8 +805,9 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
   },
   {
     name: 'valet_browser_click',
-    title: 'Click in the scratch browser',
+    title: 'Draft: click in the scratch browser',
     description:
+      'Only for building or repairing a Valet adapter draft; to just use the web, use browser_open. ' +
       'Clicks an element of the open page, by a ref from the last snapshot or a CSS selector, and returns ' +
       'the page after it settles. A form that posts doesn’t go anywhere here.',
     input: z.object({
@@ -822,8 +825,9 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
   },
   {
     name: 'valet_browser_type',
-    title: 'Type in the scratch browser',
+    title: 'Draft: type in the scratch browser',
     description:
+      'Only for building or repairing a Valet adapter draft; to just use the web, use browser_open. ' +
       'Types literal text into a field of the open page (a search box, say), by ref or selector. Never into a ' +
       'password or one-time-code field, and the browser has no logins to type.',
     input: z.object({
@@ -843,9 +847,10 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
   },
   {
     name: 'valet_browser_snapshot',
-    title: 'Read the scratch browser’s page',
+    title: 'Draft: read the scratch browser’s page',
     description:
-      'The open page again: text and interactive elements with refs, without input values, scripts or hidden ' +
+      'Only for building or repairing a Valet adapter draft; to just use the web, use browser_open. ' +
+      'The draft’s open page again: text and interactive elements with refs, without input values, scripts or hidden ' +
       'nodes. `root` limits it to one part of the page.',
     input: z.object({
       draftId: draftIdInput,
@@ -863,8 +868,9 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
   },
   {
     name: 'valet_browser_query',
-    title: 'Test a selector in the scratch browser',
+    title: 'Draft: test a selector in the scratch browser',
     description:
+      'Only for building or repairing a Valet adapter draft; to just use the web, use browser_open. ' +
       'How many elements of the open page a CSS selector matches, and a short look at the first ten.',
     input: z.object({ draftId: draftIdInput, selector: z.string().min(1).max(500) }),
     output: browserQuerySchema,
