@@ -6,7 +6,14 @@
 // (Nick, 2026-11-24: calendars aren't a store of record; every call is audited). No tool adds
 // attendees.
 
-import type { ErrorClass, NeedsUserReason, Stage, ToolDeclaration } from '@valet/core'
+import {
+  type ErrorClass,
+  type InputIssue,
+  issueFromZod,
+  type NeedsUserReason,
+  type Stage,
+  type ToolDeclaration,
+} from '@valet/core'
 import { z } from 'zod'
 import {
   type EventInfo,
@@ -29,7 +36,13 @@ export const CALENDAR_DATA_NOTE =
 
 export type EventKitToolResult =
   | { readonly status: 'ok'; readonly output: unknown }
-  | { readonly status: 'failed'; readonly stage: Stage; readonly errorClass: ErrorClass }
+  | {
+      readonly status: 'failed'
+      readonly stage: Stage
+      readonly errorClass: ErrorClass
+      /** Why the input was refused, as codes (core's input-issue.ts). */
+      readonly issue?: InputIssue
+    }
   | { readonly status: 'needsUser'; readonly reason: NeedsUserReason }
 
 export interface EventKitToolDef {
@@ -294,6 +307,7 @@ export const reminderInputs = {
       notes: notes.optional(),
       due: when.optional().describe('A day, or an ISO date-time to be reminded then.'),
       priority: z.enum(PRIORITIES).optional(),
+      url: url.optional(),
     })
     .strict(),
   update: z
@@ -305,6 +319,7 @@ export const reminderInputs = {
       due: when.nullable().optional().describe('null clears it.'),
       priority: z.enum(PRIORITIES).optional(),
       completed: z.boolean().optional().describe('true completes it, false opens it again.'),
+      url: url.nullable().optional().describe('null clears it.'),
     })
     .strict(),
   delete: z
@@ -377,13 +392,21 @@ export function reminderTools(options: { readonly writes: boolean }): readonly E
 
 // ---------- Calls ----------
 
-const fail = (stage: Stage, errorClass: ErrorClass): EventKitToolResult => ({
-  status: 'failed',
-  stage,
-  errorClass,
-})
+const fail = (stage: Stage, errorClass: ErrorClass, issue?: InputIssue): EventKitToolResult =>
+  issue === undefined
+    ? { status: 'failed', stage, errorClass }
+    : { status: 'failed', stage, errorClass, issue }
 
-function failure(error: unknown): EventKitToolResult {
+/** An input refused by this file's own checks, saying where and why. */
+const refuse = (key: string, reason: InputIssue['reason'], limit?: number): EventKitToolResult =>
+  fail(
+    'tool-input',
+    'invalid',
+    limit === undefined ? { path: [key], reason } : { path: [key], reason, limit },
+  )
+
+/** `idKey`: the input naming the calendar or list, for a read-only one. */
+function failure(error: unknown, idKey: string): EventKitToolResult {
   if (error instanceof EventKitError) {
     switch (error.code) {
       case 'denied':
@@ -394,6 +417,7 @@ function failure(error: unknown): EventKitToolResult {
       case 'invalid':
         return fail('tool-input', 'invalid')
       case 'read-only':
+        return refuse(idKey, 'read-only')
       case 'has-attendees':
         return fail('tool-input', 'not-granted')
       case 'unavailable':
@@ -404,7 +428,9 @@ function failure(error: unknown): EventKitToolResult {
 }
 
 function clip(value: string | null, max: number): string | null {
-  return value === null || value.length <= max ? value : `${value.slice(0, max)}…`
+  // EventKit reads cleared notes back as "", which means none.
+  if (value === null || value === '') return null
+  return value.length <= max ? value : `${value.slice(0, max)}…`
 }
 
 /** A recurring event's occurrence travels in its id: `<event id>#<start in ms>`. */
@@ -508,7 +534,7 @@ export async function callCalendarTool(
   const name = tool as CalendarToolName
   if (CALENDAR_WRITES.includes(name) && !deps.writes()) return fail('tool-input', 'not-found')
   const parsed = calendarInputs[name].safeParse(input)
-  if (!parsed.success) return fail('tool-input', 'invalid')
+  if (!parsed.success) return fail('tool-input', 'invalid', issueFromZod(parsed.error.issues[0], input))
   try {
     switch (name) {
       case 'calendars': {
@@ -528,7 +554,8 @@ export async function callCalendarTool(
         const q = calendarInputs.events.parse(input)
         const start = q.from === undefined ? startOfToday(deps.now()) : msOf(parseWhen(q.from) as HelperTime)
         const end = q.to === undefined ? start + 7 * DAY_MS : msOf(parseWhen(q.to) as HelperTime, true)
-        if (end <= start || end - start > MAX_RANGE_DAYS * DAY_MS) return fail('tool-input', 'invalid')
+        if (end <= start) return refuse('to', 'before-start')
+        if (end - start > MAX_RANGE_DAYS * DAY_MS) return refuse('to', 'too-large', MAX_RANGE_DAYS)
         const calendars = chosen(deps, q.calendarIds)
         if (calendars === null) return fail('tool-input', 'not-found')
         const limit = q.limit ?? DEFAULT_RESULTS
@@ -538,7 +565,9 @@ export async function callCalendarTool(
           calendars,
           startMs: start,
           endMs: end,
-          limit: q.text === undefined ? limit : 500,
+          // The helper looks for the words before its limit, so no match is cut off (issue #9).
+          ...(q.text === undefined ? {} : { text: q.text }),
+          limit,
         })
         const writable = new Set(
           (await visibleCalendars(deps, 'events')).filter((c) => c.writable).map((c) => c.id),
@@ -559,9 +588,9 @@ export async function callCalendarTool(
         const q = calendarInputs.create_event.parse(input)
         const start = parseWhen(q.start) as HelperTime
         const end = parseWhen(q.end) as HelperTime
-        if ('day' in start !== 'day' in end) return fail('tool-input', 'invalid')
+        if ('day' in start !== 'day' in end) return refuse('end', 'bad-format')
         if ('day' in start ? msOf(end, true) <= msOf(start) : msOf(end) <= msOf(start))
-          return fail('tool-input', 'invalid')
+          return refuse('end', 'before-start')
         const refused = mayChange(deps, q.calendarId)
         if (refused !== null) return refused
         const request: SaveEvent = defined({
@@ -584,7 +613,9 @@ export async function callCalendarTool(
         const start = q.start === undefined ? undefined : (parseWhen(q.start) as HelperTime)
         const end = q.end === undefined ? undefined : (parseWhen(q.end) as HelperTime)
         if (start !== undefined && end !== undefined && 'day' in start !== 'day' in end)
-          return fail('tool-input', 'invalid')
+          return refuse('end', 'bad-format')
+        if (start !== undefined && end !== undefined && msOf(end, 'day' in end) <= msOf(start))
+          return refuse('end', 'before-start')
         const refused = mayChange(deps, q.calendarId)
         if (refused !== null) return refused
         const ref = parseRef(q.id)
@@ -621,7 +652,7 @@ export async function callCalendarTool(
       }
     }
   } catch (error) {
-    return failure(error)
+    return failure(error, 'calendarId')
   }
 }
 
@@ -634,7 +665,7 @@ export async function callReminderTool(
   const name = tool as ReminderToolName
   if (REMINDER_WRITES.includes(name) && !deps.writes()) return fail('tool-input', 'not-found')
   const parsed = reminderInputs[name].safeParse(input)
-  if (!parsed.success) return fail('tool-input', 'invalid')
+  if (!parsed.success) return fail('tool-input', 'invalid', issueFromZod(parsed.error.issues[0], input))
   try {
     switch (name) {
       case 'lists': {
@@ -661,14 +692,15 @@ export async function callReminderTool(
         const dueStart = q.dueAfter === undefined ? undefined : msOf(parseWhen(q.dueAfter) as HelperTime)
         const dueEnd = q.dueBefore === undefined ? undefined : msOf(parseWhen(q.dueBefore) as HelperTime)
         if (dueStart !== undefined && dueEnd !== undefined && dueEnd <= dueStart)
-          return fail('tool-input', 'invalid')
+          return refuse('dueBefore', 'before-start')
         const found = await deps.kit.reminders(
           defined({
             calendars: lists,
             completed: status === 'all' ? null : status === 'done',
             dueStartMs: dueStart,
             dueEndMs: dueEnd,
-            limit: q.text === undefined ? limit : 500,
+            text: q.text,
+            limit,
           }),
         )
         const hits = found.reminders.filter((r) => matches(q.text, r.title, r.notes))
@@ -691,6 +723,7 @@ export async function callReminderTool(
           notes: q.notes,
           due: q.due === undefined ? undefined : (parseWhen(q.due) as HelperTime),
           priority: q.priority === undefined ? undefined : PRIORITY_VALUE[q.priority],
+          url: q.url,
         })
         const saved = await deps.kit.saveReminder(request)
         return { status: 'ok', output: { reminder: shownReminder(saved), note: 'Added to the list.' } }
@@ -708,6 +741,7 @@ export async function callReminderTool(
             due: q.due === undefined ? undefined : q.due === null ? null : (parseWhen(q.due) as HelperTime),
             priority: q.priority === undefined ? undefined : PRIORITY_VALUE[q.priority],
             completed: q.completed,
+            url: q.url,
           }),
         )
         return { status: 'ok', output: { reminder: shownReminder(saved), note: 'Changed.' } }
@@ -721,6 +755,6 @@ export async function callReminderTool(
       }
     }
   } catch (error) {
-    return failure(error)
+    return failure(error, 'listId')
   }
 }

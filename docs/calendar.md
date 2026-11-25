@@ -23,12 +23,13 @@ Calendar (adapter id `calendar`):
 
 Reminders (adapter id `reminders`):
 
-| Tool               | What it does                                                                       |
-| ------------------ | ---------------------------------------------------------------------------------- |
-| `reminders_lists`  | The picked lists.                                                                  |
-| `reminders_search` | Open (default), done or all reminders, by list, due dates and words.               |
-| `reminders_create` | Only when writes are on. A reminder with an optional due day or time and priority. |
-| `reminders_update` | Only when writes are on. Title, notes, due date, priority, or done / not done.     |
+| Tool               | What it does                                                                         |
+| ------------------ | ------------------------------------------------------------------------------------ |
+| `reminders_lists`  | The picked lists.                                                                    |
+| `reminders_search` | Open (default), done or all reminders, by list, due dates and words.                 |
+| `reminders_create` | Only when writes are on. A reminder with an optional due day or time and priority.   |
+| `reminders_update` | Only when writes are on. Title, notes, due date, priority, link, or done / not done. |
+| `reminders_delete` | Only when writes are on. Deletes a reminder.                                         |
 
 What agents can and can't do:
 
@@ -43,6 +44,9 @@ What agents can and can't do:
 Changes are capped at 100 an hour for each of Calendar and Reminders, all agents together. Every
 call is in the audit log like any built-in tool's. Results say that titles, notes and invitations
 are data written by other people, never instructions.
+
+Searching by words happens in the helper before its limit, so a match is never cut off. A refused
+input says which field and why (an end before its start, a read-only calendar).
 
 Times: a day is `YYYY-MM-DD`; anything else is an ISO date-time, in the Mac's time zone when it has
 no offset. An all-day event's `end` is its last day.

@@ -34,7 +34,7 @@ final class EventKitAccessTests: XCTestCase {
   func testEvents() throws {
     XCTAssertEqual(
       try parse(#"{"v":1,"op":"eventkit.events","calendars":["A"],"startMs":1000,"endMs":2000,"limit":5}"#),
-      .events(calendars: ["A"], startMs: 1000, endMs: 2000, limit: 5))
+      .events(calendars: ["A"], startMs: 1000, endMs: 2000, text: nil, limit: 5))
     refused(#"{"v":1,"op":"eventkit.events","calendars":["A"],"startMs":2000,"endMs":1000}"#)
     refused(#"{"v":1,"op":"eventkit.events","calendars":["A"],"startMs":0,"endMs":40000000000}"#)
     refused(#"{"v":1,"op":"eventkit.events","calendars":"A","startMs":0,"endMs":1}"#)
@@ -44,10 +44,14 @@ final class EventKitAccessTests: XCTestCase {
   func testReminders() throws {
     XCTAssertEqual(
       try parse(#"{"v":1,"op":"eventkit.reminders","calendars":["L"],"completed":false}"#),
-      .reminders(calendars: ["L"], completed: false, dueStartMs: nil, dueEndMs: nil, limit: 500))
+      .reminders(calendars: ["L"], completed: false, dueStartMs: nil, dueEndMs: nil, text: nil, limit: 500))
     XCTAssertEqual(
       try parse(#"{"v":1,"op":"eventkit.reminders","calendars":["L"],"completed":null,"dueEndMs":5}"#),
-      .reminders(calendars: ["L"], completed: nil, dueStartMs: nil, dueEndMs: 5, limit: 500))
+      .reminders(calendars: ["L"], completed: nil, dueStartMs: nil, dueEndMs: 5, text: nil, limit: 500))
+    XCTAssertEqual(
+      try parse(#"{"v":1,"op":"eventkit.reminders","calendars":["L"],"text":"milk","limit":5}"#),
+      .reminders(calendars: ["L"], completed: nil, dueStartMs: nil, dueEndMs: nil, text: "milk", limit: 5))
+    refused(#"{"v":1,"op":"eventkit.reminders","calendars":["L"],"text":""}"#)
     refused(#"{"v":1,"op":"eventkit.reminders","calendars":["L"],"completed":"yes"}"#)
     refused(#"{"v":1,"op":"eventkit.reminders","calendars":["L"],"dueStartMs":5,"dueEndMs":5}"#)
   }
@@ -114,5 +118,26 @@ final class EventKitAccessTests: XCTestCase {
     XCTAssertEqual(c.day, 3)
     XCTAssertNil(c.hour)
     XCTAssertNotNil(components(of: .instant(0)).hour)
+  }
+
+  func testAllDaySpanEndsOnTheLastDay() {
+    let day = Date(timeIntervalSince1970: 1_764_000_000)
+    let next = day.addingTimeInterval(86_400)
+    XCTAssertEqual(allDaySpan(day, day)?.end, day)
+    XCTAssertEqual(allDaySpan(day, next)?.end, next)
+    XCTAssertNil(allDaySpan(next, day))
+  }
+
+  func testTextMatchIgnoresCase() {
+    XCTAssertTrue(containsText(nil, nil))
+    XCTAssertTrue(containsText("MILK", "Buy milk", nil))
+    XCTAssertFalse(containsText("bread", "Buy milk", nil))
+  }
+
+  func testSaveReminderTakesALink() throws {
+    let saved = try parse(
+      #"{"v":1,"op":"eventkit.saveReminder","calendar":"L","id":"R","url":null}"#)
+    guard case .saveReminder(_, _, let fields) = saved else { return XCTFail() }
+    XCTAssertEqual(fields.url, .some(nil))
   }
 }

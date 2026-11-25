@@ -196,6 +196,7 @@ describe('calendar', () => {
     })
     expect(await callCalendarTool(only, 'events', { from: '2026-01-01', to: '2027-06-01' })).toMatchObject({
       errorClass: 'invalid',
+      issue: { path: ['to'], reason: 'too-large', limit: 366 },
     })
   })
 
@@ -208,8 +209,10 @@ describe('calendar', () => {
     })
     const out = calendarOutputs.events.parse((result as { output: unknown }).output)
     expect(out.events.map((e) => e.title)).toEqual(['Standup'])
-    const query = kit.queries[0] as { startMs: number; endMs: number }
+    const query = kit.queries[0] as { startMs: number; endMs: number; text?: string; limit?: number }
     expect(query.endMs - query.startMs).toBe(86_400_000)
+    // The helper matches the words before its limit (feedback issue #9).
+    expect(query).toMatchObject({ text: 'stand', limit: 50 })
   })
 
   it('marks events in writable calendars editable, with others on them too, and recurring ids name the occurrence', async () => {
@@ -272,14 +275,22 @@ describe('calendar', () => {
     const base = { calendarId: 'home', title: 'X' }
     expect(
       await callCalendarTool(only, 'create_event', { ...base, start: '2026-12-01', end: '2026-12-01T10:00' }),
-    ).toMatchObject({ errorClass: 'invalid' })
+    ).toMatchObject({ errorClass: 'invalid', issue: { path: ['end'], reason: 'bad-format' } })
     expect(
       await callCalendarTool(only, 'create_event', {
         ...base,
         start: '2026-12-01T11:00',
         end: '2026-12-01T10:00',
       }),
-    ).toMatchObject({ errorClass: 'invalid' })
+    ).toMatchObject({ errorClass: 'invalid', issue: { path: ['end'], reason: 'before-start' } })
+    expect(
+      await callCalendarTool(only, 'update_event', {
+        id: 'E1',
+        calendarId: 'home',
+        start: '2026-12-02',
+        end: '2026-12-01',
+      }),
+    ).toMatchObject({ errorClass: 'invalid', issue: { path: ['end'], reason: 'before-start' } })
     expect(
       await callCalendarTool(only, 'create_event', {
         ...base,
@@ -295,7 +306,7 @@ describe('calendar', () => {
         end: '2026-12-01',
         attendees: ['a@b.c'],
       }),
-    ).toMatchObject({ errorClass: 'invalid' })
+    ).toMatchObject({ errorClass: 'invalid', issue: { path: ['attendees'], reason: 'unknown-key' } })
     expect(
       (await callCalendarTool(only, 'create_event', { ...base, start: '2026-12-01', end: '2026-12-01' }))
         .status,
@@ -323,7 +334,7 @@ describe('calendar', () => {
     kit.fail = new EventKitError('read-only')
     expect(
       await callCalendarTool(calendar, 'update_event', { id: 'E2', calendarId: 'work', title: 'Z' }),
-    ).toMatchObject({ errorClass: 'not-granted' })
+    ).toMatchObject({ errorClass: 'invalid', issue: { path: ['calendarId'], reason: 'read-only' } })
   })
 
   it('deletes one occurrence in a picked calendar, only while writes are on', async () => {
@@ -405,5 +416,25 @@ describe('reminders', () => {
     expect(
       await callReminderTool(reminders, 'update', { id: 'R9', listId: 'secret', completed: true }),
     ).toMatchObject({ errorClass: 'not-found' })
+  })
+
+  it('passes words to the helper, reads cleared notes as none, and sets links', async () => {
+    const { kit, reminders } = setup({ writes: true })
+    await callReminderTool(reminders, 'search', { text: 'milk', status: 'all' })
+    expect(kit.queries.at(-1)).toMatchObject({ text: 'milk', limit: 50, completed: null })
+    kit.reminders_.push(rem({ id: 'R7', notes: '' }))
+    const out = reminderOutputs.search.parse(
+      ((await callReminderTool(reminders, 'search', {})) as { output: unknown }).output,
+    )
+    expect(out.reminders.find((r) => r.id === 'R7')?.notes).toBeNull()
+    await callReminderTool(reminders, 'create', { listId: 'todo', title: 'X', url: 'https://example.com/a' })
+    await callReminderTool(reminders, 'update', { id: 'R1', listId: 'todo', url: null })
+    expect(kit.savedReminders.map((r) => r.url)).toEqual(['https://example.com/a', null])
+    expect(
+      await callReminderTool(reminders, 'update', { id: 'R1', listId: 'todo', priority: 'x' }),
+    ).toMatchObject({
+      errorClass: 'invalid',
+      issue: { path: ['priority'], reason: 'not-allowed' },
+    })
   })
 })
