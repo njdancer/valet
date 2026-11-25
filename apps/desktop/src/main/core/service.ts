@@ -1048,6 +1048,10 @@ export class AppService {
     // and a token left lying there would be one more copy to leak.
     await rm(paths.legacyBridgeConfig, { force: true }).catch(() => undefined)
     this.settingsNow = await this.settings.get()
+    // Start at login is written again at every start, so it names this run's Electron and app
+    // folder: a development LaunchAgent written before an Electron update or a move would start a
+    // binary that is no longer there. It isn't loaded now (launchd reads it at the next login).
+    if (this.settingsNow.launchAtLogin) this.deps.ui.setLaunchAtLogin(true)
     await this.pruneTraces()
     // A long-running app still drops a trace on the day it expires, not at the next start.
     this.pruneTimer = setInterval(() => {
