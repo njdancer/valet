@@ -293,21 +293,32 @@ public func accessName(_ status: EKAuthorizationStatus) -> String {
   }
 }
 
-/// The helper's one store, made again when access changes (a store made before access was given
-/// sees nothing).
+/// The helper's store, made again when access changes (a store made before access was given sees
+/// nothing) and once it is `maxAge` old. The helper runs no run loop for EventKit's change
+/// notifications, so a store never learns of a calendar or list added after it was made, even with
+/// refreshSourcesIfNecessary: a subscribed calendar added on the phone stayed invisible for hours.
 final class EventKitStores {
   private var store: EKEventStore?
   private var madeWith: [EKEntityType: String] = [:]
+  private var madeAt = Date.distantPast
+  private let maxAge: TimeInterval
+  private let now: () -> Date
+
+  init(maxAge: TimeInterval = 30, now: @escaping () -> Date = Date.init) {
+    self.maxAge = maxAge
+    self.now = now
+  }
 
   func get() -> EKEventStore {
-    let now: [EKEntityType: String] = [
+    let access: [EKEntityType: String] = [
       .event: accessName(EKEventStore.authorizationStatus(for: .event)),
       .reminder: accessName(EKEventStore.authorizationStatus(for: .reminder)),
     ]
-    if let store, now == madeWith { return store }
+    if let store, access == madeWith, now().timeIntervalSince(madeAt) < maxAge { return store }
     let made = EKEventStore()
     store = made
-    madeWith = now
+    madeWith = access
+    madeAt = now()
     return made
   }
 }

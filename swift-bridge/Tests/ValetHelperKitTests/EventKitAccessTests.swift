@@ -140,4 +140,14 @@ final class EventKitAccessTests: XCTestCase {
     guard case .saveReminder(_, _, let fields) = saved else { return XCTFail() }
     XCTAssertEqual(fields.url, .some(nil))
   }
+
+  func testStoreIsMadeAgainOnceOld() {
+    var clock = Date(timeIntervalSince1970: 0)
+    let stores = EventKitStores(maxAge: 30, now: { clock })
+    let first = stores.get()
+    clock += 10
+    XCTAssertTrue(stores.get() === first)
+    clock += 30
+    XCTAssertFalse(stores.get() === first)
+  }
 }
