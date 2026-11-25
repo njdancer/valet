@@ -460,10 +460,17 @@ describe('a signed-in scratch browser (a browser grant)', () => {
         status: 200,
         mimeType: 'application/json',
       })
-    }, 1500)
+    }, 900)
     await browser.navigate('https://finance.example.com/next')
     clearTimeout(reply)
     expect(answered).toBe(true)
+    // A call that never answers (failed, cancelled) holds the page up only a little while.
+    expect(await filter({ url: 'https://api.example.com/dead', method: 'GET', resourceType: 'fetch' })).toBe(
+      true,
+    )
+    const started = Date.now()
+    await browser.navigate('https://finance.example.com/again')
+    expect(Date.now() - started).toBeLessThan(SCRATCH_LIMITS.quietCapMs - 1000)
   }, 20_000)
 
   it('closes on a page with a card or password field, or a payment address, and says why', async () => {

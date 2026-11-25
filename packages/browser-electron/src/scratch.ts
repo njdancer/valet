@@ -45,6 +45,8 @@ export const SCRATCH_LIMITS = {
   quietMs: 500,
   /** …or after this long in all, for a page that never goes quiet (polling, analytics). */
   quietCapMs: 5000,
+  /** Quiet ticks after which an API call still out is taken to be dead. */
+  quietStuckTicks: 3,
   logEntries: 500,
   maxNodes: 1000,
   defaultNodes: 300,
@@ -237,9 +239,12 @@ export class ScratchBrowser {
       throw new ScratchError(
         `${target.hostname} isn't under the draft's domains. Add it to the manifest's home, navigation or egress first.`,
       )
+    if (!this.options.rules.mayRequest(target))
+      throw new ScratchError(`This browser doesn’t reach ${target.hostname.slice(0, 100)}.`)
     this.refusal = null
     const loaded = await this.withTimeout(this.surface.load(target.href))
-    if (this.refusal !== null) throw new ScratchError(this.refusal)
+    // Only when the page itself didn't load: a page that loaded and then tried to go elsewhere is shown.
+    if (this.refusal !== null && (loaded === null || !loaded.ok)) throw new ScratchError(this.refusal)
     if (this.closed) throw new ScratchError('The site refused the scratch browser, so it closed.')
     if (loaded !== null && !loaded.ok && loaded.code !== 'ERR_ABORTED')
       throw new ScratchError(`The page didn't load (${loaded.code.slice(0, 40)}).`)
@@ -458,6 +463,9 @@ export class ScratchBrowser {
     this.activity++
     if (API_TYPES.has(request.resourceType.toLowerCase())) this.apiStarted++
     if (request.resourceType === 'mainFrame') {
+      // A new document: calls the last one left without an answer no longer hold settle() up.
+      this.apiStarted = 0
+      this.apiDone = 0
       this.loadRequests = 0
       this.mainFrames++
     }
@@ -559,17 +567,18 @@ export class ScratchBrowser {
   private async quiet(): Promise<void> {
     const timers = this.options.timers ?? realTimers
     const sleep = (ms: number) => new Promise<void>((resolve) => timers.setTimeout(resolve, ms))
+    let still = 0
     for (let waited = 0; waited < SCRATCH_LIMITS.quietCapMs; waited += SCRATCH_LIMITS.quietMs) {
       const before = this.activity
       await sleep(SCRATCH_LIMITS.quietMs)
       if (this.closed) break
-      // Quiet, and no API call still out: one that failed never answers, so the cap ends that wait.
-      if (this.activity === before && this.apiDone >= this.apiStarted) return
+      still = this.activity === before ? still + 1 : 0
+      // Quiet with no API call still out; or quiet for a while even so, since a call that failed,
+      // was cancelled or was answered somewhere Valet doesn't see never counts as answered.
+      if (still >= 1 && this.apiDone >= this.apiStarted) return
+      if (still >= SCRATCH_LIMITS.quietStuckTicks) return
     }
-    if (this.closed)
-      throw new ScratchError(
-        'The scratch browser closed while the page loaded: it made more requests than Valet allows, or the site refused it.',
-      )
+    if (this.closed) throw new ScratchError('The scratch browser closed while the page was loading.')
   }
 
   private withTimeout<T>(work: Promise<T>): Promise<T | null> {
