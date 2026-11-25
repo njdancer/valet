@@ -50,6 +50,8 @@ export interface ParsedMessage {
   readonly attachmentParts: readonly AttachmentPart[]
   /** Web and mail links from the HTML part, whether or not there is a plain-text part. */
   readonly links: readonly Link[]
+  /** The text/html part as it is, null when there is none. */
+  readonly html: string | null
 }
 
 const MAX_DEPTH = 8
@@ -407,6 +409,7 @@ export function parseMessage(raw: Buffer): ParsedMessage {
     attachments: found.attachments.map(({ name, contentType, size }) => ({ name, contentType, size })),
     attachmentParts: found.attachments,
     links: found.html === null ? [] : htmlLinks(found.html),
+    html: found.html,
   }
 }
 
@@ -491,12 +494,17 @@ export function htmlToText(html: string): string {
       i = endGt < 0 ? html.length : endGt + 1
       continue
     }
-    if (BLOCK_TAGS.has(tag)) out += '\n'
+    // A table row is a line of its own: a break before it, none after, so rows sit together.
+    if (BLOCK_TAGS.has(tag) && !(tag === 'tr' && closing)) out += '\n'
     else if (tag === 'td' || tag === 'th') out += ' '
     else if (tag === 'img' && !closing) {
-      // A picture's words: retailers often name the product only in its picture's alt text.
-      const alt = /\balt\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(html.slice(lt, gt + 1))
-      const words = (alt?.[1] ?? alt?.[2] ?? '').trim()
+      // A picture's words: retailers often name the product only in its picture's alt (or title).
+      const tagText = html.slice(lt, gt + 1)
+      const attr = (name: string): string => {
+        const m = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'i').exec(tagText)
+        return (m?.[1] ?? m?.[2] ?? '').trim()
+      }
+      const words = attr('alt') || attr('title')
       if (words.length > 0 && words.length <= 300) out += ` ${words} `
     }
   }

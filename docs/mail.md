@@ -107,6 +107,11 @@ hasn't downloaded is fetched through Mail instead: the same fixed script returns
 message's whole `source` (Mail downloads it if it must, read-only), and the attachment is read from
 that. Only when Mail can't give it either does it come back as `reason: "not-downloaded"`.
 
+The body is the text/plain part unless the HTML part says clearly more (some senders' plain part
+leaves a table's values out, agent feedback #12); HTML becomes text a table row to a line, with a
+picture's alt or title text. `as: "html"` (without `attachment`) returns the HTML part's markup
+instead, scripts, styles, comments and event handlers removed, in chunks like the text (#13).
+
 `links` lists the web and mail links of the HTML part, each once, at most 100, even when the body
 comes from the plain-text part.
 

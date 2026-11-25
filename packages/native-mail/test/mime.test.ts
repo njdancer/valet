@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { decodeWords, htmlToText, parseAddresses, parseMessage, parseParams } from '../src/mime'
+import {
+  decodeWords,
+  htmlToText,
+  normaliseText,
+  parseAddresses,
+  parseMessage,
+  parseParams,
+} from '../src/mime'
 
 describe('mime', () => {
   it('decodes encoded words, joining adjacent ones', () => {
@@ -84,8 +91,13 @@ describe('mime', () => {
     expect(parseMessage(Buffer.from(full)).text).toContain('( http://link.example/a )')
   })
 
-  it('gives a picture’s alt text, and nothing for one without', () => {
-    expect(htmlToText('<p>a<img src="t.gif" alt="">b<img alt=\'Logo\'>c</p>')).toBe('\nab Logo c\n')
+  it('gives a picture’s alt text, else its title, and nothing for one without', () => {
+    expect(htmlToText('<p>a<img src="t.gif" alt="">b<img alt=\'Logo\'>c<img title="Tea">d</p>')).toBe(
+      '\nab Logo c Tea d\n',
+    )
+    // A table comes out a row to a line, its cells side by side.
+    const table = '<table><tr><td>Tea</td><td>2</td></tr><tr><td>Cups</td><td>1</td></tr></table>'
+    expect(normaliseText(htmlToText(table))).toBe('Tea 2\nCups 1')
   })
 
   it('turns HTML into text in one pass, even when it is hostile', () => {

@@ -72,6 +72,7 @@ const detail = summary.extend({
   inReplyTo: z.string().nullable(),
   references: z.array(z.string()),
   body: z.string(),
+  bodyFormat: z.literal('html').optional().describe('The body is the HTML part’s markup.'),
   bodyTruncated: z.boolean(),
   bodyOffset: z.number().int(),
   nextOffset: z.number().int().nullable(),
@@ -155,12 +156,14 @@ export const mailInputs = {
             'see layout, tables, signatures or scans. Its text marks each page "--- Page N of M ---".',
         ),
       as: z
-        .enum(['text', 'file'])
+        .enum(['text', 'file', 'html'])
         .optional()
         .describe(
           'With attachment: text (the default) returns its text, and an image as a picture you can see; ' +
             'file returns the attachment itself as an embedded file, which a client such as Claude Code ' +
-            'saves to disk for you to open (some clients refuse files).',
+            'saves to disk for you to open (some clients refuse files). Without attachment: html returns ' +
+            'the body as the HTML part’s markup (scripts and styles removed), in chunks like the text, ' +
+            'for when the text seems to have lost something such as a table.',
         ),
     })
     .strict(),
@@ -482,8 +485,13 @@ export async function callMailTool(
       }
       case 'read': {
         const q = mailInputs.read.parse(input)
-        if (q.attachment !== undefined) return await readAttachment(deps, { ...q, attachment: q.attachment })
-        const message = await deps.store.read(q.id, q.maxChars, q.offset)
+        if (q.attachment !== undefined)
+          return await readAttachment(deps, {
+            ...q,
+            attachment: q.attachment,
+            as: q.as === 'html' ? 'text' : q.as,
+          })
+        const message = await deps.store.read(q.id, q.maxChars, q.offset, q.as === 'html')
         return { status: 'ok', output: { message, note: MAIL_DATA_NOTE } }
       }
       case 'thread': {

@@ -6,7 +6,7 @@ import { DirectMailFiles } from '../src/direct-files'
 import { htmlLinks } from '../src/mime'
 import { PDF_TEXT_SCRIPT, pdfText } from '../src/pdf'
 import { RENDER_SCRIPT, renderPictures } from '../src/render'
-import { MailStore, MailStoreError } from '../src/store'
+import { cleanHtml, MailStore, MailStoreError } from '../src/store'
 import { callMailTool, mailOutputs } from '../src/tools'
 import { ALLOWED, buildLibrary, type FixtureMessage, MESSAGES } from './fixture-library'
 
@@ -273,6 +273,35 @@ describe('reading an attachment', () => {
     const out = mailOutputs.read.parse(result.output)
     expect(out.message).toBeUndefined()
     expect(out.attachment?.text).toBe('item,qty\ntea,2')
+  })
+})
+
+describe('mail_read with as: html', () => {
+  it('gives the HTML part’s markup as the body, in chunks, without scripts', async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: only the store is used here.
+    const result = await callMailTool({ store: store() } as any, 'read', { id: 501, as: 'html' })
+    expect(result.status).toBe('ok')
+    if (result.status !== 'ok') return
+    const message = mailOutputs.read.parse(result.output).message
+    expect(message?.bodyFormat).toBe('html')
+    expect(message?.body).toContain('<a href="https://shop.example/track?id=1&amp;x=2">Track it</a>')
+    // A message read as text says nothing of format.
+    // biome-ignore lint/suspicious/noExplicitAny: only the store is used here.
+    const text = await callMailTool({ store: store() } as any, 'read', { id: 501 })
+    expect(text.status === 'ok' && mailOutputs.read.parse(text.output).message?.bodyFormat).toBeUndefined()
+  })
+
+  it('strips scripts, styles, comments and event handlers, and stays quick on hostile markup', () => {
+    expect(
+      cleanHtml(
+        '<p onclick="x()">a</p><script>bad()</script><style>p{}</style><!-- c --><img alt="Tea" onload=y>b',
+      ),
+    ).toBe('<p>a</p><img alt="Tea">b')
+    expect(cleanHtml('<p>a<script>never closed')).toBe('<p>a')
+    const hostile = '<script'.repeat(100_000)
+    const started = Date.now()
+    cleanHtml(hostile)
+    expect(Date.now() - started).toBeLessThan(2_000)
   })
 })
 
