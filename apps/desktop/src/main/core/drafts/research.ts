@@ -185,7 +185,13 @@ export class ScratchSessions {
     }
     const rules: ScratchRules = {
       mayNavigate: (url) => url.protocol === 'https:' && domains.includes(siteDomain(url.hostname)),
-      mayRequest: (url) => !refused.has(siteDomain(url.hostname)),
+      // Signed out, a page's scripts, pictures and analytics load from wherever it asks, as in any
+      // browser: nothing of the person's is in it. Signed in, only the draft's own domains: a
+      // third-party script or beacon would otherwise read, or carry off, what the session shows.
+      mayRequest: (url) =>
+        granted === null
+          ? !refused.has(siteDomain(url.hostname))
+          : domains.includes(siteDomain(url.hostname)),
       pace: (host) => this.pace(siteDomain(host)),
       blocked: (host, status) => this.deps.blocked(host, status),
       mayType: async (text) => !(await this.deps.secretIn(text).catch(() => true)),

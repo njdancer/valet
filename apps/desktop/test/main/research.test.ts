@@ -158,6 +158,11 @@ describe('scratch browser rules', () => {
     })
     await s.browser('dr-aaaaaaaaaa', 'local:c1', 'Claude Code', 'quotes', MANIFEST)
     expect(opened[0]?.rules.signedIn).toEqual({ adapterId: 'quotes', cookieDomains: ['example.com'] })
+    // Signed in, nothing reaches a host outside the draft's domains: no third-party script or beacon.
+    const signedIn = opened[0]?.rules
+    expect(signedIn?.mayRequest(new URL('https://query1.finance.example.com/v1'))).toBe(true)
+    expect(signedIn?.mayRequest(new URL('https://www.google-analytics.com/g/collect'))).toBe(false)
+    expect(signedIn?.mayRequest(new URL('https://cdn.jsdelivr.net/x.js'))).toBe(false)
     expect(notices).toEqual([
       'Claude Code is browsing example.com signed in, read only. End it from the draft’s page.',
     ])
@@ -168,6 +173,8 @@ describe('scratch browser rules', () => {
     // Another draft, or a grant for another adapter, or one that has ended: signed out.
     await s.browser('dr-bbbbbbbbbb', 'local:c2', 'B', 'quotes', MANIFEST)
     expect(opened[1]?.rules.signedIn).toBeUndefined()
+    // Signed out, a page's third-party scripts and analytics load as in any browser.
+    expect(opened[1]?.rules.mayRequest(new URL('https://www.google-analytics.com/g/collect'))).toBe(true)
     advance(31 * 60_000)
     await s.browser('dr-aaaaaaaaaa', 'local:c1', 'Claude Code', 'quotes', MANIFEST)
     expect(opened[2]?.rules.signedIn).toBeUndefined()

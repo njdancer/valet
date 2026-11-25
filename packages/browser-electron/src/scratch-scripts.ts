@@ -193,6 +193,11 @@ const FIELD = `(selector) => {
     inputType: tag === 'input' ? (lower('type') || 'text') : null,
     autocomplete: lower('autocomplete'),
     name: lower('name') + ' ' + lower('id'),
+    editable:
+      el.isContentEditable ||
+      (tag === 'textarea' && !el.disabled && !el.readOnly) ||
+      (tag === 'input' && !el.disabled && !el.readOnly &&
+        !['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit'].includes(lower('type'))),
   }
 }`
 

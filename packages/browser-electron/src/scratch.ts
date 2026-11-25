@@ -38,6 +38,10 @@ export const SCRATCH_LIMITS = {
   requests: 1500,
   loadTimeoutMs: 20_000,
   settleMs: 1500,
+  /** After a load or input, the page counts as settled once no request starts or ends for this long… */
+  quietMs: 500,
+  /** …or after this long in all, for a page that never goes quiet (polling, analytics). */
+  quietCapMs: 5000,
   logEntries: 500,
   maxNodes: 1000,
   defaultNodes: 300,
@@ -122,6 +126,8 @@ export class ScratchBrowser {
   /** Main-frame requests seen, so settle() can tell an input started a navigation. */
   private mainFrames = 0
   private refusedWrites = 0
+  /** Requests started and responses seen: settle() waits until this stops moving. */
+  private activity = 0
 
   private constructor(
     private readonly options: ScratchOptions,
@@ -228,6 +234,7 @@ export class ScratchBrowser {
     if (this.closed) throw new ScratchError('The site refused the scratch browser, so it closed.')
     if (loaded !== null && !loaded.ok && loaded.code !== 'ERR_ABORTED')
       throw new ScratchError(`The page didn't load (${loaded.code.slice(0, 40)}).`)
+    await this.quiet()
     return this.snapshot()
   }
 
@@ -315,6 +322,7 @@ export class ScratchBrowser {
     const selector = this.selectorOf(target)
     const field = (await this.run(fieldScript(selector))) as {
       error?: string
+      editable?: boolean
       inputType?: string | null
       autocomplete?: string
       name?: string
@@ -327,8 +335,19 @@ export class ScratchBrowser {
       /otp|passcode|password/.test(field.name ?? '')
     )
       throw new ScratchError('The scratch browser doesn’t type into password or code fields.')
+    if (field.editable === false)
+      throw new ScratchError(
+        'That element isn’t a field you can type into (it is disabled, read only or not a text field).',
+      )
+    // The window is never shown, and Valet is a menu-bar app, so the page has no keyboard focus of
+    // its own: give it focus first, as the tool page does, or no field can take the keyboard.
+    this.surface.focus()
     const focused = (await this.run(focusScript(selector))) as { focused?: boolean } | null
-    if (focused?.focused !== true) throw new ScratchError('That field couldn’t take the keyboard.')
+    if (focused === null) throw new ScratchError('Nothing on the page matches that.')
+    if (focused.focused !== true)
+      throw new ScratchError(
+        'That field couldn’t take the keyboard: the page moved focus elsewhere. Click it first, or try its selector.',
+      )
     const frames = this.mainFrames
     for (const char of text) this.surface.sendChar(char, 'full')
     await this.settle(frames)
@@ -422,6 +441,7 @@ export class ScratchBrowser {
       if (page === null || page.hostname !== url.hostname) return false
     }
     this.requests++
+    this.activity++
     if (request.resourceType === 'mainFrame') {
       this.loadRequests = 0
       this.mainFrames++
@@ -433,7 +453,14 @@ export class ScratchBrowser {
     }
     if (request.resourceType !== 'mainFrame') return true
     // A form that posts is a request the agent could make as anyone; only GET pages open.
-    if (request.method !== 'GET' || !this.options.rules.mayNavigate(url)) return false
+    if (request.method !== 'GET') {
+      this.refusal = 'The page tried to post a form, which this browser never sends.'
+      return false
+    }
+    if (!this.options.rules.mayNavigate(url)) {
+      this.refusal = `The page went on to ${url.hostname.slice(0, 100)}, which this browser doesn’t open.`
+      return false
+    }
     // A server redirect is the same load (it keeps the request's id): paced once, at its first hop,
     // so a page that sends a signed-out visitor to its sign-in page isn't refused as a second load.
     if (request.id !== undefined && request.id === this.pacedRequest) return true
@@ -450,6 +477,7 @@ export class ScratchBrowser {
 
   private record(response: NetworkResponse): void {
     if (this.closed) return
+    this.activity++
     this.seq++
     this.log.push({
       seq: this.seq,
@@ -500,6 +528,21 @@ export class ScratchBrowser {
     }
     if (this.surface.isLoading()) await this.withTimeout(this.surface.nextStopLoading())
     if (this.closed) throw new ScratchError('The site refused the scratch browser, so it closed.')
+    await this.quiet()
+  }
+
+  /**
+   * Waits until the page stops fetching: an app that draws itself from its API (a React page, say)
+   * has its content only once those requests are back, well after the load event.
+   */
+  private async quiet(): Promise<void> {
+    const timers = this.options.timers ?? realTimers
+    const sleep = (ms: number) => new Promise<void>((resolve) => timers.setTimeout(resolve, ms))
+    for (let waited = 0; waited < SCRATCH_LIMITS.quietCapMs; waited += SCRATCH_LIMITS.quietMs) {
+      const before = this.activity
+      await sleep(SCRATCH_LIMITS.quietMs)
+      if (this.closed || this.activity === before) return
+    }
   }
 
   private withTimeout<T>(work: Promise<T>): Promise<T | null> {

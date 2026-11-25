@@ -18,6 +18,8 @@ grant is the wide access used only to build the narrow one.
   tool-partition cookies for its cookie domains, copied in one way into its in-memory partition
   (`ScratchRules.signedIn`, packages/browser-electron/src/scratch.ts). While signed in:
   - only GET, HEAD and OPTIONS requests leave it; anything else is refused and counted;
+  - requests reach only the draft's own domains (home, navigation, egress): no third-party script,
+    analytics beacon or CDN. A signed-out scratch browser loads those as any browser does;
   - cookie values are replaced with `[cookie]` everywhere the agent reads, as for any scratch
     browser, and the seeded ones are scrubbed from the start;
   - a page that looks like payment, card, bank, payee, password, email, two-factor or account
