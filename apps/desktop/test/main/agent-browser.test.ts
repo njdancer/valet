@@ -186,6 +186,19 @@ describe('the agents’ browser', () => {
     await expect(pace?.('news.example.com')).resolves.toBeUndefined()
   })
 
+  it('caps page loads on a site in an hour', async () => {
+    const { call, opened, advance } = setup()
+    await call('open', { url: 'https://news.example.com/' })
+    const pace = opened[0]?.rules.pace
+    for (let i = 0; i < AGENT_BROWSER_LIMITS.loadsPerDomainPerHour; i++) {
+      await pace?.('news.example.com')
+      advance(AGENT_BROWSER_LIMITS.minGapMs)
+    }
+    await expect(pace?.('news.example.com')).rejects.toMatchObject({
+      detail: expect.stringMatching(/as often as it allows in an hour/),
+    })
+  })
+
   it('closes on request, when left alone, and all at once', async () => {
     const { service, call, opened, timers } = setup()
     await call('open', { url: 'https://news.example.com/' })
