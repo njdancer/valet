@@ -71,7 +71,7 @@ describe('ApnsSender', () => {
     expect(push?.headers['apns-push-type']).toBe('alert')
     // Nothing but the wake-up: no site, agent or request in what Apple sees.
     expect(pushPayloadSchema.parse(JSON.parse(push?.body ?? ''))).toEqual(JSON.parse(NEEDS_YOU_PAYLOAD))
-    const jwt = (push?.headers.authorization ?? '').replace(/^bearer /, '')
+    const jwt = (push?.headers['authorization'] ?? '').replace(/^bearer /, '')
     const [h, c, s] = jwt.split('.')
     expect(JSON.parse(Buffer.from(h ?? '', 'base64url').toString())).toEqual({
       alg: 'ES256',
