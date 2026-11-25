@@ -71,6 +71,7 @@ function authoring(overrides: Partial<Authoring> = {}): Authoring & { writes: st
     listDrafts: async () => ({ drafts: [DETAIL.draft] }),
     listRepairs: async () => ({ repairs: [] }),
     requestSession: async () => ({ requestId: 'r', ref: 'R1AB', expiresAt: '', tellThePerson: '' }),
+    requestGrant: async () => ({ requestId: 'r', ref: 'R1AB', expiresAt: '', tellThePerson: '' }),
     requestPrivateNetwork: async () => ({ requestId: 'r', ref: 'R1AB', expiresAt: '', tellThePerson: '' }),
     getRepair: async () => {
       throw new AuthoringRefusal('No repair ticket has that id.')

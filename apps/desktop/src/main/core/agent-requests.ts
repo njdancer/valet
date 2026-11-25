@@ -14,6 +14,7 @@ type CardKind = AgentRequestItem['requestKind']
 const CARD_KINDS: ReadonlySet<string> = new Set<CardKind>([
   'setting',
   'authoring-session',
+  'browser-grant',
   'private-network',
   'tool-enable',
   'secret-grant',
@@ -88,6 +89,21 @@ export function agentRequestItem(
         details: [
           `For up to ${s.minutes} minutes, on ${s.origins.join(', ')}.`,
           `To build or repair draft ${s.draftId}. It drives Valet’s browser; it never sees your password or cookies.`,
+        ],
+        choices: null,
+      }
+    }
+    case 'browser-grant': {
+      const s = request.subject
+      return {
+        ...base,
+        requestKind: 'browser-grant',
+        adapterId: s.adapterId,
+        title: `Let the agent browse ${nameOf(s.adapterId)} signed in, read only`,
+        details: [
+          `Its reason: “${s.purpose}”`,
+          `For up to ${s.minutes} minutes, on ${s.origins.join(', ')}. Only page loads and reads reach the site.`,
+          'It never sees your password or session. Payment, password and security pages close on sight. You can end it any time.',
         ],
         choices: null,
       }

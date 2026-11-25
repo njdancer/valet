@@ -12,6 +12,7 @@ public enum ApprovalKind: String, CaseIterable, Sendable {
   case remoteClient = "remote-client"
   case setting
   case authoringSession = "authoring-session"
+  case browserGrant = "browser-grant"
   case privateNetwork = "private-network"
   case irreversibleCall = "irreversible-call"
   case resume
@@ -25,7 +26,7 @@ public enum ApprovalKind: String, CaseIterable, Sendable {
     switch self {
     case .adapterInstall, .secretGrant, .credentialGrant, .toolEnable, .setting: return 24 * 3600
     case .remoteClient, .resume: return 10 * 60
-    case .authoringSession, .privateNetwork: return 30 * 60
+    case .authoringSession, .browserGrant, .privateNetwork: return 30 * 60
     case .irreversibleCall: return 2 * 60
     case .devicePair: return 5 * 60
     }
@@ -115,6 +116,15 @@ public enum ApprovalSubject: Equatable, Sendable {
     public let origins: [String]
     public let minutes: Int
   }
+  /// A browser grant (docs/browser-grants.md): the draft's scratch browser signed in, read only.
+  public struct BrowserGrant: Equatable, Sendable {
+    public let adapterId, draftId: String
+    public let origins: [String]
+    /// The agent's own words: a claim.
+    public let purpose: String
+    public let mode: String
+    public let minutes: Int
+  }
   public struct IrreversibleCall: Equatable, Sendable {
     public let adapterId, adapterHash, tool, callId: String
     /// Which confirmation in the call this is: two in one call never share a request.
@@ -156,6 +166,7 @@ public enum ApprovalSubject: Equatable, Sendable {
   case remoteClient(RemoteClient)
   case setting(Setting)
   case authoringSession(AuthoringSession)
+  case browserGrant(BrowserGrant)
   case privateNetwork(PrivateNetwork)
   case irreversibleCall(IrreversibleCall)
   case resume(from: String)
@@ -283,6 +294,16 @@ public enum ApprovalSubject: Equatable, Sendable {
         draftId: try f.string("draftId", pattern: "[A-Za-z0-9_-]{1,40}"),
         origins: try f.strings("origins", min: 1, max: 10, pattern: Patterns.origin),
         minutes: try f.int("minutes", min: 1, max: 60)
+      ))
+    case .browserGrant:
+      let f = try Fields(value, path: path, required: ["adapterId", "draftId", "origins", "purpose", "mode", "minutes"])
+      return .browserGrant(BrowserGrant(
+        adapterId: try f.string("adapterId", pattern: Patterns.adapterId),
+        draftId: try f.string("draftId", pattern: "[A-Za-z0-9_-]{1,40}"),
+        origins: try f.strings("origins", min: 1, max: 10, pattern: Patterns.origin),
+        purpose: try f.display("purpose", max: 200),
+        mode: try f.string("mode", pattern: "read"),
+        minutes: try f.int("minutes", min: 1, max: 120)
       ))
     case .privateNetwork:
       let f = try Fields(value, path: path, required: ["adapterId", "draftId", "address", "port", "minutes"])

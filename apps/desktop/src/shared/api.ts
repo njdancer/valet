@@ -1147,6 +1147,7 @@ export interface AgentRequestItem {
   readonly requestKind:
     | 'setting'
     | 'authoring-session'
+    | 'browser-grant'
     | 'private-network'
     | 'tool-enable'
     | 'secret-grant'

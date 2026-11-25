@@ -212,6 +212,19 @@ function requests(macId: string): ApprovalRequest[] {
       },
     },
     {
+      ...base('6E12', '2026-11-12T09:11:00.000Z'),
+      kind: 'browser-grant',
+      tier: 'approve',
+      subject: {
+        adapterId: 'claude-ai',
+        draftId: 'draft-5f2d',
+        origins: ['https://claude.ai'],
+        purpose: 'To build a tool that lists the threads in a project',
+        mode: 'read',
+        minutes: 45,
+      },
+    },
+    {
       ...base('8F20', '2026-11-12T08:42:00.000Z'),
       kind: 'irreversible-call',
       tier: 'approve-each-use',
