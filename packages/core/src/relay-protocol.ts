@@ -576,6 +576,7 @@ export const pushPayloadSchema = z
             body: z.enum(['Valet needs you', 'Something changed in Valet']),
           })
           .strict(),
+        sound: z.literal('default').optional(),
       })
       .strict(),
   })

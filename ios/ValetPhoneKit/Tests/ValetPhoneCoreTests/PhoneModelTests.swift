@@ -56,6 +56,23 @@ final class PhoneModelTests: XCTestCase {
     XCTAssertEqual(model.status?.account?.accountId, "acct_0123456789abcdef")
   }
 
+  func testSendsItsPushTokenOnceConnectedAndAgainWhenItChanges() throws {
+    setUp(.quiet)
+    let token = String(repeating: "ab", count: 32)
+    model.pushToken = token
+    world.relay.drain()
+    XCTAssertEqual(world.relay.pushTokens, [token])
+    // A reconnect sends it again: the Mac may have lost it.
+    model.disconnect()
+    model.connect()
+    world.relay.drain()
+    XCTAssertEqual(world.relay.pushTokens, [token, token])
+    // Not hex: never sent.
+    model.pushToken = "not a token"
+    world.relay.drain()
+    XCTAssertEqual(world.relay.pushTokens.count, 2)
+  }
+
   func testPairsEndToEnd() throws {
     setUp(.quiet)
     XCTAssertEqual(model.phase, .paired)

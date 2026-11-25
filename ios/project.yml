@@ -50,6 +50,12 @@ targetTemplates:
 targets:
   ValetPhone:
     templates: [App]
+    # Push needs the paid Apple Developer Program (Nick, 2026-11-25). Xcode builds get the
+    # development (sandbox) entitlement; an archive for TestFlight switches it to production.
+    entitlements:
+      path: ValetPhone/Generated/ValetPhone.entitlements
+      properties:
+        aps-environment: development
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: me.dncr.valet

@@ -6,6 +6,7 @@ import { readFile, rename, writeFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
 import { type DeviceRecord, SIGNING_DOMAINS, verifyP256 } from '@valet/core'
 import type { PairingView, PhonesStatus } from '../../shared/api'
+import type { ApnsSender } from './approvals/apns'
 import type { ApprovalBroker, MacToPhoneBody, PhoneOutbox } from './approvals/broker'
 import type { DeviceStore } from './approvals/devices'
 import {
@@ -28,6 +29,8 @@ export interface PhonesOptions {
   readonly log?: (line: string) => void
   /** This Mac at the blind relay, started with the transport key and binding once they're ready. */
   readonly tunnel: BlindTunnel | null
+  /** Wakes a phone that isn't connected when a card waits for it. Null: phones fetch on open only. */
+  readonly apns?: ApnsSender | null
 }
 
 export interface PhonesParts {
@@ -84,11 +87,23 @@ export class Phones implements PhoneOutbox {
       devices: parts.devices,
       origin: () => tunnel.origin,
       onEvent: (event) => this.doorEvent(event),
+      onPushToken: (deviceId, token) => {
+        void this.options.apns?.setToken(deviceId, token).catch(() => undefined)
+      },
       now: parts.now,
       ...(this.options.log === undefined ? {} : { log: this.options.log }),
     })
     this.door = door
-    const link: RelayLink = { send: (frame) => door.send(frame) }
+    const link: RelayLink = {
+      send: (frame) => {
+        if (frame.type !== 'push') return door.send(frame)
+        // A connected phone has the card already; one that isn't is woken through Apple.
+        const apns = this.options.apns
+        if (apns === undefined || apns === null || door.online(frame.deviceId)) return false
+        void apns.wake(frame.deviceId)
+        return true
+      },
+    }
     this.channel = await PhoneChannel.open({
       devices: parts.devices,
       keys,
@@ -178,6 +193,7 @@ export class Phones implements PhoneOutbox {
   /** Tells the phone, and stops the relay letting it in. The caller revokes its record. */
   unpair(deviceId: string): void {
     this.channel?.unpair(deviceId)
+    void this.options.apns?.forget(deviceId).catch(() => undefined)
     this.door?.devicesChanged()
   }
 

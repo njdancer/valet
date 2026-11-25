@@ -50,6 +50,8 @@ export interface PhoneDoorOptions {
   readonly origin: () => string | null
   /** Envelopes, pairing replies and phones coming and going, for the phone channel. */
   readonly onEvent: (event: ChannelEvent) => void
+  /** The APNs token a connected phone sent, for waking it later (apns.ts). */
+  readonly onPushToken?: (deviceId: string, token: string) => void
   readonly now?: () => number
   readonly log?: (line: string) => void
 }
@@ -274,8 +276,13 @@ export class PhoneDoor {
     const frame = parsed.data
     // Locking the relay asks a stranger to stop passing traffic while the Mac is away. Here the
     // Mac itself is answering, and nothing reaches it while it is away; the phone's Pause and
-    // Lock down commands, sealed, are the way to stop it. A push token has nowhere to go.
-    if (frame.type === 'relay-lock' || frame.type === 'push-token') return
+    // Lock down commands, sealed, are the way to stop it. A push token is kept here, at the Mac,
+    // which sends its own wakes (apns.ts).
+    if (frame.type === 'push-token') {
+      this.options.onPushToken?.(state.id, frame.token)
+      return
+    }
+    if (frame.type === 'relay-lock') return
     const envelope = frame.envelope
     if (envelope.from !== state.id || envelope.to !== this.macId)
       return this.close(socket, DOOR_CLOSE.badFrame, 'envelopes go from this phone to its Mac')

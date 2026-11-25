@@ -90,6 +90,7 @@ interface DoorMac {
   readonly events: string[]
   /** Frames the channel sent that no door took (would have gone to the Worker relay). */
   readonly unrouted: string[]
+  readonly pushTokens: string[]
 }
 
 async function startDoorMac(rig: Rig): Promise<DoorMac> {
@@ -102,6 +103,7 @@ async function startDoorMac(rig: Rig): Promise<DoorMac> {
   const origin = `https://${devices.macId}.${MAC_DOMAIN}`
   const events: string[] = []
   const unrouted: string[] = []
+  const pushTokens: string[] = []
   let channel: PhoneChannel | null = null
   const broker = await ApprovalBroker.open({
     ledger,
@@ -127,6 +129,7 @@ async function startDoorMac(rig: Rig): Promise<DoorMac> {
       events.push(event.type === 'device-online' ? `online ${event.online}` : event.type)
       channel?.handle(event)
     },
+    onPushToken: (deviceId, token) => pushTokens.push(`${deviceId} ${token}`),
   })
   cleanup.push(() => door.stop())
   channel = await PhoneChannel.open({
@@ -170,7 +173,18 @@ async function startDoorMac(rig: Rig): Promise<DoorMac> {
   })
   cleanup.push(() => tunnel.client.stop())
   await tunnel.online()
-  return { devices, broker, channel, door, tunnel, origin, agreementKey: keys.agreementKey, events, unrouted }
+  return {
+    devices,
+    broker,
+    channel,
+    door,
+    tunnel,
+    origin,
+    agreementKey: keys.agreementKey,
+    events,
+    unrouted,
+    pushTokens,
+  }
 }
 
 /** A phone dialling the Mac's own name through the relay, trusting only the Mac's certificate. */
@@ -376,6 +390,20 @@ describe('phones at the Mac’s own address, through the blind relay', () => {
     await again.dial((nonce) => again.hello(nonce))
     expect(await first).toBe(DOOR_CLOSE.replaced)
     await until(() => again.frames.find((f) => f['type'] === 'ready'))
+    expect(mac.door.online(phone.deviceId)).toBe(true)
+  }, 30_000)
+
+  it('keeps the push token a connected phone sends, and only from a phone that said hello', async () => {
+    const rig = await startRig()
+    cleanup.push(() => rig.close())
+    const mac = await startDoorMac(rig)
+    const phone = await pair(rig, mac)
+    await phone.dial((nonce) => phone.hello(nonce))
+    await until(() => phone.frames.find((f) => f['type'] === 'ready'))
+    const token = 'cd'.repeat(32)
+    phone.socket?.send(JSON.stringify({ type: 'push-token', token }))
+    await until(() => mac.pushTokens.length > 0)
+    expect(mac.pushTokens).toEqual([`${phone.deviceId} ${token}`])
     expect(mac.door.online(phone.deviceId)).toBe(true)
   }, 30_000)
 })
