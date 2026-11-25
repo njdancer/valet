@@ -115,4 +115,12 @@ final class EventKitAccessTests: XCTestCase {
     XCTAssertNil(c.hour)
     XCTAssertNotNil(components(of: .instant(0)).hour)
   }
+
+  func testAllDaySpanEndsOnTheLastDay() {
+    let day = Date(timeIntervalSince1970: 1_764_000_000)
+    let next = day.addingTimeInterval(86_400)
+    XCTAssertEqual(allDaySpan(day, day)?.end, day)
+    XCTAssertEqual(allDaySpan(day, next)?.end, next)
+    XCTAssertNil(allDaySpan(next, day))
+  }
 }

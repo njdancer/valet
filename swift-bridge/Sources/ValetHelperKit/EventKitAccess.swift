@@ -370,7 +370,7 @@ private func participantJSON(_ p: EKParticipant) -> [String: Any] {
 
 func eventJSON(_ event: EKEvent) -> [String: Any] {
   let start: Any = event.isAllDay ? dayString(event.startDate) : isoTime(event.startDate)
-  // An all-day event ends at the start of the day after its last; give the last day itself.
+  // An all-day event ends late on its last day (or midnight after); give the last day itself.
   let end: Any =
     event.isAllDay
     ? dayString(event.endDate.addingTimeInterval(-1)) : isoTime(event.endDate)
@@ -477,12 +477,11 @@ private func apply(_ fields: EventFields, to event: EKEvent) throws {
       ?? (event.isAllDay ? .dayOf(event.endDate.addingTimeInterval(-1)) : .instant(ms(event.endDate)))
     switch (start, end) {
     case (.day, .day):
-      guard let s = date(of: start), let lastDay = date(of: end),
-        let e = Calendar.current.date(byAdding: .day, value: 1, to: lastDay), e > s
+      guard let s = date(of: start), let lastDay = date(of: end), let span = allDaySpan(s, lastDay)
       else { throw EventKitFailure.invalid }
       event.isAllDay = true
-      event.startDate = s
-      event.endDate = e
+      event.startDate = span.start
+      event.endDate = span.end
     case (.instant, .instant):
       guard let s = date(of: start), let e = date(of: end), e > s else { throw EventKitFailure.invalid }
       event.isAllDay = false
@@ -492,6 +491,12 @@ private func apply(_ fields: EventFields, to event: EKEvent) throws {
       throw EventKitFailure.invalid
     }
   }
+}
+
+/// An all-day event's dates as EventKit takes them: its end is a moment on the last day itself.
+/// (Midnight after the last day reads to EventKit as one more day: feedback issue #8.)
+func allDaySpan(_ start: Date, _ lastDay: Date) -> (start: Date, end: Date)? {
+  lastDay >= start ? (start, lastDay) : nil
 }
 
 private func ms(_ date: Date) -> Int64 { Int64(date.timeIntervalSince1970 * 1000) }
