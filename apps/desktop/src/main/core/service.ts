@@ -171,6 +171,7 @@ import {
   WIDENING_SETTINGS,
   type WideningSetting,
 } from './approvals'
+import { ApnsSender } from './approvals/apns'
 import { MissedItems, sortAttention } from './attention'
 import {
   type AdapterLookup,
@@ -798,6 +799,7 @@ export class AppService {
       macName: deps.macName ?? 'This Mac',
       statePath: join(deps.paths.dir, 'phone-channel.json'),
       bindingPath: join(deps.paths.dir, 'relay-binding.json'),
+      apns: new ApnsSender({ dir: deps.paths.dir, log: (line) => deps.diagnostics?.({ type: line }) }),
       emit: () => this.emit('phones-changed'),
       log: (line) => deps.diagnostics?.({ type: line }),
     })

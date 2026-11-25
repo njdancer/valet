@@ -28,6 +28,8 @@ public final class FakeRelay: RelayTransport {
   public private(set) var dialled: [String] = []
   /// A phone asked the relay to stop forwarding remote traffic to the Mac.
   public private(set) var locked = false
+  /// Push tokens phones sent after their hello, newest last (the Mac keeps them to wake phones).
+  public private(set) var pushTokens: [String] = []
   /// A hook for hostile-relay tests: return nil to drop a frame to the phone, or a changed frame.
   public var tamperToPhone: ((String) -> String?)?
   public var tamperToMac: ((String) -> String?)?
@@ -130,7 +132,10 @@ public final class FakeRelay: RelayTransport {
       else { return }
       if mac.online { mac.receive(envelope: envelope) }
     case (.phone, "push-token"):
-      break
+      guard connection.authenticated, let f = try? Fields(value, path: "frame", required: ["type", "token"]),
+        let token = try? f.string("token")
+      else { return }
+      pushTokens.append(token)
     case (.phone, "relay-lock"):
       guard connection.authenticated else { return }
       locked = true

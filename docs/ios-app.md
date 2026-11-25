@@ -251,8 +251,32 @@ question for Nick), even though B's `approvableOn` would allow a `resume` card; 
   extension that decrypts a sealed title is CR-8, for later.
 - Grouping and time-sensitive interruption level follow A §10 once titles exist; with fixed text
   every push is one thread, and only "Valet needs you" is time-sensitive.
-- The APNs token goes to the relay in `push-token`. In the simulator and CI, pushes are simulated
-  by the fake (`xcrun simctl push` in one UI test).
+- ~~The APNs token goes to the relay in `push-token`.~~ Since the blind relay (it can't read or
+  keep anything), the phone sends `push-token` to the **Mac** after its hello, each time it
+  connects, and the Mac sends the push to Apple itself (2026-11-25, Nick chose the paid Apple
+  Developer Program over a third-party push app).
+
+### How it's built (2026-11-25)
+
+- Phone: `PushDelegate` (ValetPhoneApp.swift) asks for notification permission once paired,
+  registers with APNs and hands the hex token to `PhoneModel.pushToken`, which sends it on every
+  `ready`. A banner isn't shown while the app is open, and delivered notifications are cleared when
+  it comes to the front. The shipping target has the `aps-environment` entitlement; a build signed
+  with the free account fails registration quietly and keeps fetching cards on open.
+- Mac: `PhoneDoor` passes the token to `ApnsSender` (apps/desktop/src/main/core/approvals/apns.ts),
+  kept in `push-tokens.json`. When a card or handoff goes to a phone that isn't connected,
+  `Phones` wakes it: one push per phone per 30 seconds at most, collapsed on the lock screen,
+  expiring after an hour, fixed text only (`NEEDS_YOU_PAYLOAD`). The first push tries production
+  and falls back to the sandbox for an Xcode build, then remembers which. A 410 drops the token.
+- Setup, once, in Valet's data folder (`~/Library/Application Support/Valet` for the dev build's
+  own folder): `apns.json` = `{"teamId":"<10 chars>","keyId":"<10 chars>","bundleId":"me.dncr.valet"}`
+  and the key Apple gave, `AuthKey_<keyId>.p8`. Without them nothing is sent. The key can only send
+  pushes to this app; it can't sign or read anything else.
+- Apple side: App ID `me.dncr.valet` with Push Notifications, and an APNs auth key (Keys, "Apple
+  Push Notifications service"). Both need the paid membership.
+- Tests: apps/desktop/test/main/apns.test.ts (fake Apple: payload, ES256 provider token, gap,
+  sandbox fallback, 410), phone-door.test.ts (token from a connected phone),
+  PhoneModelTests `testSendsItsPushTokenOnceConnectedAndAgainWhenItChanges`.
 
 ## Screens
 

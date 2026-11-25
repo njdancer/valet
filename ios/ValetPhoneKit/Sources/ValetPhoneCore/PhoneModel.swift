@@ -140,6 +140,11 @@ public final class PhoneModel {
   public private(set) var alerts: [AlertEntry] = []
   public private(set) var commands: [PendingCommand] = []
   public private(set) var connected = false
+  /// Apple's push token for this phone, as hex. Sent to the Mac each time the channel opens, so it
+  /// can wake the phone when a card waits (the push itself holds only "Valet needs you").
+  public var pushToken: String? {
+    didSet { if pushToken != oldValue { sendPushToken() } }
+  }
   public private(set) var macOnline = false
   public private(set) var macLastSeen: Date?
   /// Messages from the Mac are missing (a gap in seq).
@@ -427,6 +432,7 @@ public final class PhoneModel {
     case let .ready(online):
       connected = true
       setMacOnline(online)
+      sendPushToken()
       flushOutbox()
     case let .macOnline(online):
       setMacOnline(online)
@@ -439,6 +445,16 @@ public final class PhoneModel {
     case .pairingChallenge, .pairingResult:
       dropped += 1
     }
+  }
+
+  private func sendPushToken() {
+    guard connected, let token = pushToken, Self.validPushToken(token) else { return }
+    connection?.send(PhoneToRelay.pushToken(token).text)
+  }
+
+  /// What the Mac takes: 64 to 200 lowercase hex characters.
+  public static func validPushToken(_ token: String) -> Bool {
+    (64...200).contains(token.count) && token.allSatisfy { ("0"..."9").contains($0) || ("a"..."f").contains($0) }
   }
 
   private func setMacOnline(_ online: Bool) {
