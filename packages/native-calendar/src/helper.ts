@@ -81,6 +81,8 @@ export interface EventQuery {
   readonly calendars: readonly string[]
   readonly startMs: number
   readonly endMs: number
+  /** Words in the title, location or notes, matched before the limit. */
+  readonly text?: string
   readonly limit?: number
 }
 
@@ -90,6 +92,8 @@ export interface ReminderQuery {
   readonly completed: boolean | null
   readonly dueStartMs?: number
   readonly dueEndMs?: number
+  /** Words in the title or notes, matched before the limit. */
+  readonly text?: string
   readonly limit?: number
 }
 
@@ -113,6 +117,7 @@ export interface SaveReminder {
   readonly due?: HelperTime | null
   readonly priority?: number
   readonly completed?: boolean
+  readonly url?: string | null
 }
 
 export interface EventKit {

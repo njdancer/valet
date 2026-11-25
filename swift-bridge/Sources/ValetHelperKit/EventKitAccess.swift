@@ -60,14 +60,17 @@ public struct ReminderFields: Equatable {
   public var due: EventKitTime??
   public var priority: Int?
   public var completed: Bool?
+  /// .some(nil) clears it.
+  public var url: String??
 }
 
 public enum EventKitRequest: Equatable {
   case status(EventKitKind)
   case request(EventKitKind)
   case calendars(EventKitKind)
-  case events(calendars: [String], startMs: Int64, endMs: Int64, limit: Int)
-  case reminders(calendars: [String], completed: Bool?, dueStartMs: Int64?, dueEndMs: Int64?, limit: Int)
+  case events(calendars: [String], startMs: Int64, endMs: Int64, text: String?, limit: Int)
+  case reminders(
+    calendars: [String], completed: Bool?, dueStartMs: Int64?, dueEndMs: Int64?, text: String?, limit: Int)
   /// id nil: a new event in `calendar`. occurrenceMs: which occurrence of a recurring one.
   case saveEvent(calendar: String, id: String?, occurrenceMs: Int64?, fields: EventFields)
   case saveReminder(calendar: String, id: String?, fields: ReminderFields)
@@ -140,6 +143,19 @@ private func calendarIds(_ value: Any?) throws -> [String] {
   }
 }
 
+/// Optional words to look for; matched before the limit, so no match is cut off (feedback issue #9).
+private func searchText(_ value: Any?) throws -> String? {
+  guard let value, !(value is NSNull) else { return nil }
+  guard let t = text(value, max: 200), !t.isEmpty else { throw EventKitFailure.invalid }
+  return t
+}
+
+/// Whether any field holds the words, ignoring case.
+func containsText(_ needle: String?, _ fields: String?...) -> Bool {
+  guard let needle else { return true }
+  return fields.contains { $0?.range(of: needle, options: .caseInsensitive) != nil }
+}
+
 private func limit(_ value: Any?) throws -> Int {
   guard let value else { return maxEventKitResults }
   guard let n = int64(value), n >= 1, n <= Int64(maxEventKitResults) else { throw EventKitFailure.invalid }
@@ -163,14 +179,15 @@ public func parseEventKitRequest(_ data: Data) throws -> EventKitRequest {
     let k = try kind(object)
     return op == "eventkit.status" ? .status(k) : op == "eventkit.request" ? .request(k) : .calendars(k)
   case "eventkit.events":
-    try only(["calendars", "startMs", "endMs", "limit"], required: ["calendars", "startMs", "endMs"])
+    try only(["calendars", "startMs", "endMs", "text", "limit"], required: ["calendars", "startMs", "endMs"])
     guard let start = int64(object["startMs"]), let end = int64(object["endMs"]), end > start,
       end - start <= maxRangeMs
     else { throw EventKitFailure.invalid }
     return .events(
-      calendars: try calendarIds(object["calendars"]), startMs: start, endMs: end, limit: try limit(object["limit"]))
+      calendars: try calendarIds(object["calendars"]), startMs: start, endMs: end,
+      text: try searchText(object["text"]), limit: try limit(object["limit"]))
   case "eventkit.reminders":
-    try only(["calendars", "completed", "dueStartMs", "dueEndMs", "limit"], required: ["calendars"])
+    try only(["calendars", "completed", "dueStartMs", "dueEndMs", "text", "limit"], required: ["calendars"])
     var completed: Bool?
     if let value = object["completed"], !(value is NSNull) {
       guard let b = bool(value) else { throw EventKitFailure.invalid }
@@ -189,7 +206,7 @@ public func parseEventKitRequest(_ data: Data) throws -> EventKitRequest {
     if let start, let end, end <= start { throw EventKitFailure.invalid }
     return .reminders(
       calendars: try calendarIds(object["calendars"]), completed: completed, dueStartMs: start, dueEndMs: end,
-      limit: try limit(object["limit"]))
+      text: try searchText(object["text"]), limit: try limit(object["limit"]))
   case "eventkit.saveEvent":
     try only(
       ["calendar", "id", "occurrenceMs", "title", "start", "end", "location", "notes", "url"],
@@ -219,7 +236,7 @@ public func parseEventKitRequest(_ data: Data) throws -> EventKitRequest {
     }
     return .saveEvent(calendar: calendar, id: id, occurrenceMs: occurrence, fields: fields)
   case "eventkit.saveReminder":
-    try only(["calendar", "id", "title", "notes", "due", "priority", "completed"], required: ["calendar"])
+    try only(["calendar", "id", "title", "notes", "due", "priority", "completed", "url"], required: ["calendar"])
     guard let calendar = text(object["calendar"], max: 200), !calendar.isEmpty else { throw EventKitFailure.invalid }
     let id = try optionalText(object, "id", max: 400) ?? nil
     var fields = ReminderFields()
@@ -239,6 +256,7 @@ public func parseEventKitRequest(_ data: Data) throws -> EventKitRequest {
       guard let b = bool(value) else { throw EventKitFailure.invalid }
       fields.completed = b
     }
+    fields.url = try optionalText(object, "url", max: 2_000)
     if id == nil && fields.title == nil { throw EventKitFailure.invalid }
     return .saveReminder(calendar: calendar, id: id, fields: fields)
   case "eventkit.removeEvent", "eventkit.removeReminder":
@@ -456,20 +474,20 @@ private func findEvent(_ id: String, occurrenceMs: Int64?, in calendar: EKCalend
   }
 }
 
+/// An http(s) link, or nil to clear one.
+private func webURL(_ text: String?) throws -> URL? {
+  guard let text else { return nil }
+  guard let parsed = URL(string: text), ["http", "https"].contains(parsed.scheme?.lowercased() ?? "") else {
+    throw EventKitFailure.invalid
+  }
+  return parsed
+}
+
 private func apply(_ fields: EventFields, to event: EKEvent) throws {
   if let title = fields.title { event.title = title }
   if let location = fields.location { event.location = location }
   if let notes = fields.notes { event.notes = notes }
-  if let url = fields.url {
-    if let url {
-      guard let parsed = URL(string: url), ["http", "https"].contains(parsed.scheme?.lowercased() ?? "") else {
-        throw EventKitFailure.invalid
-      }
-      event.url = parsed
-    } else {
-      event.url = nil
-    }
-  }
+  if let url = fields.url { event.url = try webURL(url) }
   if fields.start != nil || fields.end != nil {
     let start = fields.start ?? (event.isAllDay ? .dayOf(event.startDate) : .instant(ms(event.startDate)))
     let end =
@@ -534,7 +552,7 @@ public func answerEventKit(_ request: EventKitRequest) -> [String: Any] {
       let store = eventKitStores.get()
       store.refreshSourcesIfNecessary()
       return ["calendars": store.calendars(for: kind.entity).prefix(maxEventKitResults).map { calendarJSON($0) }]
-    case .events(let ids, let startMs, let endMs, let limit):
+    case .events(let ids, let startMs, let endMs, let words, let limit):
       guard hasFullAccess(.events) else { throw EventKitFailure.denied }
       let store = eventKitStores.get()
       let chosen = calendars(ids, .events, store)
@@ -542,9 +560,11 @@ public func answerEventKit(_ request: EventKitRequest) -> [String: Any] {
       let predicate = store.predicateForEvents(
         withStart: Date(timeIntervalSince1970: TimeInterval(startMs) / 1000),
         end: Date(timeIntervalSince1970: TimeInterval(endMs) / 1000), calendars: chosen)
-      let found = store.events(matching: predicate).sorted { $0.startDate < $1.startDate }
+      let found = store.events(matching: predicate)
+        .filter { containsText(words, $0.title, $0.location, $0.notes) }
+        .sorted { $0.startDate < $1.startDate }
       return ["events": found.prefix(limit).map { eventJSON($0) }, "more": found.count > limit]
-    case .reminders(let ids, let completed, let dueStartMs, let dueEndMs, let limit):
+    case .reminders(let ids, let completed, let dueStartMs, let dueEndMs, let words, let limit):
       guard hasFullAccess(.reminders) else { throw EventKitFailure.denied }
       let store = eventKitStores.get()
       let chosen = calendars(ids, .reminders, store)
@@ -563,7 +583,7 @@ public func answerEventKit(_ request: EventKitRequest) -> [String: Any] {
       guard let fetched: [EKReminder]? = wait(seconds: 15, { done in
         _ = store.fetchReminders(matching: predicate) { done($0) }
       }) else { throw EventKitFailure.unavailable }
-      var found = fetched ?? []
+      var found = (fetched ?? []).filter { containsText(words, $0.title, $0.notes) }
       if completed != false, start != nil || end != nil {
         found = found.filter { r in
           guard let c = r.dueDateComponents, let due = Calendar.current.date(from: c) else { return false }
@@ -630,6 +650,7 @@ public func answerEventKit(_ request: EventKitRequest) -> [String: Any] {
         }
       }
       if let completed = fields.completed { reminder.isCompleted = completed }
+      if let url = fields.url { reminder.url = try webURL(url) }
       do {
         try store.save(reminder, commit: true)
       } catch {

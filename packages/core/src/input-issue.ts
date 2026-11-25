@@ -31,6 +31,10 @@ export const INPUT_REASONS = [
   'over-total',
   /** The site itself refused the value: it may not be one the site knows. */
   'not-accepted',
+  /** An end that isn't after its start. Set by the tool's own check. */
+  'before-start',
+  /** Names something agents may read but not change (a read-only calendar). Set by the tool. */
+  'read-only',
   /** A check of the tool's own, which says nothing more. */
   'refused',
 ] as const
@@ -234,6 +238,10 @@ export function inputIssueSentence(issue: InputIssue): string {
         : `${at} would take the total over its limit`
     case 'not-accepted':
       return `the site did not accept ${at}: it may not be a value the site knows. Check it against what the site's own search returns`
+    case 'before-start':
+      return `${at} must be after the start`
+    case 'read-only':
+      return `${at} names one that can be read but not changed. Pick one the list shows as writable`
     case 'refused':
       return `${at} was refused by the tool's own checks`
   }
