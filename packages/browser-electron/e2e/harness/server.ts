@@ -129,10 +129,12 @@ function routes(
       body: page(
         'Dialogs',
         `<p>Dialogs</p><script>
+          setTimeout(() => { document.body.dataset.late = String(confirm('later')) }, 100)
           document.body.dataset.confirm = String(confirm('There was a problem loading the page.'))
           alert('alert')
-          document.body.dataset.prompt = String(prompt('prompt'))
-          setTimeout(() => { document.body.dataset.late = String(confirm('later')) }, 100)
+          // Electron's renderer throws for prompt(), which it doesn't support.
+          try { document.body.dataset.prompt = String(prompt('prompt')) }
+          catch { document.body.dataset.prompt = 'unsupported' }
         </script>`,
       ),
     }
