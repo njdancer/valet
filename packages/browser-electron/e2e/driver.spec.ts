@@ -551,6 +551,18 @@ test('handToUser shows the window, and closing it hides the page instead of dest
   })
 })
 
+test('a tool page’s own dialogs return at once and never show its window or hold up the next load', async () => {
+  expect(await scenario(app, 'pageDialogs')).toEqual({
+    hidden: true,
+    answers: { confirm: 'false', prompt: expect.stringMatching(/^(null|unsupported)$/), late: 'false' },
+    hiddenAfterShow: true,
+    movedOn: true,
+    quick: true,
+    discarded: true,
+    freshWindow: true,
+  })
+})
+
 test('close destroys every window the driver opened', async () => {
   expect(await scenario(app, 'close')).toEqual({ windows: 0 })
 })

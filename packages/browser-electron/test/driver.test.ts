@@ -152,6 +152,32 @@ describe('ElectronSessionDriver.forManifest', () => {
   })
 })
 
+describe('discardToolPage', () => {
+  it('closes the tool window, and the next toolPage opens a fresh one in the same partition', async () => {
+    const { platform } = browserLike()
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    const first = await driver.toolPage()
+    expect(await driver.toolPage()).toBe(first)
+    const old = platform.surfaces.at(-1)!
+    driver.discardToolPage()
+    expect(old.isDestroyed()).toBe(true)
+    const second = await driver.toolPage()
+    expect(second).not.toBe(first)
+    const fresh = platform.surfaces.at(-1)!
+    expect(fresh).not.toBe(old)
+    expect(fresh.isDestroyed()).toBe(false)
+    // The partition was set up once: its proxy and guards carry on.
+    expect(platform.session(TOOL).hardened).toBe(1)
+  })
+
+  it('does nothing when no tool page is open', () => {
+    const { platform } = browserLike()
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    expect(() => driver.discardToolPage()).not.toThrow()
+    expect(platform.surfaces).toEqual([])
+  })
+})
+
 describe('partition set-up', () => {
   it('hardens the auth partition once and gives it a subframe filter but no proxy', async () => {
     const { platform } = browserLike()

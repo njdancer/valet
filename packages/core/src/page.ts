@@ -155,6 +155,13 @@ export interface SessionDriver {
   unlockIrreversible(): void
   endRun(): void
   /**
+   * Closes the tool page's window, if one is open, so the next run opens a fresh one. For a run
+   * that timed out: whatever held it up (a page stuck in a dialog, a load that never ends) would
+   * otherwise hold up every later run on the same page. Optional: a driver without it keeps its
+   * page.
+   */
+  discardToolPage?(): void
+  /**
    * Connects the site's breaker and budget (D55). From now on the driver tells `watcher` about
    * every block signature it sees in either partition, cancels every tool-partition request while
    * `watcher.held()` is true, and paces the tool partition's main-frame navigations. Optional: a driver without it leaves blocks to the runtime's own checks.

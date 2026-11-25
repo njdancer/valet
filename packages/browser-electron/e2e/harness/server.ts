@@ -122,6 +122,23 @@ function routes(
 ) {
   const login = site.url('login.test')
   const evil = site.url('evil.test')
+  // Opens the page's own dialogs, at once and a moment after load, as Yahoo's quote page confirm()s
+  // when its scripts fail to load. What each returned is written to the body for the test to read.
+  if (host === 'site.test' && path === '/dialogs') {
+    return {
+      body: page(
+        'Dialogs',
+        `<p>Dialogs</p><script>
+          setTimeout(() => { document.body.dataset.late = String(confirm('later')) }, 100)
+          document.body.dataset.confirm = String(confirm('There was a problem loading the page.'))
+          alert('alert')
+          // Electron's renderer throws for prompt(), which it doesn't support.
+          try { document.body.dataset.prompt = String(prompt('prompt')) }
+          catch { document.body.dataset.prompt = 'unsupported' }
+        </script>`,
+      ),
+    }
+  }
   if (host === 'site.test' && path === '/') {
     return { body: page('Home', '<h1>Home</h1><p class="greeting">Welcome to the test site</p>') }
   }

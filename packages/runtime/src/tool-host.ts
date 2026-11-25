@@ -907,6 +907,15 @@ export class ToolHost {
       // Any ending but ok may mean the session isn't what it was (logged out, blocked, cut off
       // halfway through a write), so the next call starts from the site, not from memory.
       if (result.status !== 'ok') forget(entry)
+      // A run that timed out may have left the page stuck (in a dialog, or a load that never
+      // settles); reusing it would time out every call after. The next call opens a fresh one.
+      if (result.status === 'failed' && result.stage === 'timeout') {
+        try {
+          entry.driver.discardToolPage?.()
+        } catch {
+          // The next call reuses the old page, as before.
+        }
+      }
       return result
     } finally {
       external?.removeEventListener('abort', stop)
