@@ -37,6 +37,11 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
 
   /// Asks once a phone is paired: before then there is no Mac to wake it.
   func askIfPaired(_ paired: Bool) {
+    // The fakes build has no push entitlement, and the system's permission alert would sit over
+    // the screens its UI tests drive.
+    #if VALET_FAKES
+      return
+    #endif
     guard paired, !asked else { return }
     asked = true
     Task {
