@@ -125,6 +125,8 @@ export interface EventKit {
   /** Asks macOS (its prompt shows); answers at once with the access before the person answers. */
   requestAccess(kind: EventKitKind): Promise<EventKitAccess>
   calendars(kind: EventKitKind): Promise<readonly CalendarInfo[]>
+  /** The next request sees calendars and lists added since (the helper keeps one store). */
+  refresh(): Promise<void>
   events(query: EventQuery): Promise<{ readonly events: readonly EventInfo[]; readonly more: boolean }>
   reminders(
     query: ReminderQuery,
@@ -199,6 +201,10 @@ export class HelperEventKit implements EventKit {
   async calendars(kind: EventKitKind): Promise<readonly CalendarInfo[]> {
     const answer = await this.#ask({ op: 'eventkit.calendars', kind })
     return listOf(answer['calendars']) as unknown as CalendarInfo[]
+  }
+
+  async refresh(): Promise<void> {
+    await this.#ask({ op: 'eventkit.refresh' })
   }
 
   async events(query: EventQuery) {

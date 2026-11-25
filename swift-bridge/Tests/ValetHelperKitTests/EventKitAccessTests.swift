@@ -141,13 +141,13 @@ final class EventKitAccessTests: XCTestCase {
     XCTAssertEqual(fields.url, .some(nil))
   }
 
-  func testStoreIsMadeAgainOnceOld() {
-    var clock = Date(timeIntervalSince1970: 0)
-    let stores = EventKitStores(maxAge: 30, now: { clock })
+  func testStoreIsMadeAgainAfterReset() throws {
+    XCTAssertEqual(try parse(#"{"v":1,"op":"eventkit.refresh"}"#), .refresh)
+    refused(#"{"v":1,"op":"eventkit.refresh","kind":"events"}"#)
+    let stores = EventKitStores()
     let first = stores.get()
-    clock += 10
     XCTAssertTrue(stores.get() === first)
-    clock += 30
+    stores.reset()
     XCTAssertFalse(stores.get() === first)
   }
 }

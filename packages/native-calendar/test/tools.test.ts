@@ -92,6 +92,7 @@ class FakeKit implements EventKit {
   async requestAccess() {
     return 'full' as const
   }
+  async refresh() {}
   async calendars(kind: 'events' | 'reminders') {
     if (this.fail !== null) throw this.fail
     return this.calendarsOf[kind]

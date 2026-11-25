@@ -30,6 +30,8 @@ import { Failed } from '../connections/shared'
 
 /** How often the screen looks again while macOS asks, or the person is in System Settings. */
 const RECHECK_MS = 2000
+/** How often the list is looked at again while the screen is in the foreground. */
+const LIST_RECHECK_MS = 5000
 
 interface Words {
   readonly name: string
@@ -92,18 +94,44 @@ export function EventKitSection({ app }: { readonly app: EventKitApp }) {
     status !== null &&
     (status.state === 'not-running' || status.state === 'needs-access' || status.state === 'denied')
 
-  // While macOS asks, or the person is in System Settings, look again so the next step appears.
+  // Look again while this screen is showing in the foreground: quickly while macOS asks or the
+  // person is in System Settings, so the next step appears, and otherwise every few seconds so a
+  // calendar or list added meanwhile shows. Nothing polls while the window is hidden or in the
+  // background; it looks again the moment it comes back (Nick, 2026-11-25).
   useEffect(() => {
-    if (!waiting) return
-    const timer = setInterval(() => {
+    let timer: ReturnType<typeof setInterval> | undefined
+    const look = () =>
       void api.eventKit
         .status(app)
         .then((s) => {
           if (s !== null) setLatest(s)
         })
         .catch(() => undefined)
-    }, RECHECK_MS)
-    return () => clearInterval(timer)
+    const active = () => document.visibilityState === 'visible' && document.hasFocus()
+    const stop = () => {
+      clearInterval(timer)
+      timer = undefined
+    }
+    const start = () => {
+      stop()
+      if (!active()) return
+      timer = setInterval(() => (active() ? look() : stop()), waiting ? RECHECK_MS : LIST_RECHECK_MS)
+    }
+    const back = () => {
+      if (!active()) return stop()
+      look()
+      start()
+    }
+    start()
+    window.addEventListener('focus', back)
+    window.addEventListener('blur', stop)
+    document.addEventListener('visibilitychange', back)
+    return () => {
+      stop()
+      window.removeEventListener('focus', back)
+      window.removeEventListener('blur', stop)
+      document.removeEventListener('visibilitychange', back)
+    }
   }, [api, app, waiting])
 
   const update = (patch: EventKitSettingsPatch) =>

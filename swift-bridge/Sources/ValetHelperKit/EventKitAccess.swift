@@ -9,6 +9,7 @@
 // - eventkit.status     the access macOS gives the helper for events or reminders
 // - eventkit.request    asks macOS for it (the prompt), and answers at once with the access now
 // - eventkit.calendars  the calendars (events) or lists (reminders), with their accounts
+// - eventkit.refresh    drops the store, so the next request sees calendars and lists added since
 // - eventkit.events     the events in some calendars between two times, recurring ones expanded
 // - eventkit.reminders  the reminders in some lists, open or done, optionally due in a range
 // - eventkit.saveEvent  creates an event, or changes one (one occurrence of a recurring one)
@@ -68,6 +69,7 @@ public enum EventKitRequest: Equatable {
   case status(EventKitKind)
   case request(EventKitKind)
   case calendars(EventKitKind)
+  case refresh
   case events(calendars: [String], startMs: Int64, endMs: Int64, text: String?, limit: Int)
   case reminders(
     calendars: [String], completed: Bool?, dueStartMs: Int64?, dueEndMs: Int64?, text: String?, limit: Int)
@@ -174,6 +176,9 @@ public func parseEventKitRequest(_ data: Data) throws -> EventKitRequest {
     }
   }
   switch op {
+  case "eventkit.refresh":
+    try only([])
+    return .refresh
   case "eventkit.status", "eventkit.request", "eventkit.calendars":
     try only(["kind"], required: ["kind"])
     let k = try kind(object)
@@ -293,34 +298,29 @@ public func accessName(_ status: EKAuthorizationStatus) -> String {
   }
 }
 
-/// The helper's store, made again when access changes (a store made before access was given sees
-/// nothing) and once it is `maxAge` old. The helper runs no run loop for EventKit's change
-/// notifications, so a store never learns of a calendar or list added after it was made, even with
-/// refreshSourcesIfNecessary: a subscribed calendar added on the phone stayed invisible for hours.
+/// The helper's one store, made again when access changes (a store made before access was given
+/// sees nothing) or when Valet asks (`eventkit.refresh`). The helper runs no run loop for
+/// EventKit's change notifications, so a store never learns of a calendar or list added after it
+/// was made: Valet refreshes while its Calendar or Reminders screen is open and before each agent
+/// call, and nothing runs in the background.
 final class EventKitStores {
   private var store: EKEventStore?
   private var madeWith: [EKEntityType: String] = [:]
-  private var madeAt = Date.distantPast
-  private let maxAge: TimeInterval
-  private let now: () -> Date
-
-  init(maxAge: TimeInterval = 30, now: @escaping () -> Date = Date.init) {
-    self.maxAge = maxAge
-    self.now = now
-  }
 
   func get() -> EKEventStore {
     let access: [EKEntityType: String] = [
       .event: accessName(EKEventStore.authorizationStatus(for: .event)),
       .reminder: accessName(EKEventStore.authorizationStatus(for: .reminder)),
     ]
-    if let store, access == madeWith, now().timeIntervalSince(madeAt) < maxAge { return store }
+    if let store, access == madeWith { return store }
     let made = EKEventStore()
     store = made
     madeWith = access
-    madeAt = now()
     return made
   }
+
+  /// The next get() makes a fresh store.
+  func reset() { store = nil }
 }
 
 let eventKitStores = EventKitStores()
@@ -558,6 +558,9 @@ public func answerEventKit(_ request: EventKitRequest) -> [String: Any] {
         }
       }
       return ["access": before]
+    case .refresh:
+      eventKitStores.reset()
+      return ["ok": true]
     case .calendars(let kind):
       guard hasFullAccess(kind) else { throw EventKitFailure.denied }
       let store = eventKitStores.get()
