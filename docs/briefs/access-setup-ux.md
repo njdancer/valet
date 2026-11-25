@@ -18,14 +18,14 @@ through with Nick, then turn whatever he settles into numbered decisions in [pla
 
 Calendar, for one cloud agent (Reminders is the same again; Mail is similar):
 
-| Step | Where | What the person does |
-| --- | --- | --- |
-| 1 | Settings › Calendar | Turn Calendar on (starts Valet Reader). |
-| 2 | macOS | Ask macOS, then allow "Valet Reader" to use Calendar. |
-| 3 | Settings › Calendar | Tick each calendar one by one; there's no select all. |
-| 4 | Settings › Calendar | Turn on "add and change" (one switch for all picked calendars). |
-| 5 | Settings › Calendar › Cloud agents | Turn the agent's read switch on: Touch ID **twice** (one per read tool). |
-| 6 | Same | Turn the agent's "Add and change" switch on: Touch ID **three times** (one per write tool). |
+| Step | Where                              | What the person does                                                                        |
+| ---- | ---------------------------------- | ------------------------------------------------------------------------------------------- |
+| 1    | Settings › Calendar                | Turn Calendar on (starts Valet Reader).                                                     |
+| 2    | macOS                              | Ask macOS, then allow "Valet Reader" to use Calendar.                                       |
+| 3    | Settings › Calendar                | Tick each calendar one by one; there's no select all.                                       |
+| 4    | Settings › Calendar                | Turn on "add and change" (one switch for all picked calendars).                             |
+| 5    | Settings › Calendar › Cloud agents | Turn the agent's read switch on: Touch ID **twice** (one per read tool).                    |
+| 6    | Same                               | Turn the agent's "Add and change" switch on: Touch ID **three times** (one per write tool). |
 
 So Calendar plus Reminders for one cloud agent is two app switches, two macOS prompts, two lists of
 ticks, two write switches and **ten Touch ID prompts**. A second agent means ten more. Mail adds
