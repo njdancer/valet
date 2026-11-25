@@ -425,6 +425,47 @@ describe('a signed-in scratch browser (a browser grant)', () => {
     expect(browser.writesRefused).toBe(2)
   })
 
+  it('says why a signed-in browser held a page back, and a redirect off the site too', async () => {
+    const { browser, session } = await openSignedIn(ACCOUNT)
+    const filter = session.filter as NonNullable<typeof session.filter>
+    // Signed in, the request filter refuses the page before the navigation rule sees it.
+    expect(
+      await filter({ url: 'https://shop.example.com/cart', method: 'POST', resourceType: 'mainFrame' }),
+    ).toBe(false)
+    expect((browser as unknown as { refusal: string }).refusal).toMatch(/post a form/)
+    const surface = (browser as unknown as { surface: FakeSurface }).surface
+    const guard = (surface as unknown as { guard: (n: { url: string; isMainFrame: boolean }) => boolean })
+      .guard
+    expect(guard({ url: 'https://elsewhere.test/', isMainFrame: true })).toBe(false)
+    expect((browser as unknown as { refusal: string }).refusal).toBe(
+      'The page went on to elsewhere.test, which this browser doesn’t open.',
+    )
+  })
+
+  it('waits for an API call still out, even when nothing else moves', async () => {
+    const { browser, session } = await open()
+    const filter = session.filter as NonNullable<typeof session.filter>
+    await browser.navigate('https://finance.example.com/')
+    expect(
+      await filter({ url: 'https://api.example.com/forecast', method: 'GET', resourceType: 'xhr' }),
+    ).toBe(true)
+    let answered = false
+    const reply = setTimeout(() => {
+      answered = true
+      ;(browser as unknown as { record: (r: object) => void }).record({
+        id: 'r1',
+        method: 'GET',
+        url: 'https://api.example.com/forecast',
+        resourceType: 'XHR',
+        status: 200,
+        mimeType: 'application/json',
+      })
+    }, 1500)
+    await browser.navigate('https://finance.example.com/next')
+    clearTimeout(reply)
+    expect(answered).toBe(true)
+  }, 20_000)
+
   it('closes on a page with a card or password field, or a payment address, and says why', async () => {
     const card = await openSignedIn(
       '<html><body><form><input name="cardnumber" autocomplete="cc-number"></form></body></html>',

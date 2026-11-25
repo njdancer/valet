@@ -193,11 +193,14 @@ const FIELD = `(selector) => {
     inputType: tag === 'input' ? (lower('type') || 'text') : null,
     autocomplete: lower('autocomplete'),
     name: lower('name') + ' ' + lower('id'),
+    // Only a plain field that plainly can't take text is refused here; anything else (a custom
+    // element that hands focus to its own input, a select, an ARIA textbox) is left to the focus check.
     editable:
-      el.isContentEditable ||
-      (tag === 'textarea' && !el.disabled && !el.readOnly) ||
-      (tag === 'input' && !el.disabled && !el.readOnly &&
-        !['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit'].includes(lower('type'))),
+      tag === 'textarea'
+        ? !el.disabled && !el.readOnly
+        : tag !== 'input' ||
+          (!el.disabled && !el.readOnly &&
+            !['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit'].includes(lower('type'))),
   }
 }`
 

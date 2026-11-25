@@ -3740,6 +3740,7 @@ export class AppService {
   private grantFor(draftId: string): {
     readonly adapterId: string
     readonly cookieDomains: readonly string[]
+    readonly domains: readonly string[]
     readonly until: number
   } | null {
     const grant = this.browserGrants.get(draftId)
@@ -3749,7 +3750,11 @@ export class AppService {
       this.browserGrants.delete(draftId)
       return null
     }
-    return { ...grant, cookieDomains: adapter.definition.manifest.session.cookieDomains }
+    return {
+      ...grant,
+      cookieDomains: adapter.definition.manifest.session.cookieDomains,
+      domains: draftDomains(adapter.definition.manifest),
+    }
   }
 
   /** The draft's lent session or browser grant for the Mac, while either runs: the later end. */

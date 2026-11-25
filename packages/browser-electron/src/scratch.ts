@@ -32,6 +32,9 @@ import { chromeUserAgentOverride, cleanChromeUserAgent, LANGUAGES } from './user
 
 /** What a signed-in (granted) browser may send: reads only. */
 const READ_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD', 'OPTIONS'])
+/** The requests an app page draws itself from, as webRequest and DevTools name them. */
+const API_TYPES: ReadonlySet<string> = new Set(['xhr', 'fetch'])
+const POSTED = 'The page tried to post a form, which this browser never sends.'
 
 export const SCRATCH_LIMITS = {
   requestsPerLoad: 300,
@@ -128,6 +131,9 @@ export class ScratchBrowser {
   private refusedWrites = 0
   /** Requests started and responses seen: settle() waits until this stops moving. */
   private activity = 0
+  /** Fetch and XHR requests let out, and their responses seen: settle() waits for them too. */
+  private apiStarted = 0
+  private apiDone = 0
 
   private constructor(
     private readonly options: ScratchOptions,
@@ -197,7 +203,10 @@ export class ScratchBrowser {
     surface.guardNavigation((navigation) => {
       if (!navigation.isMainFrame) return true
       const url = parseUrl(navigation.url)
-      return url !== null && (url.protocol === 'about:' || options.rules.mayNavigate(url))
+      const ok = url !== null && (url.protocol === 'about:' || options.rules.mayNavigate(url))
+      // A redirect stopped here never reaches the request filter: say where it went.
+      if (!ok && url !== null) browser.refusal = browser.wentOn(url)
+      return ok
     })
     surface.onDestroyed(() => browser.close())
     return browser
@@ -430,10 +439,15 @@ export class ScratchBrowser {
     if (url === null) return false
     if (url.protocol === 'data:' || url.protocol === 'blob:' || url.protocol === 'about:') return true
     if (url.protocol !== 'https:' && url.protocol !== 'wss:') return false
-    if (!this.options.rules.mayRequest(url)) return false
+    const mainFrame = request.resourceType === 'mainFrame'
+    if (!this.options.rules.mayRequest(url)) {
+      if (mainFrame) this.refusal = this.wentOn(url)
+      return false
+    }
     // Read only: nothing that could change something on the site leaves a signed-in browser.
     if (this.options.rules.signedIn !== undefined && !READ_METHODS.has(request.method.toUpperCase())) {
       this.refusedWrites++
+      if (mainFrame) this.refusal = POSTED
       return false
     }
     if (request.resourceType === 'webSocket') {
@@ -442,6 +456,7 @@ export class ScratchBrowser {
     }
     this.requests++
     this.activity++
+    if (API_TYPES.has(request.resourceType.toLowerCase())) this.apiStarted++
     if (request.resourceType === 'mainFrame') {
       this.loadRequests = 0
       this.mainFrames++
@@ -454,11 +469,11 @@ export class ScratchBrowser {
     if (request.resourceType !== 'mainFrame') return true
     // A form that posts is a request the agent could make as anyone; only GET pages open.
     if (request.method !== 'GET') {
-      this.refusal = 'The page tried to post a form, which this browser never sends.'
+      this.refusal = POSTED
       return false
     }
     if (!this.options.rules.mayNavigate(url)) {
-      this.refusal = `The page went on to ${url.hostname.slice(0, 100)}, which this browser doesn’t open.`
+      this.refusal = this.wentOn(url)
       return false
     }
     // A server redirect is the same load (it keeps the request's id): paced once, at its first hop,
@@ -475,9 +490,15 @@ export class ScratchBrowser {
     )
   }
 
+  /** Why a page load was held back: the host it went on to, never its path or query. */
+  private wentOn(url: URL): string {
+    return `The page went on to ${this.scrub(url.hostname).slice(0, 100)}, which this browser doesn’t open.`
+  }
+
   private record(response: NetworkResponse): void {
     if (this.closed) return
     this.activity++
+    if (API_TYPES.has(response.resourceType.toLowerCase())) this.apiDone++
     this.seq++
     this.log.push({
       seq: this.seq,
@@ -541,8 +562,14 @@ export class ScratchBrowser {
     for (let waited = 0; waited < SCRATCH_LIMITS.quietCapMs; waited += SCRATCH_LIMITS.quietMs) {
       const before = this.activity
       await sleep(SCRATCH_LIMITS.quietMs)
-      if (this.closed || this.activity === before) return
+      if (this.closed) break
+      // Quiet, and no API call still out: one that failed never answers, so the cap ends that wait.
+      if (this.activity === before && this.apiDone >= this.apiStarted) return
     }
+    if (this.closed)
+      throw new ScratchError(
+        'The scratch browser closed while the page loaded: it made more requests than Valet allows, or the site refused it.',
+      )
   }
 
   private withTimeout<T>(work: Promise<T>): Promise<T | null> {
