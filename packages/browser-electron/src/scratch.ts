@@ -32,12 +32,21 @@ import { chromeUserAgentOverride, cleanChromeUserAgent, LANGUAGES } from './user
 
 /** What a signed-in (granted) browser may send: reads only. */
 const READ_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD', 'OPTIONS'])
+/** The requests an app page draws itself from, as webRequest and DevTools name them. */
+const API_TYPES: ReadonlySet<string> = new Set(['xhr', 'fetch'])
+const POSTED = 'The page tried to post a form, which this browser never sends.'
 
 export const SCRATCH_LIMITS = {
   requestsPerLoad: 300,
   requests: 1500,
   loadTimeoutMs: 20_000,
   settleMs: 1500,
+  /** After a load or input, the page counts as settled once no request starts or ends for this long… */
+  quietMs: 500,
+  /** …or after this long in all, for a page that never goes quiet (polling, analytics). */
+  quietCapMs: 5000,
+  /** Quiet ticks after which an API call still out is taken to be dead. */
+  quietStuckTicks: 3,
   logEntries: 500,
   maxNodes: 1000,
   defaultNodes: 300,
@@ -122,6 +131,11 @@ export class ScratchBrowser {
   /** Main-frame requests seen, so settle() can tell an input started a navigation. */
   private mainFrames = 0
   private refusedWrites = 0
+  /** Requests started and responses seen: settle() waits until this stops moving. */
+  private activity = 0
+  /** Fetch and XHR requests let out, and their responses seen: settle() waits for them too. */
+  private apiStarted = 0
+  private apiDone = 0
 
   private constructor(
     private readonly options: ScratchOptions,
@@ -191,7 +205,10 @@ export class ScratchBrowser {
     surface.guardNavigation((navigation) => {
       if (!navigation.isMainFrame) return true
       const url = parseUrl(navigation.url)
-      return url !== null && (url.protocol === 'about:' || options.rules.mayNavigate(url))
+      const ok = url !== null && (url.protocol === 'about:' || options.rules.mayNavigate(url))
+      // A redirect stopped here never reaches the request filter: say where it went.
+      if (!ok && url !== null) browser.refusal = browser.wentOn(url)
+      return ok
     })
     surface.onDestroyed(() => browser.close())
     return browser
@@ -222,12 +239,16 @@ export class ScratchBrowser {
       throw new ScratchError(
         `${target.hostname} isn't under the draft's domains. Add it to the manifest's home, navigation or egress first.`,
       )
+    if (!this.options.rules.mayRequest(target))
+      throw new ScratchError(`This browser doesn’t reach ${target.hostname.slice(0, 100)}.`)
     this.refusal = null
     const loaded = await this.withTimeout(this.surface.load(target.href))
-    if (this.refusal !== null) throw new ScratchError(this.refusal)
+    // Only when the page itself didn't load: a page that loaded and then tried to go elsewhere is shown.
+    if (this.refusal !== null && (loaded === null || !loaded.ok)) throw new ScratchError(this.refusal)
     if (this.closed) throw new ScratchError('The site refused the scratch browser, so it closed.')
     if (loaded !== null && !loaded.ok && loaded.code !== 'ERR_ABORTED')
       throw new ScratchError(`The page didn't load (${loaded.code.slice(0, 40)}).`)
+    await this.quiet()
     return this.snapshot()
   }
 
@@ -315,6 +336,7 @@ export class ScratchBrowser {
     const selector = this.selectorOf(target)
     const field = (await this.run(fieldScript(selector))) as {
       error?: string
+      editable?: boolean
       inputType?: string | null
       autocomplete?: string
       name?: string
@@ -327,8 +349,19 @@ export class ScratchBrowser {
       /otp|passcode|password/.test(field.name ?? '')
     )
       throw new ScratchError('The scratch browser doesn’t type into password or code fields.')
+    if (field.editable === false)
+      throw new ScratchError(
+        'That element isn’t a field you can type into (it is disabled, read only or not a text field).',
+      )
+    // The window is never shown, and Valet is a menu-bar app, so the page has no keyboard focus of
+    // its own: give it focus first, as the tool page does, or no field can take the keyboard.
+    this.surface.focus()
     const focused = (await this.run(focusScript(selector))) as { focused?: boolean } | null
-    if (focused?.focused !== true) throw new ScratchError('That field couldn’t take the keyboard.')
+    if (focused === null) throw new ScratchError('Nothing on the page matches that.')
+    if (focused.focused !== true)
+      throw new ScratchError(
+        'That field couldn’t take the keyboard: the page moved focus elsewhere. Click it first, or try its selector.',
+      )
     const frames = this.mainFrames
     for (const char of text) this.surface.sendChar(char, 'full')
     await this.settle(frames)
@@ -411,10 +444,15 @@ export class ScratchBrowser {
     if (url === null) return false
     if (url.protocol === 'data:' || url.protocol === 'blob:' || url.protocol === 'about:') return true
     if (url.protocol !== 'https:' && url.protocol !== 'wss:') return false
-    if (!this.options.rules.mayRequest(url)) return false
+    const mainFrame = request.resourceType === 'mainFrame'
+    if (!this.options.rules.mayRequest(url)) {
+      if (mainFrame) this.refusal = this.wentOn(url)
+      return false
+    }
     // Read only: nothing that could change something on the site leaves a signed-in browser.
     if (this.options.rules.signedIn !== undefined && !READ_METHODS.has(request.method.toUpperCase())) {
       this.refusedWrites++
+      if (mainFrame) this.refusal = POSTED
       return false
     }
     if (request.resourceType === 'webSocket') {
@@ -422,7 +460,12 @@ export class ScratchBrowser {
       if (page === null || page.hostname !== url.hostname) return false
     }
     this.requests++
+    this.activity++
+    if (API_TYPES.has(request.resourceType.toLowerCase())) this.apiStarted++
     if (request.resourceType === 'mainFrame') {
+      // A new document: calls the last one left without an answer no longer hold settle() up.
+      this.apiStarted = 0
+      this.apiDone = 0
       this.loadRequests = 0
       this.mainFrames++
     }
@@ -433,7 +476,14 @@ export class ScratchBrowser {
     }
     if (request.resourceType !== 'mainFrame') return true
     // A form that posts is a request the agent could make as anyone; only GET pages open.
-    if (request.method !== 'GET' || !this.options.rules.mayNavigate(url)) return false
+    if (request.method !== 'GET') {
+      this.refusal = POSTED
+      return false
+    }
+    if (!this.options.rules.mayNavigate(url)) {
+      this.refusal = this.wentOn(url)
+      return false
+    }
     // A server redirect is the same load (it keeps the request's id): paced once, at its first hop,
     // so a page that sends a signed-out visitor to its sign-in page isn't refused as a second load.
     if (request.id !== undefined && request.id === this.pacedRequest) return true
@@ -448,8 +498,15 @@ export class ScratchBrowser {
     )
   }
 
+  /** Why a page load was held back: the host it went on to, never its path or query. */
+  private wentOn(url: URL): string {
+    return `The page went on to ${this.scrub(url.hostname).slice(0, 100)}, which this browser doesn’t open.`
+  }
+
   private record(response: NetworkResponse): void {
     if (this.closed) return
+    this.activity++
+    if (API_TYPES.has(response.resourceType.toLowerCase())) this.apiDone++
     this.seq++
     this.log.push({
       seq: this.seq,
@@ -500,6 +557,28 @@ export class ScratchBrowser {
     }
     if (this.surface.isLoading()) await this.withTimeout(this.surface.nextStopLoading())
     if (this.closed) throw new ScratchError('The site refused the scratch browser, so it closed.')
+    await this.quiet()
+  }
+
+  /**
+   * Waits until the page stops fetching: an app that draws itself from its API (a React page, say)
+   * has its content only once those requests are back, well after the load event.
+   */
+  private async quiet(): Promise<void> {
+    const timers = this.options.timers ?? realTimers
+    const sleep = (ms: number) => new Promise<void>((resolve) => timers.setTimeout(resolve, ms))
+    let still = 0
+    for (let waited = 0; waited < SCRATCH_LIMITS.quietCapMs; waited += SCRATCH_LIMITS.quietMs) {
+      const before = this.activity
+      await sleep(SCRATCH_LIMITS.quietMs)
+      if (this.closed) break
+      still = this.activity === before ? still + 1 : 0
+      // Quiet with no API call still out; or quiet for a while even so, since a call that failed,
+      // was cancelled or was answered somewhere Valet doesn't see never counts as answered.
+      if (still >= 1 && this.apiDone >= this.apiStarted) return
+      if (still >= SCRATCH_LIMITS.quietStuckTicks) return
+    }
+    if (this.closed) throw new ScratchError('The scratch browser closed while the page was loading.')
   }
 
   private withTimeout<T>(work: Promise<T>): Promise<T | null> {

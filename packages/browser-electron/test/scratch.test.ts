@@ -5,7 +5,7 @@ import { JSDOM } from 'jsdom'
 import { describe, expect, it } from 'vitest'
 import type { FrameHandle } from '../src/platform'
 import { SCRATCH_LIMITS, ScratchBrowser, ScratchError, type ScratchRules } from '../src/scratch'
-import { type FakeFrame, FakePlatform, FakeSurface, flush } from './fake-browser'
+import { type FakeFrame, FakePlatform, type FakeSession, FakeSurface, flush } from './fake-browser'
 
 const PAGE = `<!doctype html><html><head><title>Quotes</title><script>secret()</script></head><body>
   <h1>Market data</h1>
@@ -177,6 +177,65 @@ describe('the scratch browser', () => {
     await expect(browserRef.navigate('https://finance.example.com/')).rejects.toThrow(/Wait 20 seconds/)
   })
 
+  it('says which address a page went on to when it was held back', async () => {
+    const platform = new FakePlatform()
+    const frame = jsdomFrame(PAGE)
+    platform.makeSurface = (partition) => {
+      const surface = new FakeSurface(partition, [frame as unknown as FakeFrame])
+      surface.onLoad = async (url) => {
+        const filter = platform.session(partition).filter
+        await filter?.({ url, method: 'GET', resourceType: 'mainFrame', id: 1 })
+        // A server redirect off the allowed domains, then a form that posts.
+        const off = await filter?.({
+          url: 'https://elsewhere.test/x',
+          method: 'GET',
+          resourceType: 'mainFrame',
+          id: 1,
+        })
+        return off === true ? { ok: true } : { ok: false, code: 'ERR_FAILED' }
+      }
+      return surface
+    }
+    const browser = await ScratchBrowser.open({
+      platform,
+      partition: 'scratch:dr-abcdefghij',
+      rules: rules(),
+    })
+    await expect(browser.navigate('https://finance.example.com/')).rejects.toThrow(
+      'The page went on to elsewhere.test, which this browser doesn’t open.',
+    )
+    const filter = platform.session('scratch:dr-abcdefghij').filter as NonNullable<FakeSession['filter']>
+    expect(
+      await filter({ url: 'https://finance.example.com/s', method: 'POST', resourceType: 'mainFrame' }),
+    ).toBe(false)
+  })
+
+  it('waits for an app page’s own requests before reading it, but not for ever', async () => {
+    const { browser, session } = await open()
+    const filter = session.filter as NonNullable<typeof session.filter>
+    // The page keeps fetching for a while after it loads, as a React page fetches its data.
+    let fetches = 0
+    const timer = setInterval(() => {
+      fetches++
+      void filter({ url: `https://api.example.com/d${fetches}`, method: 'GET', resourceType: 'fetch' })
+      if (fetches === 4) clearInterval(timer)
+    }, 200)
+    const started = Date.now()
+    await browser.navigate('https://finance.example.com/')
+    expect(fetches).toBe(4)
+    expect(Date.now() - started).toBeGreaterThanOrEqual(800 + SCRATCH_LIMITS.quietMs - 50)
+    // A page that never goes quiet is read anyway, at the cap.
+    const forever = setInterval(
+      () => void filter({ url: 'https://api.example.com/poll', method: 'GET', resourceType: 'xhr' }),
+      100,
+    )
+    const again = Date.now()
+    await browser.snapshot()
+    await browser.click({ selector: 'h1' }).catch(() => undefined)
+    clearInterval(forever)
+    expect(Date.now() - again).toBeLessThan(SCRATCH_LIMITS.quietCapMs + 3000)
+  }, 20_000)
+
   it('closes once a page load or the browser goes over its request caps', async () => {
     const { session, browser } = await open()
     const filter = session.filter as NonNullable<typeof session.filter>
@@ -266,6 +325,25 @@ describe('the scratch browser', () => {
     await browser.type({ selector: '#q' }, 'AAPL').catch(() => undefined)
     // jsdom has no window focus, so the focus check may refuse; either way nothing went to the password field.
     expect(surface.chars.join('')).not.toContain('x')
+    // The page gets keyboard focus before the field is focused: the window is never shown (#14).
+    expect(surface.focusCalls).toBe(1)
+  })
+
+  it('says why a field can’t be typed into: not a text field, disabled or read only', async () => {
+    const { browser, surface } = await open(
+      `<!doctype html><html><body><input id="box" type="checkbox"><input id="off" disabled>
+        <input id="ro" readonly><textarea id="t"></textarea></body></html>`,
+    )
+    await browser.navigate('https://finance.example.com/')
+    for (const id of ['box', 'off', 'ro'])
+      await expect(browser.type({ selector: `#${id}` }, 'x')).rejects.toThrow(
+        /isn’t a field you can type into/,
+      )
+    await expect(browser.type({ selector: '#nothing' }, 'x')).rejects.toThrow(/Nothing on the page matches/)
+    await browser
+      .type({ selector: '#t' }, 'ok')
+      .catch((e: Error) => expect(e.message).toMatch(/Click it first/))
+    expect(surface.chars).toEqual(surface.focusCalls > 0 && surface.chars.length > 0 ? ['o', 'k'] : [])
   })
 
   it('answers a query with counts and short descriptions, never a field’s contents', async () => {
@@ -346,6 +424,54 @@ describe('a signed-in scratch browser (a browser grant)', () => {
     ).toBe(false)
     expect(browser.writesRefused).toBe(2)
   })
+
+  it('says why a signed-in browser held a page back, and a redirect off the site too', async () => {
+    const { browser, session } = await openSignedIn(ACCOUNT)
+    const filter = session.filter as NonNullable<typeof session.filter>
+    // Signed in, the request filter refuses the page before the navigation rule sees it.
+    expect(
+      await filter({ url: 'https://shop.example.com/cart', method: 'POST', resourceType: 'mainFrame' }),
+    ).toBe(false)
+    expect((browser as unknown as { refusal: string }).refusal).toMatch(/post a form/)
+    const surface = (browser as unknown as { surface: FakeSurface }).surface
+    const guard = (surface as unknown as { guard: (n: { url: string; isMainFrame: boolean }) => boolean })
+      .guard
+    expect(guard({ url: 'https://elsewhere.test/', isMainFrame: true })).toBe(false)
+    expect((browser as unknown as { refusal: string }).refusal).toBe(
+      'The page went on to elsewhere.test, which this browser doesn’t open.',
+    )
+  })
+
+  it('waits for an API call still out, even when nothing else moves', async () => {
+    const { browser, session } = await open()
+    const filter = session.filter as NonNullable<typeof session.filter>
+    await browser.navigate('https://finance.example.com/')
+    expect(
+      await filter({ url: 'https://api.example.com/forecast', method: 'GET', resourceType: 'xhr' }),
+    ).toBe(true)
+    let answered = false
+    const reply = setTimeout(() => {
+      answered = true
+      ;(browser as unknown as { record: (r: object) => void }).record({
+        id: 'r1',
+        method: 'GET',
+        url: 'https://api.example.com/forecast',
+        resourceType: 'XHR',
+        status: 200,
+        mimeType: 'application/json',
+      })
+    }, 900)
+    await browser.navigate('https://finance.example.com/next')
+    clearTimeout(reply)
+    expect(answered).toBe(true)
+    // A call that never answers (failed, cancelled) holds the page up only a little while.
+    expect(await filter({ url: 'https://api.example.com/dead', method: 'GET', resourceType: 'fetch' })).toBe(
+      true,
+    )
+    const started = Date.now()
+    await browser.navigate('https://finance.example.com/again')
+    expect(Date.now() - started).toBeLessThan(SCRATCH_LIMITS.quietCapMs - 1000)
+  }, 20_000)
 
   it('closes on a page with a card or password field, or a payment address, and says why', async () => {
     const card = await openSignedIn(

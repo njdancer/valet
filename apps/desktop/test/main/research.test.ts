@@ -152,12 +152,20 @@ describe('scratch browser rules', () => {
 
   it('opens signed in, read only, under a running browser grant, and closes when it ends', async () => {
     let until = Date.parse('2026-11-12T00:30:00Z')
+    let installed = ['example.com']
     const { s, opened, notices, timers, advance } = await sessions({
       grantFor: (draftId) =>
-        draftId === 'dr-aaaaaaaaaa' ? { adapterId: 'quotes', cookieDomains: ['example.com'], until } : null,
+        draftId === 'dr-aaaaaaaaaa'
+          ? { adapterId: 'quotes', cookieDomains: ['example.com'], domains: installed, until }
+          : null,
     })
     await s.browser('dr-aaaaaaaaaa', 'local:c1', 'Claude Code', 'quotes', MANIFEST)
     expect(opened[0]?.rules.signedIn).toEqual({ adapterId: 'quotes', cookieDomains: ['example.com'] })
+    // Signed in, nothing reaches a host outside the draft's domains: no third-party script or beacon.
+    const signedIn = opened[0]?.rules
+    expect(signedIn?.mayRequest(new URL('https://query1.finance.example.com/v1'))).toBe(true)
+    expect(signedIn?.mayRequest(new URL('https://www.google-analytics.com/g/collect'))).toBe(false)
+    expect(signedIn?.mayRequest(new URL('https://cdn.jsdelivr.net/x.js'))).toBe(false)
     expect(notices).toEqual([
       'Claude Code is browsing example.com signed in, read only. End it from the draft’s page.',
     ])
@@ -168,6 +176,8 @@ describe('scratch browser rules', () => {
     // Another draft, or a grant for another adapter, or one that has ended: signed out.
     await s.browser('dr-bbbbbbbbbb', 'local:c2', 'B', 'quotes', MANIFEST)
     expect(opened[1]?.rules.signedIn).toBeUndefined()
+    // Signed out, a page's third-party scripts and analytics load as in any browser.
+    expect(opened[1]?.rules.mayRequest(new URL('https://www.google-analytics.com/g/collect'))).toBe(true)
     advance(31 * 60_000)
     await s.browser('dr-aaaaaaaaaa', 'local:c1', 'Claude Code', 'quotes', MANIFEST)
     expect(opened[2]?.rules.signedIn).toBeUndefined()
@@ -175,6 +185,12 @@ describe('scratch browser rules', () => {
     s.close('dr-aaaaaaaaaa')
     await s.browser('dr-aaaaaaaaaa', 'local:c1', 'Claude Code', 'shop', MANIFEST)
     expect(opened[3]?.rules.signedIn).toBeUndefined()
+    // A domain the draft added to its egress, but the approved adapter doesn't have: refused.
+    installed = ['other.test']
+    s.close('dr-aaaaaaaaaa')
+    await s.browser('dr-aaaaaaaaaa', 'local:c1', 'Claude Code', 'quotes', MANIFEST)
+    expect(opened[4]?.rules.signedIn).toBeDefined()
+    expect(opened[4]?.rules.mayRequest(new URL('https://finance.example.com/'))).toBe(false)
   })
 
   it('needs a manifest it can read', async () => {

@@ -64,6 +64,8 @@ export interface ResearchDeps {
   readonly grantFor?: (draftId: string) => {
     readonly adapterId: string
     readonly cookieDomains: readonly string[]
+    /** The installed adapter's domains, as the person approved them: all a signed-in browser reaches. */
+    readonly domains: readonly string[]
     readonly until: number
   } | null
   /** The site refused a scratch browser: trip its breaker, tell the person. */
@@ -185,7 +187,16 @@ export class ScratchSessions {
     }
     const rules: ScratchRules = {
       mayNavigate: (url) => url.protocol === 'https:' && domains.includes(siteDomain(url.hostname)),
-      mayRequest: (url) => !refused.has(siteDomain(url.hostname)),
+      // Signed out, a page's scripts, pictures and analytics load from wherever it asks, as in any
+      // browser: nothing of the person's is in it. Signed in, only the draft's own domains: a
+      // third-party script or beacon would otherwise read, or carry off, what the session shows.
+      // The draft's domains alone would let the agent widen the list by editing egress, so signed
+      // in it is also held to the installed adapter's, which the person approved.
+      mayRequest: (url) => {
+        const domain = siteDomain(url.hostname)
+        if (refused.has(domain)) return false
+        return granted === null || (granted.domains.includes(domain) && domains.includes(domain))
+      },
       pace: (host) => this.pace(siteDomain(host)),
       blocked: (host, status) => this.deps.blocked(host, status),
       mayType: async (text) => !(await this.deps.secretIn(text).catch(() => true)),
