@@ -15,6 +15,7 @@ import { type AdminReader, registerAdminTools } from './admin-tools'
 import type { ClientIdentity } from './auth'
 import { type Authoring, registerAuthoringTools } from './authoring-tools'
 import { failedResult, type ResultContext, toolResult } from './results'
+import { registerSkills, SKILLS_EXTENSION, type Skill, TEST_SKILL } from './skills'
 import type { CallOutcome, ClientTransport, ListedTool, ProtocolRefusal, ToolCaller } from './tool-caller'
 import { type ExposedTool, planTools, type SkippedTool, type ToolPlan } from './tool-names'
 
@@ -35,6 +36,8 @@ export interface ServerOptions {
    * progressToken on the request). Default PROGRESS_INTERVAL_MS.
    */
   readonly progressIntervalMs?: number
+  /** The skills this session serves (SEP-2640); a fixed test skill by default. */
+  readonly skills?: readonly Skill[]
   /** The time zone clock times in results are given in; the machine's own by default. For tests. */
   readonly timeZone?: string
   /** The clock results compute "calls resume at" from; Date.now by default. */
@@ -185,12 +188,14 @@ export function createMcpServer(
     { name: info.name, version: info.version },
     {
       // Declared up front so that a server that starts with no tools can still announce some later.
-      capabilities: { tools: { listChanged: true } },
+      // Skills (SEP-2640) are resources, so resources are declared alongside the extension.
+      capabilities: { tools: { listChanged: true }, resources: {}, extensions: { [SKILLS_EXTENSION]: {} } },
       // A refresh removes and re-adds every tool; the client should hear about it once.
       debouncedNotificationMethods: ['notifications/tools/list_changed'],
       instructions: SERVER_INSTRUCTIONS,
     },
   )
+  registerSkills(server, options.skills ?? [TEST_SKILL])
 
   // Ended by endCalls(), before the session closes.
   const ending = new AbortController()
