@@ -141,6 +141,7 @@ import type {
 import { AdapterSettingsStore } from './adapter-settings'
 import { adminReader } from './admin'
 import { AdminWriterImpl, type AgentSettingValues, type WriterSource } from './admin-writer'
+import { AgentBrowserService } from './agent-browser'
 import { agentRequestItem, draftReviewRequest } from './agent-requests'
 import { AppStateStore } from './app-state'
 import {
@@ -708,6 +709,8 @@ export class AppService {
   private mailApp: MailService | null = null
   /** Valet's built-in Calendar and Reminders tools, when this build has them. */
   private eventKitApps = new Map<EventKitApp, EventKitService>()
+  /** The agents' own signed-out browser (docs/agent-browser.md); null in builds without one. */
+  private agentBrowser: AgentBrowserService | null = null
   private endpoint: SessionReportingEndpoint | null = null
   /** The remote listener, its policy and the kill switch (relay.md). Off unless the person turns it on. */
   readonly remote: RemoteAccess
@@ -1169,6 +1172,18 @@ export class AppService {
         this.eventKitApps.set(app, service)
       }
     }
+    const scratch = this.deps.scratch
+    if (scratch !== undefined)
+      this.agentBrowser = new AgentBrowserService({
+        // Public addresses only: never a private one, whatever a draft was allowed.
+        open: (rules) => scratch('agent-browser', rules, () => false),
+        signedIn: () => this.signedInDomains(),
+        secretIn: (text) => this.knownSecretIn([text]),
+        notify: (text) => this.notifier.draftActivity(text),
+        audit: (call, result, durationMs) => this.auditNativeCall(call, result, durationMs),
+        now: this.deps.now,
+        timers: this.deps.timers,
+      })
     this.caller = new RuntimeToolCaller(
       host,
       {
@@ -1274,7 +1289,11 @@ export class AppService {
 
   /** The built-in tool sources this build has: Mail, Calendar and Reminders on this Mac. */
   private natives(): NativeTools[] {
-    return [...(this.mailApp === null ? [] : [this.mailApp]), ...this.eventKitApps.values()]
+    return [
+      ...(this.mailApp === null ? [] : [this.mailApp]),
+      ...this.eventKitApps.values(),
+      ...(this.agentBrowser === null ? [] : [this.agentBrowser]),
+    ]
   }
 
   /** A built-in tool as the app lists it now (Mail, Calendar, Reminders on this Mac), or null. */
@@ -1371,6 +1390,7 @@ export class AppService {
     this.broker.declineAll()
     this.approvalBroker?.stop()
     this.handoffs.closeAll()
+    this.agentBrowser?.closeAll()
     this.mail?.close()
     this.notifier.clear()
     if (this.missedTimer !== null) this.deps.timers.clearTimeout(this.missedTimer)
@@ -1861,6 +1881,7 @@ export class AppService {
     // In memory at once: no call gets through while the rest happens, even if a write fails.
     const saved = this.appState.setLockedDown(true)
     this.authoring?.closeBrowsers()
+    this.agentBrowser?.closeAll()
     // Lockdown ends every lent session and private address (B).
     this.authoringSessions.clear()
     this.browserGrants.clear()
@@ -5712,7 +5733,10 @@ export class AppService {
           const changed = this.paused !== paused
           // In memory at once, as lock down: no call gets through while the record is written.
           this.paused = paused
-          if (paused) this.authoring?.closeBrowsers()
+          if (paused) {
+            this.authoring?.closeBrowsers()
+            this.agentBrowser?.closeAll()
+          }
           this.emit('app-changed')
           if (changed) await this.audit.append({ type: 'app-paused', paused })
         },
