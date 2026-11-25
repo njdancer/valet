@@ -3716,9 +3716,7 @@ export class AppService {
   }
 
   /** The draft's running grant, for its scratch browser: the adapter's cookie domains, until when. */
-  private grantFor(
-    draftId: string,
-  ): {
+  private grantFor(draftId: string): {
     readonly adapterId: string
     readonly cookieDomains: readonly string[]
     readonly until: number
