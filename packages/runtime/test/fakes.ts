@@ -153,6 +153,10 @@ export class FakeSessionDriver implements SessionDriver {
     this.onBlocked = null
   }
 
+  discardToolPage(): void {
+    this.runEvents.push('discard')
+  }
+
   async close(): Promise<void> {}
 }
 

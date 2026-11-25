@@ -204,11 +204,39 @@ describe('beginRun and endRun', () => {
     await flush()
     await clock.advance(1_000)
     expect(await running).toMatchObject({ stage: 'timeout' })
-    expect(driver.runEvents).toEqual(['begin'])
+    expect(driver.runEvents).toEqual(['begin', 'discard'])
 
     finishGoto()
     await flush()
-    expect(driver.runEvents).toEqual(['begin', 'end'])
+    expect(driver.runEvents).toEqual(['begin', 'discard', 'end'])
+  })
+
+  it('discards the tool page after a timed-out call, so a stuck page can’t hold up the next one', async () => {
+    let stuck = true
+    const { host, driver, page, clock } = fixture(
+      adapterRunning((ctx) => ctx.page.goto('/quote')),
+      {
+        timeoutMs: 1_000,
+      },
+    )
+    page.goto = (url: string) => {
+      page.gotos.push(url)
+      // A page held in a dialog never finishes a load; a fresh one does.
+      return stuck ? new Promise<void>(() => {}) : Promise.resolve()
+    }
+
+    const first = host.call(call)
+    await flush()
+    await clock.advance(1_000)
+    expect(await first).toMatchObject({ status: 'failed', stage: 'timeout', errorClass: 'timed-out' })
+    expect(driver.runEvents).toContain('discard')
+
+    stuck = false
+    await clock.advance(60_000)
+    const before = driver.runEvents.filter((e) => e === 'discard').length
+    expect(await host.call(call)).toMatchObject({ status: 'ok' })
+    // An ok call keeps its page.
+    expect(driver.runEvents.filter((e) => e === 'discard').length).toBe(before)
   })
 })
 

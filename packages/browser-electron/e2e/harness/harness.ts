@@ -1265,6 +1265,36 @@ async function setup() {
       return { view, query }
     },
 
+    // The page's own alert(), confirm() and prompt() in a tool page: none may show the hidden window
+    // or leave the page stuck, and the next load must go through.
+    pageDialogs: async () => {
+      begin()
+      const tool = await driver.toolPage()
+      const started = Date.now()
+      await tool.goto(site.url('site.test', '/dialogs'))
+      await sleep(400)
+      const window = windowAt(site.url('site.test', '/dialogs'))
+      const hidden = window?.isVisible() === false
+      const answers = await tool.evaluate(
+        `({ confirm: document.body.dataset.confirm, prompt: document.body.dataset.prompt, late: document.body.dataset.late })`,
+      )
+      // Anything else that shows the window is undone.
+      window?.show()
+      await sleep(200)
+      const hiddenAfterShow = window?.isVisible() === false
+      await tool.goto(site.url('site.test', '/'))
+      const nextLoadMs = Date.now() - started
+      const movedOn = tool.currentUrl() === site.url('site.test', '/')
+      driver.endRun()
+      driver.discardToolPage()
+      const discarded = window?.isDestroyed() === true
+      begin()
+      const fresh = await driver.toolPage()
+      const freshWindow = fresh !== tool
+      driver.endRun()
+      return { hidden, answers, hiddenAfterShow, movedOn, quick: nextLoadMs < 10_000, discarded, freshWindow }
+    },
+
     close: async () => {
       await driver.toolPage()
       await driver.openAuthPage()

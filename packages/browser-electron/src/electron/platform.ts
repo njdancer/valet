@@ -275,6 +275,7 @@ class ElectronSurface implements BrowserSurface {
   private closeHandler: (() => boolean) | null = null
   private readonly navigationListeners: ((event: NavigationEvent) => void)[] = []
   private readonly destroyedHandlers: (() => void)[] = []
+  private handedToPerson = false
 
   constructor(partition: string) {
     // Hidden but headed: headless gets fingerprinted, a hidden window doesn't (the earlier app).
@@ -293,12 +294,21 @@ class ElectronSurface implements BrowserSurface {
         spellcheck: false,
         devTools: false,
         backgroundThrottling: false,
-        safeDialogs: true,
+        // alert(), confirm() and prompt() return at once (confirm() answers Cancel). On macOS a dialog
+        // is a sheet on its window, and showing one shows the hidden window with it; and while it is
+        // open the page is stuck in it, so every later load waits forever. Yahoo's quote page
+        // confirm()s "There was a problem loading the page" when the scripts we block don't load.
+        disableDialogs: true,
         navigateOnDragDrop: false,
       },
     })
     const contents = this.window.webContents
     this.contents = contents
+    // Only show() (a login handed to the person) may put this window on screen. Anything else that
+    // shows it, such as a native dialog the page opened, is undone at once.
+    this.window.on('show', () => {
+      if (!this.handedToPerson) this.window.hide()
+    })
     // With a proxy set (the tool partition's), WebRTC may then only use TCP through it, where the
     // egress list applies; UDP, which no proxy here carries, is off.
     contents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp')
@@ -546,10 +556,12 @@ class ElectronSurface implements BrowserSurface {
 
   show(title: string): void {
     this.window.setTitle(title)
+    this.handedToPerson = true
     this.window.show()
   }
 
   hide(): void {
+    this.handedToPerson = false
     this.window.hide()
   }
 

@@ -401,7 +401,17 @@ export class ElectronSessionDriver implements SessionDriver {
     return [...new Set((await this.toolCookies(cookieDomains)).map((cookie) => cookie.name))]
   }
 
-  /** Closes every window this driver opened, and the tool partition's proxy. */
+  /**
+   * Closes the tool page's window. The partition, its proxy and cookies stay, so the next
+   * toolPage() opens a fresh window on home in the same session. Tool code still holding the old
+   * page finds it gone: its steps end aborted rather than waiting on it.
+   */
+  discardToolPage(): void {
+    const slot = this.tool
+    this.tool = null
+    if (slot?.surface && !slot.surface.isDestroyed()) slot.surface.destroy()
+  }
+
   /**
    * How many auth-partition refusals went unreported because their reporter's budget was spent,
    * since the driver was made. The refusals themselves held.
@@ -410,6 +420,7 @@ export class ElectronSessionDriver implements SessionDriver {
     return this.droppedReports
   }
 
+  /** Closes every window this driver opened, and the tool partition's proxy. */
   async close(): Promise<void> {
     // Closing a page first cancels any probe it has in flight.
     for (const page of this.authPages.values()) await page.close()
