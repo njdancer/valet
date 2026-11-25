@@ -410,6 +410,18 @@ Live trials are signed out. Once a version is installed and the person has signe
 signed-in session on a draft from "installed" with valet_request_session, then valet_live_trial with
 \`signedIn: true\` runs the draft with that session, reading only what the installed version reads.
 
+To study the signed-in pages themselves, ask with valet_request_signed_in_browser instead (say why
+in \`purpose\`). Once approved, close and open the scratch browser: it opens signed in as the
+person, read only, until the time runs out or you submit the draft. You never see the password or
+the session, and payment, bank, password and security pages close it. Use it to find the pages and
+requests your tools need, then write narrow tools and submit them: the person approves those for
+good, not the browsing.
+
+A site with no adapter yet: write a small first version that only signs in (its \`auth\` flow, the
+login credential it declares, its session cookies) and one read tool that shows the sign-in worked,
+such as the account's name. Submit it; once the person approves it and its login, Valet signs in
+itself, so you can start a draft from "installed" and ask for the signed-in browser.
+
 ## When something's wrong
 
 You are one of Valet's testers. If Valet gives you valet_send_feedback (not every build lists it),

@@ -21,6 +21,24 @@ class JourneyTestCase: XCTestCase {
     }
   }
 
+  /// Types `text` into `field` until `button` is enabled. A busy CI simulator's keyboard can drop
+  /// a keystroke, leaving a code the card rightly refuses, so it clears the field and types again,
+  /// up to three times.
+  func type(_ text: String, into field: XCUIElement, until button: XCUIElement, then after: () -> Void = {}) {
+    let enabled = NSPredicate(format: "isEnabled == true")
+    for attempt in 0..<3 {
+      if attempt > 0, let typed = field.value as? String, !typed.isEmpty {
+        focus(field)
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: typed.count + 2))
+      }
+      focus(field)
+      field.typeText(text)
+      after()
+      let wait = XCTNSPredicateExpectation(predicate: enabled, object: button)
+      if XCTWaiter().wait(for: [wait], timeout: 3) == .completed { return }
+    }
+  }
+
   override func setUp() {
     continueAfterFailure = false
   }
@@ -131,9 +149,10 @@ final class ConnectJourneyTests: JourneyTestCase {
     let approve = waitFor("card.approve")
     XCTAssertFalse(approve.isEnabled, "Approve before a code is typed")
     let field = waitFor("card.code")
-    focus(field)
-    field.typeText("kqxm rpdt")
-    if element("card.readTick").exists { element("card.readTick").switches.firstMatch.tap() }
+    type("kqxm rpdt", into: field, until: approve) {
+      let tick = self.element("card.readTick").switches.firstMatch
+      if tick.exists, (tick.value as? String) != "1" { tick.tap() }
+    }
     XCTAssertTrue(approve.isEnabled)
     approve.tap()
     XCTAssertTrue(waitFor("card.state").label.contains("Approved"))

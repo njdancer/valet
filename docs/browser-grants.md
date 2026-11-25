@@ -28,10 +28,21 @@ grant is the wide access used only to build the narrow one.
   which ends a lent session too), on lockdown, and when the draft is submitted for install: the
   tools are written, so the wide access ends then, a little before the person approves them.
 
+## A site with no adapter yet
+
+For now through what exists, so no new path ever handles a password: the agent writes a small
+first version that only signs in (its declarative `auth` flow, its login credential, its session
+cookies) and one read tool that proves it, such as the account name, and submits it. The person
+approves the install and the login item as for any adapter; Valet signs in itself, in its auth
+partition, and hands the session one way to the tool partition. The agent then starts a draft
+from `installed` and asks for the signed-in browser. The authoring guide says so.
+
+That is three approvals for a new site (the install, its login, the browsing). Folding them into
+one card is the follow-up, in line with the permissions redesign's "one confirm".
+
 ## Not built yet
 
-- Signing in to a site that has no installed adapter (Valet runs a declarative login with a
-  granted credential, so the agent never sees the password).
+- One card for a new site's sign-in adapter, its login and the browsing.
 - "Can act" grants with a card for each change.
 - The phone's "Live now" bar and End button; today the grant shows on the Mac's draft page.
 - Cloud agents (after a red team).
