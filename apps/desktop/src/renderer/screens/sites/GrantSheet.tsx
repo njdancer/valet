@@ -378,7 +378,7 @@ function GrantForm({
                   }
                 >
                   Check the account name matches the one 1Password shows (Settings, Accounts), and that
-                  1Password is open with “Integrate with other apps” turned on.
+                  1Password is open with “Integrate with 1Password SDKs” turned on.
                 </Banner>
               ) : items.status === 'error' ? (
                 <Banner

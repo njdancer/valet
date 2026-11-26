@@ -18,7 +18,9 @@ import {
   disabledOtpReader,
   type FileFacts,
   findOp,
+  miseOpPath,
   OP_REQUIREMENT,
+  parseOpAccounts,
   realCredentials,
   SERVICE_ACCOUNT_LISTS_ITEMS,
   serviceAccountReady,
@@ -275,6 +277,80 @@ describe('checkOpBinary', () => {
     expect(await findOp(DEFAULT_SETTINGS, deps)).toBe('/opt/homebrew/Caskroom/op/op')
     expect(await findOp({ ...DEFAULT_SETTINGS, opPath: '/usr/local/bin/op' }, deps)).toBeNull()
     expect(ran.every((r) => r.command === '/usr/bin/codesign')).toBe(true)
+  })
+})
+
+describe('1Password accounts', () => {
+  it('reads op account list: ids and where they sign in, nothing that isn’t that shape', () => {
+    const json = JSON.stringify([
+      { account_uuid: 'HWLTX', url: 'my.1password.com', email: 'p@example.com', user_uuid: 'U1' },
+      { account_uuid: 'HWLTX', url: 'dup.1password.com' },
+      { account_uuid: 'NOURL' },
+      { account_uuid: 'bad\u0000id', url: 'x' },
+      { url: 'no-id.1password.com' },
+      'nonsense',
+    ])
+    expect(parseOpAccounts(json)).toEqual([
+      { id: 'HWLTX', label: 'my.1password.com · p@example.com' },
+      { id: 'NOURL', label: 'NOURL' },
+    ])
+    expect(parseOpAccounts('not json')).toEqual([])
+    expect(parseOpAccounts('{"account_uuid":"x"}')).toEqual([])
+  })
+
+  it('lists accounts through the checked op only, and none without one', async () => {
+    const list = JSON.stringify([{ account_uuid: 'HWLTX', url: 'my.1password.com', email: 'p@example.com' }])
+    const { spawn, ran } = spawner({
+      ...signed,
+      '/opt/homebrew/Caskroom/op/op account': { code: 0, stdout: list },
+    })
+    const credentials = realCredentials({
+      files: files(homebrew),
+      spawner: spawn,
+      timers,
+      uid: UID,
+      groups: GROUPS,
+    })
+    await credentials.configure(DEFAULT_SETTINGS)
+    expect(await credentials.onePasswordAccounts?.()).toEqual([
+      { id: 'HWLTX', label: 'my.1password.com · p@example.com' },
+    ])
+    expect(ran.at(-1)).toEqual({
+      command: '/opt/homebrew/Caskroom/op/op',
+      args: ['account', 'list', '--format', 'json'],
+    })
+    const none = realCredentials({ files: files({}), spawner: spawn, timers, uid: UID, groups: GROUPS })
+    await none.configure(DEFAULT_SETTINGS)
+    expect(await none.onePasswordAccounts?.()).toEqual([])
+  })
+
+  it('finds op where mise installs it, under the person’s home, with the same checks', async () => {
+    const { spawn } = spawner(signed)
+    const home = '/Users/p'
+    const real = `${home}/.local/share/mise/installs/op/2.39.0/op`
+    const tree: Record<string, Entry> = {
+      '/': dir(),
+      '/Users': dir(),
+      [home]: dir(UID),
+      [`${home}/.local`]: dir(UID),
+      [`${home}/.local/share`]: dir(UID),
+      [`${home}/.local/share/mise`]: dir(UID),
+      [`${home}/.local/share/mise/installs`]: dir(UID),
+      [`${home}/.local/share/mise/installs/op`]: dir(UID),
+      [`${home}/.local/share/mise/installs/op/2.39.0`]: dir(UID),
+      [miseOpPath(home).replace(/\/op$/, '')]: {
+        kind: 'link',
+        mode: 0o755,
+        uid: UID,
+        target: `${home}/.local/share/mise/installs/op/2.39.0`,
+      },
+      [real]: { kind: 'file', mode: 0o755, uid: UID },
+    }
+    const deps = { files: files(tree), spawner: spawn, timers, uid: UID, groups: GROUPS, home }
+    expect(await findOp(DEFAULT_SETTINGS, deps)).toBe(real)
+    // Someone else's home: refused like any other binary they could change.
+    const theirs = { ...tree, [real]: { kind: 'file', mode: 0o755, uid: 502 } as Entry }
+    expect(await findOp(DEFAULT_SETTINGS, { ...deps, files: files(theirs) })).toBeNull()
   })
 })
 

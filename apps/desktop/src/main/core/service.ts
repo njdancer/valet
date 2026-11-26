@@ -125,6 +125,7 @@ import type {
   HashRoute,
   KeysChangedItem,
   MailUndo,
+  OnePasswordAccount,
   PendingReview,
   RemoteConsentItem,
   RemoteConsentRequest,
@@ -1100,6 +1101,14 @@ export class AppService {
     // still be replaced by the next one.
     await this.startUpdates()
     await this.deps.credentials.configure(this.settingsNow)
+    // With one 1Password account on this Mac and none chosen, that one is the default. In the
+    // background: the CLI can take a few seconds, and nothing at launch waits on the account.
+    this.background = this.background
+      .then(() => this.onePasswordAccounts())
+      .then(
+        () => undefined,
+        () => undefined,
+      )
     await this.clients.load()
     const host = new ToolHost({
       approvals: this.installGate,
@@ -5078,6 +5087,23 @@ export class AppService {
     )
   }
 
+  /**
+   * The accounts the CLI lists. When none is set and there is exactly one, it becomes the account:
+   * naming an account grants nothing, as every copy is still approved in 1Password.
+   */
+  private async onePasswordAccounts(): Promise<readonly OnePasswordAccount[]> {
+    const accounts = (await this.deps.credentials.onePasswordAccounts?.()) ?? []
+    const [only] = accounts
+    if (
+      accounts.length === 1 &&
+      only !== undefined &&
+      (await this.settings.get()).onePasswordAccount === null
+    ) {
+      await this.afterSettings(await this.settings.set({ onePasswordAccount: only.id }))
+    }
+    return accounts
+  }
+
   private async afterSettings(settings: Settings): Promise<Settings> {
     const shorter = settings.traceRetentionDays < this.settingsNow.traceRetentionDays
     this.settingsNow = settings
@@ -5630,6 +5656,7 @@ export class AppService {
           return this.afterSettings(await this.settings.setOpPath(chosen))
         },
         clearOpPath: async () => this.afterSettings(await this.settings.setOpPath(null)),
+        onePasswordAccounts: () => this.onePasswordAccounts(),
       },
       eventKit: {
         status: async (app: EventKitApp): Promise<EventKitStatus | null> =>
