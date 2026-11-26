@@ -32,6 +32,23 @@ describe('mime', () => {
     expect(m.text).toBe('body')
   })
 
+  it('reads the HTML part when the plain one is blank, as Mail saves a scripted draft', () => {
+    const raw = [
+      'Content-Type: multipart/alternative; boundary=zz',
+      'X-Uniform-Type-Identifier: com.apple.mail-draft',
+      '',
+      '--zz',
+      'Content-Type: text/plain; charset=us-ascii',
+      '',
+      '--zz',
+      'Content-Type: text/html; charset=us-ascii',
+      '',
+      '<html><body><div class="Apple-Mail-URLShareWrapperClass"><blockquote type="cite">Hi Sam,<br><br>See you Friday.<br>Nick</blockquote></div></body></html>',
+      '--zz--',
+    ].join('\r\n')
+    expect(parseMessage(Buffer.from(raw)).text).toContain('Hi Sam,\n\nSee you Friday.\nNick')
+  })
+
   it('prefers the plain part of an alternative', () => {
     const raw = [
       'Content-Type: multipart/alternative; boundary=zz',

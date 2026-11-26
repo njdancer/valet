@@ -370,7 +370,9 @@ export function parseMessage(raw: Buffer): ParsedMessage {
   const first = (key: string): string | undefined => headers.get(key)?.[0]
   const found: Collected = { plain: null, html: null, attachments: [], parts: 0 }
   walk(raw, 0, found)
-  const text = found.plain ?? (found.html === null ? '' : htmlToText(found.html))
+  // A blank plain part, like the one Mail saves with a scripted draft, says nothing: read the HTML.
+  const plain = found.plain !== null && found.plain.trim().length > 0 ? found.plain : null
+  const text = plain ?? (found.html === null ? '' : htmlToText(found.html))
   const subject = first('subject')
   return {
     headers,
