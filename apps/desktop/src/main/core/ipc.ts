@@ -284,6 +284,7 @@ const HANDLERS: Readonly<
   'settings.set': entry(z.tuple([settingsPatch]), (api, [patch]) => api.settings.set(stripUndefined(patch))),
   'settings.chooseOpPath': entry(none, (api) => api.settings.chooseOpPath()),
   'settings.clearOpPath': entry(none, (api) => api.settings.clearOpPath()),
+  'settings.onePasswordAccounts': entry(none, (api) => api.settings.onePasswordAccounts()),
   'mail.status': entry(none, (api) => api.mail.status()),
   'mail.update': entry(z.tuple([mailSettingsPatchSchema]), (api, [patch]) =>
     api.mail.update(stripUndefined(patch)),

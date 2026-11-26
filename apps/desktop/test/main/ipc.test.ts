@@ -394,6 +394,7 @@ describe('every channel', () => {
     'settings.set': [{ messagesOtpEnabled: true }],
     'settings.chooseOpPath': [],
     'settings.clearOpPath': [],
+    'settings.onePasswordAccounts': [],
     'mail.status': [],
     'mail.update': [{ enabled: true, accounts: ['A1B2'] }],
     'mail.action': ['full-disk-access'],

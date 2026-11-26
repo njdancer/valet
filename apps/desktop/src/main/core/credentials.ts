@@ -18,7 +18,8 @@
 // - fake: demo mode only (demo.ts); a normal launch never has it.
 
 import { lstat, realpath } from 'node:fs/promises'
-import { dirname, isAbsolute } from 'node:path'
+import { homedir } from 'node:os'
+import { dirname, isAbsolute, join } from 'node:path'
 import type { MailReader } from '@valet/core'
 import {
   CredentialError,
@@ -34,6 +35,7 @@ import {
   DEFAULT_OP_PATHS,
   type DesktopClientFactory,
   HelperKeychainTokenSource,
+  isOnePasswordAccount,
   KEY_SERVICE,
   KeychainCopyProvider,
   KeychainCopySync,
@@ -53,7 +55,7 @@ import {
   type Timers,
   ValetKeys,
 } from '@valet/credentials'
-import type { ProviderStatus, Settings, VaultItem } from '../../shared/api'
+import type { OnePasswordAccount, ProviderStatus, Settings, VaultItem } from '../../shared/api'
 import { KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE, ONEPASSWORD_TEAM_ID, VAULT } from './constants'
 
 export interface Credentials {
@@ -67,6 +69,12 @@ export interface Credentials {
   mailReader?(): MailReader
   /** Each provider this launch offers, with grant counts filled in by the caller. */
   status(): Promise<readonly Omit<ProviderStatus, 'grantCount'>[]>
+  /**
+   * The 1Password accounts on this Mac, as the CLI lists them (`op account list`): ids and where
+   * they sign in, never a secret. Empty when there's no CLI or it can't list them. Absent in builds
+   * without one.
+   */
+  onePasswordAccounts?(): Promise<readonly OnePasswordAccount[]>
   /** Items in the vault, title only. Empty for providers without a vault. */
   vaultItems(provider: ProviderKind): Promise<readonly VaultItem[]>
   /** Rebuilds the providers after a settings change. */
@@ -120,6 +128,8 @@ export interface OpCheckDeps {
   readonly uid: number
   /** The person's groups (process.getgroups()), for the admin-group rule below. */
   readonly groups: readonly number[]
+  /** The person's home, for the CLI's mise location; os.homedir() by default. */
+  readonly home?: string
 }
 
 const CODESIGN = '/usr/bin/codesign'
@@ -189,9 +199,30 @@ function ancestors(path: string): string[] {
   }
 }
 
+/**
+ * Where mise installs the CLI (`mise use op`): the binary in its `latest` folder, under the
+ * person's home. mise makes `latest` a link to the version's folder, and checkOpBinary refuses a
+ * linked folder, so the link is resolved first; the folder it names then gets the same checks.
+ */
+export function miseOpPath(home: string): string {
+  return join(home, '.local', 'share', 'mise', 'installs', 'op', 'latest', 'op')
+}
+
+async function resolvedMiseOp(deps: OpCheckDeps): Promise<string | null> {
+  try {
+    return join(await deps.files.realpath(dirname(miseOpPath(deps.home ?? homedir()))), 'op')
+  } catch {
+    return null
+  }
+}
+
 /** The CLI to use for these settings: the chosen path if it passes, else the first usual place that does. */
 export async function findOp(settings: Settings, deps: OpCheckDeps): Promise<string | null> {
-  const candidates = settings.opPath === null ? DEFAULT_OP_PATHS : [settings.opPath]
+  let candidates: readonly string[] = [settings.opPath ?? '']
+  if (settings.opPath === null) {
+    const mise = await resolvedMiseOp(deps)
+    candidates = mise === null ? DEFAULT_OP_PATHS : [...DEFAULT_OP_PATHS, mise]
+  }
   for (const candidate of candidates) {
     const checked = await checkOpBinary(candidate, deps)
     if (checked !== null) return checked
@@ -343,6 +374,16 @@ export function realCredentials(deps: RealCredentialsDeps): Credentials {
         },
       ]
     },
+    async onePasswordAccounts() {
+      if (opPath === null) return []
+      const outcome = await run(opPath, ['account', 'list', '--format', 'json'], 256 * 1024, 15_000)
+      if (outcome.kind !== 'exited') return []
+      try {
+        return outcome.code === 0 ? parseOpAccounts(outcome.stdout.toString('utf8')) : []
+      } finally {
+        outcome.stdout.fill(0)
+      }
+    },
     async vaultItems(provider) {
       // Both providers list the vault themselves: ids and titles only, never a field.
       if (provider === 'onepassword-cli') return cli === null ? [] : cli.listItems(VAULT)
@@ -470,3 +511,31 @@ export const defaultOpCheckDeps = (): OpCheckDeps => ({
   uid: process.getuid?.() ?? -1,
   groups: process.getgroups?.() ?? [],
 })
+
+/**
+ * `op account list --format json`: an array of { account_uuid, url, email, user_uuid }. Entries
+ * that don't have that shape, or whose id DesktopAuth couldn't take, are skipped; at most 20.
+ */
+export function parseOpAccounts(json: string): OnePasswordAccount[] {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(json)
+  } catch {
+    return []
+  }
+  if (!Array.isArray(parsed)) return []
+  const accounts: OnePasswordAccount[] = []
+  const seen = new Set<string>()
+  for (const entry of parsed) {
+    if (entry === null || typeof entry !== 'object') continue
+    const { account_uuid: id, url, email } = entry as Record<string, unknown>
+    if (typeof id !== 'string' || !isOnePasswordAccount(id) || id.length > 64 || seen.has(id)) continue
+    const parts = [url, email].filter(
+      (part): part is string => typeof part === 'string' && part.length > 0 && isOnePasswordAccount(part),
+    )
+    seen.add(id)
+    accounts.push({ id, label: (parts.length > 0 ? parts.join(' · ') : id).slice(0, 200) })
+    if (accounts.length === 20) break
+  }
+  return accounts
+}

@@ -575,6 +575,14 @@ export interface RollbackPreview {
 
 // ---------- Grants ----------
 
+/** A 1Password account the person can pick (Settings' onePasswordAccount takes `id`). */
+export interface OnePasswordAccount {
+  /** The account's UUID, which DesktopAuth takes as well as a name. */
+  readonly id: string
+  /** Where it signs in and as whom, e.g. "my.1password.com · nick@example.com". */
+  readonly label: string
+}
+
 export interface ProviderStatus {
   readonly kind: ProviderKind
   /** Installed, configured and reachable. */
@@ -1779,6 +1787,12 @@ export interface ValetApi {
     chooseOpPath(): Promise<Settings>
     /** Goes back to searching the usual places, where the same checks apply. */
     clearOpPath(): Promise<Settings>
+    /**
+     * The 1Password accounts the CLI lists on this Mac, for the account picker; empty without a
+     * CLI. When no account is set and there is exactly one, the main process sets it first (an
+     * account grants nothing: every copy is still approved in 1Password).
+     */
+    onePasswordAccounts(): Promise<readonly OnePasswordAccount[]>
   }
   /** Null answers: this build has no built-in Mail tools. */
   readonly mail: {

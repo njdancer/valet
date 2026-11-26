@@ -35,6 +35,7 @@ import type {
   MailSettings,
   MailStatus,
   MissedItem,
+  OnePasswordAccount,
   PairingView,
   PendingReview,
   PhonesStatus,
@@ -99,6 +100,8 @@ export interface FakeControls {
   appendAudit(event: AuditEvent): AuditRecord
   /** What the next settings.chooseOpPath() dialog picks; null is a cancelled dialog. */
   chooseOpPathResult(path: string | null): void
+  /** The 1Password accounts settings.onePasswordAccounts() lists, as `op account list` would. */
+  setOnePasswordAccounts(accounts: readonly OnePasswordAccount[]): void
   /** Makes a 1Password provider available or not, as setting it up outside the app would. */
   setProviderAvailable(kind: ProviderKind, available: boolean): void
   /** Records a client's first call, as the endpoint would. */
@@ -909,6 +912,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     return clone(remoteSetup)
   }
   let chosenOpPath: string | null = '/opt/homebrew/bin/op'
+  let opAccounts: readonly OnePasswordAccount[] = []
   let setup: SetupStatus = { completedAt: ago(10 * 24 * 60) }
   const providerAvailable = new Map<ProviderKind, boolean>([
     ['onepassword-service-account', true],
@@ -1759,6 +1763,16 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         emit({ type: 'settings-changed' })
         return clone(settings)
       },
+      async onePasswordAccounts() {
+        enter('settings.onePasswordAccounts')
+        const [only] = opAccounts
+        if (opAccounts.length === 1 && only !== undefined && settings.onePasswordAccount === null) {
+          settings = { ...settings, onePasswordAccount: only.id }
+          emit({ type: 'settings-changed' })
+          emit({ type: 'grants-changed' })
+        }
+        return clone(opAccounts)
+      },
     },
     eventKit: {
       async status(app) {
@@ -2136,6 +2150,9 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       },
       chooseOpPathResult(path) {
         chosenOpPath = path
+      },
+      setOnePasswordAccounts(accounts) {
+        opAccounts = clone(accounts)
       },
       setProviderAvailable(kind, available) {
         providerAvailable.set(kind, available)

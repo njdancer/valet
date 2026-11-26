@@ -103,6 +103,30 @@ describe('secrets', () => {
     ])
   })
 
+  it('offers the accounts the 1Password CLI lists as a menu, and saves the one picked', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    api.fake.setOnePasswordAccounts([
+      { id: 'ACCOUNT1', label: 'my.1password.com · one@example.com' },
+      { id: 'ACCOUNT2', label: 'team.1password.com · two@example.com' },
+    ])
+    renderPage(api, <SecretsPage />)
+    const menu = await screen.findByRole('combobox', { name: '1Password account' })
+    expect(screen.queryByRole('textbox', { name: '1Password account' })).toBeNull()
+    await user.click(menu)
+    await user.click(await screen.findByRole('option', { name: 'team.1password.com · two@example.com' }))
+    expect(called(api, 'settings.set')).toEqual([[{ onePasswordAccount: 'ACCOUNT2' }]])
+  })
+
+  it('chooses the only 1Password account by itself', async () => {
+    const api = createFakeApi({ now: NOW })
+    api.fake.setOnePasswordAccounts([{ id: 'ACCOUNT1', label: 'my.1password.com · one@example.com' }])
+    renderPage(api, <SecretsPage />)
+    expect((await screen.findByRole('combobox', { name: '1Password account' })).textContent).toContain(
+      'my.1password.com · one@example.com',
+    )
+  })
+
   it('has no way to type the 1Password CLI path: the main process’s file dialog picks it', async () => {
     const user = userEvent.setup()
     const fake = createFakeApi({ now: NOW })

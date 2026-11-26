@@ -17,9 +17,7 @@ import {
   CheckList,
   CodeBlock,
   DescriptionList,
-  Field,
   Heading,
-  Input,
   RiskBadge,
   SecretBadge,
   Spinner,
@@ -44,6 +42,7 @@ import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
 import { hostOf, plural } from '../../lib/format'
 import { href } from '../../lib/routes'
 import { FIELD_WORDING, PROVIDER_WORDING } from '../../lib/wording'
+import { OnePasswordAccountSetting } from '../secrets/OnePasswordSettings'
 import { StoreChooser } from './StoreChooser'
 import { SETUP_CLIENTS, setupClient, vaultProviders } from './setup-logic'
 
@@ -203,47 +202,19 @@ function KeychainCopyCard({
 }) {
   const api = useApi()
   const save = useAction()
-  const [draft, setDraft] = useState(settings.onePasswordAccount ?? '')
-  const trimmed = draft.trim()
-  const value = trimmed === '' ? null : trimmed
-  const changed = value !== settings.onePasswordAccount
   return (
     <Card>
       <ProviderHeader provider={provider} />
       <CardContent>
         <Stack gap={3}>
           <CardDescription>
-            {PROVIDER_WORDING[provider.kind].detail} Turn on “Integrate with other apps” in 1Password’s
+            {PROVIDER_WORDING[provider.kind].detail} Turn on “Integrate with 1Password SDKs” in 1Password’s
             Developer settings first.
           </CardDescription>
-          <form
-            className="flex flex-wrap items-end gap-2"
-            onSubmit={(event) => {
-              event.preventDefault()
-              if (changed) void save.run(() => api.settings.set({ onePasswordAccount: value }))
-            }}
-          >
-            <Field
-              label="1Password account"
-              description="The account name at the top of 1Password’s sidebar."
-              className="min-w-[min(100%,18rem)] flex-1"
-            >
-              <Input
-                placeholder="e.g. Smith Family"
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-              />
-            </Field>
-            <Button
-              type="submit"
-              disabled={!changed}
-              disabledReason="Type the account name first"
-              loading={save.busy}
-              className="mb-6"
-            >
-              Save
-            </Button>
-          </form>
+          <OnePasswordAccountSetting
+            value={settings.onePasswordAccount}
+            onSave={(account) => void save.run(() => api.settings.set({ onePasswordAccount: account }))}
+          />
           <Failed failed={save.failed} what="save the account" />
         </Stack>
       </CardContent>

@@ -75,6 +75,7 @@ export const INVOKE_METHODS = [
   'settings.set',
   'settings.chooseOpPath',
   'settings.clearOpPath',
+  'settings.onePasswordAccounts',
   'mail.status',
   'mail.update',
   'mail.action',

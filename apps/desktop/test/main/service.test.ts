@@ -1173,6 +1173,23 @@ describe('tool calls', () => {
     })
   })
 
+  it('picks the only 1Password account on this Mac when none is set, and never replaces a chosen one', async () => {
+    const demo = testCredentials(disabledOtpReader)
+    let listed = [{ id: 'HWLTACCOUNT', label: 'my.1password.com · person@example.com' }]
+    const credentials: Credentials = { ...demo, onePasswordAccounts: async () => listed }
+    const s = await setup({ credentials })
+    expect(await s.api.settings.onePasswordAccounts()).toEqual(listed)
+    expect((await s.api.settings.get()).onePasswordAccount).toBe('HWLTACCOUNT')
+    await s.api.settings.set({ onePasswordAccount: 'Smith Family' })
+    await s.api.settings.onePasswordAccounts()
+    expect((await s.api.settings.get()).onePasswordAccount).toBe('Smith Family')
+    // Two accounts and none set: the person picks.
+    await s.api.settings.set({ onePasswordAccount: null })
+    listed = [...listed, { id: 'OTHERACCOUNT', label: 'team.1password.com' }]
+    await s.api.settings.onePasswordAccounts()
+    expect((await s.api.settings.get()).onePasswordAccount).toBeNull()
+  })
+
   it('ends a call the client cancels, and every call still running when the app stops', async () => {
     const s = await approved()
     const client = new AbortController()

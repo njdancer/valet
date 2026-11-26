@@ -1,16 +1,70 @@
 // 1Password on this Mac: the account Keychain copies come from, and the CLI Valet runs. Setup uses
 // the account field too.
 
-import { Button, Field, Inline, Input, Stack, Text, Value } from '@valet/ui'
+import {
+  Button,
+  Field,
+  Inline,
+  Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Stack,
+  Text,
+  Value,
+} from '@valet/ui'
 import { useState } from 'react'
-import { useAction, useApi } from '../../lib/api-context'
+import { useAction, useApi, useLoad } from '../../lib/api-context'
 import { Failed } from '../connections/shared'
 
 /**
  * The 1Password account Keychain copies come from (D6). It names an account, never a secret: the
- * person approves each copy in 1Password itself.
+ * person approves each copy in 1Password itself. When the 1Password CLI can list the accounts, they
+ * are a menu (one account is chosen by the main process on its own); otherwise the name is typed.
  */
 export function OnePasswordAccountSetting({
+  value,
+  onSave,
+}: {
+  readonly value: string | null
+  readonly onSave: (account: string | null) => void
+}) {
+  const accounts = useLoad((a) => a.settings.onePasswordAccounts(), [], [])
+  const listed = accounts.status === 'ready' ? accounts.data : []
+  if (listed.length > 0) {
+    const options =
+      value === null || listed.some((a) => a.id === value) ? listed : [...listed, { id: value, label: value }]
+    return (
+      <Field label="1Password account" description={ACCOUNT_DESCRIPTION}>
+        <Select
+          value={value ?? undefined}
+          onValueChange={(id) => {
+            if (id !== value) onSave(id)
+          }}
+        >
+          <SelectTrigger aria-label="1Password account" className="w-full">
+            <SelectValue placeholder="Choose an account" />
+          </SelectTrigger>
+          <SelectContent>
+            {options.map((a) => (
+              <SelectItem key={a.id} value={a.id}>
+                {a.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Field>
+    )
+  }
+  return <TypedAccount value={value} onSave={onSave} />
+}
+
+const ACCOUNT_DESCRIPTION =
+  'Valet copies the items you give it into your Keychain, with your approval in 1Password each time.'
+
+function TypedAccount({
   value,
   onSave,
 }: {
@@ -29,7 +83,7 @@ export function OnePasswordAccountSetting({
     >
       <Field
         label="1Password account"
-        description="The account name at the top of 1Password’s sidebar. Valet copies the items you give it into your Keychain, with your approval in 1Password each time."
+        description={`The account name at the top of 1Password’s sidebar. ${ACCOUNT_DESCRIPTION}`}
       >
         <Inline gap={2} wrap={false}>
           <Input
