@@ -26,30 +26,34 @@ takes. A session is a browser of its own:
   the same registrable domain) takes a slot in that adapter's budget and waits out its breaker, so
   a session never makes Valet break a limit already known for the site. A wait over a minute is
   refused with how long to wait. A host with no known limit gets none. A site that refuses the
-  browser (a 429 or an HTML 403) closes it, and the person is told.
+  browser (a 429 or an HTML 403) leaves the session open on the page it sent: the answer's
+  `problem` says so, the network log and snapshot show what came back, and the person is told.
+  A page that asks for more than 1,000 requests in one load has the rest refused, and is said to.
+- **Answers stay small.** A snapshot past 25,000 characters is cut at a line, with `cut` and
+  `next`; `browser_snapshot` with `from: next` reads on.
 - **Every call is audited** like any built-in tool's. Agents on the Mac get the tools at once;
   remote agents (claude.ai and others) once the person turns them on on the agent's page.
 
 ## Tools
 
-| Tool                                                                          | What it does                                                                                                  |
-| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `browser_session_create`, `browser_session_list`, `browser_session_close`     | Sessions                                                                                                      |
-| `browser_navigate`, `browser_navigate_back`                                   | Open an https page; go back                                                                                   |
-| `browser_snapshot`                                                            | The page as Playwright MCP's YAML, `[ref=eN]` on what can be acted on; `target`, `depth`, `mode: interactive` |
-| `browser_find`                                                                | Snapshot lines matching text or a pattern, each under its path                                                |
-| `browser_click`                                                               | `doubleClick`, `button`, `modifiers`                                                                          |
-| `browser_type`                                                                | Replaces a field's text at once; `slowly` types a key at a time; `submit` presses Enter                       |
-| `browser_fill_form`                                                           | Text boxes, checkboxes, radio buttons, dropdowns and sliders in turn                                          |
-| `browser_press_key`, `browser_select_option`, `browser_hover`, `browser_drag` | As in Playwright MCP                                                                                          |
-| `browser_wait_for`                                                            | Text shows, text goes, or a time; up to 30 seconds; `met` says whether it happened                            |
-| `browser_resize`                                                              | The window's size                                                                                             |
-| `browser_take_screenshot`                                                     | A PNG of the window, the whole page (`fullPage`) or one element, as an image                                  |
-| `browser_file_upload`                                                         | Files (base64) into a file input, hidden or not; about 700 KB in all per request                              |
-| `browser_evaluate`                                                            | A function in its own world (the DOM, unseen by the page) or, with `world: "page"`, the page's                |
-| `browser_console_messages`                                                    | The page's console since the session opened, at a level and above                                             |
-| `browser_network_requests`, `browser_network_request`                         | Requests since it opened (static files only if asked), and one response body                                  |
-| `browser_cookie_list`, `browser_storage_list`                                 | The session's own cookies, values and all; the page's local and session storage                               |
+| Tool                                                                          | What it does                                                                                                          |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `browser_session_create`, `browser_session_list`, `browser_session_close`     | Sessions                                                                                                              |
+| `browser_navigate`, `browser_navigate_back`                                   | Open an https page; go back                                                                                           |
+| `browser_snapshot`                                                            | The page as Playwright MCP's YAML, `[ref=eN]` on what can be acted on; `target`, `depth`, `mode: interactive`, `from` |
+| `browser_find`                                                                | Snapshot lines matching text or a pattern, each under its path                                                        |
+| `browser_click`                                                               | `doubleClick`, `button`, `modifiers`                                                                                  |
+| `browser_type`                                                                | Replaces a field's text at once; `slowly` types a key at a time; `submit` presses Enter                               |
+| `browser_fill_form`                                                           | Text boxes, checkboxes, radio buttons, dropdowns and sliders in turn                                                  |
+| `browser_press_key`, `browser_select_option`, `browser_hover`, `browser_drag` | As in Playwright MCP                                                                                                  |
+| `browser_wait_for`                                                            | Text shows, text goes, or a time; up to 30 seconds; `met` says whether it happened                                    |
+| `browser_resize`                                                              | The window's size                                                                                                     |
+| `browser_take_screenshot`                                                     | A PNG of the window, the whole page (`fullPage`) or one element, as an image                                          |
+| `browser_file_upload`                                                         | Files (base64) into a file input, hidden or not; about 700 KB in all per request                                      |
+| `browser_evaluate`                                                            | A function in its own world (the DOM, unseen by the page) or, with `world: "page"`, the page's                        |
+| `browser_console_messages`                                                    | The page's console since the session opened, at a level and above                                                     |
+| `browser_network_requests`, `browser_network_request`                         | Requests since it opened (static files only if asked), and one response body                                          |
+| `browser_cookie_list`, `browser_storage_list`                                 | The session's own cookies, values and all; the page's local and session storage                                       |
 
 A target is a ref from the last snapshot or a CSS selector. Navigating and `browser_snapshot`
 answer with the whole page; an action on the same page answers with only the lines that changed
@@ -89,5 +93,5 @@ DevTools' `Page.captureScreenshot` while the hidden window is made to draw (a fr
 it comes back as an image beside the output, never in it or in the audit log. The console comes from Electron's own console event and `browser_evaluate` from Electron's script calls, so neither turns on a DevTools domain a page could notice (Runtime or Console).
 
 Not yet: tabs, the page's own dialogs, plain http pages, home network and
-network interface settings, frames inside the page (an iframe's content isn't in the snapshot), and setting cookies or storage (browser_evaluate can, for what a page's script could).
-The drafts' `valet_browser_*` tools are unchanged and still use the older snapshot.
+network interface settings, frames inside the page (an iframe's content isn't in the snapshot), and setting cookies or storage (browser*evaluate can, for what a page's script could).
+The drafts' `valet_browser*\*` tools are unchanged and still use the older snapshot.

@@ -2714,6 +2714,7 @@ describe('remote access', () => {
           storage: async () => ({ origin: '', local: [], session: [] }),
           entries: () => [],
           body: async () => null,
+          takeNotices: () => [],
           // The first answer after a page loads brings a download with it.
           takeDownloads: () =>
             gave++ === 0
