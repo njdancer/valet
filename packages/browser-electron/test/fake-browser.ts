@@ -161,6 +161,23 @@ export class FakeSurface implements BrowserSurface {
     this.afterInput?.({ key })
   }
 
+  /** Pages before this one; goBack() takes the last. */
+  readonly history: string[] = []
+  readonly sizes: { width: number; height: number }[] = []
+
+  canGoBack(): boolean {
+    return this.history.length > 0
+  }
+
+  goBack(): void {
+    const url = this.history.pop()
+    if (url !== undefined) this.currentUrl = url
+  }
+
+  setSize(width: number, height: number): void {
+    this.sizes.push({ width, height })
+  }
+
   async insertText(text: string): Promise<void> {
     this.inserted.push(text)
     this.afterInput?.({ text })

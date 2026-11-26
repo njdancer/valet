@@ -154,6 +154,18 @@ const SELECT = `(args) => {
   return { selected: result.map((value) => String(value).slice(0, 200)) }
 }`
 
+/** Whether a checkbox, radio button or switch is checked; an error for anything else. */
+const CHECKED = `(target) => {
+  const v = globalThis.${GLOBAL}
+  const found = (${ELEMENT})(target)
+  if (found.error) return found
+  try {
+    const state = v.elementState(found, 'checked')
+    if (state.received === 'error:notcheckbox') return { error: 'not-checkbox' }
+    return { checked: state.matches === true }
+  } catch (e) { return { error: 'not-checkbox' } }
+}`
+
 /** Whether the text shows on the page, as a person would read it. */
 const TEXT = `(text) => {
   const body = document.body
@@ -178,6 +190,8 @@ export const ariaSelectScript = (args: {
   readonly target: string
   readonly values: readonly string[]
 }): string => `(${SELECT})(${jsonLiteral(args)})`
+
+export const ariaCheckedScript = (target: string): string => `(${CHECKED})(${jsonLiteral(target)})`
 
 export const textShownScript = (text: string): string => `(${TEXT})(${jsonLiteral(text)})`
 
@@ -280,4 +294,49 @@ export function findInSnapshot(
 
 function indentOf(line: string): number {
   return line.length - line.trimStart().length
+}
+
+const INTERACTIVE_ROLES = new Set([
+  'link',
+  'button',
+  'textbox',
+  'searchbox',
+  'combobox',
+  'listbox',
+  'option',
+  'checkbox',
+  'radio',
+  'switch',
+  'slider',
+  'spinbutton',
+  'tab',
+  'menuitem',
+  'menuitemcheckbox',
+  'menuitemradio',
+  'treeitem',
+])
+
+/**
+ * Only what an agent can act on (snapshot mode "interactive"): the lines for controls and links,
+ * a link's URL, and the lines they sit under, so the page's outline is kept but its prose is not.
+ */
+export function interactiveOnly(yaml: string): string {
+  const lines = yaml.split('\n')
+  const keep = new Set<number>()
+  lines.forEach((line, index) => {
+    const role = /^\s*- ([a-z]+)\b/.exec(line)?.[1]
+    const own = role !== undefined && INTERACTIVE_ROLES.has(role)
+    const linkUrl = /^\s*- \/url: /.test(line) && keep.has(index - 1)
+    if (!own && !linkUrl) return
+    keep.add(index)
+    let indent = indentOf(line)
+    for (let up = index - 1; up >= 0 && indent > 0; up--) {
+      const level = indentOf(lines[up] ?? '')
+      if (level < indent) {
+        keep.add(up)
+        indent = level
+      }
+    }
+  })
+  return lines.filter((_, index) => keep.has(index)).join('\n')
 }

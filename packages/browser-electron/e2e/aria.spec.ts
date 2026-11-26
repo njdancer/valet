@@ -59,3 +59,15 @@ test('Playwright’s snapshot leaves out every kind of hidden text a page aims a
   // An icon link: its picture's alt names it.
   expect(yaml).toMatch(/- link \[ref=e\d+\] \[cursor=pointer\]:\n(.*\n)*?\s+- img "Cart"/)
 })
+
+test('in a session, forms post, back goes back, checkboxes tick and the window resizes', async () => {
+  const r = (await scenario(app, 'session')) as Record<string, unknown>
+  expect(r.ticked).toMatch(/checkbox "Agree" \[checked\]/)
+  expect(r.again).toBe(true)
+  expect(r.unticked).toMatch(/checkbox "Agree" (\[active\] )?\[ref=e\d+\]/)
+  expect(r.unticked).not.toMatch(/checkbox "Agree" \[checked\]/)
+  expect(r.notBox).toMatch(/isn’t a checkbox/)
+  expect(String(r.narrow)).toContain('/agent')
+  expect(r.posted).toBe(1)
+  expect(String(r.back)).toMatch(/\/scratch$/)
+})

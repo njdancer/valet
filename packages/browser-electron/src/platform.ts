@@ -298,6 +298,11 @@ export interface BrowserSurface {
   watchNetwork(listener: (response: NetworkResponse) => void): Promise<void>
   /** The body of a response watchNetwork reported, while the browser still holds it; null if not. */
   responseBody(id: string): Promise<{ readonly body: string; readonly base64: boolean } | null>
+  canGoBack(): boolean
+  /** Starts going back one page in the history. */
+  goBack(): void
+  /** Sets the page's viewport size in CSS pixels. */
+  setSize(width: number, height: number): void
   /** Gives the web contents keyboard focus without showing the window. */
   focus(): void
   show(title: string): void

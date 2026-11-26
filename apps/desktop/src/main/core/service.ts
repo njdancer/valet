@@ -141,7 +141,7 @@ import type {
 import { AdapterSettingsStore } from './adapter-settings'
 import { adminReader } from './admin'
 import { AdminWriterImpl, type AgentSettingValues, type WriterSource } from './admin-writer'
-import { AgentBrowserService } from './agent-browser'
+import { AgentBrowserService, type SessionBrowser } from './agent-browser'
 import { agentRequestItem, draftReviewRequest } from './agent-requests'
 import { AppStateStore } from './app-state'
 import {
@@ -471,6 +471,12 @@ export interface ServiceDeps {
     /** The private addresses (and ports) the person let this draft reach, asked at each dial. */
     allowPrivate: (address: string, port: number) => boolean,
   ) => Promise<ScratchHandle>
+  /**
+   * Opens an agent's browser session (docs/agent-browser.md): signed out, in memory, a partition of
+   * its own, through the public-only dial. None in tests that don't drive a browser, and then the
+   * browser tools aren't listed.
+   */
+  readonly sessionBrowser?: (rules: ScratchRules) => Promise<SessionBrowser>
   /**
    * A session driver for a draft's live trial (docs/authoring-tools.md#live-trials): partitions in
    * memory named by `label`, through the same public-only dial. None in tests that don't drive a
@@ -1180,12 +1186,11 @@ export class AppService {
         this.eventKitApps.set(app, service)
       }
     }
-    const scratch = this.deps.scratch
-    if (scratch !== undefined)
+    const sessionBrowser = this.deps.sessionBrowser
+    if (sessionBrowser !== undefined)
       this.agentBrowser = new AgentBrowserService({
-        // Public addresses only: never a private one, whatever a draft was allowed.
-        open: (rules) => scratch('agent-browser', rules, () => false),
-        signedIn: () => this.signedInDomains(),
+        open: sessionBrowser,
+        newId: () => `s${randomBytes(6).toString('hex')}`,
         secretIn: (text) => this.knownSecretIn([text]),
         notify: (text) => this.notifier.draftActivity(text),
         audit: (call, result, durationMs) => this.auditNativeCall(call, result, durationMs),

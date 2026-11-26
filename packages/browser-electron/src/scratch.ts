@@ -10,6 +10,7 @@ import {
   absoluteUrls,
   ariaBootedScript,
   ariaBootScript,
+  ariaCheckedScript,
   ariaFieldScript,
   ariaPointScript,
   ariaSelectScript,
@@ -70,7 +71,7 @@ export const SCRATCH_LIMITS = {
   /** A snapshot longer than this is cut; a ref or depth reads less of the page. */
   snapshotChars: 150_000,
   snapshotDepth: 100,
-  waitMs: 20_000,
+  waitMs: 30_000,
   waitPollMs: 250,
   selectValues: 50,
   dragSteps: 5,
@@ -98,6 +99,12 @@ export interface ScratchRules {
    * settings closes the browser. Cookie values never reach the agent, as always.
    */
   readonly signedIn?: { readonly adapterId: string; readonly cookieDomains: readonly string[] }
+  /**
+   * An agent's browser session (docs/agent-browser.md): forms may post, as in any browser, and
+   * the session's own cookie values are shown as they are, since they were set in it and are
+   * nothing of the person's.
+   */
+  readonly session?: boolean
 }
 
 export interface ScratchOptions {
@@ -277,6 +284,41 @@ export class ScratchBrowser {
   }
 
   async navigate(url: string): Promise<ScratchSnapshot> {
+    await this.load(url)
+    return this.snapshot()
+  }
+
+  /** Opens a page and gives its accessibility snapshot (the agents' browser). */
+  async go(url: string): Promise<AriaPage> {
+    await this.load(url)
+    return this.ariaSnapshot()
+  }
+
+  /** The page before this one in the history, as the Back button goes. */
+  async back(): Promise<AriaPage> {
+    this.open()
+    if (!this.surface.canGoBack()) throw new ScratchError('There is no page to go back to.')
+    const frames = this.mainFrames
+    this.refusal = null
+    this.surface.goBack()
+    await this.settle(frames)
+    return this.ariaSnapshot()
+  }
+
+  /** Sets the size of the page's window, in CSS pixels, for layouts that change with it. */
+  async resize(width: number, height: number): Promise<AriaPage> {
+    this.open()
+    const w = Math.round(width)
+    const h = Math.round(height)
+    if (!(w >= 200 && w <= 4000 && h >= 200 && h <= 4000))
+      throw new ScratchError('Give a width and height between 200 and 4000 pixels.')
+    const frames = this.mainFrames
+    this.surface.setSize(w, h)
+    await this.settle(frames)
+    return this.ariaSnapshot()
+  }
+
+  private async load(url: string): Promise<void> {
     this.open()
     const target = parseUrl(url)
     if (target === null || target.protocol !== 'https:') throw new ScratchError('Only https pages open here.')
@@ -294,7 +336,6 @@ export class ScratchBrowser {
     if (loaded !== null && !loaded.ok && loaded.code !== 'ERR_ABORTED')
       throw new ScratchError(`The page didn't load (${loaded.code.slice(0, 40)}).`)
     await this.quiet()
-    return this.snapshot()
   }
 
   async snapshot(
@@ -483,6 +524,20 @@ export class ScratchBrowser {
     }
     await this.settle(frames)
     return this.ariaSnapshot()
+  }
+
+  /** Ticks or unticks a checkbox, or picks a radio button, by clicking it when it isn't so already. */
+  async check(target: string, checked: boolean): Promise<AriaPage> {
+    this.open()
+    const raw = (await this.runAria(ariaCheckedScript(this.ariaTarget(target)))) as {
+      error?: string
+      checked?: boolean
+    } | null
+    if (raw === null || typeof raw !== 'object') throw new ScratchError('The page could not be read.')
+    if (raw.error === 'not-checkbox') throw new ScratchError('That element isn’t a checkbox or radio button.')
+    if (raw.error !== undefined) throw this.targetError(raw.error)
+    if (raw.checked === checked) return this.ariaSnapshot()
+    return this.clickElement(target)
   }
 
   /** Moves the mouse over the element, for menus and tooltips that open on hover. */
@@ -759,6 +814,7 @@ export class ScratchBrowser {
 
   /** Replaces every cookie value the partition has held, so none reaches the agent or a fixture. */
   scrub(text: string): string {
+    if (this.options.rules.session === true) return text
     let out = text
     for (const value of this.cookieValues) if (out.includes(value)) out = out.replaceAll(value, '[cookie]')
     return out
@@ -802,7 +858,7 @@ export class ScratchBrowser {
     }
     if (request.resourceType !== 'mainFrame') return true
     // A form that posts is a request the agent could make as anyone; only GET pages open.
-    if (request.method !== 'GET') {
+    if (request.method !== 'GET' && this.options.rules.session !== true) {
       this.refusal = POSTED
       return false
     }

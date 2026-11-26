@@ -10,7 +10,7 @@ import { SCRATCH_LIMITS, ScratchBrowser, type ScratchRules } from '../src/scratc
 import { pageFieldsScript } from '../src/sensitive-page'
 import { type FakeFrame, FakePlatform, FakeSurface } from './fake-browser'
 
-type Kind = 'snapshot' | 'point' | 'field' | 'select' | 'text' | 'fields'
+type Kind = 'snapshot' | 'point' | 'field' | 'select' | 'text' | 'checked' | 'fields'
 type Answer = (kind: Kind, args: Record<string, unknown> | string) => unknown
 
 const MARKERS: [Kind, string][] = [
@@ -19,6 +19,7 @@ const MARKERS: [Kind, string][] = [
   ['field', 'v.fill(el'],
   ['select', 'selectOptions(found'],
   ['text', "innerText || ''"],
+  ['checked', "elementState(found, 'checked')"],
 ]
 
 /** Timers that fire at once, so settling and waiting take no real time. */
@@ -80,6 +81,7 @@ function defaults(kind: Kind): unknown {
   if (kind === 'field') return { done: false, focused: true }
   if (kind === 'select') return { selected: ['l'] }
   if (kind === 'text') return true
+  if (kind === 'checked') return { checked: false }
   return { url: 'https://shop.example.com/home', fields: [] }
 }
 
@@ -411,5 +413,62 @@ describe('waiting', () => {
       return defaults(kind)
     })
     expect(await detail(browser.waitFor({ text: 'x' }))).toMatch(/closed/)
+  })
+})
+
+describe('a session’s page', () => {
+  it('opens a page and gives its snapshot, goes back, and resizes', async () => {
+    const { browser, surface } = await open()
+    const page = await browser.go('https://shop.example.com/')
+    expect(page.yaml).toContain('heading "Shop"')
+    expect(await detail(browser.back())).toMatch(/no page to go back to/)
+    surface.history.push('https://shop.example.com/before')
+    await browser.back()
+    expect(surface.url()).toBe('https://shop.example.com/before')
+    await browser.resize(800.4, 600)
+    expect(surface.sizes).toEqual([{ width: 800, height: 600 }])
+    expect(await detail(browser.resize(100, 600))).toMatch(/between 200 and 4000/)
+    expect(await detail(browser.resize(Number.NaN, 600))).toMatch(/between 200 and 4000/)
+  })
+
+  it('ticks a box by clicking it, only when it isn’t so already', async () => {
+    let checked = false
+    const { browser, surface } = await open((kind) => (kind === 'checked' ? { checked } : defaults(kind)))
+    await browser.check('#agree', true)
+    expect(surface.mice.filter((m) => m.type === 'down')).toHaveLength(1)
+    checked = true
+    await browser.check('#agree', true)
+    expect(surface.mice.filter((m) => m.type === 'down')).toHaveLength(1)
+    for (const [answer, words] of [
+      [{ error: 'not-checkbox' }, /isn’t a checkbox/],
+      [{ error: 'stale' }, /page changed/],
+      [null, /could not be read/],
+    ] as const) {
+      const other = await open((kind) => (kind === 'checked' ? answer : defaults(kind)))
+      expect(await detail(other.browser.check('#x', true))).toMatch(words)
+    }
+  })
+
+  it('shows the session’s own cookie values as they are, and lets forms post', async () => {
+    const { browser, session } = await open(
+      (kind) =>
+        kind === 'snapshot'
+          ? {
+              url: 'https://shop.example.com/',
+              title: 'woolworths.com.au',
+              yaml: '- text: woolworths.com.au',
+            }
+          : defaults(kind),
+      { session: true },
+    )
+    for (const listener of session.cookieListeners)
+      listener({ name: 'site', value: 'woolworths.com.au', sameSite: 'lax' })
+    const page = await browser.ariaSnapshot()
+    expect(page.title).toBe('woolworths.com.au')
+    expect(page.yaml).toBe('- text: woolworths.com.au')
+    const allow = session.filter as (request: object) => boolean | Promise<boolean>
+    expect(
+      await allow({ id: 1, url: 'https://shop.example.com/cart', method: 'POST', resourceType: 'mainFrame' }),
+    ).toBe(true)
   })
 })

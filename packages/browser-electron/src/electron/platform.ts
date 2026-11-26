@@ -477,6 +477,18 @@ class ElectronSurface implements BrowserSurface {
     this.contents.sendInputEvent({ type: 'keyUp', keyCode: key.keyCode, modifiers })
   }
 
+  canGoBack(): boolean {
+    return !this.contents.isDestroyed() && this.contents.navigationHistory.canGoBack()
+  }
+
+  goBack(): void {
+    if (this.canGoBack()) this.contents.navigationHistory.goBack()
+  }
+
+  setSize(width: number, height: number): void {
+    if (!this.window.isDestroyed()) this.window.setContentSize(width, height)
+  }
+
   async insertText(text: string): Promise<void> {
     await this.contents.insertText(text)
   }
