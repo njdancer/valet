@@ -259,6 +259,33 @@ describe('the scratch browser', () => {
     await expect(browser.snapshot()).rejects.toThrow(/has closed/)
   })
 
+  it('in a session, stays open when a site refuses it, and says so once', async () => {
+    const { session, browser, rules: r } = await open(PAGE, { session: true })
+    session.respond({ url: 'https://finance.example.com/', status: 403, contentType: 'text/html' })
+    session.respond({ url: 'https://finance.example.com/', status: 429, contentType: 'text/html' })
+    expect(browser.isClosed()).toBe(false)
+    expect(r.blocks).toEqual(['finance.example.com 403', 'finance.example.com 429'])
+    const notices = browser.takeNotices()
+    expect(notices).toHaveLength(2)
+    expect(notices[0]).toMatch(/^finance\.example\.com answered 403 .*still open/)
+    expect(browser.takeNotices()).toEqual([])
+  })
+
+  it('in a session, refuses what a busy page asks for past the cap, and stays open', async () => {
+    const { session, browser } = await open(PAGE, { session: true })
+    const filter = session.filter as NonNullable<typeof session.filter>
+    await filter({ url: 'https://finance.example.com/', method: 'GET', resourceType: 'mainFrame' })
+    for (let i = 1; i < SCRATCH_LIMITS.sessionRequestsPerLoad; i++)
+      await filter({ url: `https://cdn.test/${i}.js`, method: 'GET', resourceType: 'script' })
+    expect(await filter({ url: 'https://cdn.test/a.js', method: 'GET', resourceType: 'script' })).toBe(false)
+    expect(await filter({ url: 'https://cdn.test/b.js', method: 'GET', resourceType: 'script' })).toBe(false)
+    expect(browser.isClosed()).toBe(false)
+    expect(browser.takeNotices()).toEqual([expect.stringMatching(/more than 1000 requests/)])
+    // A new page starts its own count, past what a draft's browser could make in all.
+    await filter({ url: 'https://finance.example.com/2', method: 'GET', resourceType: 'mainFrame' })
+    expect(await filter({ url: 'https://cdn.test/c.js', method: 'GET', resourceType: 'script' })).toBe(true)
+  })
+
   it('refuses a WebSocket to anything but the page’s own host', async () => {
     const { session, surface } = await open()
     surface.commit('https://finance.example.com/')

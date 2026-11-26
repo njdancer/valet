@@ -29,6 +29,7 @@ function browser(): SessionBrowser & {
   yaml: string
   previous: string | null
   news: DownloadNews[]
+  notices: string[]
 } {
   const listeners: (() => void)[] = []
   const b = {
@@ -37,6 +38,7 @@ function browser(): SessionBrowser & {
     yaml: PAGE,
     previous: null as string | null,
     news: [] as DownloadNews[],
+    notices: [] as string[],
   }
   const page =
     (method: string) =>
@@ -153,6 +155,7 @@ function browser(): SessionBrowser & {
             text: '{"ok":true}',
           }
         : null,
+    takeNotices: () => b.notices.splice(0),
     takeDownloads: () => {
       const all = [...b.news]
       b.news = b.news.filter((n) => n.status === 'downloading')
@@ -369,6 +372,49 @@ describe('a browser session', () => {
     expect((part.output['page'] as { snapshot: { fromSite: string } }).snapshot.fromSite).toBe(
       '- link "Next" [ref=e3]:\n  - /url: https://news.example.com/2\n- textbox "Search" [ref=e4]',
     )
+  })
+
+  it('cuts a big page at a line, and reads on from where it was cut', async () => {
+    const { call, create, opened } = setup()
+    const session = await create()
+    const big = Array.from({ length: 2000 }, (_, i) => `- link "Story number ${i + 1}" [ref=e${i + 1}]`)
+    const b = opened[0]?.browser
+    if (b === undefined) throw new Error('no browser')
+    b.yaml = big.join('\n')
+    type Page = { snapshot: { fromSite: string }; cut: boolean; next?: number }
+    const first = (await call('navigate', { session, url: 'https://news.example.com/' })).output[
+      'page'
+    ] as Page
+    expect(first.cut).toBe(true)
+    expect(first.snapshot.fromSite.length).toBeLessThanOrEqual(25_000)
+    const shown = first.snapshot.fromSite.split('\n')
+    expect(shown.at(-1)).toBe(big[shown.length - 1])
+    expect(first.next).toBe(shown.length + 1)
+    const rest = (await call('snapshot', { session, from: first.next })).output['page'] as Page
+    expect(rest.snapshot.fromSite.split('\n')[0]).toBe(big[shown.length])
+    let page = rest
+    while (page.next !== undefined)
+      page = (await call('snapshot', { session, from: page.next })).output['page'] as Page
+    expect(page.cut).toBe(false)
+    expect(page.snapshot.fromSite.split('\n').at(-1)).toBe(big.at(-1))
+    // A page that fits comes whole, with no next.
+    b.yaml = PAGE
+    const small = (await call('snapshot', { session })).output['page'] as Page
+    expect(small).toMatchObject({ cut: false, snapshot: { fromSite: PAGE } })
+    expect(small.next).toBeUndefined()
+  })
+
+  it('stays open when a site refuses it, and says so with the page', async () => {
+    const { call, create, opened } = setup()
+    const session = await create()
+    const b = opened[0]?.browser
+    if (b === undefined) throw new Error('no browser')
+    b.notices.push('www.example.com answered 403 with a web page, usually a bot check or a block.')
+    const got = await call('navigate', { session, url: 'https://www.example.com/' })
+    expect(got.output['problem']).toMatch(/answered 403/)
+    expect(got.output['page']).not.toBeNull()
+    // Said once.
+    expect((await call('snapshot', { session })).output['problem']).toBeNull()
   })
 
   it('passes each input through as Playwright MCP names it', async () => {

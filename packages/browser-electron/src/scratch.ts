@@ -60,6 +60,8 @@ const POSTED = 'The page tried to post a form, which this browser never sends.'
 export const SCRATCH_LIMITS = {
   requestsPerLoad: 300,
   requests: 1500,
+  /** A session's page may ask for more; past it the rest are refused, and the session stays open. */
+  sessionRequestsPerLoad: 1000,
   loadTimeoutMs: 20_000,
   settleMs: 1500,
   /** After a load or input, the page counts as settled once no request starts or ends for this long… */
@@ -148,7 +150,10 @@ export interface ScratchRules {
    * error whose `detail` is the sentence for the agent.
    */
   readonly pace: (host: string) => Promise<void>
-  /** The site refused the browser (a 429, an HTML 403): it has closed. */
+  /**
+   * The site refused the browser (a 429, an HTML 403). Any browser but a session's has closed; a
+   * session stays open on the page the site sent, and says so with the next answer (takeNotices).
+   */
   readonly blocked: (host: string, status: number) => void
   /** False for text the browser must not type (a login secret or session value Valet knows). */
   readonly mayType: (text: string) => boolean | Promise<boolean>
@@ -252,6 +257,11 @@ export class ScratchBrowser {
   private readonly console: ConsoleMessage[] = []
   /** A session's downloads not yet handed on (takeDownloads). */
   private readonly downloads = new Map<string, DownloadNews>()
+  /** What happened to a session's page that the agent should hear with the next answer. */
+  private notices: string[] = []
+  /** Why the browser closed itself, when it did. */
+  private closedBy: string | null = null
+  private cappedLoad = -1
 
   private constructor(
     private readonly options: ScratchOptions,
@@ -294,7 +304,11 @@ export class ScratchBrowser {
       const html = (response.contentType ?? '').includes('html')
       if (response.status === 429 || (response.status === 403 && html)) {
         const host = hostOf(response.url)
-        self.close()
+        if (options.rules.session === true) self.refusedBy(host ?? 'The site', response.status)
+        else {
+          self.closedBy = `${host ?? 'The site'} refused the browser (${response.status}), so it closed.`
+          self.close()
+        }
         if (host !== null) options.rules.blocked(host, response.status)
       }
     })
@@ -342,6 +356,27 @@ export class ScratchBrowser {
    * The session's downloads since the last call: each one still coming (every time, until it ends),
    * then once ready with its bytes or once failed. Nothing is kept after it is handed on.
    */
+  takeNotices(): readonly string[] {
+    const notices = this.notices
+    this.notices = []
+    return notices
+  }
+
+  private refusedBy(host: string, status: number): void {
+    const what =
+      status === 429
+        ? 'answered 429, too many requests'
+        : 'answered 403 with a web page, usually a bot check or a block'
+    this.notice(
+      `${host.slice(0, 100)} ${what}. The session is still open on the page it sent: ` +
+        'browser_network_requests and browser_snapshot show what came back. Wait a while before trying it again.',
+    )
+  }
+
+  private notice(text: string): void {
+    if (this.notices.length < 5 && !this.notices.includes(text)) this.notices.push(text)
+  }
+
   takeDownloads(): readonly DownloadNews[] {
     const news = [...this.downloads.values()]
     for (const item of news) if (item.status !== 'downloading') this.downloads.delete(item.id)
@@ -426,7 +461,7 @@ export class ScratchBrowser {
     const loaded = await this.withTimeout(this.surface.load(target.href))
     // Only when the page itself didn't load: a page that loaded and then tried to go elsewhere is shown.
     if (this.refusal !== null && (loaded === null || !loaded.ok)) throw new ScratchError(this.refusal)
-    if (this.closed) throw new ScratchError('The site refused the scratch browser, so it closed.')
+    if (this.closed) throw new ScratchError(this.closedBy ?? 'The browser closed.')
     if (loaded !== null && !loaded.ok && loaded.code !== 'ERR_ABORTED')
       throw new ScratchError(`The page didn't load (${loaded.code.slice(0, 40)}).`)
     await this.quiet()
@@ -964,7 +999,7 @@ export class ScratchBrowser {
     try {
       answer = await Promise.race([runner(code), late])
     } catch (error) {
-      if (this.closed) throw new ScratchError('The scratch browser closed.')
+      if (this.closed) throw new ScratchError(this.closedBy ?? 'The browser closed.')
       const message = error instanceof Error ? error.message : String(error)
       throw new ScratchError(`The script failed: ${this.scrub(message).slice(0, 300)}`)
     } finally {
@@ -1134,7 +1169,22 @@ export class ScratchBrowser {
       this.mainFrames++
     }
     this.loadRequests++
-    if (this.requests > SCRATCH_LIMITS.requests || this.loadRequests > SCRATCH_LIMITS.requestsPerLoad) {
+    if (this.options.rules.session === true) {
+      // A session isn't closed for a busy page: what goes past the cap is refused, and said once.
+      if (this.loadRequests > SCRATCH_LIMITS.sessionRequestsPerLoad) {
+        if (this.cappedLoad !== this.mainFrames) {
+          this.cappedLoad = this.mainFrames
+          this.notice(
+            `The page asked for more than ${SCRATCH_LIMITS.sessionRequestsPerLoad} requests in one load, so Valet refused the rest; parts of it may be missing.`,
+          )
+        }
+        return false
+      }
+    } else if (
+      this.requests > SCRATCH_LIMITS.requests ||
+      this.loadRequests > SCRATCH_LIMITS.requestsPerLoad
+    ) {
+      this.closedBy = 'The page made more requests than Valet allows, so the browser closed.'
       this.close()
       return false
     }
@@ -1201,7 +1251,7 @@ export class ScratchBrowser {
     try {
       return await frame.run(script)
     } catch {
-      if (this.closed) throw new ScratchError('The scratch browser closed.')
+      if (this.closed) throw new ScratchError(this.closedBy ?? 'The browser closed.')
       throw new ScratchError('The page could not be read.')
     }
   }
@@ -1220,7 +1270,7 @@ export class ScratchBrowser {
       await sleep(100)
     }
     if (this.surface.isLoading()) await this.withTimeout(this.surface.nextStopLoading())
-    if (this.closed) throw new ScratchError('The site refused the scratch browser, so it closed.')
+    if (this.closed) throw new ScratchError(this.closedBy ?? 'The browser closed.')
     await this.quiet()
   }
 
@@ -1242,7 +1292,7 @@ export class ScratchBrowser {
       if (still >= 1 && this.apiDone >= this.apiStarted) return
       if (still >= SCRATCH_LIMITS.quietStuckTicks) return
     }
-    if (this.closed) throw new ScratchError('The scratch browser closed while the page was loading.')
+    if (this.closed) throw new ScratchError(this.closedBy ?? 'The browser closed while the page was loading.')
   }
 
   private withTimeout<T>(work: Promise<T>): Promise<T | null> {

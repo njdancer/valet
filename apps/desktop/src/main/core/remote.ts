@@ -533,6 +533,54 @@ export class RemoteAccess {
   }
 
   /**
+   * Takes tools that no longer exist out of every agent's grant and out of Remote access: a
+   * built-in tool a newer build dropped or renamed (the first agents' browser's browser_open,
+   * say). Only narrows, so it needs no signature. Each is audited as turned off. Returns how many
+   * grants and switches it changed.
+   */
+  forgetTools(gone: (ref: string) => boolean): Promise<number> {
+    return this.serially(async () => {
+      let changed = 0
+      const tools: typeof this.current.tools = {}
+      const dropped: { adapter: string; tool: string; sideEffect: ToolDeclaration['sideEffect'] }[] = []
+      for (const [adapter, byTool] of Object.entries(this.current.tools)) {
+        const kept: (typeof this.current.tools)[string] = {}
+        for (const [tool, entry] of Object.entries(byTool)) {
+          if (gone(`${adapter}.${tool}`)) dropped.push({ adapter, tool, sideEffect: entry.sideEffect })
+          else kept[tool] = entry
+        }
+        if (Object.keys(kept).length > 0) tools[adapter] = kept
+      }
+      if (dropped.length > 0) {
+        await this.save({ ...this.current, tools })
+        for (const d of dropped)
+          await this.deps
+            .audit({
+              type: 'remote-tool',
+              adapterId: d.adapter,
+              tool: d.tool,
+              enabled: false,
+              sideEffect: d.sideEffect,
+            })
+            .catch(() => undefined)
+        changed += dropped.length
+      }
+      const touched: string[] = []
+      for (const client of this.clients.list()) {
+        const stale = (client.grant?.tools ?? []).filter(gone)
+        if (stale.length === 0 || !this.clients.removeTools(client.id, stale)) continue
+        touched.push(client.id)
+        changed += stale.length
+      }
+      if (changed === 0) return 0
+      this.refresh()
+      await this.reopenAfterChange(touched)
+      this.deps.changed()
+      return changed
+    })
+  }
+
+  /**
    * After a change to what these clients may call: closes their sessions (tokens kept). A tool
    * list change notice reaches only a client holding an event stream open, and claude.ai doesn't:
    * it keeps using its session's first list. A closed session makes it start a new one and list

@@ -228,7 +228,10 @@ function routes(
           window.pageGlobal = 'from the page'
           console.log('agent page ready'); console.debug('quiet detail'); console.error('something broke')
           localStorage.setItem('theme', 'dark'); sessionStorage.setItem('step', '2'); document.cookie = 'seen=yes; Secure; Path=/'
-          setTimeout(() => { const p = document.createElement('p'); p.textContent = 'Late arrival'; document.body.appendChild(p) }, 1500)
+          // Starts on the first key pressed on the page, not at load, so a slow machine's two first
+          // snapshots never straddle it.
+          let late = false
+          document.addEventListener('keydown', (e) => { if (e.target !== document.body || late) return; late = true; setTimeout(() => { const p = document.createElement('p'); p.textContent = 'Late arrival'; document.body.appendChild(p) }, 500) })
         </script>`,
       ),
     }

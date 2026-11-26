@@ -122,6 +122,51 @@ describe('the remote policy', () => {
   })
 })
 
+describe('tools that no longer exist', () => {
+  it('leave Remote access and every agent’s grant, and nothing else does', async () => {
+    const { remote, caller, path } = make()
+    const grant = (tools: string[]) => ({
+      tools,
+      resource: 'https://mac.valet.test/mcp',
+      grantedAt: 1,
+      refreshHash: 'a'.repeat(64),
+      refreshExpiresAt: Date.parse('2027-01-01T00:00:00.000Z'),
+      retired: [],
+    })
+    const registration = (id: string, tools: string[]) => ({
+      id,
+      redirectUris: ['https://claude.ai/api/mcp/auth_callback'],
+      clientName: id,
+      authMethod: 'none',
+      secretHash: null,
+      registeredAt: 1,
+      source: null,
+      grant: grant(tools),
+    })
+    writeFileSync(
+      join(path, '..', 'remote-clients.json'),
+      JSON.stringify({
+        version: 1,
+        registrations: [
+          registration('rcaaaaaaaaaaaaaaaaaaaa', ['browser.open', 'browser.session_create', 'shop.add']),
+          registration('rcbbbbbbbbbbbbbbbbbbbb', ['shop.add']),
+        ],
+      }),
+    )
+    await remote.start(caller)
+    await remote.setTool('browser', declaration('open', 'read'), true)
+    await remote.setTool('shop', declaration('add', 'write'), true)
+    const gone = (ref: string) => ref === 'browser.open'
+    expect(await remote.forgetTools(gone)).toBe(2)
+    expect(remote.status().tools).toEqual(['shop.add'])
+    expect(remote.remoteClients().map((c) => c.grant?.tools)).toEqual([
+      ['browser.session_create', 'shop.add'],
+      ['shop.add'],
+    ])
+    expect(await remote.forgetTools(gone)).toBe(0)
+  })
+})
+
 describe('the tray', () => {
   const status = (over: Partial<RemoteStatus> = {}): RemoteStatus => ({
     enabled: false,
