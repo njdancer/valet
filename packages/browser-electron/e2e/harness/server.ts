@@ -72,6 +72,10 @@ function makeCertificate(): { key: Buffer; cert: Buffer } {
   return { key: readFileSync(key), cert: readFileSync(cert) }
 }
 
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
+}
+
 function page(title: string, body: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body>${body}</body></html>`
 }
@@ -185,6 +189,45 @@ function routes(
       ),
     }
   }
+  // The agents' browser (docs/agent-browser.md): a page with each kind of input an agent sends.
+  if (host === 'site.test' && path === '/agent') {
+    return {
+      body: page(
+        'Agent',
+        `<h1>Agent page</h1>
+        <form action="/agent-results"><label for="q">Search</label><input id="q" name="q" type="search" value="old"></form>
+        <label for="live">Live</label><input id="live" type="text"><p id="keys">keys:</p>
+        <label for="pw">Password</label><input id="pw" name="pw" type="password">
+        <label for="size">Size</label><select id="size"><option value="s">Small</option><option value="l">Large</option></select>
+        <p id="chosen">chosen: none</p>
+        <a href="/scratch-next" style="display:inline-block;width:100px;height:30px">Relative</a>
+        <button id="dbl" style="width:100px;height:30px">Twice</button><p id="dbls">doubles: 0</p>
+        <button id="ctx" style="width:100px;height:30px">Menu</button><p id="ctxs">menus: 0</p>
+        <div id="hov" style="width:100px;height:30px;background:#eee">Hover me</div><p id="hovered">hovered: no</p>
+        <div id="src" draggable="false" style="width:60px;height:30px;background:#cfc">Drag</div>
+        <div id="dst" style="width:120px;height:60px;background:#ccf;margin-top:20px">Drop here</div><p id="dropped">dropped: no</p>
+        <div style="height:3000px"></div>
+        <div style="position:relative;width:200px;height:40px"><button id="under" style="width:100px;height:30px">Covered</button>
+        <div style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div></div>
+        <p id="pressed">pressed: none</p>
+        <script>
+          const text = (id, value) => { document.getElementById(id).textContent = value }
+          document.getElementById('live').addEventListener('keydown', (e) => text('keys', document.getElementById('keys').textContent + e.key))
+          document.getElementById('size').addEventListener('change', (e) => text('chosen', 'chosen: ' + e.target.value))
+          let dbls = 0; document.getElementById('dbl').addEventListener('dblclick', () => text('dbls', 'doubles: ' + ++dbls))
+          let ctxs = 0; document.getElementById('ctx').addEventListener('contextmenu', (e) => { e.preventDefault(); text('ctxs', 'menus: ' + ++ctxs) })
+          document.getElementById('hov').addEventListener('mouseenter', () => text('hovered', 'hovered: yes'))
+          let dragging = false
+          document.getElementById('src').addEventListener('mousedown', () => { dragging = true })
+          document.getElementById('dst').addEventListener('mouseup', () => { if (dragging) text('dropped', 'dropped: yes') })
+          document.addEventListener('keydown', (e) => { if (e.target === document.body) text('pressed', 'pressed: ' + (e.shiftKey ? 'Shift+' : '') + e.key) })
+          setTimeout(() => { const p = document.createElement('p'); p.textContent = 'Late arrival'; document.body.appendChild(p) }, 1500)
+        </script>`,
+      ),
+    }
+  }
+  if (host === 'site.test' && path === '/agent-results')
+    return { body: page('Results', `<p>Results for ${escapeHtml(query.get('q') ?? '')}</p>`) }
   if (host === 'site.test' && path === '/scratch-next') return { body: page('Next', '<p>Second page</p>') }
   if (host === 'site.test' && path === '/login') {
     return {

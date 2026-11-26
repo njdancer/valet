@@ -1,2 +1,8 @@
 Valet
 Copyright 2026 Nick Dancer
+
+This product includes Playwright's in-page script (packages/browser-electron/src/generated),
+copied from playwright-core and patched by packages/browser-electron/scripts/vendor-playwright.mjs.
+Playwright
+Copyright (c) Microsoft Corporation
+Licensed under the Apache License, Version 2.0.

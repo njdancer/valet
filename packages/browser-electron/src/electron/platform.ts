@@ -11,6 +11,7 @@ import {
   webFrameMain,
 } from 'electron'
 import { type Dial, startEgressProxy } from '../egress-proxy'
+import type { KeyPress } from '../keys'
 import type {
   BrowserPlatform,
   BrowserSurface,
@@ -20,6 +21,7 @@ import type {
   FrameHandle,
   KeyEvents,
   LoadResult,
+  MouseInput,
   NavigationEvent,
   NetworkResponse,
   ObservedResponse,
@@ -449,6 +451,34 @@ class ElectronSurface implements BrowserSurface {
     if (full) this.contents.sendInputEvent({ type: 'keyDown', keyCode: char })
     this.contents.sendInputEvent({ type: 'char', keyCode: char })
     if (full) this.contents.sendInputEvent({ type: 'keyUp', keyCode: char })
+  }
+
+  mouse(event: MouseInput): void {
+    const { x, y } = event
+    const modifiers = [...(event.modifiers ?? [])]
+    if (event.type === 'move') {
+      this.contents.sendInputEvent({ type: 'mouseMove', x, y, modifiers })
+      return
+    }
+    this.contents.sendInputEvent({
+      type: event.type === 'down' ? 'mouseDown' : 'mouseUp',
+      x,
+      y,
+      button: event.button ?? 'left',
+      clickCount: event.clickCount ?? 1,
+      modifiers,
+    })
+  }
+
+  pressKey(key: KeyPress): void {
+    const modifiers = [...key.modifiers]
+    this.contents.sendInputEvent({ type: 'keyDown', keyCode: key.keyCode, modifiers })
+    if (key.char !== null) this.contents.sendInputEvent({ type: 'char', keyCode: key.char, modifiers })
+    this.contents.sendInputEvent({ type: 'keyUp', keyCode: key.keyCode, modifiers })
+  }
+
+  async insertText(text: string): Promise<void> {
+    await this.contents.insertText(text)
   }
 
   async overrideUserAgent(override: UserAgentOverride): Promise<void> {

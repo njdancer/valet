@@ -52,7 +52,7 @@ const PATH = `(el) => {
 
 // Hidden is anything a person looking at the page can't read: not rendered, see-through, too small,
 // clipped away or placed off the page. Pages hide instructions for agents in all of these.
-const HIDDEN = `(el) => {
+export const HIDDEN = `(el) => {
   if (el.hidden || el.getAttribute('aria-hidden') === 'true') return true
   const style = getComputedStyle(el)
   if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return true
@@ -64,9 +64,14 @@ const HIDDEN = `(el) => {
   const rect = el.getBoundingClientRect()
   if (el.getClientRects().length === 0) return true
   if ((rect.width < 2 || rect.height < 2) && style.overflow !== 'visible') return true
+  // Off the page, not merely scrolled out of view: where it is in the document, unless it is fixed
+  // to the window, whose box is where it shows.
   const doc = document.documentElement
-  if (rect.right <= 0 || rect.bottom <= 0) return true
-  if (rect.left >= Math.max(doc.scrollWidth, innerWidth) || rect.top >= Math.max(doc.scrollHeight, innerHeight)) return true
+  const fixed = style.position === 'fixed'
+  const left = rect.left + (fixed ? 0 : scrollX)
+  const top = rect.top + (fixed ? 0 : scrollY)
+  if (left + rect.width <= 0 || top + rect.height <= 0) return true
+  if (left >= Math.max(doc.scrollWidth, innerWidth) || top >= Math.max(doc.scrollHeight, innerHeight)) return true
   const color = style.color.replace(/\\s/g, '')
   if (/^rgba\\(\\d+,\\d+,\\d+,0(\\.0+)?\\)$/.test(color) || color === 'transparent') return true
   return false

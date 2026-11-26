@@ -5,7 +5,20 @@
 // pages for the agent through the scripts in scratch-scripts.ts.
 
 import type { Socket } from 'node:net'
+import {
+  type AriaPoint,
+  absoluteUrls,
+  ariaBootedScript,
+  ariaBootScript,
+  ariaFieldScript,
+  ariaPointScript,
+  ariaSelectScript,
+  ariaSnapshotScript,
+  findInSnapshot,
+  textShownScript,
+} from './aria'
 import { cookieSetDetails, cookiesForDomains } from './cookies'
+import { type Modifier, parseKey } from './keys'
 import { partitionName } from './partitions'
 import type {
   BrowserPlatform,
@@ -52,6 +65,15 @@ export const SCRATCH_LIMITS = {
   defaultNodes: 300,
   textLimit: 200,
   typeChars: 500,
+  /** Text fill inserts at once; typing slowly sends a keystroke per character, so far less. */
+  fillChars: 5000,
+  /** A snapshot longer than this is cut; a ref or depth reads less of the page. */
+  snapshotChars: 150_000,
+  snapshotDepth: 100,
+  waitMs: 20_000,
+  waitPollMs: 250,
+  selectValues: 50,
+  dragSteps: 5,
 } as const
 
 /** What the app decides; the browser only asks. */
@@ -114,6 +136,27 @@ export interface LogEntry {
 
 export type Target = { readonly ref: string } | { readonly selector: string }
 
+/** A page as Playwright MCP shows it: its accessibility snapshot in YAML, refs on what can be acted on. */
+export interface AriaPage {
+  readonly url: string
+  readonly title: string
+  readonly yaml: string
+  /** The page's last snapshot before this one, for a delta; null when this is a new page. */
+  readonly previous: string | null
+  readonly cut: boolean
+}
+
+export interface ClickOptions {
+  readonly button?: 'left' | 'right' | 'middle'
+  readonly doubleClick?: boolean
+  readonly modifiers?: readonly Modifier[]
+}
+
+export type WaitFor =
+  | { readonly text: string; readonly timeoutMs?: number }
+  | { readonly textGone: string; readonly timeoutMs?: number }
+  | { readonly timeMs: number }
+
 export class ScratchBrowser {
   private closed = false
   private readonly closers: (() => void)[] = []
@@ -136,6 +179,8 @@ export class ScratchBrowser {
   /** Fetch and XHR requests let out, and their responses seen: settle() waits for them too. */
   private apiStarted = 0
   private apiDone = 0
+  /** The last snapshot's YAML and the document it was of, for deltas. */
+  private lastYaml: { readonly frame: string; readonly url: string; readonly yaml: string } | null = null
 
   private constructor(
     private readonly options: ScratchOptions,
@@ -366,6 +411,287 @@ export class ScratchBrowser {
     for (const char of text) this.surface.sendChar(char, 'full')
     await this.settle(frames)
     return this.snapshot()
+  }
+
+  // The agents' browser (docs/agent-browser.md): Playwright MCP's page reading and input. Targets
+  // are a ref from the last snapshot (e12) or a CSS selector, resolved in the page.
+
+  /** The page's accessibility snapshot, or one element's with `target`; `depth` limits how deep. */
+  async ariaSnapshot(options: { readonly target?: string; readonly depth?: number } = {}): Promise<AriaPage> {
+    this.open()
+    const target = options.target === undefined ? null : this.ariaTarget(options.target)
+    const depth =
+      options.depth === undefined
+        ? null
+        : Math.min(Math.max(Math.floor(options.depth), 1), SCRATCH_LIMITS.snapshotDepth)
+    const raw = (await this.runAria(ariaSnapshotScript({ target, depth }))) as {
+      url?: unknown
+      title?: unknown
+      yaml?: unknown
+      error?: string
+    } | null
+    if (raw === null || typeof raw !== 'object') throw new ScratchError('The page could not be read.')
+    if (raw.error !== undefined) throw this.targetError(raw.error)
+    const pageUrl = String(raw.url ?? this.surface.url())
+    if (this.options.rules.signedIn !== undefined) await this.guardPage(pageUrl)
+    let yaml = this.scrub(absoluteUrls(String(raw.yaml ?? ''), pageUrl))
+    const cut = yaml.length > SCRATCH_LIMITS.snapshotChars
+    if (cut) yaml = yaml.slice(0, yaml.lastIndexOf('\n', SCRATCH_LIMITS.snapshotChars))
+    const frame = this.surface.frames()[0]?.id ?? ''
+    const last = this.lastYaml
+    const previous = last !== null && last.frame === frame && last.url === pageUrl ? last.yaml : null
+    // Only a whole-page snapshot is what a later one is compared with.
+    if (target === null && depth === null) this.lastYaml = { frame, url: pageUrl, yaml }
+    return { url: this.scrub(pageUrl), title: this.scrub(String(raw.title ?? '')), yaml, previous, cut }
+  }
+
+  /** The snapshot's lines that match, each under its path, so an agent can find a ref. */
+  async find(match: { readonly text: string } | { readonly regex: string }): Promise<{
+    readonly url: string
+    readonly matches: readonly string[]
+  }> {
+    let test: { readonly text: string } | { readonly regex: RegExp }
+    if ('regex' in match) {
+      if (match.regex.length === 0 || match.regex.length > 200)
+        throw new ScratchError('That pattern is too long.')
+      try {
+        test = { regex: new RegExp(match.regex, 'i') }
+      } catch {
+        throw new ScratchError('That isn’t a valid regular expression.')
+      }
+    } else {
+      if (match.text.trim().length === 0 || match.text.length > 200)
+        throw new ScratchError('Give some text to look for, up to 200 characters.')
+      test = { text: match.text.trim() }
+    }
+    const page = await this.ariaSnapshot()
+    return { url: page.url, matches: findInSnapshot(page.yaml, test) }
+  }
+
+  /** A trusted click at the element's centre, as a mouse makes it; then the page settles. */
+  async clickElement(target: string, options: ClickOptions = {}): Promise<AriaPage> {
+    const point = await this.pointAt(target)
+    const frames = this.mainFrames
+    const button = options.button ?? 'left'
+    const modifiers = options.modifiers ?? []
+    const { x, y } = point
+    this.surface.focus()
+    this.surface.mouse({ type: 'move', x, y, modifiers })
+    for (let count = 1; count <= (options.doubleClick === true ? 2 : 1); count++) {
+      this.surface.mouse({ type: 'down', x, y, button, clickCount: count, modifiers })
+      this.surface.mouse({ type: 'up', x, y, button, clickCount: count, modifiers })
+    }
+    await this.settle(frames)
+    return this.ariaSnapshot()
+  }
+
+  /** Moves the mouse over the element, for menus and tooltips that open on hover. */
+  async hover(target: string): Promise<AriaPage> {
+    const { x, y } = await this.pointAt(target)
+    const frames = this.mainFrames
+    this.surface.mouse({ type: 'move', x, y })
+    await this.settle(frames)
+    return this.ariaSnapshot()
+  }
+
+  /** Drags one element onto another with the mouse held down. */
+  async drag(from: string, to: string): Promise<AriaPage> {
+    const start = await this.pointAt(from)
+    const frames = this.mainFrames
+    this.surface.mouse({ type: 'move', x: start.x, y: start.y })
+    this.surface.mouse({ type: 'down', x: start.x, y: start.y })
+    try {
+      const end = await this.pointAt(to)
+      for (let step = 1; step <= SCRATCH_LIMITS.dragSteps; step++) {
+        const x = start.x + ((end.x - start.x) * step) / SCRATCH_LIMITS.dragSteps
+        const y = start.y + ((end.y - start.y) * step) / SCRATCH_LIMITS.dragSteps
+        this.surface.mouse({ type: 'move', x, y })
+      }
+      this.surface.mouse({ type: 'up', x: end.x, y: end.y })
+    } catch (error) {
+      this.surface.mouse({ type: 'up', x: start.x, y: start.y })
+      throw error
+    }
+    await this.settle(frames)
+    return this.ariaSnapshot()
+  }
+
+  /**
+   * Puts text in a field, as Playwright's fill does: what was there is replaced, all at once. With
+   * `slowly` it is typed a key at a time after what is there, for pages that react to each key. With
+   * `submit` Enter is pressed after. Never a password or one-time code field.
+   */
+  async fill(
+    target: string,
+    text: string,
+    options: { readonly slowly?: boolean; readonly submit?: boolean } = {},
+  ): Promise<AriaPage> {
+    this.open()
+    const slowly = options.slowly === true
+    if (text.length > (slowly ? SCRATCH_LIMITS.typeChars : SCRATCH_LIMITS.fillChars))
+      throw new ScratchError(
+        slowly
+          ? 'That is more text than the browser types a key at a time.'
+          : 'That is more text than the browser fills.',
+      )
+    if (!(await this.options.rules.mayType(text))) throw new ScratchError('Valet doesn’t type that here.')
+    // The window is never shown, and Valet is a menu-bar app, so the page has no keyboard focus of
+    // its own: give it focus first, or no field can take the keyboard.
+    this.surface.focus()
+    const raw = (await this.runAria(
+      ariaFieldScript({ target: this.ariaTarget(target), value: text, keep: slowly }),
+    )) as { error?: string; done?: boolean; focused?: boolean; message?: string } | null
+    if (raw === null || typeof raw !== 'object') throw new ScratchError('The page could not be read.')
+    if (raw.error === 'secret')
+      throw new ScratchError(
+        'Agents don’t type into password or code fields; Valet signs in to sites itself.',
+      )
+    if (raw.error === 'not-editable')
+      throw new ScratchError(
+        'That element isn’t a field you can type into (it is disabled, read only or not a text field).',
+      )
+    if (raw.error === 'cannot-fill')
+      throw new ScratchError(`That field can’t take text: ${String(raw.message ?? '').slice(0, 200)}`)
+    if (raw.error !== undefined) throw this.targetError(raw.error)
+    const frames = this.mainFrames
+    if (raw.done !== true) {
+      if (raw.focused !== true)
+        throw new ScratchError(
+          'That field couldn’t take the keyboard: the page moved focus elsewhere. Click it first, then type.',
+        )
+      if (slowly) for (const char of text) this.surface.sendChar(char, 'full')
+      else if (text === '') this.surface.pressKey({ keyCode: 'Delete', modifiers: [], char: null })
+      else await this.surface.insertText(text)
+    }
+    if (options.submit === true) {
+      await this.settleShort()
+      this.surface.pressKey({ keyCode: 'Enter', modifiers: [], char: '\r' })
+    }
+    await this.settle(frames)
+    return this.ariaSnapshot()
+  }
+
+  /** Presses a key or combination on whatever has focus: Enter, Escape, ArrowDown, Shift+Tab. */
+  async press(key: string): Promise<AriaPage> {
+    this.open()
+    const parsed = parseKey(key)
+    if (parsed === null)
+      throw new ScratchError(
+        'Valet doesn’t know that key. Use a name like Enter, Tab, Escape, ArrowDown or PageDown, one character, or a combination like Shift+Tab.',
+      )
+    if (
+      parsed.char !== null &&
+      parsed.char !== '\r' &&
+      parsed.char !== '\t' &&
+      !(await this.options.rules.mayType(parsed.char))
+    )
+      throw new ScratchError('Valet doesn’t type that here.')
+    const frames = this.mainFrames
+    this.surface.focus()
+    this.surface.pressKey(parsed)
+    await this.settle(frames)
+    return this.ariaSnapshot()
+  }
+
+  /** Chooses options in a select by their value or label. */
+  async select(target: string, values: readonly string[]): Promise<AriaPage> {
+    this.open()
+    if (
+      values.length === 0 ||
+      values.length > SCRATCH_LIMITS.selectValues ||
+      values.some((v) => v.length > 500)
+    )
+      throw new ScratchError('Give between 1 and 50 options to choose.')
+    const raw = (await this.runAria(ariaSelectScript({ target: this.ariaTarget(target), values }))) as {
+      error?: string
+    } | null
+    if (raw === null || typeof raw !== 'object') throw new ScratchError('The page could not be read.')
+    if (raw.error === 'not-select') throw new ScratchError('That element isn’t a select (a dropdown list).')
+    if (raw.error === 'no-option')
+      throw new ScratchError('The select has no option with that value or label.')
+    if (raw.error === 'option-disabled') throw new ScratchError('That option is disabled.')
+    if (raw.error !== undefined) throw this.targetError(raw.error)
+    const frames = this.mainFrames
+    await this.settle(frames)
+    return this.ariaSnapshot()
+  }
+
+  /** Waits until text appears or goes, or for a time; then the page as it is. */
+  async waitFor(condition: WaitFor): Promise<AriaPage & { readonly met: boolean }> {
+    this.open()
+    const timers = this.options.timers ?? realTimers
+    const sleep = (ms: number) => new Promise<void>((resolve) => timers.setTimeout(resolve, ms))
+    if ('timeMs' in condition) {
+      await sleep(Math.min(Math.max(condition.timeMs, 0), SCRATCH_LIMITS.waitMs))
+      this.open()
+      return { ...(await this.ariaSnapshot()), met: true }
+    }
+    const appear = 'text' in condition
+    const text = appear ? condition.text : condition.textGone
+    if (text.trim().length === 0 || text.length > 500)
+      throw new ScratchError('Give the text to wait for, up to 500 characters.')
+    const limit = Math.min(Math.max(condition.timeoutMs ?? SCRATCH_LIMITS.waitMs, 0), SCRATCH_LIMITS.waitMs)
+    let met = false
+    for (let waited = 0; ; waited += SCRATCH_LIMITS.waitPollMs) {
+      // A page mid-navigation has no document to read for a moment: that is not yet, not an error.
+      const shown = await this.runAria(textShownScript(text)).catch((error: unknown) => {
+        if (this.closed) throw error
+        return null
+      })
+      if (shown !== null && shown === appear) {
+        met = true
+        break
+      }
+      if (waited >= limit) break
+      await sleep(SCRATCH_LIMITS.waitPollMs)
+      this.open()
+    }
+    return { ...(await this.ariaSnapshot()), met }
+  }
+
+  /** Where to send trusted input for an element, refusing one no one could click. */
+  private async pointAt(target: string): Promise<AriaPoint> {
+    this.open()
+    const raw = (await this.runAria(ariaPointScript(this.ariaTarget(target)))) as
+      | (Partial<AriaPoint> & { error?: string })
+      | null
+    if (raw === null || typeof raw !== 'object') throw new ScratchError('The page could not be read.')
+    if (raw.error !== undefined) throw this.targetError(raw.error)
+    if (typeof raw.x !== 'number' || typeof raw.y !== 'number')
+      throw new ScratchError('The page could not be read.')
+    if (raw.covered === true)
+      throw new ScratchError(
+        'Something else covers that element (a dialog, banner or overlay?). Take a snapshot and deal with it first.',
+      )
+    return raw as AriaPoint
+  }
+
+  private ariaTarget(target: string): string {
+    if (target.length === 0 || target.length > 500)
+      throw new ScratchError('That isn’t a ref or a valid selector.')
+    return target
+  }
+
+  private targetError(error: string): ScratchError {
+    if (error === 'stale')
+      return new ScratchError('No element has that ref now: the page changed. Take a new snapshot.')
+    if (error === 'invalid-selector') return new ScratchError('That isn’t a ref or a valid selector.')
+    if (error === 'not-found') return new ScratchError('Nothing on the page matches that selector.')
+    if (error === 'hidden') return new ScratchError('That element isn’t visible, so it can’t be used.')
+    return new ScratchError('The page could not be read.')
+  }
+
+  /** Runs a script that needs Playwright's injected script, booting it in this document first. */
+  private async runAria(script: string): Promise<unknown> {
+    if ((await this.run(ariaBootedScript())) !== true) await this.run(ariaBootScript())
+    return this.run(script)
+  }
+
+  /** A moment between a field's input and its Enter, so the page has handled the one before the other. */
+  private async settleShort(): Promise<void> {
+    const timers = this.options.timers ?? realTimers
+    await new Promise<void>((resolve) => timers.setTimeout(resolve, 100))
+    this.open()
   }
 
   /** The log since `sinceSeq`, newest last. URLs carry no cookie values. */
