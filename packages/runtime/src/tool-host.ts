@@ -638,6 +638,17 @@ export class ToolHost {
     return this.protection.forSite(key, TRIAL_LIMITS)
   }
 
+  /**
+   * Each installed adapter's site host with its rate budget and breaker: the limits already known
+   * for a host, which an agent's browser session reaching that host obeys too
+   * (docs/agent-browser.md). Hosts no adapter has are not here, and get no limit.
+   */
+  registeredSites(): readonly { readonly host: string; readonly guards: SiteGuards }[] {
+    const seen = new Map<string, SiteGuards>()
+    for (const entry of this.adapters.values()) if (!seen.has(entry.host)) seen.set(entry.host, entry.site)
+    return [...seen].map(([host, guards]) => ({ host, guards }))
+  }
+
   call(request: ToolCallRequest): Promise<ToolCallResult> {
     return this.dispatch(request, false)
   }
