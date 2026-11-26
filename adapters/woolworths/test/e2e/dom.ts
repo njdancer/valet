@@ -84,8 +84,10 @@ export function isVisible(element: Element): boolean {
 
 type Test = (element: Element) => boolean
 
-const SIMPLE = /^([a-zA-Z][\w-]*)?((?:#[\w-]+|\.[\w-]+|\[[\w-]+(?:="[^"]*")?\]|:not\(:checked\)|:checked)*)$/
-const PART = /#([\w-]+)|\.([\w-]+)|\[([\w-]+)(?:="([^"]*)")?\]|(:not\(:checked\))|(:checked)/g
+const SIMPLE =
+  /^([a-zA-Z][\w-]*)?((?:#[\w-]+|\.[\w-]+|\[[\w-]+(?:="[^"]*")?\]|:not\(:checked\)|:checked|:not\(\[[\w-]+\]\))*)$/
+const PART =
+  /#([\w-]+)|\.([\w-]+)|\[([\w-]+)(?:="([^"]*)")?\]|(:not\(:checked\))|(:checked)|:not\(\[([\w-]+)\]\)/g
 
 function compile(selector: string): Test {
   const shape = SIMPLE.exec(selector)
@@ -96,7 +98,7 @@ function compile(selector: string): Test {
   const rest = shape[2] ?? ''
   PART.lastIndex = 0
   for (let part = PART.exec(rest); part !== null; part = PART.exec(rest)) {
-    const [, id, className, attr, value, notChecked, checked] = part
+    const [, id, className, attr, value, notChecked, checked, notAttr] = part
     if (id !== undefined) tests.push((e) => e.attrs.get('id') === id)
     else if (className !== undefined) {
       tests.push((e) => (e.attrs.get('class') ?? '').split(/\s+/).includes(className))
@@ -104,6 +106,7 @@ function compile(selector: string): Test {
       tests.push((e) => (value === undefined ? e.attrs.has(attr) : e.attrs.get(attr) === value))
     } else if (notChecked !== undefined) tests.push((e) => !e.checked)
     else if (checked !== undefined) tests.push((e) => e.checked)
+    else if (notAttr !== undefined) tests.push((e) => !e.attrs.has(notAttr))
   }
   return (element) => tests.every((test) => test(element))
 }

@@ -55,7 +55,7 @@ function stepsIn(steps: readonly unknown[]): any[] {
 describe('the real manifest', () => {
   it('is the default export and points at the live site', () => {
     expect(realManifest.home).toBe('https://www.woolworths.com.au/')
-    expect(realManifest.version).toBe('0.5.0')
+    expect(realManifest.version).toBe('0.5.1')
     expect(manifestSchema.parse(realManifest)).toEqual(realManifest)
   })
 
@@ -256,7 +256,8 @@ describe('the auth steps', () => {
   it('click only Auth0’s primary button and the remember-device box, never passkey or Everyday', () => {
     const clicks = new Set(all.filter((step) => step.op === 'click').map((step) => step.selector))
     expect(clicks).toEqual(new Set([SELECTORS.submit, SELECTORS.rememberDevice]))
-    expect(SELECTORS.submit).toBe('button[type="submit"][name="action"][value="default"]')
+    // The form's own submit: live (2026-11-26), passkey and Everyday sit outside the form.
+    expect(SELECTORS.submit).toBe('button[type="submit"]:not([data-testid])')
   })
 
   it('tick remember-device only while it is unticked', () => {

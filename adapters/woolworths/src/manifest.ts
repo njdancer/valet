@@ -26,17 +26,29 @@ export const REAL_AUTH_ORIGIN = 'https://auth.woolworths.com.au'
 /** Hosts the live probe found the site cannot work without, beyond its own www host. */
 const REAL_EXTRA_EGRESS = ['cdn0.woolworths.media', 'acs.woolworths.com.au']
 
-/** Auth0 Universal Login's elements. Only `username` was seen live; the rest is Auth0's standard markup. */
+/**
+ * Auth0 Universal Login's elements. Seen live on 2026-11-26 (anonymous probe, a made-up email):
+ * Woolworths runs Auth0's newer React-built pages, with no `name="action"` buttons, no `#password`
+ * and no `main._widget`. The identifier page's form holds the email and one submit (Continue); the
+ * passkey and Everyday buttons sit outside it. The password page's form holds the read-only email,
+ * the password, a type="button" Show and one submit (Log in). The rest is still unseen: the MFA
+ * page, field errors, the CAPTCHA and the blocked-account page keep Auth0's classic markup (the
+ * code field by name only), and a page the flow can't place goes to the person.
+ */
 export const SELECTORS = {
   username: 'input[name="username"]',
-  password: 'input#password[name="password"]',
-  code: 'input#code[name="code"]',
-  /** The primary button on every Auth0 page, not the passkey, Everyday, resend or other-method ones. */
-  submit: 'button[type="submit"][name="action"][value="default"]',
+  /** By name only: the runtime refuses to type into one whose type isn't password. */
+  password: 'input[name="password"]',
+  code: 'input[name="code"]',
+  /**
+   * The page's own submit: Continue, Log in or the code's. Live, the passkey and Everyday buttons
+   * carry a data-testid and no type attribute, and Show is type="button", so none of them match.
+   */
+  submit: 'button[type="submit"]:not([data-testid])',
   /** Only while unticked: a click on a ticked box would untick it. */
   rememberDevice: 'input[type="checkbox"][name="rememberBrowser"]:not(:checked)',
   captcha: '.ulp-captcha-container',
-  /** The container every Universal Login page renders into, error pages included. */
+  /** The container every classic Universal Login page renders into, error pages included. */
   auth0Widget: 'main._widget',
   fieldError: '.ulp-input-error-message',
   accountBlocked: '[data-error-code="user-blocked"]',
@@ -188,7 +200,7 @@ export function createManifest({
     schemaVersion: 1,
     id: 'woolworths',
     name: 'Woolworths',
-    version: '0.5.0',
+    version: '0.5.1',
     description: 'Search Woolworths (Australia) products and manage the online shopping cart.',
     home: `${origin}/`,
     // Opened in the person's own browser to check out: Valet never places orders.
