@@ -218,6 +218,8 @@ async function setup() {
     'e2e-control',
     'scratch:e2e',
     'scratch:e2e-hostile',
+    'scratch:e2e-aria',
+    'scratch:e2e-hostile-aria',
   ]) {
     session.fromPartition(partition).setCertificateVerifyProc((request, callback) => {
       callback(trusted(request.certificate.data) ? 0 : -2)
@@ -1263,6 +1265,91 @@ async function setup() {
       const query = await browser.query('p')
       browser.close()
       return { view, query }
+    },
+
+    hostileAria: async () => {
+      const browser = await openElectronScratchBrowser({
+        partition: 'scratch:e2e-hostile-aria',
+        rules: {
+          mayNavigate: (url) => url.hostname === 'site.test',
+          mayRequest: () => true,
+          pace: async () => undefined,
+          blocked: () => undefined,
+          mayType: () => true,
+        },
+        dial: local.dial,
+      })
+      await browser.navigate(site.url('site.test', '/hostile'))
+      const { yaml } = await browser.ariaSnapshot()
+      browser.close()
+      return { yaml }
+    },
+
+    // The agents' browser: Playwright's snapshot and refs, and every kind of input it sends.
+    aria: async () => {
+      const browser = await openElectronScratchBrowser({
+        partition: 'scratch:e2e-aria',
+        rules: {
+          mayNavigate: (url) => url.hostname === 'site.test',
+          mayRequest: () => true,
+          pace: async () => undefined,
+          blocked: () => undefined,
+          mayType: () => true,
+        },
+        dial: local.dial,
+      })
+      const attempt = async <T>(work: () => Promise<T>): Promise<T | string> =>
+        work().catch((e: { detail?: string; message?: string }) => `error: ${e.detail ?? e.message}`)
+      await browser.navigate(site.url('site.test', '/agent'))
+      const first = await browser.ariaSnapshot()
+      const again = await browser.ariaSnapshot()
+      const refOf = (yaml: string, pattern: RegExp) =>
+        yaml
+          .split('\n')
+          .find((l) => pattern.test(l))
+          ?.match(/\[ref=(e\d+)\]/)?.[1] ?? ''
+      const found = await browser.find({ text: 'Twice' })
+      const live = await browser.fill(refOf(first.yaml, /textbox "Live"/), 'abc', { slowly: true })
+      const select = await browser.select('#size', ['Large'])
+      const dbl = await browser.clickElement('#dbl', { doubleClick: true })
+      const ctx = await browser.clickElement('#ctx', { button: 'right' })
+      const hover = await browser.hover('#hov')
+      const drag = await browser.drag('#src', '#dst')
+      const covered = await attempt(() => browser.clickElement('#under'))
+      const password = await attempt(() => browser.fill('#pw', 'secret'))
+      const badKey = await attempt(() => browser.press('Hyper+Q'))
+      await browser.clickElement('h1')
+      const pressed = await browser.press('Shift+Tab')
+      const waited = await browser.waitFor({ text: 'Late arrival', timeoutMs: 5000 })
+      const notYet = await browser.waitFor({ text: 'Never shown', timeoutMs: 500 })
+      const staleRef = refOf(first.yaml, /link "Relative"/)
+      const results = await browser.fill(refOf(first.yaml, /searchbox "Search"/), 'MSFT shares', {
+        submit: true,
+      })
+      const stale = await attempt(() => browser.clickElement(staleRef))
+      const partial = await browser.ariaSnapshot({ target: 'p' })
+      browser.close()
+      return {
+        first: first.yaml,
+        sameRefs: first.yaml === again.yaml,
+        againPrevious: again.previous === first.yaml,
+        found: found.matches,
+        live: live.yaml,
+        select: select.yaml,
+        dbl: dbl.yaml,
+        ctx: ctx.yaml,
+        hover: hover.yaml,
+        drag: drag.yaml,
+        covered,
+        password,
+        badKey,
+        pressed: pressed.yaml,
+        waited: { met: waited.met, yaml: waited.yaml },
+        notYet: notYet.met,
+        results: { url: results.url, yaml: results.yaml, previous: results.previous },
+        stale,
+        partial: partial.yaml,
+      }
     },
 
     // The page's own alert(), confirm() and prompt() in a tool page: none may show the hidden window

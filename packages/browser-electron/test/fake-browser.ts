@@ -1,6 +1,7 @@
 // Fakes for BrowserPlatform, its sessions and surfaces, plus timers the test drives by hand.
 // Frames run the real page scripts against FakeWindow, so these tests exercise the scripts too.
 
+import type { KeyPress } from '../src/keys'
 import type {
   BrowserPlatform,
   BrowserSurface,
@@ -10,6 +11,7 @@ import type {
   FrameHandle,
   KeyEvents,
   LoadResult,
+  MouseInput,
   NavigationEvent,
   NetworkResponse,
   ObservedResponse,
@@ -140,6 +142,28 @@ export class FakeSurface implements BrowserSurface {
 
   click(x: number, y: number): void {
     this.clicks.push({ x, y })
+  }
+
+  /** Every trusted mouse event, key press and inserted text, in order. */
+  readonly mice: MouseInput[] = []
+  readonly keys: KeyPress[] = []
+  readonly inserted: string[] = []
+  /** Called after each input, to let a test answer it as the page would. */
+  afterInput: ((input: { mouse: MouseInput } | { key: KeyPress } | { text: string }) => void) | null = null
+
+  mouse(event: MouseInput): void {
+    this.mice.push(event)
+    this.afterInput?.({ mouse: event })
+  }
+
+  pressKey(key: KeyPress): void {
+    this.keys.push(key)
+    this.afterInput?.({ key })
+  }
+
+  async insertText(text: string): Promise<void> {
+    this.inserted.push(text)
+    this.afterInput?.({ text })
   }
 
   sendChar(char: string, events: KeyEvents): void {

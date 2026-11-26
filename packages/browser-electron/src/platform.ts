@@ -2,7 +2,11 @@
 // written against these so that they run and are tested in plain Node; src/electron implements
 // them over BrowserWindow and session.
 
-/** A cookie as the browser reports it. Mirrors Electron's Cookie. */
+/** A cookie as the browser reports it. Mirrors Electron's Cookie. */ import type {
+  KeyPress,
+  Modifier,
+} from './keys'
+
 export interface CookieRecord {
   readonly name: string
   readonly value: string
@@ -190,6 +194,16 @@ export interface FrameHandle {
   runAdapter(code: string): Promise<unknown>
 }
 
+/** A trusted mouse event. Buttons and clicks count only on down and up. */
+export interface MouseInput {
+  readonly type: 'move' | 'down' | 'up'
+  readonly x: number
+  readonly y: number
+  readonly button?: 'left' | 'right' | 'middle'
+  readonly clickCount?: number
+  readonly modifiers?: readonly Modifier[]
+}
+
 /** Which trusted key events typing sends per character. */
 export type KeyEvents = 'char' | 'full'
 
@@ -258,6 +272,12 @@ export interface BrowserSurface {
    * sends them.
    */
   sendChar(char: string, events: KeyEvents): void
+  /** One trusted mouse event at viewport coordinates, as a mouse sends it. */
+  mouse(event: MouseInput): void
+  /** One trusted key press with its modifiers held: keyDown, char when it types one, keyUp. */
+  pressKey(key: KeyPress): void
+  /** Inserts text into the focused field at once, as an input method commits it: one input event. */
+  insertText(text: string): Promise<void>
   /**
    * Overrides the UA, Accept-Language and client hints for this page's documents over the DevTools
    * protocol. Must be called before the first load.

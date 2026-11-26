@@ -100,12 +100,116 @@ const POINT = `(target) => {
   }
 }`
 
+/** Whether a field takes a secret, which an agent never types: a password or one-time code. */
+const SECRET = `(el) => {
+  const lower = (name) => (el.getAttribute(name) || '').toLowerCase()
+  if (el.tagName.toLowerCase() === 'input' && lower('type') === 'password') return true
+  if (/one-time-code|current-password|new-password/.test(lower('autocomplete'))) return true
+  return /otp|passcode|password/.test(lower('name') + ' ' + lower('id'))
+}`
+
+/**
+ * Readies a field for typing as Playwright's fill does: a date, colour or range input takes its
+ * value here; any other field has its text selected and focus, and Valet then inserts the text
+ * with trusted input. With `keep` the text stays and the caret goes to its end (typing slowly).
+ */
+const FIELD = `(args) => {
+  const v = globalThis.${GLOBAL}
+  const found = (${ELEMENT})(args.target)
+  if (found.error) return found
+  if (globalThis.__valetHidden(found)) return { error: 'hidden' }
+  const el = v.retarget(found, 'follow-label')
+  if (!el) return { error: 'stale' }
+  if ((${SECRET})(el)) return { error: 'secret' }
+  try {
+    if (!v.elementState(el, 'editable').matches) return { error: 'not-editable' }
+  } catch (e) { return { error: 'not-editable' } }
+  el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
+  if (args.keep) {
+    v.focusNode(el, true)
+  } else {
+    let result
+    try { result = v.fill(el, args.value) } catch (e) { return { error: 'cannot-fill', message: String(e && e.message).slice(0, 200) } }
+    if (result === 'done') return { done: true }
+    if (typeof result === 'string' && result.startsWith('error:')) return { error: 'stale' }
+  }
+  let active = document.activeElement
+  while (active && active.shadowRoot && active.shadowRoot.activeElement) active = active.shadowRoot.activeElement
+  return { done: false, focused: active === el || (active !== null && el.contains(active)) }
+}`
+
+/** Chooses options in a select by value or label, as Playwright's selectOption does. */
+const SELECT = `(args) => {
+  const v = globalThis.${GLOBAL}
+  const found = (${ELEMENT})(args.target)
+  if (found.error) return found
+  if (globalThis.__valetHidden(found)) return { error: 'hidden' }
+  let result
+  try {
+    result = v.selectOptions(found, args.values.map((value) => ({ valueOrLabel: value })))
+  } catch (e) { return { error: 'not-select' } }
+  if (result === 'error:optionsnotfound') return { error: 'no-option' }
+  if (result === 'error:optionnotenabled') return { error: 'option-disabled' }
+  if (typeof result === 'string') return { error: 'stale' }
+  return { selected: result.map((value) => String(value).slice(0, 200)) }
+}`
+
+/** Whether the text shows on the page, as a person would read it. */
+const TEXT = `(text) => {
+  const body = document.body
+  const seen = body ? String(body.innerText || '') : ''
+  return seen.replace(/\\s+/g, ' ').includes(text.replace(/\\s+/g, ' ').trim())
+}`
+
 export const ariaSnapshotScript = (options: {
   readonly target: string | null
   readonly depth: number | null
 }): string => `(${SNAPSHOT})(${jsonLiteral(options)})`
 
 export const ariaPointScript = (target: string): string => `(${POINT})(${jsonLiteral(target)})`
+
+export const ariaFieldScript = (args: {
+  readonly target: string
+  readonly value: string
+  readonly keep: boolean
+}): string => `(${FIELD})(${jsonLiteral(args)})`
+
+export const ariaSelectScript = (args: {
+  readonly target: string
+  readonly values: readonly string[]
+}): string => `(${SELECT})(${jsonLiteral(args)})`
+
+export const textShownScript = (text: string): string => `(${TEXT})(${jsonLiteral(text)})`
+
+/**
+ * Rewrites the snapshot's link targets (`/url:` lines, as the page wrote its href) to absolute URLs
+ * against the page, so an agent can open one without working it out.
+ */
+export function absoluteUrls(yaml: string, base: string): string {
+  return yaml.replace(/^(\s*- \/url: )(.+)$/gm, (line, lead: string, raw: string) => {
+    const value = unquote(raw.trim())
+    let absolute: string
+    try {
+      absolute = new URL(value, base).href
+    } catch {
+      return line
+    }
+    if (absolute === value) return line
+    return lead + (/^[a-z]+:\/\/[\w.:/?=&%~+@-]*$/.test(absolute) ? absolute : JSON.stringify(absolute))
+  })
+}
+
+function unquote(value: string): string {
+  if (value.startsWith('"')) {
+    try {
+      return String(JSON.parse(value))
+    } catch {
+      return value
+    }
+  }
+  if (value.startsWith("'") && value.endsWith("'")) return value.slice(1, -1).replaceAll("''", "'")
+  return value
+}
 
 export interface AriaPoint {
   readonly x: number
