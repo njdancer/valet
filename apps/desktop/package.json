@@ -31,6 +31,7 @@
     "@valet/core": "workspace:*",
     "@valet/credentials": "workspace:*",
     "@valet/egress": "workspace:*",
+    "@valet/iphone": "workspace:*",
     "@valet/mcp-server": "workspace:*",
     "@valet/native-calendar": "workspace:*",
     "@valet/native-mail": "workspace:*",

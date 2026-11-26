@@ -290,6 +290,16 @@ export class Notifier {
     })
   }
 
+  /** Valet saved (or couldn't save) the iPhone's home screen (docs/iphone-home-screen.md). */
+  iphone(text: string): void {
+    this.put({
+      key: 'iphone',
+      title: 'iPhone home screen',
+      body: text,
+      target: { kind: 'panel', route: href.audit() },
+    })
+  }
+
   /**
    * An agent started or submitted a draft adapter (the Notify tier, docs/authoring-tools.md). The
    * text is the app's own fixed wording with the client's name; nothing the agent wrote.
