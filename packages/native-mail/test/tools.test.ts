@@ -102,7 +102,15 @@ describe('mail tools', () => {
     // Not left to Mail, whose pick has changed between runs: the account's own address, echoed back.
     expect(result).toMatchObject({ status: 'ok', output: { saved: true, from: 'me@example.com' } })
     expect(saved).toEqual([
-      { from: 'me@example.com', to: ['ada@example.com'], cc: [], bcc: [], subject: 'Hi', body: 'Hello', replyTo: null },
+      {
+        from: 'me@example.com',
+        to: ['ada@example.com'],
+        cc: [],
+        bcc: [],
+        subject: 'Hi',
+        body: 'Hello',
+        replyTo: null,
+      },
     ])
   })
 
@@ -155,7 +163,14 @@ describe('mail tools', () => {
     expect(await callMailTool(d, 'create_draft', { to: ['a@b.c'], subject: 's', body: 'x' })).toMatchObject({
       status: 'ok',
     })
-    expect(asked[0]).toEqual({ from: 'me@example.com', to: ['a@b.c'], cc: [], bcc: [], subject: 's', reply: false })
+    expect(asked[0]).toEqual({
+      from: 'me@example.com',
+      to: ['a@b.c'],
+      cc: [],
+      bcc: [],
+      subject: 's',
+      reply: false,
+    })
   })
 
   it('needs the person when Mail scripting isn’t allowed, and when drafts are off', async () => {

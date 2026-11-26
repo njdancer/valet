@@ -180,7 +180,11 @@ export const mailInputs = {
         .optional()
         .describe('Leave out for a reply, which keeps the original subject.'),
       body: z.string().min(1).max(100_000).describe('Plain text.'),
-      from: email.optional().describe('One of the account’s own addresses. Left out: the account’s address for a new message, the address it was sent to for a reply.'),
+      from: email
+        .optional()
+        .describe(
+          'One of the account’s own addresses. Left out: the account’s address for a new message, the address it was sent to for a reply.',
+        ),
       replyToId: z
         .number()
         .int()
