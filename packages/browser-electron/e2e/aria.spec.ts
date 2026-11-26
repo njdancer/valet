@@ -33,6 +33,8 @@ test('reads a page as Playwright MCP does and acts on it with trusted input', as
   expect(r.ctx).toContain('menus: 1')
   expect(r.hover).toContain('hovered: yes')
   expect(r.drag).toContain('dropped: yes')
+  // What the page scrolled past is still on it.
+  expect(r.pressed).toContain('heading "Agent page"')
   expect(r.covered).toMatch(/covers that element/)
   expect(r.password).toMatch(/password or code/)
   expect(r.badKey).toMatch(/doesn’t know that key/)

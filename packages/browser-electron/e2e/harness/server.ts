@@ -206,6 +206,7 @@ function routes(
         <div id="hov" style="width:100px;height:30px;background:#eee">Hover me</div><p id="hovered">hovered: no</p>
         <div id="src" draggable="false" style="width:60px;height:30px;background:#cfc">Drag</div>
         <div id="dst" style="width:120px;height:60px;background:#ccf;margin-top:20px">Drop here</div><p id="dropped">dropped: no</p>
+        <div style="height:3000px"></div>
         <div style="position:relative;width:200px;height:40px"><button id="under" style="width:100px;height:30px">Covered</button>
         <div style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div></div>
         <p id="pressed">pressed: none</p>
