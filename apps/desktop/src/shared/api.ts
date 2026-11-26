@@ -1591,6 +1591,46 @@ export interface EventKitStatus {
 
 export type EventKitAction = 'start-reader' | 'request-access' | 'privacy-settings'
 
+/** Messages on this Mac (docs/messages.md). */
+export interface MessagesSettings {
+  readonly enabled: boolean
+  /** Conversations agents never see, by id (their chat identifier). */
+  readonly hidden: readonly string[]
+  /** Whether messages that look like one-time codes are hidden from agents. */
+  readonly hideCodes: boolean
+}
+
+export interface MessagesSettingsPatch {
+  readonly enabled?: boolean
+  readonly hidden?: readonly string[]
+  readonly hideCodes?: boolean
+}
+
+/** `needs-access`: the reader has no Full Disk Access; `no-reader`: none, or one too old to ask. */
+export type MessagesSetupState =
+  | 'off'
+  | 'no-reader'
+  | 'not-running'
+  | 'needs-access'
+  | 'unsupported'
+  | 'ready'
+
+export interface MessagesStatus {
+  readonly state: MessagesSetupState
+  readonly settings: MessagesSettings
+  /** The newest conversations, for hiding: hidden ones too. */
+  readonly chats: readonly {
+    readonly id: string
+    readonly name: string
+    /** The number or address behind a name, or how many people are in a group. */
+    readonly detail: string | null
+    readonly last: string | null
+    readonly hidden: boolean
+  }[]
+}
+
+export type MessagesAction = 'start-reader' | 'full-disk-access' | 'reveal-reader'
+
 export interface ValetApi {
   readonly phones: {
     status(): Promise<PhonesStatus>
@@ -1811,6 +1851,12 @@ export interface ValetApi {
     status(app: EventKitApp): Promise<EventKitStatus | null>
     update(app: EventKitApp, patch: EventKitSettingsPatch): Promise<EventKitStatus | null>
     action(app: EventKitApp, action: EventKitAction): Promise<void>
+  }
+  /** Messages on this Mac. Null answers: this build has none. */
+  readonly messages: {
+    status(): Promise<MessagesStatus | null>
+    update(patch: MessagesSettingsPatch): Promise<MessagesStatus | null>
+    action(action: MessagesAction): Promise<void>
   }
   readonly updates: {
     status(): Promise<UpdateStatus>

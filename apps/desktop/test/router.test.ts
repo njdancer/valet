@@ -82,6 +82,7 @@ describe('parseRoute', () => {
       'mail',
       'calendar',
       'reminders',
+      'messages',
       'reset',
     ]) {
       expect(parseRoute(`#/settings/${section}`)).toEqual({ page: 'settings', section })

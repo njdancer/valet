@@ -489,7 +489,7 @@ function SiteTools({
         {/* Mail, Calendar and Reminders on this Mac are built in, not sites: their pages are in Settings. */}
         <ObjectLink
           href={
-            siteId === 'mail' || siteId === 'calendar' || siteId === 'reminders'
+            siteId === 'mail' || siteId === 'calendar' || siteId === 'reminders' || siteId === 'messages'
               ? href.settings(siteId)
               : href.site(siteId, 'tools')
           }
