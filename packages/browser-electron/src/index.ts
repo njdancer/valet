@@ -5,6 +5,7 @@ import { FixtureBrowser, type FixtureBrowserOptions } from './fixture-browser'
 
 import { ScratchBrowser, type ScratchOptions } from './scratch'
 
+export { findInSnapshot, interactiveOnly, snapshotDelta } from './aria'
 export { type AuthPageOptions, SurfaceAuthPage } from './auth-page'
 export { cookieHost, cookieSetDetails, cookiesForDomains } from './cookies'
 export type { AuthPageRequest, DriverOptions, ManifestOptions } from './driver'
@@ -25,11 +26,14 @@ export {
   requestTarget,
   underApiRoot,
 } from './guards'
+export { parseKey } from './keys'
 export { needsUserTitle } from './needs-user'
 export { partitionName, trialPartitionName } from './partitions'
 export type * from './platform'
 export { CHROMIUM_SWITCHES, hardenProcess } from './process-hardening'
 export {
+  type AriaPage,
+  type ClickOptions,
   type LogEntry,
   SCRATCH_LIMITS,
   ScratchBrowser,
@@ -38,6 +42,7 @@ export {
   type ScratchRules,
   type ScratchSnapshot,
   type Target as ScratchTarget,
+  type WaitFor,
 } from './scratch'
 export {
   type ChainState,

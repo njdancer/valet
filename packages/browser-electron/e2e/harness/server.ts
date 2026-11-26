@@ -200,6 +200,7 @@ function routes(
         <label for="pw">Password</label><input id="pw" name="pw" type="password">
         <label for="size">Size</label><select id="size"><option value="s">Small</option><option value="l">Large</option></select>
         <p id="chosen">chosen: none</p>
+        <label><input id="agree" type="checkbox"> Agree</label>
         <a href="/scratch-next" style="display:inline-block;width:100px;height:30px">Relative</a>
         <button id="dbl" style="width:100px;height:30px">Twice</button><p id="dbls">doubles: 0</p>
         <button id="ctx" style="width:100px;height:30px">Menu</button><p id="ctxs">menus: 0</p>

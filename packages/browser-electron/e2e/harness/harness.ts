@@ -220,6 +220,7 @@ async function setup() {
     'scratch:e2e-hostile',
     'scratch:e2e-aria',
     'scratch:e2e-hostile-aria',
+    'scratch:e2e-session',
   ]) {
     session.fromPartition(partition).setCertificateVerifyProc((request, callback) => {
       callback(trusted(request.certificate.data) ? 0 : -2)
@@ -1265,6 +1266,46 @@ async function setup() {
       const query = await browser.query('p')
       browser.close()
       return { view, query }
+    },
+
+    // An agent's session: forms post, back goes back, checkboxes tick, the window resizes.
+    session: async () => {
+      const browser = await openElectronScratchBrowser({
+        partition: 'scratch:e2e-session',
+        rules: {
+          mayNavigate: (url) => url.protocol === 'https:',
+          mayRequest: () => true,
+          pace: async () => undefined,
+          blocked: () => undefined,
+          mayType: () => true,
+          session: true,
+        },
+        dial: local.dial,
+      })
+      await browser.go(site.url('site.test', '/agent'))
+      const ticked = await browser.check('#agree', true)
+      const again = await browser.check('#agree', true)
+      const unticked = await browser.check('#agree', false)
+      const notBox = await browser.check('h1', true).then(
+        () => 'ok',
+        (e: { detail?: string }) => e.detail ?? 'failed',
+      )
+      const narrow = await browser.resize(400, 600)
+      await browser.go(site.url('site.test', '/scratch'))
+      const postsBefore = site.posts.length
+      await browser.clickElement('#post')
+      const posted = site.posts.length - postsBefore
+      const back = await browser.back()
+      browser.close()
+      return {
+        ticked: ticked.yaml,
+        again: again.yaml === ticked.yaml,
+        unticked: unticked.yaml,
+        notBox,
+        narrow: narrow.url,
+        posted,
+        back: back.url,
+      }
     },
 
     hostileAria: async () => {

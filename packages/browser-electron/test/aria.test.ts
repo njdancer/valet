@@ -91,3 +91,32 @@ describe('parseKey', () => {
       expect(parseKey(bad)).toBeNull()
   })
 })
+
+describe('interactiveOnly', () => {
+  it('keeps controls, links and their URLs, under the lines they sit in, and drops prose', async () => {
+    const { interactiveOnly } = await import('../src/aria')
+    const yaml = [
+      '- banner [ref=e1]:',
+      '  - link "Home" [ref=e2]:',
+      '    - /url: https://a.example/',
+      '  - paragraph [ref=e3]: Welcome',
+      '- main [ref=e4]:',
+      '  - heading "Deals" [level=2] [ref=e5]',
+      '  - list [ref=e6]:',
+      '    - listitem [ref=e7]:',
+      '      - button "Add" [ref=e8]',
+      '- contentinfo [ref=e9]: Fine print',
+    ].join('\n')
+    expect(interactiveOnly(yaml)).toBe(
+      [
+        '- banner [ref=e1]:',
+        '  - link "Home" [ref=e2]:',
+        '    - /url: https://a.example/',
+        '- main [ref=e4]:',
+        '  - list [ref=e6]:',
+        '    - listitem [ref=e7]:',
+        '      - button "Add" [ref=e8]',
+      ].join('\n'),
+    )
+  })
+})

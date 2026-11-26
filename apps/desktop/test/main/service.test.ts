@@ -166,6 +166,7 @@ async function setup(
     mail?: ServiceDeps['mail']
     raw?: ServiceDeps['raw']
     scratch?: ServiceDeps['scratch']
+    sessionBrowser?: ServiceDeps['sessionBrowser']
   } = {},
 ) {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'sa-service-'))
@@ -254,6 +255,7 @@ async function setup(
     ...(options.mail === undefined ? {} : { mail: options.mail }),
     ...(options.raw === undefined ? {} : { raw: options.raw }),
     ...(options.scratch === undefined ? {} : { scratch: options.scratch }),
+    ...(options.sessionBrowser === undefined ? {} : { sessionBrowser: options.sessionBrowser }),
     createDriver: async (_manifest, reporters) => {
       driver.reporters = reporters
       return driver
@@ -2655,25 +2657,40 @@ describe('remote access', () => {
   })
 
   it('offers the agents’ browser to cloud agents, audits each call, and closes it on pause', async () => {
-    const opened: { key: string; closed: boolean; mayPrivate: boolean }[] = []
+    const opened: { closed: boolean }[] = []
     const s = await setup({
-      scratch: async (key, rules, allowPrivate) => {
-        const entry = { key, closed: false, mayPrivate: allowPrivate('10.0.0.1', 443) }
+      sessionBrowser: async (rules) => {
+        const entry = { closed: false }
         opened.push(entry)
         const listeners: (() => void)[] = []
-        // The rules the service gave: a site signed in through Valet is never reached.
-        expect(rules.mayNavigate(new URL('https://news.example.com/'))).toBe(true)
+        // A session: any https page, forms post, cookies its own; never a secret Valet knows.
+        expect(rules.session).toBe(true)
+        expect(rules.mayNavigate(new URL('https://woolworths.com.au/'))).toBe(true)
+        expect(rules.mayNavigate(new URL('http://news.example.com/'))).toBe(false)
         expect(await rules.mayType('weather')).toBe(true)
         rules.blocked('news.example.com', 429)
+        const page = async () => ({
+          url: 'https://news.example.com/',
+          title: 'News',
+          yaml: '- heading "News" [level=1] [ref=e1]',
+          previous: null,
+          cut: false,
+        })
         return {
-          navigate: async (url: string) => ({ url, title: 'News', nodes: [], cut: false }),
-          click: async () => ({ url: '', title: '', nodes: [], cut: false }),
-          type: async () => ({ url: '', title: '', nodes: [], cut: false }),
-          snapshot: async () => ({ url: '', title: '', nodes: [], cut: false }),
-          query: async () => ({ count: 0, matches: [] }),
-          entries: () => [],
-          body: async () => null,
-          document: async () => '',
+          go: page,
+          back: page,
+          resize: page,
+          ariaSnapshot: page,
+          find: async () => ({ url: 'https://news.example.com/', matches: [] }),
+          clickElement: page,
+          hover: page,
+          drag: page,
+          fill: page,
+          check: page,
+          press: page,
+          select: page,
+          waitFor: async () => ({ ...(await page()), met: true }),
+          url: () => 'https://news.example.com/',
           isClosed: () => entry.closed,
           onClosed: (l: () => void) => void listeners.push(l),
           close: () => {
@@ -2684,29 +2701,50 @@ describe('remote access', () => {
       },
     })
     const tools = (await s.api.remote.setup()).tools.filter((t) => t.adapterId === 'browser')
-    expect(tools.map((t) => [t.tool, t.enabled])).toEqual([
-      ['open', false],
-      ['snapshot', false],
-      ['click', false],
-      ['type', false],
-      ['query', false],
-      ['close', false],
+    expect(tools.map((t) => t.tool)).toEqual([
+      'session_create',
+      'session_list',
+      'session_close',
+      'navigate',
+      'navigate_back',
+      'snapshot',
+      'find',
+      'click',
+      'type',
+      'fill_form',
+      'press_key',
+      'select_option',
+      'hover',
+      'drag',
+      'wait_for',
+      'resize',
     ])
+    expect(tools.every((t) => !t.enabled)).toBe(true)
     await s.service.remote.setHosts([HOST])
     await s.service.remote.setEnabled(true)
     const port = Number(new URL(s.service.remote.status().url as string).port)
-    const agent = approvedClient(s, ['browser.open'])
-    await s.api.remote.setTool('browser', 'open', true)
+    const agent = approvedClient(s, ['browser.session_create', 'browser.navigate'])
+    await s.api.remote.setTool('browser', 'session_create', true)
+    await s.api.remote.setTool('browser', 'navigate', true)
     const client = await remoteClient(port, agent.token)
-    expect((await client.listTools()).tools.map((t) => t.name)).toEqual(['browser_open'])
+    expect((await client.listTools()).tools.map((t) => t.name)).toEqual([
+      'browser_session_create',
+      'browser_navigate',
+    ])
+    const created = await client.callTool({ name: 'browser_session_create', arguments: {} })
+    const session = (created.structuredContent as { session: string }).session
+    expect(session).toMatch(/^s[0-9a-f]{12}$/)
     const result = await client.callTool({
-      name: 'browser_open',
-      arguments: { url: 'https://news.example.com/' },
+      name: 'browser_navigate',
+      arguments: { session, url: 'https://news.example.com/' },
     })
     expect(result.isError).not.toBe(true)
-    expect(result.structuredContent).toMatchObject({ page: { title: { fromSite: 'News' } }, problem: null })
-    // Public addresses only, whatever a draft was allowed.
-    expect(opened).toEqual([{ key: 'agent-browser', closed: false, mayPrivate: false }])
+    expect(result.structuredContent).toMatchObject({
+      session,
+      page: { title: { fromSite: 'News' }, snapshot: { fromSite: '- heading "News" [level=1] [ref=e1]' } },
+      problem: null,
+    })
+    expect(opened).toEqual([{ closed: false }])
     expect(
       readAudit(s.paths.audit).some((e) => e.type === 'tool-called' && e['adapterId'] === 'browser'),
     ).toBe(true)

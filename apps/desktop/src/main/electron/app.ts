@@ -702,6 +702,13 @@ async function main(): Promise<void> {
         rules,
         dial: authoringDial(allowPrivate),
       }),
+    // An agent's browser session: its own in-memory partition, public addresses only.
+    sessionBrowser: (rules) =>
+      openElectronScratchBrowser({
+        partition: `scratch:agent-browser:${++scratchOpens}`,
+        rules,
+        dial: authoringDial(() => false),
+      }),
     // A live trial: the same driver a real call uses, in partitions of its own that live in memory,
     // through the dial that refuses private addresses (docs/authoring-tools.md#live-trials).
     // A case's pages: in memory, a new partition each case, nothing sent anywhere.
