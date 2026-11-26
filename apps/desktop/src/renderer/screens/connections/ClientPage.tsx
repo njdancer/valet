@@ -653,7 +653,7 @@ function AgentTools({
           <div key={ref} className="flex flex-wrap items-center gap-2">
             <Code>{ref}</Code>
             <Text size="sm" tone="muted">
-              its site isn’t approved now, so it can’t be called
+              Valet doesn’t offer this tool now, so it can’t be called
             </Text>
           </div>
         ))}

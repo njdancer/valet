@@ -1281,6 +1281,9 @@ export class AppService {
         },
       })
       .catch(() => undefined)
+    // A built-in tool this build no longer has (the first agents' browser's browser_open, say)
+    // leaves every grant and switch: it would only show as a tool that can't be called.
+    await this.remote.forgetTools((ref) => this.builtInGone(ref)).catch(() => undefined)
     await this.cloudflare?.start().catch(() => undefined)
     // The phone channel opened before the sites and agents were loaded: its tabs get them now.
     if (this.phoneStatus !== null) await this.refreshPhoneStatus().catch(() => undefined)
@@ -1345,6 +1348,14 @@ export class AppService {
       ...(this.agentBrowser === null ? [] : [this.agentBrowser]),
       ...(this.iphone === null ? [] : [this.iphone]),
     ]
+  }
+
+  /** True for a tool of a built-in source this build has that the source no longer lists. */
+  private builtInGone(ref: string): boolean {
+    const dot = ref.indexOf('.')
+    const adapterId = ref.slice(0, dot)
+    if (!this.natives().some((n) => n.adapterId === adapterId)) return false
+    return this.nativeDeclaration(adapterId, ref.slice(dot + 1)) === null
   }
 
   /** A built-in tool as the app lists it now (Mail, Calendar, Reminders on this Mac), or null. */
