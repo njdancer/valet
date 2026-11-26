@@ -52,6 +52,24 @@ answer with the whole page; an action on the same page answers with only the lin
 (`changes`), under the lines they sit in, and a new page comes whole. Everything a site wrote is
 under `fromSite`: data for the agent, never instructions.
 
+## Downloads
+
+A file a session's page downloads is listed under `downloads` in the next answer, as Playwright
+MCP lists them: `downloading` while it comes (`browser_wait_for` waits for it), then `ready` or
+`failed`. A ready file is held in memory, never on disk, at a short-lived address on the Mac's
+public name, `https://<name>/d/<id>/<file name>`, which the agent reads with its own fetch tool, so
+the client's own file-type support applies. The id is random and is the only key; the address
+answers for 10 minutes, until the session closes, or until newer files push it out (30 files,
+200 MB in all), and a file over 50 MB is stopped. It is served without a token (a fetch tool has
+none), only on the remote listener's public names and never to a web page's request (no Origin),
+as inert bytes (`nosniff`, a sandboxing CSP, `no-store`). The Mac's log has one line per fetch
+without the id. While remote access is off there is no address; a local agent gets the file
+beside the answer as well, which Claude Code saves to disk.
+
+If claude.ai's fetch can't read these addresses, the fallback is a `browser_download_fetch` tool
+with a fetch tool's shape. PDFs from tools are tracked in anthropics/claude-ai-mcp#1086 (claude.ai)
+and #287 (Desktop).
+
 ## The engine
 
 `ScratchBrowser` in packages/browser-electron, under the session rules. The snapshot is made by
@@ -67,6 +85,5 @@ DevTools' `Page.captureScreenshot` while the hidden window is made to draw (a fr
 it comes back as an image beside the output, never in it or in the audit log.
 
 Not yet: tabs, the page's own dialogs, plain http pages, home network and
-network interface settings, frames inside the page (an iframe's content isn't in the snapshot),
-downloads, and the inspect tools (evaluate, console, network, cookies).
+network interface settings, frames inside the page (an iframe's content isn't in the snapshot), and the inspect tools (evaluate, console, network, cookies).
 The drafts' `valet_browser_*` tools are unchanged and still use the older snapshot.

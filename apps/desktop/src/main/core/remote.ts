@@ -41,6 +41,7 @@ import {
   type RemoteRefusal,
   type RunningRemoteListener,
   remoteClientsStateSchema,
+  type ServedFile,
   type ServerInfo,
   startRemoteListener,
   type ToolCall,
@@ -157,6 +158,8 @@ export interface RemoteAccessDeps {
   readonly start?: (options: RemoteListenerOptions) => Promise<RunningRemoteListener>
   /** Where the OAuth server's one line per request goes; the console (the app's log) without it. */
   readonly log?: (line: string) => void
+  /** Files agents' browsers downloaded, served at /d/<id>/<name> (mcp-server downloads.ts). */
+  readonly downloads?: (id: string) => ServedFile | null
 }
 
 /**
@@ -589,6 +592,8 @@ export class RemoteAccess {
       policy: this,
       tokens: this.tokens,
       authorization: this.authorization,
+      ...(this.deps.downloads === undefined ? {} : { downloads: this.deps.downloads }),
+      log: this.deps.log ?? ((line) => console.log(`${new Date().toISOString()} ${line}`)),
       hosts: () =>
         new Set([
           ...this.current.hosts,

@@ -507,6 +507,37 @@ describe('a session’s page', () => {
     ).toMatch(/isn’t a file input/)
   })
 
+  it('keeps a session’s downloads until handed on, and only a session’s', async () => {
+    const plain = await open()
+    expect(plain.session.downloads).toBeNull()
+    const { browser, session } = await open(defaults, { session: true })
+    const accept = session.downloads
+    expect(accept?.maxBytes).toBe(SCRATCH_LIMITS.downloadBytes)
+    accept?.listener({ kind: 'started', id: 'd1', name: '../a.pdf' })
+    accept?.listener({ kind: 'started', id: 'd2', name: 'b.zip' })
+    expect(browser.takeDownloads()).toEqual([
+      { status: 'downloading', id: 'd1', name: '.._a.pdf' },
+      { status: 'downloading', id: 'd2', name: 'b.zip' },
+    ])
+    accept?.listener({ kind: 'done', id: 'd1', name: '../a.pdf', mimeType: '', data: Buffer.from('%PDF') })
+    accept?.listener({ kind: 'failed', id: 'd2', name: 'b.zip', reason: 'too-large' })
+    expect(browser.takeDownloads()).toEqual([
+      {
+        status: 'ready',
+        id: 'd1',
+        name: '.._a.pdf',
+        mimeType: 'application/octet-stream',
+        data: Buffer.from('%PDF'),
+      },
+      { status: 'failed', id: 'd2', name: 'b.zip', reason: 'too-large' },
+    ])
+    expect(browser.takeDownloads()).toEqual([])
+    accept?.listener({ kind: 'started', id: 'd3', name: 'c' })
+    browser.close()
+    accept?.listener({ kind: 'done', id: 'd3', name: 'c', mimeType: 'text/plain', data: Buffer.from('c') })
+    expect(browser.takeDownloads()).toEqual([])
+  })
+
   it('shows the session’s own cookie values as they are, and lets forms post', async () => {
     const { browser, session } = await open(
       (kind) =>

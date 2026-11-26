@@ -1308,6 +1308,14 @@ async function setup() {
           () => 'ok',
           (e: { detail?: string }) => e.detail ?? 'failed',
         )
+      await browser.clickElement('#report')
+      let downloads = browser.takeDownloads()
+      for (let i = 0; i < 40 && !downloads.some((d) => d.status !== 'downloading'); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        downloads = browser.takeDownloads()
+      }
+      const download = downloads.find((d) => d.status !== 'downloading')
+      const stillOn = (await browser.ariaSnapshot()).url
       const narrow = await browser.resize(400, 600)
       await browser.go(site.url('site.test', '/scratch'))
       const postsBefore = site.posts.length
@@ -1326,6 +1334,11 @@ async function setup() {
         elementShot,
         uploaded: uploadedPage.yaml,
         notInput,
+        download:
+          download?.status === 'ready'
+            ? { name: download.name, mimeType: download.mimeType, text: download.data.toString('utf8') }
+            : (download ?? null),
+        stillOn,
         posted,
         back: back.url,
       }

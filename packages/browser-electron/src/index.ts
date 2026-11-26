@@ -34,6 +34,7 @@ export { CHROMIUM_SWITCHES, hardenProcess } from './process-hardening'
 export {
   type AriaPage,
   type ClickOptions,
+  type DownloadNews,
   type LogEntry,
   SCRATCH_LIMITS,
   ScratchBrowser,

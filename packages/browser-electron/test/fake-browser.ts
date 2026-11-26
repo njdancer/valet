@@ -7,6 +7,7 @@ import type {
   BrowserSurface,
   CookieRecord,
   CookieSetDetails,
+  DownloadEvent,
   FixtureResponse,
   FrameHandle,
   KeyEvents,
@@ -411,6 +412,12 @@ export class FakeSession implements PartitionSession {
 
   onCookieChanged(listener: (cookie: CookieRecord) => void): void {
     this.cookieListeners.push(listener)
+  }
+
+  downloads: { maxBytes: number; listener: (event: DownloadEvent) => void } | null = null
+
+  acceptDownloads(maxBytes: number, listener: (event: DownloadEvent) => void): void {
+    this.downloads = { maxBytes, listener }
   }
 
   /** Every fetch(), as it was asked. */

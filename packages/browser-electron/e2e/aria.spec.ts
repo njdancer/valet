@@ -60,7 +60,7 @@ test('Playwright’s snapshot leaves out every kind of hidden text a page aims a
   expect(yaml).toMatch(/- link \[ref=e\d+\] \[cursor=pointer\]:\n(.*\n)*?\s+- img "Cart"/)
 })
 
-test('in a session, forms post, back goes back, checkboxes tick, the window resizes, pictures and uploads work', async () => {
+test('in a session, forms post, back goes back, checkboxes tick, the window resizes, pictures, uploads and downloads work', async () => {
   const r = (await scenario(app, 'session')) as Record<string, unknown>
   expect(r.ticked).toMatch(/checkbox "Agree" \[checked\]/)
   expect(r.again).toBe(true)
@@ -77,6 +77,9 @@ test('in a session, forms post, back goes back, checkboxes tick, the window resi
   // Files into a hidden file input: the page reads them, as from its dialog.
   expect(r.uploaded).toContain('uploaded: a.txt=first,b.txt=second')
   expect(r.notInput).toMatch(/isn’t a file input/)
+  // A download is kept in memory, named safely, and the page stays where it was.
+  expect(r.download).toEqual({ name: '_report.csv', mimeType: 'text/csv', text: 'a,b\n1,2\n' })
+  expect(String(r.stillOn)).toMatch(/\/agent$/)
   expect(r.posted).toBe(1)
   expect(String(r.back)).toMatch(/\/scratch$/)
 })

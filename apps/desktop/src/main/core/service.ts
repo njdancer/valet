@@ -185,6 +185,7 @@ import {
 } from './audit-view'
 import { type BlindRelaySetup, BlindTunnel } from './blind-tunnel'
 import { BlockedAudit, LoginSecrets } from './blocked'
+import { DownloadShelf } from './browser-downloads'
 import {
   EVENTKIT_KINDS,
   type EventKitAction,
@@ -728,6 +729,8 @@ export class AppService {
   private endpoint: SessionReportingEndpoint | null = null
   /** The remote listener, its policy and the kill switch (relay.md). Off unless the person turns it on. */
   readonly remote: RemoteAccess
+  /** What agents' browser sessions downloaded, until it expires (browser-downloads.ts). */
+  private readonly downloadShelf: DownloadShelf
   private paused = false
   /** A reset or uninstall is under way: a second one is refused. */
   private erasing = false
@@ -1013,7 +1016,9 @@ export class AppService {
         })
       },
     })
+    this.downloadShelf = new DownloadShelf(deps.now)
     this.remote = new RemoteAccess({
+      downloads: (id) => this.downloadShelf.get(id),
       path: paths.remote,
       clientsPath: paths.remoteClients,
       info: { name: 'valet', version: deps.version },
@@ -1192,6 +1197,7 @@ export class AppService {
         open: sessionBrowser,
         pace: sessionPacer(() => this.runtime().registeredSites()),
         newId: () => `s${randomBytes(6).toString('hex')}`,
+        downloads: { shelf: this.downloadShelf, origin: () => this.publicOrigin() },
         secretIn: (text) => this.knownSecretIn([text]),
         notify: (text) => this.notifier.draftActivity(text),
         audit: (call, result, durationMs) => this.auditNativeCall(call, result, durationMs),
@@ -4355,6 +4361,15 @@ export class AppService {
       ...(result.status === 'failed' ? { stage: result.stage, errorClass: result.errorClass } : {}),
       durationMs,
     })
+  }
+
+  /** The Mac's public https origin while remote access listens: the relay's name, else a tunnel's. */
+  private publicOrigin(): string | null {
+    const status = this.remote.status()
+    if (!status.listening) return null
+    if (status.relayUrl !== null) return new URL(status.relayUrl).origin
+    const host = status.hosts[0]
+    return host === undefined ? null : `https://${host}`
   }
 
   /** Mail on this Mac, for its settings screen. Null when this build has no Mail tools. */
