@@ -4,6 +4,7 @@
 // sites off, pacing); this class enforces them on every request, keeps the network log, and reads
 // pages for the agent through the scripts in scratch-scripts.ts.
 
+import { randomBytes } from 'node:crypto'
 import type { Socket } from 'node:net'
 import {
   type AriaPoint,
@@ -13,6 +14,7 @@ import {
   ariaBoxScript,
   ariaCheckedScript,
   ariaFieldScript,
+  ariaMarkScript,
   ariaPointScript,
   ariaSelectScript,
   ariaSnapshotScript,
@@ -26,6 +28,8 @@ import { partitionName } from './partitions'
 import type {
   BrowserPlatform,
   BrowserSurface,
+  ConsoleMessage,
+  CookieRecord,
   DownloadEvent,
   NetworkResponse,
   OutgoingRequest,
@@ -82,10 +86,29 @@ export const SCRATCH_LIMITS = {
   uploadBytes: 10 * 1024 * 1024,
   /** A picture bigger than this, as PNG, is refused: a smaller part of the page fits. */
   screenshotBytes: 6 * 1024 * 1024,
+  /** An agent's script's answer, as JSON, is cut to this many characters. */
+  evaluateChars: 50_000,
+  evaluateMs: 30_000,
+  consoleMessages: 200,
+  consoleChars: 2000,
+  /** A response body shown to an agent is cut to this many characters. */
+  bodyChars: 100_000,
+  storageEntries: 200,
+  storageChars: 2000,
   /** A session's download bigger than this is cancelled. */
   downloadBytes: 50 * 1024 * 1024,
   dragSteps: 5,
 } as const
+
+const LEVELS: readonly ConsoleMessage['level'][] = ['debug', 'info', 'warning', 'error']
+
+/** Each storage's entries, key and value, as the page has them; nothing for a storage it refuses. */
+function storageScript(): string {
+  return `(() => {
+  const read = (name) => { try { const s = window[name]; const out = []; for (let i = 0; i < s.length && i < ${SCRATCH_LIMITS.storageEntries}; i++) { const k = s.key(i); out.push([k, String(s.getItem(k))]) } return out } catch (e) { return [] } }
+  return { origin: location.origin, local: read('localStorage'), session: read('sessionStorage') }
+})()`
+}
 
 /** What became of a session's download, for the agent: still coming, ready, or failed. */
 export type DownloadNews =
@@ -225,6 +248,8 @@ export class ScratchBrowser {
   private apiDone = 0
   /** The last snapshot's YAML and the document it was of, for deltas. */
   private lastYaml: { readonly frame: string; readonly url: string; readonly yaml: string } | null = null
+  /** A session's console, newest last. */
+  private readonly console: ConsoleMessage[] = []
   /** A session's downloads not yet handed on (takeDownloads). */
   private readonly downloads = new Map<string, DownloadNews>()
 
@@ -292,6 +317,7 @@ export class ScratchBrowser {
         chromeUserAgentOverride({ chromeVersion, os, systemVersion, arch }, 'chrome'),
       )
       await surface.watchNetwork((response) => browser.record(response))
+      if (options.rules.session === true) surface.onConsole((message) => browser.logConsole(message))
     } catch {
       browser.close()
       throw new ScratchError('The scratch browser could not start.')
@@ -883,6 +909,126 @@ export class ScratchBrowser {
     const timers = this.options.timers ?? realTimers
     await new Promise<void>((resolve) => timers.setTimeout(resolve, 100))
     this.open()
+  }
+
+  /** The console's messages at `level` or above (debug < info < warning < error), oldest first. */
+  consoleMessages(level: ConsoleMessage['level'] = 'info'): readonly ConsoleMessage[] {
+    this.sessionOnly()
+    const at = LEVELS.indexOf(level)
+    return this.console.filter((m) => LEVELS.indexOf(m.level) >= at)
+  }
+
+  /**
+   * Runs an agent's function in the page and gives back what it returned, as JSON: in a world of
+   * its own (the DOM, not the page's globals, and unseen by the page's scripts), or in the page's
+   * own world. With a target, the element is passed to it.
+   */
+  async evaluate(
+    fn: string,
+    options: { readonly target?: string; readonly world?: 'isolated' | 'page' } = {},
+  ): Promise<{ readonly result: string; readonly cut: boolean }> {
+    this.sessionOnly()
+    this.open()
+    const attribute = `data-valet-${randomBytes(6).toString('hex')}`
+    if (options.target !== undefined) {
+      const raw = (await this.runAria(
+        ariaMarkScript({ target: this.ariaTarget(options.target), attribute }),
+      )) as {
+        error?: string
+      } | null
+      if (raw === null || typeof raw !== 'object') throw new ScratchError('The page could not be read.')
+      if (raw.error !== undefined) throw this.targetError(raw.error)
+    }
+    const element =
+      options.target === undefined
+        ? 'undefined'
+        : `(() => { const el = document.querySelector('[${attribute}]'); if (el) el.removeAttribute('${attribute}'); return el ?? undefined })()`
+    const code = `(async () => {
+  const el = ${element}
+  const fn = (${fn}
+  )
+  const value = await (typeof fn === 'function' ? fn(el) : fn)
+  try { const json = JSON.stringify(value); return json === undefined ? 'undefined' : json } catch (e) { return String(value) }
+})()`
+    const frame = this.surface.frames()[0]
+    if (frame === undefined) throw new ScratchError('No page is open. Open one first.')
+    const runner = options.world === 'page' ? frame.runPage?.bind(frame) : frame.runAdapter.bind(frame)
+    if (runner === undefined)
+      throw new ScratchError('This browser can’t run scripts in the page’s own world.')
+    const timers = this.options.timers ?? realTimers
+    let timer: unknown
+    const late = new Promise<'late'>((resolve) => {
+      timer = timers.setTimeout(() => resolve('late'), SCRATCH_LIMITS.evaluateMs)
+    })
+    let answer: unknown
+    try {
+      answer = await Promise.race([runner(code), late])
+    } catch (error) {
+      if (this.closed) throw new ScratchError('The scratch browser closed.')
+      const message = error instanceof Error ? error.message : String(error)
+      throw new ScratchError(`The script failed: ${this.scrub(message).slice(0, 300)}`)
+    } finally {
+      timers.clearTimeout(timer)
+    }
+    if (answer === 'late') throw new ScratchError('The script didn’t finish within 30 seconds.')
+    const text = this.scrub(typeof answer === 'string' ? answer : String(answer))
+    return {
+      result: text.slice(0, SCRATCH_LIMITS.evaluateChars),
+      cut: text.length > SCRATCH_LIMITS.evaluateChars,
+    }
+  }
+
+  /** The session's own cookies, values and all (a session's cookies are its own). */
+  async cookies(): Promise<readonly CookieRecord[]> {
+    this.sessionOnly()
+    this.open()
+    return this.session.getCookies()
+  }
+
+  /** The page's localStorage and sessionStorage, entries cut to size. */
+  async storage(): Promise<{
+    readonly origin: string
+    readonly local: readonly { readonly key: string; readonly value: string }[]
+    readonly session: readonly { readonly key: string; readonly value: string }[]
+  }> {
+    this.sessionOnly()
+    const raw = (await this.run(storageScript())) as {
+      origin?: unknown
+      local?: unknown
+      session?: unknown
+    } | null
+    const entries = (list: unknown) =>
+      (Array.isArray(list) ? list : [])
+        .slice(0, SCRATCH_LIMITS.storageEntries)
+        .filter(
+          (e): e is [string, string] =>
+            Array.isArray(e) && typeof e[0] === 'string' && typeof e[1] === 'string',
+        )
+        .map(([key, value]) => ({
+          key: key.slice(0, SCRATCH_LIMITS.storageChars),
+          value: value.slice(0, SCRATCH_LIMITS.storageChars),
+        }))
+    return {
+      origin: typeof raw?.origin === 'string' ? raw.origin : '',
+      local: entries(raw?.local),
+      session: entries(raw?.session),
+    }
+  }
+
+  private sessionOnly(): void {
+    if (this.options.rules.session !== true) throw new ScratchError('Only an agent’s session can do that.')
+  }
+
+  private logConsole(message: ConsoleMessage): void {
+    // Electron's own warning in an unpackaged build, not the page's.
+    if (this.closed || String(message.text).startsWith('%cElectron Security Warning')) return
+    this.console.push({
+      level: LEVELS.includes(message.level) ? message.level : 'info',
+      text: String(message.text).slice(0, SCRATCH_LIMITS.consoleChars),
+      source: String(message.source).slice(0, 500),
+      line: Number.isFinite(message.line) ? message.line : 0,
+    })
+    if (this.console.length > SCRATCH_LIMITS.consoleMessages) this.console.shift()
   }
 
   /** The log since `sinceSeq`, newest last. URLs carry no cookie values. */

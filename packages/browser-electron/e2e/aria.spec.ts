@@ -80,6 +80,21 @@ test('in a session, forms post, back goes back, checkboxes tick, the window resi
   // A download is kept in memory, named safely, and the page stays where it was.
   expect(r.download).toEqual({ name: '_report.csv', mimeType: 'text/csv', text: 'a,b\n1,2\n' })
   expect(String(r.stillOn)).toMatch(/\/agent$/)
+  // Inspect: the console, scripts in their own world or the page's, cookies, storage, bodies.
+  expect(r.consoleAll).toEqual(['info:agent page ready', 'debug:quiet detail', 'error:something broke'])
+  expect(r.consoleErrors).toEqual(['something broke'])
+  expect(r.isolated).toBe('["Agent","undefined"]')
+  expect(r.inPage).toBe('"from the page"')
+  expect(r.onElement).toBe('"Drop here"')
+  expect(r.marked).toBe('0')
+  expect(r.thrown).toMatch(/The script failed: .*nope/)
+  expect(r.cookies).toContain('seen=yes')
+  expect(r.storage).toEqual({
+    origin: expect.stringMatching(/^https:\/\/site\.test/),
+    local: [{ key: 'theme', value: 'dark' }],
+    session: [{ key: 'step', value: '2' }],
+  })
+  expect(r.agentBody).toBe(true)
   expect(r.posted).toBe(1)
   expect(String(r.back)).toMatch(/\/scratch$/)
 })

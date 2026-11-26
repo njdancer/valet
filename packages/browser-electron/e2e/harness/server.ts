@@ -225,6 +225,9 @@ function routes(
           document.getElementById('dst').addEventListener('mouseup', () => { if (dragging) text('dropped', 'dropped: yes') })
           document.addEventListener('keydown', (e) => { if (e.target === document.body) text('pressed', 'pressed: ' + (e.shiftKey ? 'Shift+' : '') + e.key) })
           document.getElementById('up').addEventListener('change', async (e) => text('uploaded', 'uploaded: ' + (await Promise.all([...e.target.files].map(async (f) => f.name + '=' + (await f.text())))).join(',')))
+          window.pageGlobal = 'from the page'
+          console.log('agent page ready'); console.debug('quiet detail'); console.error('something broke')
+          localStorage.setItem('theme', 'dark'); sessionStorage.setItem('step', '2'); document.cookie = 'seen=yes; Secure; Path=/'
           setTimeout(() => { const p = document.createElement('p'); p.textContent = 'Late arrival'; document.body.appendChild(p) }, 1500)
         </script>`,
       ),

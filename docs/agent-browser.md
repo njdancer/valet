@@ -46,6 +46,10 @@ takes. A session is a browser of its own:
 | `browser_resize`                                                              | The window's size                                                                                             |
 | `browser_take_screenshot`                                                     | A PNG of the window, the whole page (`fullPage`) or one element, as an image                                  |
 | `browser_file_upload`                                                         | Files (base64) into a file input, hidden or not; about 700 KB in all per request                              |
+| `browser_evaluate`                                                            | A function in its own world (the DOM, unseen by the page) or, with `world: "page"`, the page's                |
+| `browser_console_messages`                                                    | The page's console since the session opened, at a level and above                                             |
+| `browser_network_requests`, `browser_network_request`                         | Requests since it opened (static files only if asked), and one response body                                  |
+| `browser_cookie_list`, `browser_storage_list`                                 | The session's own cookies, values and all; the page's local and session storage                               |
 
 A target is a ref from the last snapshot or a CSS selector. Navigating and `browser_snapshot`
 answer with the whole page; an action on the same page answers with only the lines that changed
@@ -82,8 +86,8 @@ are named by their visible words, not an aria-label or title no one sees. Link t
 absolute. Input is trusted, sent as a mouse and keyboard would, never as script events; something
 covered by an overlay is refused rather than clicked through. A screenshot is taken with
 DevTools' `Page.captureScreenshot` while the hidden window is made to draw (a frame subscription);
-it comes back as an image beside the output, never in it or in the audit log.
+it comes back as an image beside the output, never in it or in the audit log. The console comes from Electron's own console event and `browser_evaluate` from Electron's script calls, so neither turns on a DevTools domain a page could notice (Runtime or Console).
 
 Not yet: tabs, the page's own dialogs, plain http pages, home network and
-network interface settings, frames inside the page (an iframe's content isn't in the snapshot), and the inspect tools (evaluate, console, network, cookies).
+network interface settings, frames inside the page (an iframe's content isn't in the snapshot), and setting cookies or storage (browser_evaluate can, for what a page's script could).
 The drafts' `valet_browser_*` tools are unchanged and still use the older snapshot.

@@ -20,6 +20,7 @@ import type { KeyPress } from '../keys'
 import type {
   BrowserPlatform,
   BrowserSurface,
+  ConsoleMessage,
   CookieRecord,
   CookieSetDetails,
   DownloadEvent,
@@ -499,6 +500,13 @@ class ElectronSurface implements BrowserSurface {
           }
           return this.contents.executeJavaScriptInIsolatedWorld(ADAPTER_WORLD_ID, [{ code }])
         },
+        runPage: (code) => {
+          if (index !== 0) return Promise.reject(new Error('page scripts run in the main frame only'))
+          if (this.contents.isDestroyed() || frame.isDestroyed() || frame.detached) {
+            return Promise.reject(new Error('frame is gone'))
+          }
+          return frame.executeJavaScript(code)
+        },
       }
     })
   }
@@ -643,6 +651,21 @@ class ElectronSurface implements BrowserSurface {
     // storage event the page sent before it has been delivered.
     if (this.contents.isDestroyed() || !this.contents.debugger.isAttached()) return
     await this.contents.debugger.sendCommand('DOMStorage.enable')
+  }
+
+  onConsole(listener: (message: ConsoleMessage) => void): void {
+    this.contents.on('console-message', (details) => {
+      try {
+        listener({
+          level: details.level,
+          text: details.message,
+          source: details.sourceId,
+          line: details.lineNumber,
+        })
+      } catch {
+        // A listener's failure is not the page's.
+      }
+    })
   }
 
   async watchNetwork(listener: (response: NetworkResponse) => void): Promise<void> {

@@ -191,6 +191,14 @@ const BOX = `(target) => {
   return { x: r.left + scrollX, y: r.top + scrollY, width: r.width, height: r.height }
 }`
 
+/** Marks the target with an attribute for a script in another world to find, then unmark. */
+const MARK = `(args) => {
+  const found = (${ELEMENT})(args.target)
+  if (found.error) return found
+  found.setAttribute(args.attribute, '')
+  return { done: true }
+}`
+
 /** Whether the text shows on the page, as a person would read it. */
 const TEXT = `(text) => {
   const body = document.body
@@ -225,6 +233,8 @@ export const ariaUploadScript = (args: {
 
 export const ariaBoxScript = (target: string): string => `(${BOX})(${jsonLiteral(target)})`
 
+export const ariaMarkScript = (args: { readonly target: string; readonly attribute: string }): string =>
+  `(${MARK})(${jsonLiteral(args)})`
 export const textShownScript = (text: string): string => `(${TEXT})(${jsonLiteral(text)})`
 
 /**

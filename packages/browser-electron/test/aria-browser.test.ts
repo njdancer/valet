@@ -10,7 +10,18 @@ import { SCRATCH_LIMITS, ScratchBrowser, type ScratchRules } from '../src/scratc
 import { pageFieldsScript } from '../src/sensitive-page'
 import { type FakeFrame, FakePlatform, FakeSurface } from './fake-browser'
 
-type Kind = 'snapshot' | 'point' | 'field' | 'select' | 'text' | 'checked' | 'upload' | 'box' | 'fields'
+type Kind =
+  | 'snapshot'
+  | 'point'
+  | 'field'
+  | 'select'
+  | 'text'
+  | 'checked'
+  | 'upload'
+  | 'box'
+  | 'mark'
+  | 'storage'
+  | 'fields'
 type Answer = (kind: Kind, args: Record<string, unknown> | string) => unknown
 
 const MARKERS: [Kind, string][] = [
@@ -22,6 +33,8 @@ const MARKERS: [Kind, string][] = [
   ['checked', "elementState(found, 'checked')"],
   ['upload', 'v.setInputFiles(el'],
   ['box', 'found.getBoundingClientRect()'],
+  ['mark', 'found.setAttribute(args.attribute'],
+  ['storage', "read('localStorage')"],
 ]
 
 /** Timers that fire at once, so settling and waiting take no real time. */
@@ -65,6 +78,7 @@ function stubFrame(answer: Answer): FrameHandle & { boots: number; scripts: stri
       const kind = MARKERS.find(([, marker]) => code.includes(marker))?.[0]
       if (kind === undefined) throw new Error('unknown script')
       frame.scripts.push(kind)
+      if (kind === 'storage') return answer(kind, {})
       const json = code.slice(code.lastIndexOf(')(') + 2, -1)
       return answer(kind, JSON.parse(json))
     },
@@ -86,6 +100,16 @@ function defaults(kind: Kind): unknown {
   if (kind === 'checked') return { checked: false }
   if (kind === 'upload') return { done: true }
   if (kind === 'box') return { x: 5, y: 900, width: 120, height: 40 }
+  if (kind === 'mark') return { done: true }
+  if (kind === 'storage')
+    return {
+      origin: 'https://shop.example.com',
+      local: [
+        ['k', 'v'],
+        [1, 2],
+      ],
+      session: 'nope',
+    }
   return { url: 'https://shop.example.com/home', fields: [] }
 }
 
@@ -505,6 +529,60 @@ describe('a session’s page', () => {
     expect(
       await detail(other.browser.upload('#x', [{ name: 'a', mimeType: 'x', data: Buffer.from('a') }])),
     ).toMatch(/isn’t a file input/)
+  })
+
+  it('inspects only in a session: console by level, scripts in either world, cookies, storage', async () => {
+    const plain = await open()
+    expect(await detail(plain.browser.evaluate('() => 1'))).toMatch(/Only an agent’s session/)
+    expect(() => plain.browser.consoleMessages()).toThrow()
+    const { browser, frame, surface, session } = await open(defaults, { session: true })
+    for (const [level, text] of [
+      ['debug', 'd'],
+      ['info', 'i'],
+      ['warning', 'w'],
+      ['error', 'e'],
+      ['info', '%cElectron Security Warning (x)'],
+    ] as const)
+      for (const listener of surface.consoleListeners)
+        listener({ level, text, source: 'https://shop.example.com/a.js', line: 3 })
+    expect(browser.consoleMessages().map((m) => m.text)).toEqual(['i', 'w', 'e'])
+    expect(browser.consoleMessages('debug')).toHaveLength(4)
+    expect(browser.consoleMessages('error').map((m) => m.text)).toEqual(['e'])
+    const ran: { world: string; code: string }[] = []
+    Object.assign(frame, {
+      runAdapter: async (code: string) => {
+        ran.push({ world: 'isolated', code })
+        return '{"a":1}'
+      },
+      runPage: async (code: string) => {
+        ran.push({ world: 'page', code })
+        return 'x'.repeat(SCRATCH_LIMITS.evaluateChars + 5)
+      },
+    })
+    expect(await browser.evaluate('() => ({ a: 1 })')).toEqual({ result: '{"a":1}', cut: false })
+    const long = await browser.evaluate('() => window.big', { world: 'page' })
+    expect(long.cut).toBe(true)
+    expect(long.result).toHaveLength(SCRATCH_LIMITS.evaluateChars)
+    await browser.evaluate('(el) => el.id', { target: 'e2' })
+    expect(ran.map((r) => r.world)).toEqual(['isolated', 'page', 'isolated'])
+    expect(ran[0]?.code).toContain('() => ({ a: 1 })')
+    expect(ran[2]?.code).toMatch(/document\.querySelector\('\[data-valet-[0-9a-f]{12}\]'\)/)
+    expect(frame.scripts).toContain('mark')
+    Object.assign(frame, {
+      runAdapter: async () => {
+        throw new Error('ReferenceError: nope is not defined')
+      },
+    })
+    expect(await detail(browser.evaluate('() => nope'))).toMatch(/The script failed: ReferenceError: nope/)
+    session.cookies = [
+      { name: 'sid', value: 'abc123', domain: 'shop.example.com', path: '/', secure: true, httpOnly: true },
+    ] as never
+    expect((await browser.cookies())[0]).toMatchObject({ name: 'sid', value: 'abc123' })
+    expect(await browser.storage()).toEqual({
+      origin: 'https://shop.example.com',
+      local: [{ key: 'k', value: 'v' }],
+      session: [],
+    })
   })
 
   it('keeps a session’s downloads until handed on, and only a session’s', async () => {
