@@ -180,7 +180,7 @@ export const mailInputs = {
         .optional()
         .describe('Leave out for a reply, which keeps the original subject.'),
       body: z.string().min(1).max(100_000).describe('Plain text.'),
-      from: email.optional().describe('One of the account’s own addresses. Leave out for Mail’s default.'),
+      from: email.optional().describe('One of the account’s own addresses. Left out: the account’s address for a new message, the address it was sent to for a reply.'),
       replyToId: z
         .number()
         .int()
@@ -432,13 +432,15 @@ function storeFailure(error: unknown): MailToolResult {
   return fail('tool-run', 'internal')
 }
 
-function draftFailure(outcome: DraftOutcome): MailToolResult {
+function draftFailure(outcome: DraftOutcome, from: string | null): MailToolResult {
   switch (outcome.kind) {
     case 'saved':
       return {
         status: 'ok',
         output: {
           saved: true,
+          /** The address the draft is from; null when Mail chose (a reply). */
+          from,
           note: 'Saved to Drafts in Mail. Nothing was sent: the person reviews and sends it.',
         },
       }
@@ -653,8 +655,14 @@ async function createDraft(
     if (input.subject === undefined)
       subject = /^re:/i.test(original.subject) ? original.subject : `Re: ${original.subject}`
   }
+  // A new draft left to Mail takes whatever address Mail picks at that moment, which has changed
+  // between runs (an iCloud alias once, the account's own address another time): use the account's
+  // address when there is just one. A reply stays with Mail, which answers from the address the
+  // message was sent to.
+  const addresses = [...new Set(accounts.map((a) => a.address).filter((a): a is string => a != null))]
+  const from = input.from ?? (replyTo === null && addresses.length === 1 ? (addresses[0] ?? null) : null)
   const draft: DraftRequest = {
-    from: input.from ?? null,
+    from,
     to,
     cc: input.cc ?? [],
     bcc: input.bcc ?? [],
@@ -675,7 +683,7 @@ async function createDraft(
     if (answer === 'declined') return { status: 'declined' }
     if (answer === 'timed-out') return { status: 'declined', timedOut: true }
   }
-  return draftFailure(await deps.drafts.save(draft))
+  return draftFailure(await deps.drafts.save(draft), draft.from)
 }
 
 /** Mailbox names an account's Trash goes by, in the order looked for. */
