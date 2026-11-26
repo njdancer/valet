@@ -27,10 +27,8 @@ export const AGENT_BROWSER_LIMITS = {
   perAgent: 3,
   total: 6,
   idleMs: 10 * 60_000,
-  /** Page loads per registrable domain per hour, all agents together (until per-host limits). */
-  loadsPerDomainPerHour: 60,
-  /** The least time between two page loads on one domain. */
-  minGapMs: 3000,
+  /** The longest a page load waits for a site's pace before it is refused instead. */
+  paceWaitMs: 60_000,
   formFields: 30,
 } as const
 
@@ -77,6 +75,12 @@ export interface SessionBrowser {
 export interface AgentBrowserDeps {
   /** Opens a signed-out, in-memory browser of its own under `rules`. Throws ScratchError in words. */
   readonly open: (rules: ScratchRules) => Promise<SessionBrowser>
+  /**
+   * Waits for a page load's turn on `host`: only a limit already known for the host (an installed
+   * adapter's), shared with that adapter; none for any other host. Rejects with a BrowserRefusal to
+   * hold the load back.
+   */
+  readonly pace: (host: string) => Promise<void>
   /** True when the text holds a login secret or session value Valet knows of: never typed. */
   readonly secretIn: (text: string) => Promise<boolean>
   /** The person hears about it: a site refused a browser, or an agent opened one. */
@@ -328,8 +332,8 @@ const DECLARATIONS: Record<BrowserToolName, { title: string; description: string
     description:
       SESSION +
       'Opens an https page and returns its accessibility snapshot: the page as YAML, with a [ref=eN] on ' +
-      'everything you can act on, as Playwright MCP gives it. Valet spaces page loads on a site a few ' +
-      `seconds apart. ${NOTE}`,
+      'everything you can act on, as Playwright MCP gives it. A site an installed adapter uses keeps that ' +
+      `adapter’s pace. ${NOTE}`,
   },
   navigate_back: {
     title: 'Go back',
@@ -406,7 +410,7 @@ interface Session {
 }
 
 /** A refusal in Valet's words, returned to the agent as `problem`. */
-class Refusal extends Error {
+export class BrowserRefusal extends Error {
   constructor(readonly detail: string) {
     super(detail)
   }
@@ -424,7 +428,6 @@ export class AgentBrowserService implements NativeTools {
   readonly adapterId = BROWSER_ADAPTER_ID
   private readonly sessions = new Map<string, Session>()
   private opening = 0
-  private readonly loads = new Map<string, number[]>()
   private readonly tools = agentBrowserTools()
 
   constructor(private readonly deps: AgentBrowserDeps) {}
@@ -481,7 +484,7 @@ export class AgentBrowserService implements NativeTools {
           const text = input['text']
           const regex = input['regex']
           if ((typeof text === 'string') === (typeof regex === 'string'))
-            throw new Refusal('Give either text or regex.')
+            throw new BrowserRefusal('Give either text or regex.')
           const found = await browser.find(typeof text === 'string' ? { text } : { regex: regex as string })
           const max = typeof input['maxResults'] === 'number' ? input['maxResults'] : 20
           return ok({
@@ -567,7 +570,7 @@ export class AgentBrowserService implements NativeTools {
         const text = input['text']
         const gone = input['textGone']
         if (typeof text === 'string' && typeof gone === 'string')
-          throw new Refusal('Wait for text or for text to go, not both.')
+          throw new BrowserRefusal('Wait for text or for text to go, not both.')
         const timeoutMs = seconds === null ? 30_000 : seconds * 1000
         const result =
           typeof text === 'string'
@@ -577,13 +580,13 @@ export class AgentBrowserService implements NativeTools {
               : seconds !== null
                 ? await browser.waitFor({ timeMs: timeoutMs })
                 : null
-        if (result === null) throw new Refusal('Give text, textGone or time.')
+        if (result === null) throw new BrowserRefusal('Give text, textGone or time.')
         return answer(result, false, result.met)
       }
       case 'resize':
         return answer(await browser.resize(input['width'] as number, input['height'] as number), false)
       default:
-        throw new Refusal('Valet doesn’t know that tool.')
+        throw new BrowserRefusal('Valet doesn’t know that tool.')
     }
   }
 
@@ -593,7 +596,7 @@ export class AgentBrowserService implements NativeTools {
   ): Promise<AriaPage> {
     if (field.type === 'checkbox' || field.type === 'radio') {
       if (field.value !== 'true' && field.value !== 'false')
-        throw new Refusal('A checkbox or radio button’s value is "true" or "false".')
+        throw new BrowserRefusal('A checkbox or radio button’s value is "true" or "false".')
       return browser.check(field.target, field.value === 'true')
     }
     if (field.type === 'combobox') return browser.select(field.target, [field.value])
@@ -607,7 +610,7 @@ export class AgentBrowserService implements NativeTools {
   private browser(client: string, id: string): SessionBrowser {
     const session = this.sessions.get(id)
     if (session === undefined || session.client !== client || session.browser.isClosed())
-      throw new Refusal('No open session has that id. browser_session_create starts one.')
+      throw new BrowserRefusal('No open session has that id. browser_session_create starts one.')
     this.touch(session)
     return session.browser
   }
@@ -615,17 +618,17 @@ export class AgentBrowserService implements NativeTools {
   private async create(client: string, clientName: string, name: unknown): Promise<string> {
     const live = [...this.sessions.values()].filter((s) => !s.browser.isClosed())
     if (this.own(client).length >= AGENT_BROWSER_LIMITS.perAgent)
-      throw new Refusal(
+      throw new BrowserRefusal(
         `You have ${AGENT_BROWSER_LIMITS.perAgent} sessions open, as many as Valet allows. Close one with browser_session_close.`,
       )
     if (live.length + this.opening >= AGENT_BROWSER_LIMITS.total)
-      throw new Refusal(
+      throw new BrowserRefusal(
         'Other agents are using as many browsers as Valet allows. Try again in a few minutes.',
       )
     const rules: ScratchRules = {
       mayNavigate: (url) => url.protocol === 'https:',
       mayRequest: () => true,
-      pace: (host) => this.pace(siteDomain(host)),
+      pace: (host) => this.deps.pace(host),
       blocked: (host, status) =>
         this.deps.notify(`${host} refused ${clientName}’s browser (${status}), so Valet closed it.`),
       mayType: async (text) => !(await this.deps.secretIn(text).catch(() => true)),
@@ -662,23 +665,43 @@ export class AgentBrowserService implements NativeTools {
     if (session.idle !== null) timers.clearTimeout(session.idle)
     session.idle = timers.setTimeout(() => session.browser.close(), AGENT_BROWSER_LIMITS.idleMs)
   }
+}
 
-  private async pace(domain: string): Promise<void> {
-    const now = this.deps.now()
-    const recent = (this.loads.get(domain) ?? []).filter((t) => t > now - 3600_000)
-    if (recent.length >= AGENT_BROWSER_LIMITS.loadsPerDomainPerHour) {
-      const wait = Math.ceil(((recent[0] ?? now) + 3600_000 - now) / 60_000)
-      throw new Refusal(
-        `Valet has loaded ${domain} as often as it allows in an hour. Try again in ${wait} minutes.`,
+/** A host's known limits: an installed adapter's rate budget and breaker. */
+export interface KnownSite {
+  readonly host: string
+  readonly guards: {
+    readonly budget: { waitMs(): number; acquire(): Promise<void> }
+    readonly breaker: { isOpen(): boolean; retryAfterMs(): number }
+  }
+}
+
+/**
+ * The pace for a browser session's page loads: rate limits belong to hosts, not adapters, so a
+ * load on a site an installed adapter uses (the same host, or the same registrable domain) takes a
+ * slot in that adapter's budget and waits out its open breaker. A host with no known limit gets
+ * none. A wait longer than paceWaitMs is refused with how long to wait instead.
+ */
+export function sessionPacer(sites: () => readonly KnownSite[]): (host: string) => Promise<void> {
+  return async (host) => {
+    const key = host.toLowerCase()
+    const domain = siteDomain(key)
+    const known = sites()
+    const site = known.find((s) => s.host === key) ?? known.find((s) => siteDomain(s.host) === domain)
+    if (site === undefined) return
+    const { budget, breaker } = site.guards
+    if (breaker.isOpen()) {
+      const minutes = Math.max(1, Math.ceil(breaker.retryAfterMs() / 60_000))
+      throw new BrowserRefusal(
+        `${domain} refused Valet recently, so Valet holds page loads there. Try again in ${minutes} minutes.`,
       )
     }
-    const last = recent.at(-1)
-    if (last !== undefined && now - last < AGENT_BROWSER_LIMITS.minGapMs) {
-      const seconds = Math.ceil((AGENT_BROWSER_LIMITS.minGapMs - (now - last)) / 1000)
-      throw new Refusal(`Wait ${seconds} seconds: Valet spaces page loads on ${domain}.`)
-    }
-    recent.push(now)
-    this.loads.set(domain, recent)
+    const wait = budget.waitMs()
+    if (wait > AGENT_BROWSER_LIMITS.paceWaitMs)
+      throw new BrowserRefusal(
+        `Valet spaces page loads on ${domain}. Try again in ${Math.ceil(wait / 1000)} seconds.`,
+      )
+    await budget.acquire()
   }
 }
 

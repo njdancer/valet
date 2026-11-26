@@ -104,3 +104,14 @@ describe('a live trial’s guards', () => {
     expect(host.siteGuards('elsewhere.test')).toBe(other)
   })
 })
+
+describe('the known sites a browser session paces by', () => {
+  it('are each installed adapter’s host with its own guards, and no host a trial only touched', () => {
+    const { host } = setup()
+    const home = new URL(HOME).hostname
+    host.siteGuards('elsewhere.test')
+    const sites = host.registeredSites()
+    expect(sites.map((s) => s.host)).toEqual([home])
+    expect(sites[0]?.guards).toBe(host.siteGuards(home))
+  })
+})

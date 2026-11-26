@@ -141,7 +141,7 @@ import type {
 import { AdapterSettingsStore } from './adapter-settings'
 import { adminReader } from './admin'
 import { AdminWriterImpl, type AgentSettingValues, type WriterSource } from './admin-writer'
-import { AgentBrowserService, type SessionBrowser } from './agent-browser'
+import { AgentBrowserService, type SessionBrowser, sessionPacer } from './agent-browser'
 import { agentRequestItem, draftReviewRequest } from './agent-requests'
 import { AppStateStore } from './app-state'
 import {
@@ -1190,6 +1190,7 @@ export class AppService {
     if (sessionBrowser !== undefined)
       this.agentBrowser = new AgentBrowserService({
         open: sessionBrowser,
+        pace: sessionPacer(() => this.runtime().registeredSites()),
         newId: () => `s${randomBytes(6).toString('hex')}`,
         secretIn: (text) => this.knownSecretIn([text]),
         notify: (text) => this.notifier.draftActivity(text),

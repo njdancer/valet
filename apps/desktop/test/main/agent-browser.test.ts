@@ -9,7 +9,9 @@ import {
   AGENT_BROWSER_LIMITS,
   AgentBrowserService,
   agentBrowserTools,
+  BrowserRefusal,
   type SessionBrowser,
+  sessionPacer,
 } from '../../src/main/core/agent-browser'
 
 const PAGE = `- heading "News" [level=1] [ref=e1]
@@ -76,6 +78,7 @@ function setup() {
   let now = Date.parse('2026-11-26T00:00:00Z')
   const opened: { rules: ScratchRules; browser: ReturnType<typeof browser> }[] = []
   const notices: string[] = []
+  const paced: string[] = []
   const audited: { tool: string; status: string }[] = []
   const timers: { run: () => void; ms: number; cleared: boolean }[] = []
   let ids = 0
@@ -84,6 +87,10 @@ function setup() {
       const b = browser()
       opened.push({ rules, browser: b })
       return b
+    },
+    pace: async (host) => {
+      paced.push(host)
+      if (host === 'held.example.com') throw new BrowserRefusal('Try again in 9 seconds.')
     },
     secretIn: async (text) => text.includes('hunter2'),
     notify: (text) => void notices.push(text),
@@ -116,7 +123,17 @@ function setup() {
     )) as { status: string; output: Record<string, unknown> & { problem?: string | null } }
   const create = async (clientId = 'agent-a') =>
     (await call('session_create', {}, clientId)).output['session'] as string
-  return { service, call, create, opened, notices, audited, timers, advance: (ms: number) => (now += ms) }
+  return {
+    service,
+    call,
+    create,
+    opened,
+    notices,
+    audited,
+    timers,
+    paced,
+    advance: (ms: number) => (now += ms),
+  }
 }
 
 describe('the agents’ browser tools', () => {
@@ -350,22 +367,13 @@ describe('a browser session', () => {
     expect((await call('session_create', {}, 'agent-late')).output['problem']).toMatch(/Other agents/)
   })
 
-  it('spaces page loads on a site, and caps them in an hour', async () => {
-    const { create, opened, advance } = setup()
+  it('paces page loads only as the app says for the host', async () => {
+    const { create, opened, paced } = setup()
     await create()
     const pace = opened[0]?.rules.pace
     await pace?.('news.example.com')
-    await expect(pace?.('www.news.example.com')).rejects.toMatchObject({
-      detail: expect.stringMatching(/^Wait 3 seconds/),
-    })
-    advance(AGENT_BROWSER_LIMITS.minGapMs)
-    for (let i = 1; i < AGENT_BROWSER_LIMITS.loadsPerDomainPerHour; i++) {
-      await pace?.('news.example.com')
-      advance(AGENT_BROWSER_LIMITS.minGapMs)
-    }
-    await expect(pace?.('news.example.com')).rejects.toMatchObject({
-      detail: expect.stringMatching(/as often as it allows in an hour/),
-    })
+    await expect(pace?.('held.example.com')).rejects.toMatchObject({ detail: 'Try again in 9 seconds.' })
+    expect(paced).toEqual(['news.example.com', 'held.example.com'])
   })
 
   it('closes on request, when left alone, and all at once', async () => {
@@ -408,6 +416,7 @@ describe('a browser session', () => {
       open: async () => {
         throw Object.assign(new Error('x'), { detail: 'The scratch browser could not start.' })
       },
+      pace: async () => undefined,
       secretIn: async () => false,
       notify: () => undefined,
       audit: async () => undefined,
@@ -441,5 +450,41 @@ describe('a browser session', () => {
     ).toBe('failed')
     expect((await call('navigate', { session: 'nope', url: 'https://a.example/' })).status).toBe('failed')
     expect(opened).toHaveLength(0)
+  })
+})
+
+describe('a session’s pace', () => {
+  function site(host: string, state: { open?: boolean; wait?: number } = {}) {
+    const taken: string[] = []
+    return {
+      taken,
+      site: {
+        host,
+        guards: {
+          budget: { waitMs: () => state.wait ?? 0, acquire: async () => void taken.push(host) },
+          breaker: { isOpen: () => state.open === true, retryAfterMs: () => 125_000 },
+        },
+      },
+    }
+  }
+
+  it('shares an installed adapter’s budget on its host and its registrable domain, and none elsewhere', async () => {
+    const shop = site('www.woolworths.com.au')
+    const pace = sessionPacer(() => [shop.site])
+    await pace('www.woolworths.com.au')
+    await pace('WOOLWORTHS.com.au')
+    await pace('en.wikipedia.org')
+    expect(shop.taken).toEqual(['www.woolworths.com.au', 'www.woolworths.com.au'])
+  })
+
+  it('holds loads while the site’s breaker is open, or when the wait would be long', async () => {
+    const open = sessionPacer(() => [site('shop.example.com', { open: true }).site])
+    await expect(open('shop.example.com')).rejects.toMatchObject({
+      detail: 'example.com refused Valet recently, so Valet holds page loads there. Try again in 3 minutes.',
+    })
+    const slow = sessionPacer(() => [site('shop.example.com', { wait: 90_500 }).site])
+    await expect(slow('shop.example.com')).rejects.toMatchObject({
+      detail: 'Valet spaces page loads on example.com. Try again in 91 seconds.',
+    })
   })
 })

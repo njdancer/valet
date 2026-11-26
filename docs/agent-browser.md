@@ -21,8 +21,11 @@ takes. A session is a browser of its own:
 - **Never types** a login secret or session value Valet knows, and never into a password or
   one-time code field: Valet signs in to sites itself.
 - **Three per agent, six in all**, closed after ten minutes unused, by `browser_session_close`,
-  and on lockdown, pause or quit. Page loads on a site are at least three seconds apart and at most
-  60 an hour, all agents together (until per-host limits replace this). A site that refuses the
+  and on lockdown, pause or quit.
+- **Rate limits belong to hosts.** A page load on a site an installed adapter uses (its host, or
+  the same registrable domain) takes a slot in that adapter's budget and waits out its breaker, so
+  a session never makes Valet break a limit already known for the site. A wait over a minute is
+  refused with how long to wait. A host with no known limit gets none. A site that refuses the
   browser (a 429 or an HTML 403) closes it, and the person is told.
 - **Every call is audited** like any built-in tool's. Agents on the Mac get the tools at once;
   remote agents (claude.ai and others) once the person turns them on on the agent's page.
@@ -59,7 +62,7 @@ are named by their visible words, not an aria-label or title no one sees. Link t
 absolute. Input is trusted, sent as a mouse and keyboard would, never as script events; something
 covered by an overlay is refused rather than clicked through.
 
-Not yet: tabs, the page's own dialogs, plain http pages, per-host rate limits, home network and
+Not yet: tabs, the page's own dialogs, plain http pages, home network and
 network interface settings, frames inside the page (an iframe's content isn't in the snapshot),
 screenshots, uploads, downloads, and the inspect tools (evaluate, console, network, cookies).
 The drafts' `valet_browser_*` tools are unchanged and still use the older snapshot.
