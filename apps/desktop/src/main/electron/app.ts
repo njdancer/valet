@@ -23,6 +23,7 @@ import { EgressBroker, type OpenTunnels } from '@valet/egress'
 import { startEndpoint } from '@valet/mcp-server'
 import { HelperEventKit } from '@valet/native-calendar'
 import { HelperMailFiles, MailDrafts, MailOrganizer, pdfText, renderPictures } from '@valet/native-mail'
+import { HelperMessagesFiles } from '@valet/native-messages'
 import { diskTarballStore, loadDependencies, nodeRuntimeProcess } from '@valet/node-runtime'
 import {
   HostMailReader,
@@ -589,6 +590,8 @@ async function main(): Promise<void> {
           },
     // Calendar and Reminders (docs/calendar.md): EventKit in the same reader helper.
     eventKit: mailReader === null ? null : new HelperEventKit({ socketPath: mailReader.socketPath }),
+    // Messages (docs/messages.md): chat.db through the same reader helper.
+    messages: mailReader === null ? null : new HelperMessagesFiles({ socketPath: mailReader.socketPath }),
     version: app.getVersion(),
     demo: mode.demo,
     now: () => Date.now(),

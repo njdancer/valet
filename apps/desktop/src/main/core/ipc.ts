@@ -10,6 +10,7 @@ import type { HashRoute, ValetApi } from '../../shared/api'
 import { EVENTKIT_KINDS, eventKitSettingsPatchSchema } from './calendar'
 import { CHANNEL_PREFIX, INVOKE_METHODS, type InvokeMethod } from './channels'
 import { mailSettingsPatchSchema } from './mail'
+import { messagesSettingsPatchSchema } from './messages'
 import { onePasswordAccountSchema, traceRetentionDaysSchema } from './settings'
 
 /** Which of the app's windows sent a request. The main process assigns it when it opens the window. */
@@ -301,6 +302,14 @@ const HANDLERS: Readonly<
   'eventKit.action': entry(
     z.tuple([EVENTKIT_APP, z.enum(['start-reader', 'request-access', 'privacy-settings'])]),
     (api, [app, action]) => api.eventKit.action(app, action),
+  ),
+  'messages.status': entry(none, (api) => api.messages.status()),
+  'messages.update': entry(z.tuple([messagesSettingsPatchSchema]), (api, [patch]) =>
+    api.messages.update(stripUndefined(patch)),
+  ),
+  'messages.action': entry(
+    z.tuple([z.enum(['start-reader', 'full-disk-access', 'reveal-reader'])]),
+    (api, [action]) => api.messages.action(action),
   ),
   'updates.status': entry(none, (api) => api.updates.status()),
   'updates.check': entry(none, (api) => api.updates.check()),

@@ -81,7 +81,74 @@ const MAX_RESPONSE_BYTES = 40 * 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 20_000
 const FAILURES: ReadonlySet<string> = new Set(['invalid', 'not-found', 'unavailable', 'too-large'])
 
+/** The rows of a query's answer (`columns` and `rows`), each as a record by column name. */
+export function answerRows(answer: Readonly<Record<string, unknown>>): readonly MailRow[] {
+  const columns = answer['columns']
+  const rows = answer['rows']
+  if (!Array.isArray(columns) || !Array.isArray(rows) || !columns.every((c) => typeof c === 'string')) {
+    throw new MailFilesError('unavailable')
+  }
+  return rows.map((row: unknown) => {
+    if (!Array.isArray(row) || row.length !== columns.length) throw new MailFilesError('unavailable')
+    const out: Record<string, MailValue> = {}
+    columns.forEach((name: string, i) => {
+      const value: unknown = row[i]
+      out[name] = typeof value === 'string' || typeof value === 'number' ? value : null
+    })
+    return out
+  })
+}
+
 export class HelperMailFiles implements MailFiles {
+  readonly #reader: ReaderSocket
+
+  constructor(options: HelperMailFilesOptions) {
+    this.#reader = new ReaderSocket(options)
+  }
+
+  async library(): Promise<string> {
+    const answer = await this.#reader.ask({ op: 'mail.info' })
+    const library = answer['library']
+    if (typeof library !== 'string' || !/^V\d{1,3}$/.test(library)) throw new MailFilesError('unavailable')
+    return library
+  }
+
+  async query(db: MailDb, sql: string, params: readonly MailValue[]): Promise<readonly MailRow[]> {
+    return answerRows(await this.#reader.ask({ op: 'mail.query', db, sql, params }))
+  }
+
+  async file(path: string): Promise<Buffer> {
+    const answer = await this.#reader.ask({ op: 'mail.file', path })
+    const data = answer['base64']
+    if (typeof data !== 'string') throw new MailFilesError('unavailable')
+    return Buffer.from(data, 'base64')
+  }
+
+  async list(path: string): Promise<readonly ListEntry[]> {
+    const answer = await this.#reader.ask({ op: 'mail.list', path })
+    const entries = answer['entries']
+    if (!Array.isArray(entries)) throw new MailFilesError('unavailable')
+    return entries.flatMap((e: unknown) => {
+      if (typeof e !== 'object' || e === null) return []
+      const { name, dir } = e as { name?: unknown; dir?: unknown }
+      return typeof name === 'string' && typeof dir === 'boolean' ? [{ name, dir }] : []
+    })
+  }
+
+  async spotlight(term: string): Promise<readonly string[]> {
+    const answer = await this.#reader.ask({ op: 'mail.spotlight', term })
+    const paths = answer['paths']
+    if (!Array.isArray(paths)) throw new MailFilesError('unavailable')
+    return paths.filter((p): p is string => typeof p === 'string')
+  }
+}
+
+/**
+ * One question to the reader helper and its JSON answer, over its socket: Mail's, and the other
+ * built-in tools' that read through the same helper (Messages). An `error` answer throws
+ * MailFilesError with its code.
+ */
+export class ReaderSocket {
   readonly #socketPath: string
   readonly #connect: Connector
   readonly #lstat: NonNullable<HelperMailFilesOptions['lstat']>
@@ -96,57 +163,7 @@ export class HelperMailFiles implements MailFiles {
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
   }
 
-  async library(): Promise<string> {
-    const answer = await this.#ask({ op: 'mail.info' })
-    const library = answer['library']
-    if (typeof library !== 'string' || !/^V\d{1,3}$/.test(library)) throw new MailFilesError('unavailable')
-    return library
-  }
-
-  async query(db: MailDb, sql: string, params: readonly MailValue[]): Promise<readonly MailRow[]> {
-    const answer = await this.#ask({ op: 'mail.query', db, sql, params })
-    const columns = answer['columns']
-    const rows = answer['rows']
-    if (!Array.isArray(columns) || !Array.isArray(rows) || !columns.every((c) => typeof c === 'string')) {
-      throw new MailFilesError('unavailable')
-    }
-    return rows.map((row: unknown) => {
-      if (!Array.isArray(row) || row.length !== columns.length) throw new MailFilesError('unavailable')
-      const out: Record<string, MailValue> = {}
-      columns.forEach((name: string, i) => {
-        const value: unknown = row[i]
-        out[name] = typeof value === 'string' || typeof value === 'number' ? value : null
-      })
-      return out
-    })
-  }
-
-  async file(path: string): Promise<Buffer> {
-    const answer = await this.#ask({ op: 'mail.file', path })
-    const data = answer['base64']
-    if (typeof data !== 'string') throw new MailFilesError('unavailable')
-    return Buffer.from(data, 'base64')
-  }
-
-  async list(path: string): Promise<readonly ListEntry[]> {
-    const answer = await this.#ask({ op: 'mail.list', path })
-    const entries = answer['entries']
-    if (!Array.isArray(entries)) throw new MailFilesError('unavailable')
-    return entries.flatMap((e: unknown) => {
-      if (typeof e !== 'object' || e === null) return []
-      const { name, dir } = e as { name?: unknown; dir?: unknown }
-      return typeof name === 'string' && typeof dir === 'boolean' ? [{ name, dir }] : []
-    })
-  }
-
-  async spotlight(term: string): Promise<readonly string[]> {
-    const answer = await this.#ask({ op: 'mail.spotlight', term })
-    const paths = answer['paths']
-    if (!Array.isArray(paths)) throw new MailFilesError('unavailable')
-    return paths.filter((p): p is string => typeof p === 'string')
-  }
-
-  async #ask(request: Record<string, unknown>): Promise<Record<string, unknown>> {
+  async ask(request: Record<string, unknown>): Promise<Record<string, unknown>> {
     try {
       const info = await this.#lstat(this.#socketPath)
       if (!info.isSocket() || (this.#uid !== undefined && info.uid !== this.#uid)) {

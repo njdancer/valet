@@ -11,7 +11,8 @@
 // grant. It listens on a Unix socket only this user can reach,
 // ~/Library/Application Support/<label>/helper.sock, and answers one request per connection: the
 // newest code from one sender since a time (ValetHelperKit's Messages.swift), or one of Mail's
-// read-only questions (MailAccess.swift, docs/mail.md). A signed helper answers
+// read-only questions (MailAccess.swift, docs/mail.md), or one of the Messages tools' read-only
+// questions (MessagesAccess.swift, docs/messages.md). A signed helper answers
 // only a peer signed with its own Team ID. Node can't speak XPC without a native addon, so the
 // socket stands in for the XPC service D8 sketched; the peer check is the same audit-token check.
 
@@ -133,7 +134,9 @@ func sendData(_ fd: Int32, _ data: Data) {
   }
 }
 
-func serve(label: String, socketPath: String?, databasePath: String, mail: MailRoots) -> Never {
+func serve(
+  label: String, socketPath: String?, databasePath: String, mail: MailRoots, messages: MessagesRoots
+) -> Never {
   let team = Caller.ownTeamID()
   let path = socketPath ?? prepareSocket(dir: applicationSupport() + "/" + label)
   let server = listen(at: path)
@@ -158,6 +161,19 @@ func serve(label: String, socketPath: String?, databasePath: String, mail: MailR
       let answer: [String: Any]
       do {
         answer = answerMail(try parseMailRequest(line), roots: mail)
+      } catch {
+        answer = ["error": MailFailure.invalid.rawValue]
+      }
+      sendData(client, mailResponseLine(answer))
+      continue
+    }
+    if isMessagesRequest(line) {
+      // The built-in Messages tools (MessagesAccess.swift, docs/messages.md). A photo can be large.
+      var longer = timeval(tv_sec: 15, tv_usec: 0)
+      setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &longer, socklen_t(MemoryLayout<timeval>.size))
+      let answer: [String: Any]
+      do {
+        answer = answerMessages(try parseMessagesRequest(line), roots: messages)
       } catch {
         answer = ["error": MailFailure.invalid.rawValue]
       }
@@ -206,6 +222,7 @@ case "serve":
   var socketPath: String?
   var databasePath = home() + "/Library/Messages/chat.db"
   var mail = MailRoots.standard(home: home())
+  var messages = MessagesRoots.standard(home: home())
   // The contract suite runs the agent by hand on a fixture database and a socket in a temporary
   // directory. A release build always reads the person's own chat.db.
   #if DEBUG
@@ -219,13 +236,15 @@ case "serve":
       case "--db": databasePath = value
       case "--mail-dir": mail = MailRoots(mailDir: value, accountsDB: mail.accountsDB)
       case "--accounts-db": mail = MailRoots(mailDir: mail.mailDir, accountsDB: value)
+      case "--messages-dir": messages = MessagesRoots(messagesDir: value, addressBookDir: messages.addressBookDir)
+      case "--address-book-dir": messages = MessagesRoots(messagesDir: messages.messagesDir, addressBookDir: value)
       default: fail(64, "unknown flag \(flag)")
       }
     }
   #else
     guard args.count == 2 else { fail(64, "usage: valet-messages-helper serve <label>") }
   #endif
-  serve(label: args[1], socketPath: socketPath, databasePath: databasePath, mail: mail)
+  serve(label: args[1], socketPath: socketPath, databasePath: databasePath, mail: mail, messages: messages)
 case "register":
   do {
     try service.register()

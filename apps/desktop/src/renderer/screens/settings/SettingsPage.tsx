@@ -34,6 +34,7 @@ import { Failed } from '../connections/shared'
 import { DevicesSection } from './DevicesSection'
 import { EventKitSection } from './EventKitSection'
 import { MailSection } from './MailSection'
+import { MessagesSection } from './MessagesSection'
 
 const SECTIONS: readonly { readonly id: SettingsSection; readonly label: string }[] = [
   { id: 'general', label: 'General' },
@@ -44,6 +45,7 @@ const SECTIONS: readonly { readonly id: SettingsSection; readonly label: string 
   { id: 'mail', label: 'Mail' },
   { id: 'calendar', label: 'Calendar' },
   { id: 'reminders', label: 'Reminders' },
+  { id: 'messages', label: 'Messages' },
   { id: 'reset', label: 'Reset and uninstall' },
 ]
 
@@ -76,6 +78,7 @@ export function SettingsPage({ section }: { readonly section: SettingsSection })
         {section === 'mail' ? <MailSection /> : null}
         {section === 'calendar' ? <EventKitSection app="calendar" /> : null}
         {section === 'reminders' ? <EventKitSection app="reminders" /> : null}
+        {section === 'messages' ? <MessagesSection /> : null}
         {section === 'reset' ? <Reset /> : null}
       </PageBody>
     </Page>

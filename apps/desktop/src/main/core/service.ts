@@ -85,6 +85,7 @@ import {
   type MoveRecord,
   mailTools,
 } from '@valet/native-mail'
+import type { MessagesFiles } from '@valet/native-messages'
 import { addDependency, diskTarballStore } from '@valet/node-runtime'
 import type { MailAccount } from '@valet/protocols'
 import {
@@ -249,6 +250,13 @@ import {
   type MailStatus,
   type ReaderControl,
 } from './mail'
+import {
+  type MessagesAction,
+  MessagesService,
+  type MessagesSettingsPatch,
+  MessagesSettingsStore,
+  type MessagesStatus,
+} from './messages'
 import { type AppNotification, attentionTitle, Notifier } from './notifications'
 import { type FolderInstall, InstallError, installReason, PackageManager, rollbackEligible } from './packages'
 import { addsPermissions, permissionDiff } from './permission-diff'
@@ -441,6 +449,11 @@ export interface ServiceDeps {
    * (mail.reader). None: this build has no built-in Calendar or Reminders tools.
    */
   readonly eventKit?: EventKit | null
+  /**
+   * Messages on this Mac (docs/messages.md), through the same reader helper as Mail (mail.reader).
+   * None: this build has no built-in Messages tools.
+   */
+  readonly messages?: MessagesFiles | null
   /** This Mac's name, as a paired phone shows it. */
   readonly macName?: string
   /**
@@ -717,6 +730,8 @@ export class AppService {
   private mailApp: MailService | null = null
   /** Valet's built-in Calendar and Reminders tools, when this build has them. */
   private eventKitApps = new Map<EventKitApp, EventKitService>()
+  /** Valet's built-in Messages tools, when this build has them. */
+  private messagesApp: MessagesService | null = null
   /** The agents' own signed-out browser (docs/agent-browser.md); null in builds without one. */
   private agentBrowser: AgentBrowserService | null = null
   private endpoint: SessionReportingEndpoint | null = null
@@ -1192,6 +1207,25 @@ export class AppService {
         this.eventKitApps.set(app, service)
       }
     }
+    const messagesFiles = this.deps.messages ?? null
+    if (messagesFiles !== null) {
+      const service: MessagesService = new MessagesService({
+        settings: new MessagesSettingsStore(paths.messages),
+        reader: mail?.reader ?? null,
+        files: messagesFiles,
+        ...(mail?.render === undefined ? {} : { render: mail.render }),
+        audit: (call, result, durationMs) => this.auditNativeCall(call, result, durationMs),
+        now: this.deps.now,
+        changed: () => {
+          void this.refreshTools()
+            .then(() => this.remote.reopenHolding(service.adapterId))
+            .catch(() => undefined)
+          this.emit('adapters-changed')
+        },
+      })
+      await service.load().catch(() => undefined)
+      this.messagesApp = service
+    }
     const sessionBrowser = this.deps.sessionBrowser
     if (sessionBrowser !== undefined)
       this.agentBrowser = new AgentBrowserService({
@@ -1292,7 +1326,10 @@ export class AppService {
       if (enabled || known === undefined) throw new ValetError('config', 'not-found')
       return known
     }
-    const app = [...this.eventKitApps.values()].find((a) => a.adapterId === adapterId)
+    const app = [
+      ...this.eventKitApps.values(),
+      ...(this.messagesApp === null ? [] : [this.messagesApp]),
+    ].find((a) => a.adapterId === adapterId)
     if (app !== undefined) {
       // Calendar or Reminders, off now: likewise only turned off.
       const known = app.allTools().find((t) => t.declaration.name === tool)?.declaration
@@ -1316,6 +1353,7 @@ export class AppService {
     return [
       ...(this.mailApp === null ? [] : [this.mailApp]),
       ...this.eventKitApps.values(),
+      ...(this.messagesApp === null ? [] : [this.messagesApp]),
       ...(this.agentBrowser === null ? [] : [this.agentBrowser]),
     ]
   }
@@ -5637,6 +5675,14 @@ export class AppService {
         },
         clearOpPath: async () => this.afterSettings(await this.settings.setOpPath(null)),
         onePasswordAccounts: () => this.onePasswordAccounts(),
+      },
+      messages: {
+        status: async (): Promise<MessagesStatus | null> => (await this.messagesApp?.status()) ?? null,
+        update: async (patch: MessagesSettingsPatch): Promise<MessagesStatus | null> =>
+          (await this.messagesApp?.update(patch)) ?? null,
+        action: async (action: MessagesAction) => {
+          await this.messagesApp?.action(action)
+        },
       },
       eventKit: {
         status: async (app: EventKitApp): Promise<EventKitStatus | null> =>

@@ -34,6 +34,8 @@ import type {
   LoginMissingItem,
   MailSettings,
   MailStatus,
+  MessagesSettings,
+  MessagesStatus,
   MissedItem,
   OnePasswordAccount,
   PairingView,
@@ -757,6 +759,31 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       state: 'ready',
       settings,
       calendars: EVENTKIT_CALENDARS[app].map((c) => ({ ...c, allowed: allowed.has(c.id) })),
+    }
+  }
+  // Messages: the reader needs Full Disk Access once, then every conversation but the hidden ones.
+  let messagesSettings: MessagesSettings = { enabled: false, hidden: [], hideCodes: true }
+  let messagesStage: 'needs-access' | 'ready' = 'needs-access'
+  const MESSAGES_CHATS = [
+    { id: '+61400111222', name: 'Ada Example', detail: '+61400111222', last: '2026-11-26T08:00:00.000Z' },
+    { id: 'chat123456789', name: 'Climbing crew', detail: '4 people', last: '2026-11-25T19:30:00.000Z' },
+    {
+      id: 'bob@example.com',
+      name: 'Bob Sample',
+      detail: 'bob@example.com',
+      last: '2026-11-24T02:10:00.000Z',
+    },
+    { id: '72345', name: '72345', detail: null, last: '2026-11-23T11:00:00.000Z' },
+  ]
+  const messagesStatus = (): MessagesStatus => {
+    const settings = clone(messagesSettings)
+    if (!settings.enabled) return { state: 'off', settings, chats: [] }
+    if (messagesStage !== 'ready') return { state: messagesStage, settings, chats: [] }
+    const hidden = new Set(settings.hidden)
+    return {
+      state: 'ready',
+      settings,
+      chats: MESSAGES_CHATS.map((c) => ({ ...c, hidden: hidden.has(c.id) })),
     }
   }
   /** Mail's tools that are on for cloud agents (Connections › Remote). */
@@ -1772,6 +1799,25 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           emit({ type: 'grants-changed' })
         }
         return clone(opAccounts)
+      },
+    },
+    messages: {
+      async status() {
+        enter('messages.status')
+        return messagesStatus()
+      },
+      async update(patch) {
+        enter('messages.update', patch)
+        messagesSettings = {
+          ...messagesSettings,
+          ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)),
+        } as MessagesSettings
+        emit({ type: 'adapters-changed' })
+        return messagesStatus()
+      },
+      async action(action) {
+        enter('messages.action', action)
+        if (action === 'full-disk-access') messagesStage = 'ready'
       },
     },
     eventKit: {

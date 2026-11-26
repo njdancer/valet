@@ -100,24 +100,7 @@ public func parseMailRequest(_ data: Data) throws -> MailRequest {
       let db = MailDatabase(rawValue: dbName), let sql = object["sql"] as? String,
       !sql.isEmpty, sql.utf8.count <= maxSQLBytes, let raw = object["params"] as? [Any], raw.count <= maxParams
     else { throw MailFailure.invalid }
-    var params: [MailValue] = []
-    for value in raw {
-      if value is NSNull {
-        params.append(.null)
-      } else if let text = value as? String {
-        params.append(.text(text))
-      } else if let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() {
-        let double = number.doubleValue
-        if double.rounded() == double, abs(double) < 9.0e15 {
-          params.append(.integer(number.int64Value))
-        } else {
-          params.append(.real(double))
-        }
-      } else {
-        throw MailFailure.invalid
-      }
-    }
-    return .query(db, sql, params)
+    return .query(db, sql, try queryParams(raw))
   case "mail.file", "mail.list":
     guard keys == ["v", "op", "path"], let path = object["path"] as? String, path.utf8.count <= 1_024
     else { throw MailFailure.invalid }
@@ -129,6 +112,28 @@ public func parseMailRequest(_ data: Data) throws -> MailRequest {
   default:
     throw MailFailure.invalid
   }
+}
+
+/// A query's parameters from JSON: null, text or numbers (whole ones as integers); nothing else.
+func queryParams(_ raw: [Any]) throws -> [MailValue] {
+  var params: [MailValue] = []
+  for value in raw {
+    if value is NSNull {
+      params.append(.null)
+    } else if let text = value as? String {
+      params.append(.text(text))
+    } else if let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() {
+      let double = number.doubleValue
+      if double.rounded() == double, abs(double) < 9.0e15 {
+        params.append(.integer(number.int64Value))
+      } else {
+        params.append(.real(double))
+      }
+    } else {
+      throw MailFailure.invalid
+    }
+  }
+  return params
 }
 
 /// The highest V<n> folder in `mailDir` that has an Envelope Index, or nil.
@@ -292,22 +297,29 @@ func openReadOnly(_ path: String, immutable: Bool) -> OpaquePointer? {
 
 /// Runs one statement, read-only, under the authorizer. Mail keeps its index open while it runs;
 /// if the ordinary read-only open can't share its write-ahead log, the file is read as it stands.
-public func runQuery(path: String, sql: String, params: [MailValue], tables: Set<String>) throws -> (
-  [String], [[Any]]
-) {
+/// `configure` runs on the open connection before the statement is prepared (Messages adds a
+/// function there).
+public func runQuery(
+  path: String, sql: String, params: [MailValue], tables: Set<String>,
+  configure: ((OpaquePointer) -> Void)? = nil
+) throws -> ([String], [[Any]]) {
   guard FileManager.default.fileExists(atPath: path) else { throw MailFailure.unavailable }
   do {
-    return try runQuery(path: path, sql: sql, params: params, tables: tables, immutable: false)
+    return try runQuery(
+      path: path, sql: sql, params: params, tables: tables, immutable: false, configure: configure)
   } catch MailFailure.unavailable {
-    return try runQuery(path: path, sql: sql, params: params, tables: tables, immutable: true)
+    return try runQuery(
+      path: path, sql: sql, params: params, tables: tables, immutable: true, configure: configure)
   }
 }
 
-func runQuery(path: String, sql: String, params: [MailValue], tables: Set<String>, immutable: Bool) throws -> (
-  [String], [[Any]]
-) {
+func runQuery(
+  path: String, sql: String, params: [MailValue], tables: Set<String>, immutable: Bool,
+  configure: ((OpaquePointer) -> Void)?
+) throws -> ([String], [[Any]]) {
   guard let db = openReadOnly(path, immutable: immutable) else { throw MailFailure.unavailable }
   defer { sqlite3_close(db) }
+  configure?(db)
   let allowed = AllowedTables(tables)
   let context = Unmanaged.passUnretained(allowed).toOpaque()
   sqlite3_set_authorizer(db, mailAuthorizer, context)

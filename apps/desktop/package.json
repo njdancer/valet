@@ -34,6 +34,7 @@
     "@valet/mcp-server": "workspace:*",
     "@valet/native-calendar": "workspace:*",
     "@valet/native-mail": "workspace:*",
+    "@valet/native-messages": "workspace:*",
     "@valet/node-runtime": "workspace:*",
     "@valet/protocols": "workspace:*",
     "@valet/runtime": "workspace:*",
