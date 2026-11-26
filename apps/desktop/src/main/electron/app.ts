@@ -32,17 +32,7 @@ import {
   smtpBackend,
 } from '@valet/protocols'
 import { createLocalAccess } from '@valet/sandbox'
-import {
-  app,
-  BrowserWindow,
-  clipboard,
-  dialog,
-  nativeImage,
-  powerMonitor,
-  protocol,
-  session,
-  shell,
-} from 'electron'
+import { app, BrowserWindow, clipboard, dialog, powerMonitor, protocol, session, shell } from 'electron'
 import { href } from '../../renderer/lib/routes'
 import type { HashRoute } from '../../shared/api'
 import { builtinPackages } from '../adapters'
@@ -705,16 +695,6 @@ async function main(): Promise<void> {
                 .catch(() => null)) ?? (await ghCliToken().catch(() => null)),
           },
     macName: macName(process.env),
-    // iPhone home screen tools: a real phone only on a Mac, never in the demo or end-to-end builds.
-    iphone:
-      process.platform === 'darwin' && !mode.demo && !mode.e2e
-        ? {
-            shrink: (png) => {
-              const image = nativeImage.createFromBuffer(Buffer.from(png))
-              return image.isEmpty() ? png : image.resize({ width: 64, quality: 'best' }).toPNG()
-            },
-          }
-        : null,
     // Each open its own in-memory partition, so nothing a page left behind is there the next time.
     scratch: (draftId, rules, allowPrivate) =>
       openElectronScratchBrowser({

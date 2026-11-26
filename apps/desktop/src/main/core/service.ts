@@ -233,7 +233,6 @@ import { FeedbackDeskImpl } from './feedback'
 import { ensurePrivateDir, JsonDocument } from './files'
 import { carriesOver, checkGrantRequest, grantInfo } from './grants'
 import type { AppWindow, MainApi } from './ipc'
-import { type IPhoneDeps, IPhoneService } from './iphone'
 import {
   KEYS_CHANGED_ID,
   KeysNotice,
@@ -457,11 +456,6 @@ export interface ServiceDeps {
     admin: AdminReader,
     authoring: Authoring | null,
   ) => Promise<SessionReportingEndpoint>
-  /**
-   * The iPhone home screen tools (docs/iphone-home-screen.md): on a Mac, with Electron's icon
-   * shrinker; a fake phone in tests. None: this build has no iPhone tools.
-   */
-  readonly iphone?: Pick<IPhoneDeps, 'shrink' | 'phone'> | null
   /**
    * Opens a draft's scratch browser (docs/authoring-tools.md#the-scratch-browser-pr-2): signed
    * out, in memory, through a proxy that refuses private addresses once resolved. None in tests
@@ -725,8 +719,6 @@ export class AppService {
   private eventKitApps = new Map<EventKitApp, EventKitService>()
   /** The agents' own signed-out browser (docs/agent-browser.md); null in builds without one. */
   private agentBrowser: AgentBrowserService | null = null
-  /** The iPhone home screen tools; null in builds without them. */
-  private iphone: IPhoneService | null = null
   private endpoint: SessionReportingEndpoint | null = null
   /** The remote listener, its policy and the kill switch (relay.md). Off unless the person turns it on. */
   readonly remote: RemoteAccess
@@ -1213,27 +1205,6 @@ export class AppService {
         now: this.deps.now,
         timers: this.deps.timers,
       })
-    const iphone = this.deps.iphone
-    if (iphone != null) {
-      this.iphone = new IPhoneService({
-        ...iphone,
-        dir: join(paths.dir, 'iphone'),
-        now: this.deps.now,
-        audit: (call, result, durationMs) => this.auditNativeCall(call, result, durationMs),
-        notify: (text) => this.notifier.iphone(text),
-        approveWrite: (preview, proposalHash) =>
-          this.approveHere('irreversible-call', {
-            adapterId: 'iphone',
-            adapterHash: proposalHash,
-            tool: 'apply',
-            callId: `iphone_${proposalHash.slice(0, 24)}`,
-            confirmationId: `cf_iphone_${proposalHash.slice(0, 24)}`,
-            preview: [...preview],
-          }).catch(() => false),
-        timers: this.deps.timers,
-      })
-      await this.iphone.start().catch(() => undefined)
-    }
     this.caller = new RuntimeToolCaller(
       host,
       {
@@ -1343,7 +1314,6 @@ export class AppService {
       ...(this.mailApp === null ? [] : [this.mailApp]),
       ...this.eventKitApps.values(),
       ...(this.agentBrowser === null ? [] : [this.agentBrowser]),
-      ...(this.iphone === null ? [] : [this.iphone]),
     ]
   }
 
@@ -1442,7 +1412,6 @@ export class AppService {
     this.approvalBroker?.stop()
     this.handoffs.closeAll()
     this.agentBrowser?.closeAll()
-    this.iphone?.stop()
     this.mail?.close()
     this.notifier.clear()
     if (this.missedTimer !== null) this.deps.timers.clearTimeout(this.missedTimer)
