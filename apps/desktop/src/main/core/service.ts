@@ -2666,7 +2666,7 @@ export class AppService {
       this.drivers.delete(adapterId)
       this.installed = this.installed.filter((a) => a.definition.manifest.id !== adapterId)
       await driver?.close().catch(() => undefined)
-      await this.refreshTools()
+      await this.refreshToolsOf(adapterId)
       // Waiting requests about it end; its approvals and their evidence go.
       await this.approvalBroker?.withdrawAdapter(adapterId).catch(() => 0)
       await this.approvalBroker?.revoke('adapter-install', (s) => s.adapterId === adapterId).catch(() => 0)
@@ -2801,7 +2801,7 @@ export class AppService {
     // Swapped and applied: the version it replaces loses its approval, as any signed install's
     // would. Last, so the rolled-back version reads as approved as soon as it is in use.
     await this.retireOthers(adapterId, hash)
-    await this.refreshTools()
+    await this.refreshToolsOf(adapterId)
   }
 
   /**
@@ -3366,7 +3366,7 @@ export class AppService {
     const at = new Date(this.deps.now()).toISOString()
     await this.snapshots.put(adapterId, adapter, at)
     this.approvedAt.set(`${adapterId}:${adapterHash}`, at)
-    await this.refreshTools()
+    await this.refreshToolsOf(adapterId)
   }
 
   /**
@@ -4548,6 +4548,17 @@ export class AppService {
     this.emit('adapters-changed')
   }
 
+  /**
+   * After one adapter's tools came, went or changed (approved, rejected, rolled back, removed):
+   * re-lists, then reopens the sessions of agents holding its tools. claude.ai and Claude Code keep
+   * a session's first tool list, so without this an agent connected while the site waited for
+   * approval never sees its tools.
+   */
+  private async refreshToolsOf(adapterId: string): Promise<void> {
+    await this.refreshTools()
+    await this.remote.reopenHolding(adapterId).catch(() => undefined)
+  }
+
   private async refreshTools(): Promise<void> {
     await this.caller?.refresh()
     try {
@@ -5201,7 +5212,7 @@ export class AppService {
           // Only tightens: the evidence goes first, so a failed store write still leaves it off.
           await this.revokeInstall(adapterId, hash)
           await this.approvals.reject(adapterId, hash, adapter.definition.manifest.version)
-          await this.refreshTools()
+          await this.refreshToolsOf(adapterId)
         },
       },
       grants: {

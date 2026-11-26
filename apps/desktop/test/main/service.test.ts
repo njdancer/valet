@@ -404,6 +404,19 @@ describe('signed installs (docs/approval-broker.md)', () => {
     )
   })
 
+  it('reopens the sessions of agents holding the site’s tools once it is approved or rejected', async () => {
+    const s = await setup()
+    const remote = (s.service as unknown as { remote: RemoteAccess }).remote
+    const reopened: string[] = []
+    remote.reopenHolding = async (adapter: string) => {
+      reopened.push(adapter)
+    }
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    expect(reopened).toEqual(['shop'])
+    await s.api.approvals.reject('shop', s.adapter.hash)
+    expect(reopened).toEqual(['shop', 'shop'])
+  })
+
   it('ignores an approval written into approvals.json by hand', async () => {
     const first = await setup()
     const hash = first.adapter.hash
