@@ -1316,6 +1316,22 @@ async function setup() {
       }
       const download = downloads.find((d) => d.status !== 'downloading')
       const stillOn = (await browser.ariaSnapshot()).url
+      const consoleAll = browser.consoleMessages('debug').map((m) => `${m.level}:${m.text}`)
+      const consoleErrors = browser.consoleMessages('error').map((m) => m.text)
+      const isolated = await browser.evaluate('() => [document.title, typeof window.pageGlobal]')
+      const inPage = await browser.evaluate('() => window.pageGlobal', { world: 'page' })
+      const onElement = await browser.evaluate('(el) => el.textContent', { target: '#dst' })
+      const marked = await browser.evaluate("() => document.querySelectorAll('[data-valet-' + ']').length")
+      const thrown = await browser.evaluate('() => { throw new Error("nope") }').then(
+        () => 'ok',
+        (e: { detail?: string }) => e.detail ?? 'failed',
+      )
+      const cookies = (await browser.cookies()).map((c) => `${c.name}=${c.value}`)
+      const storage = await browser.storage()
+      const agentEntry = browser
+        .entries()
+        .find((e) => e.url.endsWith('/agent') && e.resourceType === 'Document')
+      const agentBody = agentEntry === undefined ? null : await browser.body(agentEntry.seq)
       const narrow = await browser.resize(400, 600)
       await browser.go(site.url('site.test', '/scratch'))
       const postsBefore = site.posts.length
@@ -1339,6 +1355,16 @@ async function setup() {
             ? { name: download.name, mimeType: download.mimeType, text: download.data.toString('utf8') }
             : (download ?? null),
         stillOn,
+        consoleAll,
+        consoleErrors,
+        isolated: isolated.result,
+        inPage: inPage.result,
+        onElement: onElement.result,
+        marked: marked.result,
+        thrown,
+        cookies,
+        storage,
+        agentBody: agentBody?.text.includes('Agent page') ?? false,
         posted,
         back: back.url,
       }

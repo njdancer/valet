@@ -2691,6 +2691,12 @@ describe('remote access', () => {
           press: page,
           screenshot: async () => ({ url: 'https://news.example.com/', png: Buffer.from('png') }),
           upload: page,
+          consoleMessages: () => [],
+          evaluate: async () => ({ result: 'null', cut: false }),
+          cookies: async () => [],
+          storage: async () => ({ origin: '', local: [], session: [] }),
+          entries: () => [],
+          body: async () => null,
           // The first answer after a page loads brings a download with it.
           takeDownloads: () =>
             gave++ === 0
@@ -2734,6 +2740,12 @@ describe('remote access', () => {
       'drag',
       'wait_for',
       'resize',
+      'evaluate',
+      'console_messages',
+      'network_requests',
+      'network_request',
+      'cookie_list',
+      'storage_list',
       'take_screenshot',
       'file_upload',
     ])

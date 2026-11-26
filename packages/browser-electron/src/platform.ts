@@ -215,6 +215,20 @@ export interface FrameHandle {
    * the globals the runtime's scripts rely on. Rejects in a subframe.
    */
   runAdapter(code: string): Promise<unknown>
+  /**
+   * Runs an agent's script in the page's own world, with the page's globals, on the main frame: an
+   * agent's session only (browser_evaluate with world "page"). Rejects in a subframe.
+   */
+  runPage?(code: string): Promise<unknown>
+}
+
+/** One line the page wrote to its console. */
+export interface ConsoleMessage {
+  readonly level: 'debug' | 'info' | 'warning' | 'error'
+  readonly text: string
+  /** The script it came from, and its line. */
+  readonly source: string
+  readonly line: number
 }
 
 /** A trusted mouse event. Buttons and clicks count only on down and up. */
@@ -319,6 +333,8 @@ export interface BrowserSurface {
    * DevTools protocol (the scratch browser's network log). Must be called before the first load.
    */
   watchNetwork(listener: (response: NetworkResponse) => void): Promise<void>
+  /** Calls `listener` with every console message the page's frames write from now on. No DevTools. */
+  onConsole(listener: (message: ConsoleMessage) => void): void
   /** The body of a response watchNetwork reported, while the browser still holds it; null if not. */
   responseBody(id: string): Promise<{ readonly body: string; readonly base64: boolean } | null>
   /**

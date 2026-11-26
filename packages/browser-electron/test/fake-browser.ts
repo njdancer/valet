@@ -5,6 +5,7 @@ import type { KeyPress } from '../src/keys'
 import type {
   BrowserPlatform,
   BrowserSurface,
+  ConsoleMessage,
   CookieRecord,
   CookieSetDetails,
   DownloadEvent,
@@ -246,6 +247,12 @@ export class FakeSurface implements BrowserSurface {
 
   async watchNetwork(listener: (response: NetworkResponse) => void): Promise<void> {
     this.networkListeners.push(listener)
+  }
+
+  readonly consoleListeners: ((message: ConsoleMessage) => void)[] = []
+
+  onConsole(listener: (message: ConsoleMessage) => void): void {
+    this.consoleListeners.push(listener)
   }
 
   async responseBody(id: string): Promise<{ readonly body: string; readonly base64: boolean } | null> {
