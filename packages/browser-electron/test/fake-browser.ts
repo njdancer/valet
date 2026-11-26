@@ -165,6 +165,23 @@ export class FakeSurface implements BrowserSurface {
   readonly history: string[] = []
   readonly sizes: { width: number; height: number }[] = []
 
+  readonly screenshots: { fullPage: boolean; clip: unknown }[] = []
+  /** What screenshot() answers. */
+  picture: Buffer | null = Buffer.from('png')
+
+  async screenshot(options: {
+    readonly fullPage: boolean
+    readonly clip: {
+      readonly x: number
+      readonly y: number
+      readonly width: number
+      readonly height: number
+    } | null
+  }): Promise<Buffer | null> {
+    this.screenshots.push({ fullPage: options.fullPage, clip: options.clip })
+    return this.picture
+  }
+
   canGoBack(): boolean {
     return this.history.length > 0
   }

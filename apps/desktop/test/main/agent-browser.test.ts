@@ -64,6 +64,11 @@ function browser(): SessionBrowser & {
     press: page('press'),
     select: page('select'),
     waitFor: async (condition: unknown) => ({ ...(await page('waitFor')(condition)), met: false }),
+    screenshot: async (options: unknown) => {
+      b.calls.push({ method: 'screenshot', args: [options] })
+      return { url: 'https://news.example.com/', png: Buffer.from('png!') }
+    },
+    upload: page('upload'),
     url: () => 'https://news.example.com/',
     isClosed: () => b.closedNow,
     onClosed: (listener: () => void) => void listeners.push(listener),
@@ -156,9 +161,20 @@ describe('the agents’ browser tools', () => {
       'drag',
       'wait_for',
       'resize',
+      'take_screenshot',
+      'file_upload',
     ])
     const writes = tools.filter((t) => t.declaration.sideEffect === 'write').map((t) => t.declaration.name)
-    expect(writes).toEqual(['click', 'type', 'fill_form', 'press_key', 'select_option', 'hover', 'drag'])
+    expect(writes).toEqual([
+      'click',
+      'type',
+      'fill_form',
+      'press_key',
+      'select_option',
+      'hover',
+      'drag',
+      'file_upload',
+    ])
     expect(tools.every((t) => t.adapterId === 'browser')).toBe(true)
     expect(tools.some((t) => /grant|approve/i.test(t.declaration.name))).toBe(false)
   })
@@ -333,6 +349,54 @@ describe('a browser session', () => {
     expect((await call('wait_for', { session, text: 'a', textGone: 'b' })).output['problem']).toMatch(
       /not both/,
     )
+  })
+
+  it('sends a screenshot back as a picture, never in its output', async () => {
+    const { call, create, opened } = setup()
+    const session = await create()
+    const result = (await call('take_screenshot', { session, target: 'e1', fullPage: true })) as unknown as {
+      output: unknown
+      content: unknown
+    }
+    expect(result.output).toEqual({ session, url: { fromSite: 'https://news.example.com/' }, problem: null })
+    expect(result.content).toEqual([{ kind: 'image', mimeType: 'image/png', data: Buffer.from('png!') }])
+    expect(JSON.stringify(result.output)).not.toContain('png!')
+    expect(opened[0]?.browser.calls.at(-1)).toEqual({
+      method: 'screenshot',
+      args: [{ target: 'e1', fullPage: true }],
+    })
+    const missing = await call('take_screenshot', { session: 's99999999' })
+    expect(missing.output).toMatchObject({ url: null, problem: expect.stringMatching(/No open session/) })
+  })
+
+  it('uploads files from base64 and answers with the whole page', async () => {
+    const { call, create, opened } = setup()
+    const session = await create()
+    const result = await call('file_upload', {
+      session,
+      target: 'e5',
+      files: [
+        { name: 'note.txt', mimeType: 'text/plain', content: Buffer.from('hello').toString('base64') },
+        { name: 'blob.bin', content: Buffer.from([1, 2, 3]).toString('base64') },
+      ],
+    })
+    expect(result.output['problem']).toBeNull()
+    expect((result.output['page'] as { snapshot: unknown }).snapshot).toEqual({ fromSite: PAGE })
+    expect(opened[0]?.browser.calls.at(-1)).toEqual({
+      method: 'upload',
+      args: [
+        'e5',
+        [
+          { name: 'note.txt', mimeType: 'text/plain', data: Buffer.from('hello') },
+          { name: 'blob.bin', mimeType: 'application/octet-stream', data: Buffer.from([1, 2, 3]) },
+        ],
+      ],
+    })
+    expect((await call('file_upload', { session, target: 'e5', files: [] })).status).toBe('failed')
+    expect(
+      (await call('file_upload', { session, target: 'e5', files: [{ name: 'a', content: 'not base64!' }] }))
+        .status,
+    ).toBe('failed')
   })
 
   it('belongs to the agent that made it', async () => {

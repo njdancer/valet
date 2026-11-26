@@ -166,6 +166,31 @@ const CHECKED = `(target) => {
   } catch (e) { return { error: 'not-checkbox' } }
 }`
 
+/**
+ * Sets a file input's files, as Playwright's setInputFiles does. A file input is often hidden
+ * behind a styled button, so it isn't refused for being hidden; a label leads to its input.
+ */
+const UPLOAD = `(args) => {
+  const v = globalThis.${GLOBAL}
+  const found = (${ELEMENT})(args.target)
+  if (found.error) return found
+  const el = v.retarget(found, 'follow-label') || found
+  const result = v.setInputFiles(el, args.files)
+  if (typeof result === 'string') return { error: 'not-file-input' }
+  return { done: true }
+}`
+
+/** An element's box in the document, for a picture of it alone. */
+const BOX = `(target) => {
+  const found = (${ELEMENT})(target)
+  if (found.error) return found
+  if (globalThis.__valetHidden(found)) return { error: 'hidden' }
+  found.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' })
+  const r = found.getBoundingClientRect()
+  if (r.width < 1 || r.height < 1) return { error: 'hidden' }
+  return { x: r.left + scrollX, y: r.top + scrollY, width: r.width, height: r.height }
+}`
+
 /** Whether the text shows on the page, as a person would read it. */
 const TEXT = `(text) => {
   const body = document.body
@@ -192,6 +217,13 @@ export const ariaSelectScript = (args: {
 }): string => `(${SELECT})(${jsonLiteral(args)})`
 
 export const ariaCheckedScript = (target: string): string => `(${CHECKED})(${jsonLiteral(target)})`
+
+export const ariaUploadScript = (args: {
+  readonly target: string
+  readonly files: readonly { readonly name: string; readonly mimeType: string; readonly buffer: string }[]
+}): string => `(${UPLOAD})(${jsonLiteral(args)})`
+
+export const ariaBoxScript = (target: string): string => `(${BOX})(${jsonLiteral(target)})`
 
 export const textShownScript = (text: string): string => `(${TEXT})(${jsonLiteral(text)})`
 

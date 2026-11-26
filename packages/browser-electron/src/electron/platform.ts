@@ -35,6 +35,9 @@ import type {
   UserAgentOverride,
 } from '../platform'
 
+/** The longest a screenshot may take before it is given up. */
+const SCREENSHOT_TIMEOUT_MS = 15_000
+
 // keyDown and keyUp need a key code, which Electron derives from the character on a US layout.
 // Anything outside printable ASCII has none, so it goes as a char event alone.
 const US_KEY = /^[\x20-\x7e]$/
@@ -475,6 +478,41 @@ class ElectronSurface implements BrowserSurface {
     this.contents.sendInputEvent({ type: 'keyDown', keyCode: key.keyCode, modifiers })
     if (key.char !== null) this.contents.sendInputEvent({ type: 'char', keyCode: key.char, modifiers })
     this.contents.sendInputEvent({ type: 'keyUp', keyCode: key.keyCode, modifiers })
+  }
+
+  async screenshot(options: {
+    readonly fullPage: boolean
+    readonly clip: {
+      readonly x: number
+      readonly y: number
+      readonly width: number
+      readonly height: number
+    } | null
+  }): Promise<Buffer | null> {
+    const contents = this.contents
+    if (contents.isDestroyed() || !contents.debugger.isAttached()) return null
+    // A hidden window draws no frames, so a capture would wait for one forever. Subscribing to its
+    // frames makes it draw (still hidden) while the picture is taken; and it is given up after a
+    // while rather than hang the call.
+    let timer: NodeJS.Timeout | undefined
+    try {
+      contents.beginFrameSubscription(false, () => undefined)
+      const capture = contents.debugger.sendCommand('Page.captureScreenshot', {
+        format: 'png',
+        captureBeyondViewport: options.fullPage || options.clip !== null,
+        ...(options.clip === null ? {} : { clip: { ...options.clip, scale: 1 } }),
+      }) as Promise<{ data?: unknown }>
+      const late = new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), SCREENSHOT_TIMEOUT_MS)
+      })
+      const answer = await Promise.race([capture, late])
+      return answer !== null && typeof answer.data === 'string' ? Buffer.from(answer.data, 'base64') : null
+    } catch {
+      return null
+    } finally {
+      clearTimeout(timer)
+      if (!contents.isDestroyed()) contents.endFrameSubscription()
+    }
   }
 
   canGoBack(): boolean {

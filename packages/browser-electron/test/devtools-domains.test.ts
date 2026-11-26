@@ -24,6 +24,9 @@ const ALLOWED = new Set([
   // or auth page.
   'Network.enable',
   'Network.getResponseBody',
+  // An agent's screenshot (take_screenshot): it enables no domain. A whole-page or element picture
+  // grows the viewport while it is taken, which a page could see as a resize; only in sessions.
+  'Page.captureScreenshot',
 ])
 
 // A quoted `Domain.method` string: how every command is named, whether passed straight to

@@ -60,7 +60,7 @@ test('Playwright’s snapshot leaves out every kind of hidden text a page aims a
   expect(yaml).toMatch(/- link \[ref=e\d+\] \[cursor=pointer\]:\n(.*\n)*?\s+- img "Cart"/)
 })
 
-test('in a session, forms post, back goes back, checkboxes tick and the window resizes', async () => {
+test('in a session, forms post, back goes back, checkboxes tick, the window resizes, pictures and uploads work', async () => {
   const r = (await scenario(app, 'session')) as Record<string, unknown>
   expect(r.ticked).toMatch(/checkbox "Agree" \[checked\]/)
   expect(r.again).toBe(true)
@@ -68,6 +68,15 @@ test('in a session, forms post, back goes back, checkboxes tick and the window r
   expect(r.unticked).not.toMatch(/checkbox "Agree" \[checked\]/)
   expect(r.notBox).toMatch(/isn’t a checkbox/)
   expect(String(r.narrow)).toContain('/agent')
+  // Pictures: the window, the whole page (taller, past the spacer) and one 120x60 element.
+  const shot = (k: string) => r[k] as { png: string; width: number; height: number }
+  expect(shot('windowShot').png).toBe('PNG')
+  expect(shot('fullShot').height).toBeGreaterThan(3000)
+  expect(shot('fullShot').height).toBeGreaterThan(shot('windowShot').height)
+  expect(shot('elementShot')).toEqual({ png: 'PNG', width: 120, height: 60 })
+  // Files into a hidden file input: the page reads them, as from its dialog.
+  expect(r.uploaded).toContain('uploaded: a.txt=first,b.txt=second')
+  expect(r.notInput).toMatch(/isn’t a file input/)
   expect(r.posted).toBe(1)
   expect(String(r.back)).toMatch(/\/scratch$/)
 })

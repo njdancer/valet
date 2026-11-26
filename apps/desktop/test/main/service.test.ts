@@ -2688,6 +2688,8 @@ describe('remote access', () => {
           fill: page,
           check: page,
           press: page,
+          screenshot: async () => ({ url: 'https://news.example.com/', png: Buffer.from('png') }),
+          upload: page,
           select: page,
           waitFor: async () => ({ ...(await page()), met: true }),
           url: () => 'https://news.example.com/',
@@ -2718,18 +2720,22 @@ describe('remote access', () => {
       'drag',
       'wait_for',
       'resize',
+      'take_screenshot',
+      'file_upload',
     ])
     expect(tools.every((t) => !t.enabled)).toBe(true)
     await s.service.remote.setHosts([HOST])
     await s.service.remote.setEnabled(true)
     const port = Number(new URL(s.service.remote.status().url as string).port)
-    const agent = approvedClient(s, ['browser.session_create', 'browser.navigate'])
+    const agent = approvedClient(s, ['browser.session_create', 'browser.navigate', 'browser.take_screenshot'])
     await s.api.remote.setTool('browser', 'session_create', true)
     await s.api.remote.setTool('browser', 'navigate', true)
+    await s.api.remote.setTool('browser', 'take_screenshot', true)
     const client = await remoteClient(port, agent.token)
     expect((await client.listTools()).tools.map((t) => t.name)).toEqual([
       'browser_session_create',
       'browser_navigate',
+      'browser_take_screenshot',
     ])
     const created = await client.callTool({ name: 'browser_session_create', arguments: {} })
     const session = (created.structuredContent as { session: string }).session
@@ -2744,6 +2750,14 @@ describe('remote access', () => {
       page: { title: { fromSite: 'News' }, snapshot: { fromSite: '- heading "News" [level=1] [ref=e1]' } },
       problem: null,
     })
+    // A screenshot comes back as a picture beside the output, not inside it.
+    const shot = await client.callTool({ name: 'browser_take_screenshot', arguments: { session } })
+    expect(shot.content).toContainEqual({
+      type: 'image',
+      mimeType: 'image/png',
+      data: Buffer.from('png').toString('base64'),
+    })
+    expect(JSON.stringify(shot.structuredContent)).not.toContain(Buffer.from('png').toString('base64'))
     expect(opened).toEqual([{ closed: false }])
     expect(
       readAudit(s.paths.audit).some((e) => e.type === 'tool-called' && e['adapterId'] === 'browser'),
