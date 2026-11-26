@@ -28,6 +28,8 @@ export default defineConfig({
       exclude: [
         '**/index.ts',
         '**/*.d.ts',
+        // Playwright's in-page script, vendored as one string (scripts/vendor-playwright.mjs).
+        'packages/browser-electron/src/generated/**',
         'packages/browser-electron/src/electron/**',
         // The desktop app's Electron glue, as above: covered by its smoke test and e2e suite.
         'apps/desktop/src/main/electron/**',

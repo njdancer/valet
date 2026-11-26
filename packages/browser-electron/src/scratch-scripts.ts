@@ -52,7 +52,7 @@ const PATH = `(el) => {
 
 // Hidden is anything a person looking at the page can't read: not rendered, see-through, too small,
 // clipped away or placed off the page. Pages hide instructions for agents in all of these.
-const HIDDEN = `(el) => {
+export const HIDDEN = `(el) => {
   if (el.hidden || el.getAttribute('aria-hidden') === 'true') return true
   const style = getComputedStyle(el)
   if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return true

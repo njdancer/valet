@@ -14,7 +14,8 @@
       "!docs/mockups/vendor",
       "!.claude",
       "!packages/ui/src/styles/tokens.css",
-      "!packages/ui/src/styles/theme.css"
+      "!packages/ui/src/styles/theme.css",
+      "!packages/browser-electron/src/generated"
     ]
   },
   "css": { "parser": { "tailwindDirectives": true } },
