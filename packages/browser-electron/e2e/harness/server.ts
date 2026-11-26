@@ -212,6 +212,7 @@ function routes(
         <div style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div></div>
         <p id="pressed">pressed: none</p>
         <label for="up">Attach</label><input id="up" type="file" multiple style="display:none"><p id="uploaded">uploaded: none</p>
+        <a id="report" href="/report.csv" style="display:inline-block;width:100px;height:30px">Report</a>
         <script>
           const text = (id, value) => { document.getElementById(id).textContent = value }
           document.getElementById('live').addEventListener('keydown', (e) => text('keys', document.getElementById('keys').textContent + e.key))
@@ -229,6 +230,11 @@ function routes(
       ),
     }
   }
+  if (host === 'site.test' && path === '/report.csv')
+    return {
+      headers: { 'content-type': 'text/csv', 'content-disposition': 'attachment; filename="../report.csv"' },
+      body: 'a,b\n1,2\n',
+    }
   if (host === 'site.test' && path === '/agent-results')
     return { body: page('Results', `<p>Results for ${escapeHtml(query.get('q') ?? '')}</p>`) }
   if (host === 'site.test' && path === '/scratch-next') return { body: page('Next', '<p>Second page</p>') }

@@ -2658,6 +2658,7 @@ describe('remote access', () => {
 
   it('offers the agents’ browser to cloud agents, audits each call, and closes it on pause', async () => {
     const opened: { closed: boolean }[] = []
+    let gave = 0
     const s = await setup({
       sessionBrowser: async (rules) => {
         const entry = { closed: false }
@@ -2690,6 +2691,19 @@ describe('remote access', () => {
           press: page,
           screenshot: async () => ({ url: 'https://news.example.com/', png: Buffer.from('png') }),
           upload: page,
+          // The first answer after a page loads brings a download with it.
+          takeDownloads: () =>
+            gave++ === 0
+              ? [
+                  {
+                    status: 'ready' as const,
+                    id: 'x1',
+                    name: 'report.csv',
+                    mimeType: 'text/csv',
+                    data: Buffer.from('a,b\n'),
+                  },
+                ]
+              : [],
           select: page,
           waitFor: async () => ({ ...(await page()), met: true }),
           url: () => 'https://news.example.com/',
@@ -2750,6 +2764,15 @@ describe('remote access', () => {
       page: { title: { fromSite: 'News' }, snapshot: { fromSite: '- heading "News" [level=1] [ref=e1]' } },
       problem: null,
     })
+    // A download: an address on the Mac's public name, which the agent's own fetch reads.
+    const [download] = (result.structuredContent as { downloads: { url: string }[] }).downloads
+    expect(download?.url).toMatch(
+      new RegExp(`^https://${HOST.replace(/\./g, '\\.')}/d/[A-Za-z0-9_-]{24}/report\\.csv$`),
+    )
+    const fetched = await tunnelFetch(port, HOST)(download?.url ?? '')
+    expect(fetched.status).toBe(200)
+    expect(fetched.headers.get('content-type')).toBe('text/csv')
+    expect(await fetched.text()).toBe('a,b\n')
     // A screenshot comes back as a picture beside the output, not inside it.
     const shot = await client.callTool({ name: 'browser_take_screenshot', arguments: { session } })
     expect(shot.content).toContainEqual({

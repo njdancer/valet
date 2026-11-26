@@ -26,6 +26,7 @@ import { partitionName } from './partitions'
 import type {
   BrowserPlatform,
   BrowserSurface,
+  DownloadEvent,
   NetworkResponse,
   OutgoingRequest,
   PartitionSession,
@@ -81,8 +82,37 @@ export const SCRATCH_LIMITS = {
   uploadBytes: 10 * 1024 * 1024,
   /** A picture bigger than this, as PNG, is refused: a smaller part of the page fits. */
   screenshotBytes: 6 * 1024 * 1024,
+  /** A session's download bigger than this is cancelled. */
+  downloadBytes: 50 * 1024 * 1024,
   dragSteps: 5,
 } as const
+
+/** What became of a session's download, for the agent: still coming, ready, or failed. */
+export type DownloadNews =
+  | { readonly status: 'downloading'; readonly id: string; readonly name: string }
+  | {
+      readonly status: 'ready'
+      readonly id: string
+      readonly name: string
+      readonly mimeType: string
+      readonly data: Buffer
+    }
+  | {
+      readonly status: 'failed'
+      readonly id: string
+      readonly name: string
+      readonly reason: 'too-large' | 'cancelled' | 'interrupted'
+    }
+
+/** A file name that names nothing but itself: no folders, no control characters. */
+export function safeFileName(name: string): string {
+  return (
+    [...name]
+      .map((c) => (c === '/' || c === '\\' || c < ' ' ? '_' : c))
+      .join('')
+      .slice(0, 200) || 'file'
+  )
+}
 
 /** What the app decides; the browser only asks. */
 export interface ScratchRules {
@@ -195,6 +225,8 @@ export class ScratchBrowser {
   private apiDone = 0
   /** The last snapshot's YAML and the document it was of, for deltas. */
   private lastYaml: { readonly frame: string; readonly url: string; readonly yaml: string } | null = null
+  /** A session's downloads not yet handed on (takeDownloads). */
+  private readonly downloads = new Map<string, DownloadNews>()
 
   private constructor(
     private readonly options: ScratchOptions,
@@ -212,6 +244,9 @@ export class ScratchBrowser {
     session.setUserAgent(userAgent, LANGUAGES)
     let self: ScratchBrowser | null = null
     session.filterRequests((request) => (self === null ? false : self.allow(request)))
+    // Only a session keeps what it downloads; any other scratch browser refuses downloads.
+    if (options.rules.session === true)
+      session.acceptDownloads(SCRATCH_LIMITS.downloadBytes, (event) => self?.downloaded(event))
     session.onCookieChanged((cookie) => {
       if (cookie.value.length >= 6) self?.cookieValues.add(cookie.value)
     })
@@ -277,6 +312,31 @@ export class ScratchBrowser {
     return this.closed
   }
 
+  /**
+   * The session's downloads since the last call: each one still coming (every time, until it ends),
+   * then once ready with its bytes or once failed. Nothing is kept after it is handed on.
+   */
+  takeDownloads(): readonly DownloadNews[] {
+    const news = [...this.downloads.values()]
+    for (const item of news) if (item.status !== 'downloading') this.downloads.delete(item.id)
+    return news
+  }
+
+  private downloaded(event: DownloadEvent): void {
+    if (this.closed) return
+    const name = safeFileName(event.name)
+    if (event.kind === 'started') this.downloads.set(event.id, { status: 'downloading', id: event.id, name })
+    else if (event.kind === 'done')
+      this.downloads.set(event.id, {
+        status: 'ready',
+        id: event.id,
+        name,
+        mimeType: event.mimeType.slice(0, 100) || 'application/octet-stream',
+        data: event.data,
+      })
+    else this.downloads.set(event.id, { status: 'failed', id: event.id, name, reason: event.reason })
+  }
+
   onClosed(listener: () => void): void {
     if (this.closed) listener()
     else this.closers.push(listener)
@@ -285,6 +345,7 @@ export class ScratchBrowser {
   close(): void {
     if (this.closed) return
     this.closed = true
+    this.downloads.clear()
     if (!this.surface.isDestroyed()) this.surface.destroy()
     void this.proxy.close().catch(() => undefined)
     for (const listener of this.closers.splice(0)) listener()
@@ -581,11 +642,7 @@ export class ScratchBrowser {
     if (files.reduce((sum, f) => sum + f.data.length, 0) > SCRATCH_LIMITS.uploadBytes)
       throw new ScratchError('Those files are more than the browser uploads at once (10 MB).')
     const payload = files.map((f) => ({
-      name:
-        [...f.name]
-          .map((c) => (c === '/' || c === '\\' || c < ' ' ? '_' : c))
-          .join('')
-          .slice(0, 200) || 'file',
+      name: safeFileName(f.name),
       mimeType: f.mimeType.slice(0, 100),
       buffer: f.data.toString('base64'),
     }))

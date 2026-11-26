@@ -1,6 +1,11 @@
 // BrowserPlatform over real Electron. Kept thin: every decision lives in the pure modules, and this
 // file only forwards. It is covered by the e2e suite, not unit tests.
 
+import { randomUUID } from 'node:crypto'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   app,
   BrowserWindow,
@@ -17,6 +22,7 @@ import type {
   BrowserSurface,
   CookieRecord,
   CookieSetDetails,
+  DownloadEvent,
   FixtureResponse,
   FrameHandle,
   KeyEvents,
@@ -83,6 +89,8 @@ class ElectronPartition implements PartitionSession {
   private readonly headers: [string, string][] = []
   private watcher: ((response: ObservedResponse) => void) | null = null
   private listening = false
+  private downloads: { readonly maxBytes: number; readonly listener: (event: DownloadEvent) => void } | null =
+    null
 
   constructor(private readonly ses: Session) {}
 
@@ -93,7 +101,15 @@ class ElectronPartition implements PartitionSession {
   harden(): void {
     this.ses.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
     this.ses.setPermissionCheckHandler(() => false)
-    this.ses.on('will-download', (event) => event.preventDefault())
+    this.ses.on('will-download', (event, item) => {
+      const accept = this.downloads
+      if (accept === null) event.preventDefault()
+      else keepDownload(item, accept.maxBytes, accept.listener)
+    })
+  }
+
+  acceptDownloads(maxBytes: number, listener: (event: DownloadEvent) => void): void {
+    this.downloads = { maxBytes, listener }
   }
 
   filterRequests(allow: (request: OutgoingRequest) => boolean | Promise<boolean>): void {
@@ -271,6 +287,55 @@ class ElectronPartition implements PartitionSession {
     // A removal (expired, overwritten, evicted, explicit) carries the value that was removed.
     this.ses.cookies.on('changed', (_event, cookie) => listener(cookie))
   }
+}
+
+/**
+ * Saves one download to a fresh temporary folder (never where the person keeps files, and never
+ * with a save dialog: the path is set before will-download returns), reads it into memory when it
+ * is done, and deletes the folder whatever happened.
+ */
+function keepDownload(
+  item: Electron.DownloadItem,
+  maxBytes: number,
+  listener: (event: DownloadEvent) => void,
+): void {
+  const id = randomUUID()
+  const name = item.getFilename()
+  let dir: string
+  try {
+    dir = mkdtempSync(join(tmpdir(), 'valet-download-'))
+  } catch {
+    item.cancel()
+    return
+  }
+  const path = join(dir, 'file')
+  item.setSavePath(path)
+  const remove = () => rmSync(dir, { recursive: true, force: true })
+  let big = false
+  const check = () => {
+    if (big || (item.getTotalBytes() <= maxBytes && item.getReceivedBytes() <= maxBytes)) return
+    big = true
+    item.cancel()
+  }
+  item.on('updated', check)
+  item.once('done', (_event, state) => {
+    const failed = (reason: 'too-large' | 'cancelled' | 'interrupted') => {
+      remove()
+      listener({ kind: 'failed', id, name, reason })
+    }
+    if (big) return failed('too-large')
+    if (state !== 'completed') return failed(state === 'cancelled' ? 'cancelled' : 'interrupted')
+    readFile(path).then(
+      (data) => {
+        if (data.length > maxBytes) return failed('too-large')
+        remove()
+        listener({ kind: 'done', id, name, mimeType: item.getMimeType(), data })
+      },
+      () => failed('interrupted'),
+    )
+  })
+  listener({ kind: 'started', id, name })
+  check()
 }
 
 class ElectronSurface implements BrowserSurface {

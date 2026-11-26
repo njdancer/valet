@@ -10,6 +10,7 @@
 // A cloud agent gets Valet's own tools (admin, and authoring with them) only when `ownTools` says
 // the person gave it them with a signature; each tool still checks its access on every call.
 
+import { downloadHandler, type ServedFile } from './downloads'
 import { type HttpServerOptions, type LiveSessions, type RunningHttpServer, startHttpServer } from './http'
 import type { RemoteAuthorization } from './oauth-server'
 import { type RemoteAccessTokens, remoteAuthenticator } from './remote-auth'
@@ -35,6 +36,13 @@ export interface RemoteListenerOptions
   readonly hosts: () => ReadonlySet<string>
   /** The authorisation server minting into `tokens`. Without it, no OAuth path answers. */
   readonly authorization?: RemoteAuthorization
+  /**
+   * Files agents' browsers downloaded, by their address id (downloads.ts). Without it, no download
+   * path answers.
+   */
+  readonly downloads?: (id: string) => ServedFile | null
+  /** Where the download handler writes its line per request; never the id. */
+  readonly log?: (line: string) => void
 }
 
 export interface RunningRemoteListener {
@@ -63,8 +71,20 @@ export interface RunningRemoteListener {
 
 export async function startRemoteListener(options: RemoteListenerOptions): Promise<RunningRemoteListener> {
   // `admin` is left out of the type too; taken out here as well, so nothing untyped can pass it on.
-  const { caller, policy, tokens, hosts, authorization, callsPerHour, now, refused, ownTools, ...rest } =
-    options
+  const {
+    caller,
+    policy,
+    tokens,
+    hosts,
+    authorization,
+    downloads,
+    log,
+    callsPerHour,
+    now,
+    refused,
+    ownTools,
+    ...rest
+  } = options
   // Valet's own tools only with the predicate that says which agent may have them.
   const { admin, authoring, ...http } = rest
   const own =
@@ -86,7 +106,10 @@ export async function startRemoteListener(options: RemoteListenerOptions): Promi
     ...own,
     caller: remote,
     authenticate: remoteAuthenticator({ tokens, hosts }),
-    ...(authorization === undefined ? {} : { before: authorization.handler(hosts) }),
+    ...before(
+      downloads === undefined ? undefined : downloadHandler(downloads, hosts, log),
+      authorization?.handler(hosts),
+    ),
     host: '127.0.0.1',
   })
   let closed = false
@@ -110,6 +133,20 @@ export async function startRemoteListener(options: RemoteListenerOptions): Promi
       tokens.revokeAll()
       remote.abortInFlight()
       await server.close()
+    },
+  }
+}
+
+type Before = NonNullable<HttpServerOptions['before']>
+
+/** Downloads first (their path is never logged with the OAuth lines), then the OAuth paths. */
+function before(...handlers: (Before | undefined)[]): { before?: Before } {
+  const present = handlers.filter((h): h is Before => h !== undefined)
+  if (present.length === 0) return {}
+  return {
+    before: async (req, res) => {
+      for (const handler of present) if (await handler(req, res)) return true
+      return false
     },
   }
 }

@@ -149,7 +149,30 @@ export interface PartitionSession {
    * old value when one is removed or overwritten, so that a value never goes unseen.
    */
   onCookieChanged(listener: (cookie: CookieRecord) => void): void
+  /**
+   * Keeps the partition's downloads instead of refusing them (harden's default): each is written to
+   * a temporary file while it downloads, handed to `listener` in memory once done, and the file
+   * deleted. One bigger than `maxBytes` is cancelled. The partition's only download listener.
+   */
+  acceptDownloads(maxBytes: number, listener: (event: DownloadEvent) => void): void
 }
+
+/** A download in a partition that accepts them: started, then done or failed. */
+export type DownloadEvent =
+  | { readonly kind: 'started'; readonly id: string; readonly name: string }
+  | {
+      readonly kind: 'done'
+      readonly id: string
+      readonly name: string
+      readonly mimeType: string
+      readonly data: Buffer
+    }
+  | {
+      readonly kind: 'failed'
+      readonly id: string
+      readonly name: string
+      readonly reason: 'too-large' | 'cancelled' | 'interrupted'
+    }
 
 /** A fixture the partition serves in place of the site. */
 export interface FixtureResponse {
