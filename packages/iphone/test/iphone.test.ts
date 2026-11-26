@@ -179,3 +179,113 @@ describe('the phone over usbmuxd', () => {
     void SpringBoard
   })
 })
+
+describe('more edits', () => {
+  const next = () => {
+    let n = 1
+    return () => `folder:new-${n++}`
+  }
+  const base = () => parseIconState(sampleState()).layout
+
+  it('sets pages and the dock, empties folders, and adds and moves pages', () => {
+    const layout = applyEdits(
+      base(),
+      [
+        { op: 'setDock', items: ['com.apple.mobilesafari', 'com.apple.mobilephone'] },
+        { op: 'emptyFolder', folder: 'folder:1', page: 2, position: 1 },
+        { op: 'addPage', page: 1 },
+        { op: 'setPage', page: 1, items: ['com.apple.mobilemail'] },
+        { op: 'movePage', from: 1, to: 3 },
+        { op: 'setPage', page: 4, items: ['com.x.app'] },
+        { op: 'move', item: 'com.apple.camera', to: { where: 'page', page: 4, position: 1 } },
+      ],
+      { nextFolderId: next() },
+    )
+    expect(layout.dock.map((i) => i.id)).toEqual(['com.apple.mobilesafari', 'com.apple.mobilephone'])
+    expect(layout.pages.map((p) => p.items.map((i) => i.id))).toEqual([
+      ['widget:1'],
+      ['com.apple.MobileSMS', 'com.apple.Maps'],
+      ['com.apple.mobilemail'],
+      ['com.apple.camera', 'com.x.app'],
+    ])
+    const lines = describeChanges(base(), tidy(layout))
+    expect(lines).toContain('Folder “Social” removed.')
+    expect(lines.some((l) => l.startsWith('Pages: 2 → 4'))).toBe(true)
+    expect(describeChanges(base(), tidy(layout), 1)).toHaveLength(2)
+  })
+
+  it('refuses what can’t be done', () => {
+    const cases: Parameters<typeof applyEdits>[1][] = [
+      [{ op: 'setPage', page: 1, items: ['com.apple.Maps'] }],
+      [{ op: 'setDock', items: ['com.apple.Maps'] }],
+      [{ op: 'move', item: 'com.apple.Maps', to: { where: 'page', page: 9 } }],
+      [{ op: 'move', item: 'com.apple.Maps', to: { where: 'folder', folder: 'folder:9' } }],
+      [{ op: 'move', item: 'folder:1', to: { where: 'folder', folder: 'folder:1' } }],
+      [{ op: 'renameFolder', folder: 'nope', name: 'x' }],
+      [{ op: 'movePage', from: 9, to: 1 }],
+      [{ op: 'createFolder', name: 'W', items: ['widget:1'], page: 1 }],
+    ]
+    for (const ops of cases)
+      expect(() => applyEdits(base(), ops, { nextFolderId: next() })).toThrow(EditError)
+  })
+
+  it('splits a big new folder into pages and finds overflowing pages and folders', () => {
+    const state = sampleState()
+    const many = Array.from({ length: 30 }, (_, k) => ({ bundleIdentifier: `a.b${k}`, displayName: `A${k}` }))
+    state.push(many)
+    const { layout } = parseIconState(state)
+    const ids = many.map((m) => m.bundleIdentifier)
+    const made = applyEdits(layout, [{ op: 'createFolder', name: 'Big', items: ids.slice(0, 20), page: 3 }], {
+      nextFolderId: next(),
+    })
+    const folder = made.pages[2]?.items.at(-1)
+    expect(folder?.kind === 'folder' && folder.pages.map((p) => p.length)).toEqual([9, 9, 2])
+    expect(problems(layout).map((p) => p.where)).toEqual(['page 3'])
+    const crowded = {
+      dock: [],
+      pages: [
+        {
+          items: [{ kind: 'folder' as const, id: 'f', name: 'F', pages: [layout.pages[2]?.items as never] }],
+        },
+      ],
+    }
+    expect(problems(crowded)[0]?.where).toBe('f page 1')
+  })
+})
+
+describe('parsing odd entries', () => {
+  it('reads web clips, unnamed items, stacks and large widgets', () => {
+    const { layout } = parseIconState([
+      [{ displayIdentifier: 'com.apple.webapp.123', displayName: 'Site', webClipURL: 'https://example.com' }],
+      [
+        { displayName: 'Mystery' },
+        {
+          gridSize: 'large',
+          elements: [{ containerBundleIdentifier: 'a' }, { containerBundleIdentifier: 'b' }],
+        },
+        { iconType: 'custom', gridSize: 'extraLarge' },
+        'junk',
+      ],
+    ])
+    expect(layout.dock[0]?.kind).toBe('webclip')
+    const items = layout.pages[0]?.items ?? []
+    expect(items.map((i) => i.kind)).toEqual(['other', 'widget', 'widget'])
+    expect(items[1]).toMatchObject({ size: 'large', stack: true, name: 'Widget stack' })
+    expect(items[2]).toMatchObject({ size: 'extraLarge' })
+    expect(place(items).overflow).toHaveLength(1)
+  })
+
+  it('reads XML entities, comments and empty values', () => {
+    const xml =
+      '<?xml version="1.0"?><!-- c --><plist><dict><key>a</key><string>&#65;&#x42;&quot;&apos;&lt;&gt;</string>' +
+      '<key>e</key><data/><key>d</key><date>2026-01-01T00:00:00Z</date><key>f</key><false/></dict></plist>'
+    const v = decodeXml(xml) as Record<string, PlistValue>
+    expect(v['a']).toBe('AB"\'<>')
+    expect(v['d']).toBeInstanceOf(Date)
+    expect(v['f']).toBe(false)
+    expect(() => decodeXml('<plist><dict><string>x</string></dict></plist>')).toThrow()
+    expect(() => decodeXml('<plist><bogus>x</bogus></plist>')).toThrow()
+    expect(() => decodeBinary(new Uint8Array(10))).toThrow()
+    expect(encodeXml({ when: new Date(0), list: [true], r: 0.5 })).toContain('<real>0.5</real>')
+  })
+})
