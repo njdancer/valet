@@ -10,11 +10,13 @@ import {
   absoluteUrls,
   ariaBootedScript,
   ariaBootScript,
+  ariaBoxScript,
   ariaCheckedScript,
   ariaFieldScript,
   ariaPointScript,
   ariaSelectScript,
   ariaSnapshotScript,
+  ariaUploadScript,
   findInSnapshot,
   textShownScript,
 } from './aria'
@@ -74,6 +76,11 @@ export const SCRATCH_LIMITS = {
   waitMs: 30_000,
   waitPollMs: 250,
   selectValues: 50,
+  uploadFiles: 10,
+  /** All the files of one upload together, decoded. */
+  uploadBytes: 10 * 1024 * 1024,
+  /** A picture bigger than this, as PNG, is refused: a smaller part of the page fits. */
+  screenshotBytes: 6 * 1024 * 1024,
   dragSteps: 5,
 } as const
 
@@ -522,6 +529,78 @@ export class ScratchBrowser {
       this.surface.mouse({ type: 'down', x, y, button, clickCount: count, modifiers })
       this.surface.mouse({ type: 'up', x, y, button, clickCount: count, modifiers })
     }
+    await this.settle(frames)
+    return this.ariaSnapshot()
+  }
+
+  /** A PNG of the page as it shows: the viewport, the whole page, or one element. */
+  async screenshot(options: { readonly target?: string; readonly fullPage?: boolean } = {}): Promise<{
+    readonly url: string
+    readonly png: Buffer
+  }> {
+    this.open()
+    let clip: { x: number; y: number; width: number; height: number } | null = null
+    if (options.target !== undefined) {
+      const raw = (await this.runAria(ariaBoxScript(this.ariaTarget(options.target)))) as {
+        error?: string
+        x?: number
+        y?: number
+        width?: number
+        height?: number
+      } | null
+      if (raw === null || typeof raw !== 'object') throw new ScratchError('The page could not be read.')
+      if (raw.error !== undefined) throw this.targetError(raw.error)
+      const { x, y, width, height } = raw
+      if (
+        typeof x !== 'number' ||
+        typeof y !== 'number' ||
+        typeof width !== 'number' ||
+        typeof height !== 'number'
+      )
+        throw new ScratchError('The page could not be read.')
+      clip = { x, y, width: Math.min(width, 8000), height: Math.min(height, 8000) }
+    }
+    if (this.options.rules.signedIn !== undefined) await this.guardPage(this.surface.url())
+    const png = await this.surface.screenshot({ fullPage: options.fullPage === true, clip })
+    if (png === null) throw new ScratchError('The page couldn’t be pictured.')
+    if (png.length > SCRATCH_LIMITS.screenshotBytes)
+      throw new ScratchError(
+        'That picture is too big. Picture one element, or the window instead of the whole page.',
+      )
+    return { url: this.scrub(this.surface.url()), png }
+  }
+
+  /** Puts files in a file input, as choosing them in its dialog would; then the page settles. */
+  async upload(
+    target: string,
+    files: readonly { readonly name: string; readonly mimeType: string; readonly data: Buffer }[],
+  ): Promise<AriaPage> {
+    this.open()
+    if (files.length === 0 || files.length > SCRATCH_LIMITS.uploadFiles)
+      throw new ScratchError(`Give between 1 and ${SCRATCH_LIMITS.uploadFiles} files.`)
+    if (files.reduce((sum, f) => sum + f.data.length, 0) > SCRATCH_LIMITS.uploadBytes)
+      throw new ScratchError('Those files are more than the browser uploads at once (10 MB).')
+    const payload = files.map((f) => ({
+      name:
+        [...f.name]
+          .map((c) => (c === '/' || c === '\\' || c < ' ' ? '_' : c))
+          .join('')
+          .slice(0, 200) || 'file',
+      mimeType: f.mimeType.slice(0, 100),
+      buffer: f.data.toString('base64'),
+    }))
+    const raw = (await this.runAria(
+      ariaUploadScript({ target: this.ariaTarget(target), files: payload }),
+    )) as {
+      error?: string
+    } | null
+    if (raw === null || typeof raw !== 'object') throw new ScratchError('The page could not be read.')
+    if (raw.error === 'not-file-input')
+      throw new ScratchError(
+        'That element isn’t a file input. Find the page’s <input type=file> (or its label).',
+      )
+    if (raw.error !== undefined) throw this.targetError(raw.error)
+    const frames = this.mainFrames
     await this.settle(frames)
     return this.ariaSnapshot()
   }

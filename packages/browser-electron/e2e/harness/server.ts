@@ -211,6 +211,7 @@ function routes(
         <div style="position:relative;width:200px;height:40px"><button id="under" style="width:100px;height:30px">Covered</button>
         <div style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div></div>
         <p id="pressed">pressed: none</p>
+        <label for="up">Attach</label><input id="up" type="file" multiple style="display:none"><p id="uploaded">uploaded: none</p>
         <script>
           const text = (id, value) => { document.getElementById(id).textContent = value }
           document.getElementById('live').addEventListener('keydown', (e) => text('keys', document.getElementById('keys').textContent + e.key))
@@ -222,6 +223,7 @@ function routes(
           document.getElementById('src').addEventListener('mousedown', () => { dragging = true })
           document.getElementById('dst').addEventListener('mouseup', () => { if (dragging) text('dropped', 'dropped: yes') })
           document.addEventListener('keydown', (e) => { if (e.target === document.body) text('pressed', 'pressed: ' + (e.shiftKey ? 'Shift+' : '') + e.key) })
+          document.getElementById('up').addEventListener('change', async (e) => text('uploaded', 'uploaded: ' + (await Promise.all([...e.target.files].map(async (f) => f.name + '=' + (await f.text())))).join(',')))
           setTimeout(() => { const p = document.createElement('p'); p.textContent = 'Late arrival'; document.body.appendChild(p) }, 1500)
         </script>`,
       ),

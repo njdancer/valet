@@ -44,6 +44,8 @@ takes. A session is a browser of its own:
 | `browser_press_key`, `browser_select_option`, `browser_hover`, `browser_drag` | As in Playwright MCP                                                                                          |
 | `browser_wait_for`                                                            | Text shows, text goes, or a time; up to 30 seconds; `met` says whether it happened                            |
 | `browser_resize`                                                              | The window's size                                                                                             |
+| `browser_take_screenshot`                                                     | A PNG of the window, the whole page (`fullPage`) or one element, as an image                                  |
+| `browser_file_upload`                                                         | Files (base64) into a file input, hidden or not; about 700 KB in all per request                              |
 
 A target is a ref from the last snapshot or a CSS selector. Navigating and `browser_snapshot`
 answer with the whole page; an action on the same page answers with only the lines that changed
@@ -60,9 +62,11 @@ isolated world, so a page can't see it or tamper with it. Two hooks patched into
 rule that a snapshot shows only what a person can see: hidden elements are left out, and controls
 are named by their visible words, not an aria-label or title no one sees. Link targets are made
 absolute. Input is trusted, sent as a mouse and keyboard would, never as script events; something
-covered by an overlay is refused rather than clicked through.
+covered by an overlay is refused rather than clicked through. A screenshot is taken with
+DevTools' `Page.captureScreenshot` while the hidden window is made to draw (a frame subscription);
+it comes back as an image beside the output, never in it or in the audit log.
 
 Not yet: tabs, the page's own dialogs, plain http pages, home network and
 network interface settings, frames inside the page (an iframe's content isn't in the snapshot),
-screenshots, uploads, downloads, and the inspect tools (evaluate, console, network, cookies).
+downloads, and the inspect tools (evaluate, console, network, cookies).
 The drafts' `valet_browser_*` tools are unchanged and still use the older snapshot.

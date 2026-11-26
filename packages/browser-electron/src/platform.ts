@@ -298,6 +298,19 @@ export interface BrowserSurface {
   watchNetwork(listener: (response: NetworkResponse) => void): Promise<void>
   /** The body of a response watchNetwork reported, while the browser still holds it; null if not. */
   responseBody(id: string): Promise<{ readonly body: string; readonly base64: boolean } | null>
+  /**
+   * A PNG of the page as it shows: the viewport, the whole page, or a box in document CSS pixels.
+   * Null when the page can't be drawn.
+   */
+  screenshot(options: {
+    readonly fullPage: boolean
+    readonly clip: {
+      readonly x: number
+      readonly y: number
+      readonly width: number
+      readonly height: number
+    } | null
+  }): Promise<Buffer | null>
   canGoBack(): boolean
   /** Starts going back one page in the history. */
   goBack(): void

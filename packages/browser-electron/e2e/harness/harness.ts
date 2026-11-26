@@ -1290,6 +1290,24 @@ async function setup() {
         () => 'ok',
         (e: { detail?: string }) => e.detail ?? 'failed',
       )
+      const size = (png: Buffer) => ({
+        png: png.subarray(1, 4).toString('latin1'),
+        width: png.readUInt32BE(16),
+        height: png.readUInt32BE(20),
+      })
+      const windowShot = size((await browser.screenshot()).png)
+      const fullShot = size((await browser.screenshot({ fullPage: true })).png)
+      const elementShot = size((await browser.screenshot({ target: '#dst' })).png)
+      const uploadedPage = await browser.upload('#up', [
+        { name: 'a.txt', mimeType: 'text/plain', data: Buffer.from('first') },
+        { name: 'b.txt', mimeType: 'text/plain', data: Buffer.from('second') },
+      ])
+      const notInput = await browser
+        .upload('h1', [{ name: 'a', mimeType: 'text/plain', data: Buffer.from('a') }])
+        .then(
+          () => 'ok',
+          (e: { detail?: string }) => e.detail ?? 'failed',
+        )
       const narrow = await browser.resize(400, 600)
       await browser.go(site.url('site.test', '/scratch'))
       const postsBefore = site.posts.length
@@ -1303,6 +1321,11 @@ async function setup() {
         unticked: unticked.yaml,
         notBox,
         narrow: narrow.url,
+        windowShot,
+        fullShot,
+        elementShot,
+        uploaded: uploadedPage.yaml,
+        notInput,
         posted,
         back: back.url,
       }

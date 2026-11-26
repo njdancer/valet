@@ -10,7 +10,7 @@ import { SCRATCH_LIMITS, ScratchBrowser, type ScratchRules } from '../src/scratc
 import { pageFieldsScript } from '../src/sensitive-page'
 import { type FakeFrame, FakePlatform, FakeSurface } from './fake-browser'
 
-type Kind = 'snapshot' | 'point' | 'field' | 'select' | 'text' | 'checked' | 'fields'
+type Kind = 'snapshot' | 'point' | 'field' | 'select' | 'text' | 'checked' | 'upload' | 'box' | 'fields'
 type Answer = (kind: Kind, args: Record<string, unknown> | string) => unknown
 
 const MARKERS: [Kind, string][] = [
@@ -20,6 +20,8 @@ const MARKERS: [Kind, string][] = [
   ['select', 'selectOptions(found'],
   ['text', "innerText || ''"],
   ['checked', "elementState(found, 'checked')"],
+  ['upload', 'v.setInputFiles(el'],
+  ['box', 'found.getBoundingClientRect()'],
 ]
 
 /** Timers that fire at once, so settling and waiting take no real time. */
@@ -82,6 +84,8 @@ function defaults(kind: Kind): unknown {
   if (kind === 'select') return { selected: ['l'] }
   if (kind === 'text') return true
   if (kind === 'checked') return { checked: false }
+  if (kind === 'upload') return { done: true }
+  if (kind === 'box') return { x: 5, y: 900, width: 120, height: 40 }
   return { url: 'https://shop.example.com/home', fields: [] }
 }
 
@@ -447,6 +451,60 @@ describe('a session’s page', () => {
       const other = await open((kind) => (kind === 'checked' ? answer : defaults(kind)))
       expect(await detail(other.browser.check('#x', true))).toMatch(words)
     }
+  })
+
+  it('pictures the window, the whole page or one element', async () => {
+    const { browser, surface } = await open()
+    const shot = await browser.screenshot()
+    expect(shot.png).toEqual(Buffer.from('png'))
+    await browser.screenshot({ fullPage: true })
+    await browser.screenshot({ target: 'e1' })
+    expect(surface.screenshots).toEqual([
+      { fullPage: false, clip: null },
+      { fullPage: true, clip: null },
+      { fullPage: false, clip: { x: 5, y: 900, width: 120, height: 40 } },
+    ])
+    surface.picture = null
+    expect(await detail(browser.screenshot())).toMatch(/couldn’t be pictured/)
+    surface.picture = Buffer.alloc(SCRATCH_LIMITS.screenshotBytes + 1)
+    expect(await detail(browser.screenshot())).toMatch(/too big/)
+    for (const [answer, words] of [
+      [{ error: 'hidden' }, /isn't visible|isn’t visible/],
+      [{ x: 'a' }, /could not be read/],
+      [null, /could not be read/],
+    ] as const) {
+      const other = await open((kind) => (kind === 'box' ? answer : defaults(kind)))
+      expect(await detail(other.browser.screenshot({ target: '#x' }))).toMatch(words)
+    }
+  })
+
+  it('puts files in a file input with safe names, within limits, and gives the page after', async () => {
+    const seen: unknown[] = []
+    const { browser } = await open((kind, args) => {
+      if (kind === 'upload') seen.push(args)
+      return defaults(kind)
+    })
+    const page = await browser.upload('e4', [
+      { name: '..\\etc/passwd\n', mimeType: 'text/plain', data: Buffer.from('hi') },
+      { name: '', mimeType: 'application/pdf', data: Buffer.from([0, 1]) },
+    ])
+    expect(page.yaml).toContain('heading "Shop"')
+    expect(seen).toEqual([
+      {
+        target: 'e4',
+        files: [
+          { name: '.._etc_passwd_', mimeType: 'text/plain', buffer: Buffer.from('hi').toString('base64') },
+          { name: 'file', mimeType: 'application/pdf', buffer: 'AAE=' },
+        ],
+      },
+    ])
+    expect(await detail(browser.upload('e4', []))).toMatch(/between 1 and 10/)
+    const big = Buffer.alloc(SCRATCH_LIMITS.uploadBytes + 1)
+    expect(await detail(browser.upload('e4', [{ name: 'a', mimeType: 'x', data: big }]))).toMatch(/10 MB/)
+    const other = await open((kind) => (kind === 'upload' ? { error: 'not-file-input' } : defaults(kind)))
+    expect(
+      await detail(other.browser.upload('#x', [{ name: 'a', mimeType: 'x', data: Buffer.from('a') }])),
+    ).toMatch(/isn’t a file input/)
   })
 
   it('shows the session’s own cookie values as they are, and lets forms post', async () => {
