@@ -160,6 +160,9 @@ importers:
       '@valet/egress':
         specifier: workspace:*
         version: link:../../packages/egress
+      '@valet/iphone':
+        specifier: workspace:*
+        version: link:../../packages/iphone
       '@valet/mcp-server':
         specifier: workspace:*
         version: link:../../packages/mcp-server
@@ -452,6 +455,12 @@ importers:
       '@valet/fake-woolworths-site':
         specifier: workspace:*
         version: link:../../fakes/woolworths-site
+
+  packages/iphone:
+    dependencies:
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
 
   packages/mcp-server:
     dependencies:
