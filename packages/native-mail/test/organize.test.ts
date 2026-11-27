@@ -7,7 +7,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DirectMailFiles } from '../src/direct-files'
-import { MailOrganizer, ORGANIZE_SCRIPT, type OrganizeOutcome, type OrganizeRequest } from '../src/organize'
+import {
+  MailOrganizer,
+  ORGANIZE_SCRIPT,
+  type OrganizeOutcome,
+  type OrganizeRequest,
+  scriptingFailure,
+} from '../src/organize'
 import { MailStore } from '../src/store'
 import { callMailTool, type MailToolDeps, type MoveRecord, mailOutputs, mailTools } from '../src/tools'
 import { ALLOWED, buildLibrary, OTHER } from './fixture-library'
@@ -274,6 +280,48 @@ describe('MailOrganizer', () => {
     expect(
       await organizer(1, '', 'execution error: Not authorized to send Apple events (-1743)').apply(request),
     ).toEqual({ kind: 'not-allowed' })
+  })
+
+  it('logs why a run failed with Mail’s error numbers only, and stops a stalled one sooner (feedback #34)', async () => {
+    const lines: string[] = []
+    const timeouts: number[] = []
+    const failing = (code: number | null, stderr: string) =>
+      new MailOrganizer(
+        async (_file, _args, timeoutMs) => {
+          timeouts.push(timeoutMs)
+          return { code, stdout: '', stderr }
+        },
+        undefined,
+        async (_file, _args, timeoutMs) => {
+          timeouts.push(timeoutMs)
+          return { code, stdout: '', stderr }
+        },
+        (line) => lines.push(line),
+      )
+    expect(await failing(null, '').apply(request)).toEqual({ kind: 'failed' })
+    expect(
+      await failing(
+        1,
+        'execution error: Mail got an error: "Secret subject" AppleEvent timed out. (-1712)',
+      ).apply(request),
+    ).toEqual({ kind: 'failed' })
+    expect(await failing(1, '').source({ messageId: 'a', accountId: ALLOWED, mailbox: 'INBOX' })).toEqual({
+      kind: 'failed',
+    })
+    // Not allowed is the person's to fix, said on the card: not a fault to log.
+    expect(await failing(1, 'Not authorized to send Apple events (-1743)').apply(request)).toEqual({
+      kind: 'not-allowed',
+    })
+    expect(lines).toEqual([
+      'mail scripting: move failed: timed out or was stopped',
+      'mail scripting: move failed: exited 1 (Mail error -1712)',
+      'mail scripting: source failed: exited 1',
+    ])
+    expect(lines.join('')).not.toContain('Secret')
+    expect(timeouts).toEqual([40_000, 40_000, 120_000, 40_000])
+    expect(scriptingFailure({ code: 2, stderr: '(-1) (-1712) (-1712) (-1728) (-600) (-609)' })).toBe(
+      'exited 2 (Mail error -1712, -1728, -600)',
+    )
   })
 
   it('reads a whole source, and treats an answer with none as not found', async () => {

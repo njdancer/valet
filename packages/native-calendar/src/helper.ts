@@ -152,7 +152,8 @@ const FAILURES: ReadonlySet<string> = new Set([
   'unavailable',
 ])
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024
-const DEFAULT_TIMEOUT_MS = 25_000
+/** EventKit answers in well under a second; a stalled one fails the call soon (feedback #34). */
+const DEFAULT_TIMEOUT_MS = 15_000
 
 export interface SocketLike {
   write(data: string): unknown
@@ -169,6 +170,12 @@ export interface HelperEventKitOptions {
   readonly lstat?: (path: string) => Promise<{ isSocket(): boolean; readonly uid: number }>
   readonly uid?: number
   readonly timeoutMs?: number
+  /**
+   * One line per failed exchange with the helper, for the diagnostics log: the operation and why
+   * (no socket, timed out, a socket error, a bad answer, the helper's own error code). Never the
+   * request or the answer, which hold the person's calendar.
+   */
+  readonly log?: (line: string) => void
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -181,6 +188,7 @@ export class HelperEventKit implements EventKit {
   readonly #lstat: NonNullable<HelperEventKitOptions['lstat']>
   readonly #uid: number | undefined
   readonly #timeoutMs: number
+  readonly #log: ((line: string) => void) | undefined
 
   constructor(options: HelperEventKitOptions) {
     this.#socketPath = options.socketPath
@@ -188,6 +196,12 @@ export class HelperEventKit implements EventKit {
     this.#lstat = options.lstat ?? ((path) => nodeFs.lstat(path))
     this.#uid = options.uid ?? process.getuid?.()
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+    this.#log = options.log
+  }
+
+  #failed(op: unknown, why: string, code: EventKitFailure = 'unavailable'): EventKitError {
+    this.#log?.(`eventkit: ${typeof op === 'string' ? op : 'request'} failed: ${why}`)
+    return new EventKitError(code)
   }
 
   async access(kind: EventKitKind): Promise<EventKitAccess> {
@@ -254,42 +268,50 @@ export class HelperEventKit implements EventKit {
       if (!info.isSocket() || (this.#uid !== undefined && info.uid !== this.#uid)) throw new Error('not ours')
     } catch {
       // Not installed, not allowed in Login Items, or not running yet.
-      throw new EventKitError('unavailable')
+      throw this.#failed(request['op'], 'no helper socket')
     }
     const body = Object.fromEntries(Object.entries(request).filter(([, v]) => v !== undefined))
-    const raw = await this.#send(`${JSON.stringify({ v: 1, ...body })}\n`)
+    const raw = await this.#send(request['op'], `${JSON.stringify({ v: 1, ...body })}\n`)
     let answer: unknown
     try {
       answer = JSON.parse(raw.toString('utf8'))
     } catch {
-      throw new EventKitError('unavailable')
+      throw this.#failed(request['op'], 'an answer that is not JSON')
     }
-    if (!isObject(answer)) throw new EventKitError('unavailable')
+    if (!isObject(answer)) throw this.#failed(request['op'], 'an answer that is not an object')
     const error = answer['error']
-    if (typeof error === 'string')
-      throw new EventKitError(FAILURES.has(error) ? (error as EventKitFailure) : 'unavailable')
+    if (typeof error === 'string') {
+      const code = FAILURES.has(error) ? (error as EventKitFailure) : 'unavailable'
+      // The helper's own refusals (not found, read-only) are the agent's to hear, not a fault.
+      if (code !== 'unavailable' && code !== 'denied') throw new EventKitError(code)
+      throw this.#failed(
+        request['op'],
+        `the helper said ${FAILURES.has(error) ? error : 'an unknown error'}`,
+        code,
+      )
+    }
     return answer
   }
 
-  #send(line: string): Promise<Buffer> {
+  #send(op: unknown, line: string): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = []
       let size = 0
       let settled = false
       let socket: SocketLike | null = null
-      const finish = (outcome: Buffer | EventKitError): void => {
+      const finish = (outcome: Buffer | string): void => {
         if (settled) return
         settled = true
         clearTimeout(timer)
         socket?.destroy()
-        if (outcome instanceof EventKitError) reject(outcome)
+        if (typeof outcome === 'string') reject(this.#failed(op, outcome))
         else resolve(outcome)
       }
-      const timer = setTimeout(() => finish(new EventKitError('unavailable')), this.#timeoutMs)
+      const timer = setTimeout(() => finish(`no answer in ${this.#timeoutMs / 1000} s`), this.#timeoutMs)
       try {
         socket = this.#connect(this.#socketPath)
       } catch {
-        finish(new EventKitError('unavailable'))
+        finish('could not connect')
         return
       }
       socket.on('connect', () => socket?.write(line))
@@ -298,16 +320,20 @@ export class HelperEventKit implements EventKit {
         const newline = chunk.indexOf(0x0a)
         const part = newline < 0 ? chunk : chunk.subarray(0, newline)
         size += part.length
-        if (size > MAX_RESPONSE_BYTES) return finish(new EventKitError('unavailable'))
+        if (size > MAX_RESPONSE_BYTES) return finish('an answer that is too large')
         chunks.push(part)
         if (newline >= 0) finish(Buffer.concat(chunks))
       })
-      socket.on('error', () => finish(new EventKitError('unavailable')))
-      socket.on('close', () =>
-        finish(chunks.length > 0 ? Buffer.concat(chunks) : new EventKitError('unavailable')),
-      )
+      socket.on('error', (error) => finish(`a socket error${socketCode(error)}`))
+      socket.on('close', () => finish(chunks.length > 0 ? Buffer.concat(chunks) : 'closed with no answer'))
     })
   }
+}
+
+/** A socket error's code (ECONNREFUSED, ENOENT), never its message. */
+function socketCode(error: Error): string {
+  const code = (error as { readonly code?: unknown }).code
+  return typeof code === 'string' && /^E[A-Z]{1,20}$/.test(code) ? ` (${code})` : ''
 }
 
 function accessOf(answer: Record<string, unknown>): EventKitAccess {

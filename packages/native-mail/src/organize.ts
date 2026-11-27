@@ -177,11 +177,30 @@ const sourceRunner: Runner = (file, args, timeoutMs) =>
 /** Mail's -1743: the person hasn't allowed this app to control Mail. */
 const NOT_ALLOWED = /-1743|not allowed to send Apple events|Not authorized/i
 
+/**
+ * Why a scripting run failed, for the diagnostics log: timed out, or its exit code and Mail's own
+ * error numbers (-1712 is an Apple event that timed out). Never stderr itself, which can quote a
+ * message's subject.
+ */
+export function scriptingFailure(result: { readonly code: number | null; readonly stderr: string }): string {
+  const codes = [...new Set(result.stderr.match(/-\d{3,5}\b/g) ?? [])].slice(0, 3)
+  const exit = result.code === null ? 'timed out or was stopped' : `exited ${result.code}`
+  return codes.length === 0 ? exit : `${exit} (Mail error ${codes.join(', ')})`
+}
+
 export class MailOrganizer {
+  /**
+   * `timeoutMs` for a move or mark: a few messages take Mail seconds, so a run still going after
+   * this long is a Mail that isn't answering, and the call says so before its client gives up
+   * (feedback #34: two moves each waited 120 s). A message's source, which Mail may download
+   * first, keeps `sourceTimeoutMs`.
+   */
   constructor(
     private readonly run: Runner = execRunner,
-    private readonly timeoutMs = 120_000,
+    private readonly timeoutMs = 40_000,
     private readonly runSource: Runner = sourceRunner,
+    private readonly log?: (line: string) => void,
+    private readonly sourceTimeoutMs = 120_000,
   ) {}
 
   /** One message's whole source through Mail, which downloads it first if it must. Read-only. */
@@ -189,10 +208,13 @@ export class MailOrganizer {
     const result = await this.runSource(
       '/usr/bin/osascript',
       ['-l', 'JavaScript', '-e', ORGANIZE_SCRIPT, JSON.stringify({ kind: 'source', items: [item] })],
-      this.timeoutMs,
+      this.sourceTimeoutMs,
     )
-    if (result.code !== 0)
-      return NOT_ALLOWED.test(result.stderr) ? { kind: 'not-allowed' } : { kind: 'failed' }
+    if (result.code !== 0) {
+      if (NOT_ALLOWED.test(result.stderr)) return { kind: 'not-allowed' }
+      this.log?.(`mail scripting: source failed: ${scriptingFailure(result)}`)
+      return { kind: 'failed' }
+    }
     try {
       const parsed = JSON.parse(result.stdout.trim()) as {
         kind?: unknown
@@ -216,7 +238,9 @@ export class MailOrganizer {
       this.timeoutMs,
     )
     if (result.code !== 0) {
-      return NOT_ALLOWED.test(result.stderr) ? { kind: 'not-allowed' } : { kind: 'failed' }
+      if (NOT_ALLOWED.test(result.stderr)) return { kind: 'not-allowed' }
+      this.log?.(`mail scripting: ${request.kind} failed: ${scriptingFailure(result)}`)
+      return { kind: 'failed' }
     }
     try {
       const parsed = JSON.parse(result.stdout.trim()) as { kind?: unknown; results?: unknown }

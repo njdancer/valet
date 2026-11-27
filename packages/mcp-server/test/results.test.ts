@@ -1,6 +1,6 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { describe, expect, it } from 'vitest'
-import { failedResult, type ResultContext, toolResult } from '../src/results'
+import { failedResult, macAppUnavailable, type ResultContext, toolResult } from '../src/results'
 
 /** Saturday 7 November 2026, 9:48 pm in Sydney: the wireframes' moment. */
 const NOW = Date.parse('2026-11-07T10:48:00Z')
@@ -354,5 +354,23 @@ describe('a built-in tool’s pictures and files', () => {
       (c) => c.resource?.mimeType ?? c.type,
     )
     expect(kinds).toEqual(['text', 'application/octet-stream', 'image'])
+  })
+})
+
+describe('a Mac app that does not answer (feedback #34)', () => {
+  const text = (r: CallToolResult) => (r.content[0] as { text: string }).text
+  it('says which app, what may have happened, and what fixes it', () => {
+    const r = failedResult('tool-run', 'unavailable', { adapterId: 'calendar', callId: 'call_1' })
+    expect(r.isError).toBe(true)
+    expect(text(r)).toBe(macAppUnavailable('Calendar', { callId: 'call_1' }))
+    expect(text(r)).toContain("The Mac's Calendar didn't answer Valet in time (stage tool-run: unavailable).")
+    expect(text(failedResult('tool-run', 'unavailable', { adapterId: 'mail' }))).toContain('reopening Mail')
+    // A site's own unavailable, and another class for a Mac app, keep the plain words.
+    expect(text(failedResult('tool-run', 'unavailable', { adapterId: 'woolworths' }))).toBe(
+      'The tool failed at stage tool-run: unavailable.',
+    )
+    expect(text(failedResult('tool-run', 'internal', { adapterId: 'calendar' }))).toBe(
+      'The tool failed at stage tool-run: internal.',
+    )
   })
 })
