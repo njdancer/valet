@@ -1,0 +1,24 @@
+# TEMPORARY: reproduces the browser-electron focus flake on macOS. Not for merge.
+name: focus-debug
+on:
+  push:
+    branches: [claude/project-thread-n0p920]
+jobs:
+  stress:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        load: [idle, busy]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
+      - run: pnpm install --frozen-lockfile
+      - name: stress
+        env:
+          STRESS_N: '25'
+        run: |
+          if [ "${{ matrix.load }}" = busy ]; then for i in 1 2 3 4 5 6; do (yes > /dev/null &) ; done; fi
+          cd packages/browser-electron
+          pnpm exec playwright test -c e2e/playwright.config.ts --trace off stress-focus driver
