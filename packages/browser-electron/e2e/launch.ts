@@ -64,17 +64,31 @@ export async function launchHarness(env: Record<string, string> = {}): Promise<E
 
 /** Runs one harness scenario in the main process and returns its plain-data result. */
 export async function scenario(app: ElectronApplication, name: string): Promise<Record<string, unknown>> {
-  if (TRACE) await app.evaluate((_e, s) => (globalThis as unknown as { flog: (s: string) => void }).flog(`--- ${s}`), name)
   try {
     return await app.evaluate(async (_electron, which) => {
       const harness = await (globalThis as { harness?: Promise<Scenarios> }).harness
       const run = harness?.[which]
       if (run === undefined) throw new Error(`no scenario ${which}`)
+      ;(globalThis as unknown as { flog?: (s: string) => void }).flog?.(`--- ${which}`)
       return (await run()) as Record<string, unknown>
     }, name)
   } catch (error) {
     if (TRACE) {
-      const log = await app.evaluate(() => (globalThis as unknown as { focusLog: string[] }).focusLog.slice(-80))
+      const log = await app.evaluate(async ({ webContents }) => {
+        const out = [...(globalThis as unknown as { focusLog: string[] }).focusLog.slice(-80)]
+        for (const wc of webContents.getAllWebContents()) {
+          if (wc.isDestroyed()) continue
+          out.push(`NOW wc${wc.id} focused=${wc.isFocused()} focusedFrame=${wc.focusedFrame?.url}`)
+          for (const f of wc.mainFrame.framesInSubtree) {
+            const state = await Promise.race([
+              f.executeJavaScript('JSON.stringify({hasFocus: document.hasFocus(), active: document.activeElement && (document.activeElement.id || document.activeElement.tagName)})').catch((e) => `err ${e}`),
+              new Promise((r) => setTimeout(() => r('timeout'), 1000)),
+            ])
+            out.push(`    frame ${f.url} pid=${f.processId} ${state}`)
+          }
+        }
+        return out
+      })
       console.log(`FOCUSTRACE ${name}: ${String(error).split('\n')[0]}\n  ${log.join('\n  ')}`)
     }
     throw error

@@ -21,7 +21,7 @@ jobs:
         run: |
           cd packages/browser-electron
           fails=0
-          for i in $(seq 1 14); do
+          for i in $(seq 1 16); do
             echo "=== round $i"
             pnpm exec playwright test -c e2e/playwright.config.ts --trace off --reporter line > round.log 2>&1 || { fails=$((fails+1)); cat round.log; }
             grep -E "passed|failed" round.log | tail -3
