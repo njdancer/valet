@@ -22,6 +22,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { buildRecord, type RawPackageRuntime } from '@valet/adapter-store'
 import {
   type AdapterDefinition,
+  type ApprovalSubject,
   CredentialError,
   checkPackage,
   defineAdapter,
@@ -3017,6 +3018,49 @@ describe('remote access', () => {
     ).toBe('off')
   })
 
+  it('lets a cloud agent ask for one of the browser’s tools by the name it would list', async () => {
+    const s = await setup({
+      sessionBrowser: async () => {
+        throw new Error('no session is opened here')
+      },
+    })
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    const port = Number(new URL(s.service.remote.status().url as string).port)
+    const agent = approvedClient(s, [])
+    await s.api.remote.setAskForChanges(agent.id, true)
+    const client = await remoteClient(port, agent.token)
+    const ask = (tool: string) =>
+      client.callTool({
+        name: 'valet_request_access',
+        arguments: { adapterId: 'browser', tool, reason: 'To sign in to the shop the person named' },
+      })
+    const asked = await ask('browser_login_steps')
+    expect(JSON.stringify(asked.content)).toContain('Waiting for the person')
+    const broker = (s.service as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+    const pending = broker.list().filter((p) => p.request.kind === 'tool-enable')
+    expect(pending.map((p) => p.request.subject)).toEqual([
+      expect.objectContaining({
+        adapterId: 'browser',
+        tool: 'login_steps',
+        scope: 'remote',
+        clientId: `remote:${agent.id}`,
+      }),
+    ])
+    // Its own name works too, and asks nothing new; a tool the browser hasn't is refused.
+    expect((await ask('login_steps')).isError).not.toBe(true)
+    expect(broker.list().filter((p) => p.request.kind === 'tool-enable')).toHaveLength(1)
+    expect((await ask('nope')).isError).toBe(true)
+    expect(await s.api.attention.approveRequest(pending[0]?.request.id ?? '', null)).toBe(true)
+    const listed = (await (await remoteClient(port, agent.token)).listTools()).tools.map((t) => t.name)
+    expect(listed).toContain('browser_login_steps')
+    const again = await (await remoteClient(port, agent.token)).callTool({
+      name: 'valet_request_access',
+      arguments: { adapterId: 'browser', tool: 'login_steps', reason: 'again' },
+    })
+    expect(JSON.stringify(again.content)).toContain('Nothing changed')
+  })
+
   it('offers the agents’ browser to cloud agents, audits each call, and closes it on pause', async () => {
     const opened: { closed: boolean }[] = []
     let gave = 0
@@ -3430,6 +3474,119 @@ describe('remote access', () => {
     // Revoked, it forgets.
     await s.api.remote.revokeClient(agent.id)
     await expect(s.api.clients.network(key)).rejects.toBeInstanceOf(ValetError)
+  })
+
+  it('saves an agent’s tools with its access: one Touch ID for every tool added, none to take away', async () => {
+    const s = await approved()
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    await s.service.setRemoteTool('shop', 'echo', true)
+    const port = Number(new URL(s.service.remote.status().url as string).port)
+    const agent = approvedClient(s, ['shop.echo', 'gone.old_tool'])
+    const other = approvedClient(s, ['shop.echo'])
+    const label = `remote:${agent.id}`
+    const names = async (token = agent.token) =>
+      (await (await remoteClient(port, token)).listTools()).tools.map((t) => t.name).sort()
+    // Every tool it could be given, on only where it may call it, and what Valet no longer offers.
+    const view = await s.api.agentAccess.view(label)
+    expect(view.tools.filter((t) => t.adapterId === 'shop').map((t) => [t.ref, t.on])).toEqual(
+      expect.arrayContaining([
+        ['shop.echo', true],
+        ['shop.add', false],
+      ]),
+    )
+    expect(view.gone).toEqual(['gone.old_tool'])
+    // An app on this Mac has every site tool already: nothing to give it here.
+    const local = await s.api.clients.add('Code')
+    expect((await s.api.agentAccess.view(`local:${local.id}`)).tools).toEqual([])
+    await expect(
+      s.api.agentAccess.save(`local:${local.id}`, { tools: { 'shop.add': true } }),
+    ).rejects.toMatchObject({ errorClass: 'invalid' })
+
+    // Cancelled: nothing changes.
+    s.presence.answer = false
+    expect(await s.api.agentAccess.save(label, { tools: { 'shop.add': true } })).toBe(false)
+    expect(await names()).toEqual(['shop_echo'])
+    // Two tools on and one off in one Save: one prompt, for this agent only.
+    s.presence.answer = true
+    await s.service.setRemoteTool('shop', 'echo', false)
+    const before = s.presence.prompts.length
+    expect(
+      await s.api.agentAccess.save(label, {
+        tools: { 'shop.add': true, 'shop.echo': true, 'gone.old_tool': false },
+      }),
+    ).toBe(true)
+    expect(s.presence.prompts.length).toBe(before + 1)
+    expect(await names()).toEqual(['shop_add', 'shop_echo'])
+    expect((await s.api.remote.clients()).find((c) => c.id === agent.id)?.grant?.tools).toEqual([
+      'shop.add',
+      'shop.echo',
+    ])
+    expect(await names(other.token)).toEqual(['shop_echo'])
+    // Off: no prompt, and the rest kept.
+    expect(await s.api.agentAccess.save(label, { tools: { 'shop.echo': false } })).toBe(true)
+    expect(s.presence.prompts.length).toBe(before + 1)
+    expect(await names()).toEqual(['shop_add'])
+    // A tool Valet doesn't offer can't be added.
+    await expect(s.api.agentAccess.save(label, { tools: { 'shop.nope': true } })).rejects.toMatchObject({
+      errorClass: 'invalid',
+    })
+    // Held, but off for every cloud agent now: shown as held, and Off takes it out of the grant.
+    await s.service.setRemoteTool('shop', 'add', false)
+    const latent = (await s.api.agentAccess.view(label)).tools.find((t) => t.ref === 'shop.add')
+    expect(latent).toMatchObject({ on: false, held: true })
+    expect(await s.api.agentAccess.save(label, { tools: { 'shop.add': false } })).toBe(true)
+    expect(s.presence.prompts.length).toBe(before + 1)
+    expect((await s.api.remote.clients()).find((c) => c.id === agent.id)?.grant?.tools).toEqual([])
+  })
+
+  it('applies a signed agent-access tool only at the version and side effect it names', async () => {
+    const s = await approved()
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    const agent = approvedClient(s, [])
+    const broker = (s.service as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+    const ask = (tool: Partial<ApprovalSubject<'agent-access'>['tools'][number]>) =>
+      broker.request(
+        'agent-access',
+        {
+          clientId: `remote:${agent.id}`,
+          items: [],
+          full: [],
+          tools: [
+            {
+              adapterId: 'shop',
+              adapterHash: s.adapter.hash,
+              tool: 'add',
+              label: 'Shop: Add',
+              sideEffect: 'write',
+              ...tool,
+            },
+          ],
+          capabilities: [],
+        },
+        { kind: 'person' },
+        null,
+      )
+    const add = s.adapter.definition.manifest.tools.find((t) => t.name === 'add')
+    for (const wrong of [
+      { adapterHash: 'f'.repeat(64) },
+      { sideEffect: add?.sideEffect === 'read' ? ('write' as const) : ('read' as const) },
+      // Mail isn't set up here, so this is refused as unknown before the guard that keeps Mail's,
+      // Calendar's and Reminders' tools out of these lines.
+      { adapterId: 'mail', tool: 'search' },
+    ]) {
+      const asked = await ask(wrong)
+      expect(asked.ok).toBe(true)
+      if (!asked.ok) continue
+      expect(await broker.approveOnMac(asked.requestId, {})).not.toEqual({ ok: true })
+    }
+    expect((await s.api.remote.clients()).find((c) => c.id === agent.id)?.grant?.tools).toEqual([])
+    // The line as signed for this version and side effect applies, for this agent.
+    const right = await ask({ sideEffect: add?.sideEffect ?? 'write' })
+    if (!right.ok) throw new Error(right.reason)
+    expect(await broker.approveOnMac(right.requestId, {})).toEqual({ ok: true })
+    expect((await s.api.remote.clients()).find((c) => c.id === agent.id)?.grant?.tools).toEqual(['shop.add'])
   })
 
   it('lets the person edit an approved agent’s tools in place: on with Touch ID, off at once', async () => {

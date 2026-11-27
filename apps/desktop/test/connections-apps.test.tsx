@@ -12,6 +12,18 @@ const CLAUDE_CODE = 'c_c7d2a1b2c3d4e5f6'
 const CLAUDE_DESKTOP = 'c_41e9a1b2c3d4e5f6'
 const CURSOR = 'c_0b5aa1b2c3d4e5f6'
 
+/** A tool's Off/On control on an agent's access card. */
+function toolOption(name: string, option: 'Off' | 'On'): HTMLElement {
+  return within(screen.getByRole('radiogroup', { name })).getByRole('radio', { name: option })
+}
+
+async function toolIs(name: string): Promise<'on' | 'off'> {
+  const group = await screen.findByRole('radiogroup', { name })
+  return within(group).getByRole('radio', { name: 'On' }).getAttribute('aria-checked') === 'true'
+    ? 'on'
+    : 'off'
+}
+
 describe('connections', () => {
   it('puts focus back on Add an app… when the sheet closes with Escape', async () => {
     const user = userEvent.setup()
@@ -290,11 +302,8 @@ describe('a cloud agent’s page', () => {
     renderPage(api, <ClientPage clientId="rcdemodemodemodemodemo" />)
     expect(await screen.findByRole('heading', { level: 1, name: 'claude.ai' })).toBeTruthy()
     expect(screen.getByText(/Calls itself “Claude” \(not verified\)/)).toBeTruthy()
-    const getCart = await screen.findByRole('switch', { name: 'Woolworths: Get cart' })
-    expect(getCart.getAttribute('aria-checked')).toBe('true')
-    expect(screen.getByRole('switch', { name: 'Woolworths: Add to cart' }).getAttribute('aria-checked')).toBe(
-      'false',
-    )
+    expect(await toolIs('Woolworths: Get cart')).toBe('on')
+    expect(await toolIs('Woolworths: Add to cart')).toBe('off')
     expect(screen.getByText('gone.old_tool')).toBeTruthy()
     expect(screen.getByText('valet.example.com')).toBeTruthy()
     const reach = within(screen.getByRole('region', { name: 'Can reach' }))
@@ -305,31 +314,71 @@ describe('a cloud agent’s page', () => {
     await waitFor(() => expect(window.location.hash).toBe('#/connections'))
   })
 
-  it('edits its tools in place: a switch per tool, no revoking', async () => {
+  it('edits its tools in the one Save: on with Touch ID for all of them, off at once', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
-    await api.remote.approveConsent('ABCDEFGH', ['woolworths.get_cart'])
+    await api.remote.approveConsent('ABCDEFGH', ['woolworths.get_cart', 'gone.old_tool'])
     renderPage(api, <ClientPage clientId="rcdemodemodemodemodemo" />)
-    const add = await screen.findByRole('switch', { name: 'Woolworths: Add to cart' })
+    expect(await toolIs('Woolworths: Add to cart')).toBe('off')
     expect(screen.queryByText(/revoke it and approve it again/)).toBeNull()
-    expect(screen.getByText(/Turning a tool on needs Touch ID; turning one off is at once/)).toBeTruthy()
-    await user.click(add)
+    await user.click(toolOption('Woolworths: Add to cart', 'On'))
+    await user.click(toolOption('Woolworths: Get cart', 'Off'))
+    expect(within(screen.getByTestId('access-tools')).getAllByText(/not saved/)).toHaveLength(2)
+    // Nothing is called until Save, and one Save carries both.
+    expect(called(api, 'agentAccess.save')).toEqual([])
+    await user.click(screen.getByRole('button', { name: 'Save with Touch ID' }))
     await waitFor(() =>
-      expect(
-        screen.getByRole('switch', { name: 'Woolworths: Add to cart' }).getAttribute('aria-checked'),
-      ).toBe('true'),
+      expect(called(api, 'agentAccess.save')).toEqual([
+        [
+          'remote:rcdemodemodemodemodemo',
+          { tools: { 'woolworths.add_to_cart': true, 'woolworths.get_cart': false } },
+        ],
+      ]),
     )
-    await user.click(screen.getByRole('switch', { name: 'Woolworths: Get cart' }))
+    await waitFor(async () => expect(await toolIs('Woolworths: Add to cart')).toBe('on'))
+    expect(await toolIs('Woolworths: Get cart')).toBe('off')
+    // A tool no longer offered can only be taken away, with a plain Save.
+    await user.click(screen.getByRole('button', { name: 'Take away' }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() =>
-      expect(screen.getByRole('switch', { name: 'Woolworths: Get cart' }).getAttribute('aria-checked')).toBe(
-        'false',
-      ),
+      expect(called(api, 'agentAccess.save').at(-1)).toEqual([
+        'remote:rcdemodemodemodemodemo',
+        { tools: { 'gone.old_tool': false } },
+      ]),
     )
-    expect(called(api, 'remote.setClientTool')).toEqual([
-      ['rcdemodemodemodemodemo', 'woolworths', 'add_to_cart', true],
-      ['rcdemodemodemodemodemo', 'woolworths', 'get_cart', false],
-    ])
-    expect(screen.getByRole('heading', { level: 1, name: 'claude.ai' })).toBeTruthy()
+    await waitFor(() => expect(screen.queryByText('gone.old_tool')).toBeNull())
+    expect(called(api, 'remote.setClientTool')).toEqual([])
+  })
+
+  it('shows a tool it holds that is off for every cloud agent, and takes it away with a plain Save', async () => {
+    const user = userEvent.setup()
+    const fake = createFakeApi({ now: NOW })
+    await fake.remote.approveConsent('ABCDEFGH', ['woolworths.get_cart'])
+    const api = {
+      ...fake,
+      agentAccess: {
+        ...fake.agentAccess,
+        view: async (clientId: string) => {
+          const view = await fake.agentAccess.view(clientId)
+          return {
+            ...view,
+            tools: view.tools.map((t) => (t.ref === 'woolworths.get_cart' ? { ...t, on: false } : t)),
+          }
+        },
+      },
+    }
+    renderPage(api, <ClientPage clientId="rcdemodemodemodemodemo" />)
+    expect(
+      await screen.findByText(/It still holds this, but it’s off for every cloud agent now/),
+    ).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Take away' }))
+    expect(within(screen.getByTestId('access-tools')).getByText(/not saved/)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(called(fake, 'agentAccess.save')).toEqual([
+        ['remote:rcdemodemodemodemodemo', { tools: { 'woolworths.get_cart': false } }],
+      ]),
+    )
   })
 
   it('turns Ask for changes on and off from its page', async () => {

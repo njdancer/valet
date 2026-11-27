@@ -840,7 +840,42 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           }
         }),
       ],
+      ...accessTools(clientId),
     }
+  }
+  // A cloud agent's tools: every tool remote access offers, on where its grant names it.
+  const accessTools = (clientId: string): Pick<AgentAccessView, 'tools' | 'gone'> => {
+    if (!clientId.startsWith('remote:')) return { tools: [], gone: [] }
+    const granted = remoteClients.find((c) => `remote:${c.id}` === clientId)?.grant?.tools ?? []
+    // Each approved site's tools, as the app offers them, then Valet's own that remote access lists.
+    const sites = [...adapters.values()].map(detailOf).filter((d) => d.approval === 'approved')
+    const tools: AgentAccessView['tools'][number][] = sites.flatMap((d) =>
+      d.tools
+        .filter((t) => !t.internal)
+        .map((t) => ({
+          ref: `${d.id}.${t.name}`,
+          adapterId: d.id,
+          siteName: d.name,
+          tool: t.name,
+          title: t.title,
+          sideEffect: t.sideEffect as 'read' | 'write' | 'irreversible',
+          on: granted.includes(`${d.id}.${t.name}`),
+          held: granted.includes(`${d.id}.${t.name}`),
+        })),
+    )
+    for (const t of remoteSetup.tools)
+      if (!sites.some((d) => d.id === t.adapterId))
+        tools.push({
+          ref: t.ref,
+          adapterId: t.adapterId,
+          siteName: t.adapterName,
+          tool: t.tool,
+          title: t.toolTitle,
+          sideEffect: t.sideEffect,
+          on: granted.includes(t.ref),
+          held: granted.includes(t.ref),
+        })
+    return { tools, gone: granted.filter((ref) => !tools.some((t) => t.ref === ref)) }
   }
   const mailStatus = (): MailStatus => {
     if (!mailSettings.enabled) return { state: 'off', settings: clone(mailSettings), accounts: [] }
@@ -1889,7 +1924,20 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       async save(clientId, changes) {
         enter('agentAccess.save', clientId, changes)
         const record = { ...(appAccess.get(clientId) ?? {}) }
-        for (const [app, levels] of Object.entries(changes)) {
+        const { tools: toolChanges, ...apps } = changes
+        if (toolChanges !== undefined) {
+          remoteClients = remoteClients.map((c) => {
+            if (`remote:${c.id}` !== clientId || c.grant === null) return c
+            const held = new Set(c.grant.tools)
+            for (const [ref, on] of Object.entries(toolChanges)) {
+              if (on) held.add(ref)
+              else held.delete(ref)
+            }
+            return { ...c, grant: { ...c.grant, tools: [...held].sort() } }
+          })
+          emit({ type: 'remote-changed' })
+        }
+        for (const [app, levels] of Object.entries(apps)) {
           const items = { ...(record[app as AccessApp] ?? {}) }
           for (const [id, level] of Object.entries(levels ?? {})) {
             if (level === 'off') delete items[id]

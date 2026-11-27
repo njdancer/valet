@@ -446,7 +446,10 @@ export const writeInputs = {
       .string()
       .regex(ADAPTER_ID)
       .optional()
-      .describe('For a site tool (cloud agents only): the site’s adapter id. Give tool with it.'),
+      .describe(
+        'For a tool (cloud agents only): the site’s adapter id, or "browser" for Valet’s browser_ tools. ' +
+          'Give tool with it.',
+      ),
     tool: z
       .string()
       .regex(TOOL_NAME)
@@ -647,7 +650,8 @@ export const WRITE_TOOLS: readonly WriteTool[] = [
     description:
       'Asks the person for access you don’t have, with your reason: Read or Edit on one Mail ' +
       'account, calendar or reminder list (app, item, level), or, for a cloud agent, one tool of an ' +
-      'approved site (adapterId, tool), such as one you built. Use it when the person asks for ' +
+      'approved site or of Valet’s own (adapterId, tool), such as one you built, or adapterId ' +
+      '"browser" and tool "login_steps" for browser_login_steps. Use it when the person asks for ' +
       'something you can’t reach, or a call says you may only read. The person answers on their ' +
       'phone or Mac; nothing changes until they approve it, and Valet never asks for you.',
     input: writeInputs.requestAccess,
