@@ -46,6 +46,11 @@ export type WorkbenchOutcome = { readonly status: 'ok' } | Exclude<AuthOutcome, 
 export class LoginWorkbench {
   /** Across batches: the second password fill of the workbench's life is refused. */
   private passwordFills = 0
+  /**
+   * When the first batch started: a one-time code counts from here, not from its own batch, since
+   * the step that asked for the code (a click on "send code") is usually in an earlier batch.
+   */
+  private firstStartedAt: Date | null = null
   private readonly matcher: UrlPatternMatcher
   private closed = false
   /** One batch at a time: the page is one page. */
@@ -80,6 +85,7 @@ export class LoginWorkbench {
     } catch {
       return { status: 'failed', stage: 'auth-step', errorClass: 'internal' }
     }
+    this.firstStartedAt ??= startedAt
     const ctx: FlowContext = {
       input: {
         ...this.input,
@@ -88,7 +94,7 @@ export class LoginWorkbench {
         ...(batch.signal === undefined ? {} : { signal: batch.signal }),
         ...(batch.paceNavigation === undefined ? {} : { paceNavigation: batch.paceNavigation }),
       },
-      startedAt,
+      startedAt: this.firstStartedAt,
       deadline: startedAt.getTime() + batch.timeoutMs,
       regexes: { patterns, matcher: this.matcher },
       probed: false,
