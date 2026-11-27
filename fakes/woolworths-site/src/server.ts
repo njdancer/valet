@@ -393,7 +393,9 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     const trolley = store.trolleyOf(exchange.visitor)
     if (method === 'GET' && path === '/api/ui/v2/bootstrap') {
       const firstName = store.firstNameOf(exchange.visitor)
-      return json(exchange, 200, { ShopperDetails: { IsLoggedIn: firstName !== null, FirstName: firstName } })
+      // The live shape since 2026-11 (probe, 2026-11-27): the shopper sits under ShopperRequest, and
+      // IsGuest is what says whether the session is logged in.
+      return json(exchange, 200, { ShopperRequest: { IsGuest: firstName === null, FirstName: firstName } })
     }
     if (path === '/apis/ui/search/products' && (method === 'GET' || method === 'POST')) {
       const query =
@@ -421,9 +423,11 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
       if (stores === null) return json(exchange, 400, INVALID_REQUEST)
       return json(exchange, 200, options.houseBrand === undefined ? stores : rebrandJson(stores, STORE_NAME))
     }
-    if (method === 'POST' && path === '/api/v3/ui/fulfilment') {
+    if (method === 'POST' && path === '/apis/ui/fulfilment') {
       const chosen = storeChosenBy(parseJson(exchange.body))
       if (chosen === null) return json(exchange, 400, INVALID_REQUEST)
+      // The live site answers 401 with an empty body to a guest choosing a store (probe, 2026-11-27).
+      if (store.firstNameOf(exchange.visitor) === null) return send(exchange, 401, 'text/plain', '')
       exchange.visitor.fulfilment.addressId = chosen.AddressId
       const response = fulfilmentResponse(chosen)
       return json(

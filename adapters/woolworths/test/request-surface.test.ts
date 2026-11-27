@@ -27,7 +27,7 @@ function serveEverything(ctx: FakeToolContext): FakeToolContext {
     .on('GET', '/apis/ui/Trolley', json(loadFixture('trolley-two-items.json')))
     .on('POST', '/api/v3/ui/trolley/update', json(loadFixture('trolley-two-items.json')))
     .on('GET', '/api/v3/ui/fulfilment/stores', json([{ AddressId: 9001201, Description: 'Town Hall' }]))
-    .on('POST', '/api/v3/ui/fulfilment', json({ IsSuccessful: true, AddressId: 9001201 }))
+    .on('POST', '/apis/ui/Fulfilment', json({ IsSuccessful: true, AddressId: 9001201 }))
 }
 
 for (const origin of [REAL_ORIGIN, FAKE_ORIGIN]) {

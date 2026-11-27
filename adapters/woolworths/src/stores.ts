@@ -6,8 +6,17 @@
 // for a store in the app, apply_store before a tool call whenever the store isn't known to be in
 // force. Neither is listed to, or callable by, an MCP client.
 //
-// Nothing here has been seen live. The paths, the request body and the response fields are what
-// the site is believed to use; README.md ("Store") lists what a live session has to confirm.
+// Seen live (2026-11-27, anonymous probe and the site's own scripts): stores for a postcode come from
+// GET /api/v3/ui/fulfilment/stores; a store is chosen with POST /apis/ui/Fulfilment and a body of
+// { fulfilmentMethod, addressId }, replying { IsSuccessful, IsNonServiced, Message }. Some stores
+// list "DriveUp" (direct to boot) rather than "Pickup"; when the site refuses Pickup, the store is
+// chosen once more as DriveUp.
+//
+// A guest can't choose a store at all: the site answers 401. apply_store runs before every tool,
+// search included, so logging in here would make every search log in. Instead a guest's 401 ends
+// apply_store with nothing applied: a guest's search quotes the site's default store, as it would
+// for anyone browsing signed out. Any login makes the runtime apply every setting again before the
+// next call, so the store is in force for the cart from then on.
 
 import { MAX_SETTING_CHOICES, settingChoicesSchema, settingQuerySchema, tool, ValetError } from '@valet/core'
 import { z } from 'zod'
@@ -61,12 +70,17 @@ export const applyStore = tool({
   output: z.object({}).strict(),
   async run(ctx, { value }) {
     const addressId = Number(value)
-    const reply = await postJson(
-      ctx,
-      PATHS.fulfilment,
-      { addressId, fulfilmentMethod: 'Pickup' },
-      fulfilmentWire,
-    )
+    const choose = (fulfilmentMethod: 'Pickup' | 'DriveUp') =>
+      postJson(ctx, PATHS.fulfilment, { fulfilmentMethod, addressId }, fulfilmentWire)
+    let reply: z.infer<typeof fulfilmentWire>
+    try {
+      const pickup = await choose('Pickup')
+      reply = pickup.IsSuccessful === false ? await choose('DriveUp') : pickup
+    } catch (error) {
+      if (error instanceof ValetError && error.stage === 'tool-run' && error.errorClass === 'not-logged-in')
+        return {}
+      throw error
+    }
     // The site answered, but not with the store asked for: the tools must not go on to quote another.
     if (reply.IsSuccessful === false) throw new ValetError('tool-run', 'unavailable')
     if (typeof reply.AddressId === 'number' && reply.AddressId !== addressId) {

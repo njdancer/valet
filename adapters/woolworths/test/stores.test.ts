@@ -7,7 +7,7 @@ import { applyStore, findStores } from '../src/stores'
 import { FakeToolContext, json } from './fake-context'
 
 const STORES = '/api/v3/ui/fulfilment/stores'
-const FULFILMENT = '/api/v3/ui/fulfilment'
+const FULFILMENT = '/apis/ui/Fulfilment'
 
 const TOWN_HALL = {
   FulfilmentStoreId: 1201,
@@ -122,8 +122,35 @@ describe('apply_store', () => {
     expect(ctx.fetches[0]).toMatchObject({
       method: 'POST',
       path: FULFILMENT,
-      json: { addressId: 9001201, fulfilmentMethod: 'Pickup' },
+      json: { fulfilmentMethod: 'Pickup', addressId: 9001201 },
     })
+  })
+
+  it('never logs in: it runs before searches too, and a search must not need a login', async () => {
+    const ctx = new FakeToolContext().on('POST', FULFILMENT, json({ IsSuccessful: true }))
+    await apply(ctx, '9001201')
+    expect(ctx.events).toEqual([`POST ${FULFILMENT}`])
+  })
+
+  it('applies nothing for a guest, whom the site refuses with 401, and writes once', async () => {
+    const ctx = new FakeToolContext().on('POST', FULFILMENT, {
+      status: 401,
+      contentType: 'text/plain',
+      body: '',
+    })
+    expect(await apply(ctx, '9001201')).toEqual({})
+    expect(ctx.fetches).toHaveLength(1)
+  })
+
+  it('chooses the store for direct to boot when the site refuses pick-up there', async () => {
+    const ctx = new FakeToolContext().on('POST', FULFILMENT, (request) =>
+      json({ IsSuccessful: (request.json as { fulfilmentMethod?: string }).fulfilmentMethod === 'DriveUp' }),
+    )
+    expect(await apply(ctx, '9001201')).toEqual({})
+    expect(ctx.fetches.map((f) => f.json)).toEqual([
+      { fulfilmentMethod: 'Pickup', addressId: 9001201 },
+      { fulfilmentMethod: 'DriveUp', addressId: 9001201 },
+    ])
   })
 
   it.each(['', '0', '-1', '1.5', '9001201 ', 'abc', '1e3', '1234567890123'])(
@@ -136,6 +163,8 @@ describe('apply_store', () => {
   it('fails when the site says the choice was not taken', async () => {
     const ctx = new FakeToolContext().on('POST', FULFILMENT, json({ IsSuccessful: false }))
     await expect(apply(ctx, '9001201')).rejects.toEqual(new ValetError('tool-run', 'unavailable'))
+    // Pick-up, then direct to boot once; never more.
+    expect(ctx.fetches).toHaveLength(2)
   })
 
   it('fails when the site answers with another store', async () => {

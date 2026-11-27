@@ -112,7 +112,7 @@ export const pickupStoreWire = z.object({
 export type PickupStoreWire = z.infer<typeof pickupStoreWire>
 export const pickupStoresWire = z.array(z.unknown())
 
-/** POST /api/v3/ui/fulfilment. Assumed: a reply that says whether the choice was taken. */
+/** POST /apis/ui/Fulfilment. The site's scripts read IsSuccessful; AddressId is an assumption. */
 export const fulfilmentWire = z.object({
   IsSuccessful: z.boolean().nullish(),
   AddressId: z.number().nullish(),

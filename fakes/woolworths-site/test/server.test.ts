@@ -272,7 +272,7 @@ describe('GET /api/ui/v2/bootstrap', () => {
     const client = await browsing(site)
     const reply = await client.get('/api/ui/v2/bootstrap')
     expect(reply.headers.get('content-type')).toBe('application/json; charset=utf-8')
-    expect(JSON.parse(reply.text)).toEqual({ ShopperDetails: { IsLoggedIn: false, FirstName: null } })
+    expect(JSON.parse(reply.text)).toEqual({ ShopperRequest: { IsGuest: true, FirstName: null } })
   })
 })
 
@@ -620,29 +620,21 @@ describe('pick-up stores and fulfilment (assumed shapes)', () => {
     }
   })
 
-  it('remembers the store a session chooses, and only for that session', async () => {
+  it('refuses a guest’s choice with an empty 401, as the live site does, and keeps no store', async () => {
     const site = await start()
     const client = await browsing(site)
-    await browsing(site)
-    expect(site.pickupAddresses(null)).toEqual([null, null])
-    const reply = await client.postJson('/api/v3/ui/fulfilment', {
+    const reply = await client.postJson('/apis/ui/Fulfilment', {
       addressId: 9001310,
       fulfilmentMethod: 'Pickup',
     })
-    expect(reply.status).toBe(200)
-    expect(JSON.parse(reply.text)).toEqual({
-      IsSuccessful: true,
-      FulfilmentMethod: 'Pickup',
-      AddressId: 9001310,
-      FulfilmentStoreId: 1310,
-    })
-    expect(site.pickupAddresses(null)).toEqual([9001310, null])
+    expect(reply.status).toBe(401)
+    expect(reply.text).toBe('')
+    expect(site.pickupAddresses(null)).toEqual([null])
   })
 
-  it('refuses a choice that is not a pick-up store, and keeps the old one', async () => {
+  it('refuses a choice that is not a pick-up store', async () => {
     const site = await start()
     const client = await browsing(site)
-    await client.postJson('/api/v3/ui/fulfilment', { addressId: 9003105, fulfilmentMethod: 'Pickup' })
     for (const body of [
       { addressId: 1, fulfilmentMethod: 'Pickup' },
       { addressId: '9001201', fulfilmentMethod: 'Pickup' },
@@ -650,9 +642,9 @@ describe('pick-up stores and fulfilment (assumed shapes)', () => {
       { fulfilmentMethod: 'Pickup' },
       'Pickup',
     ]) {
-      expect((await client.postJson('/api/v3/ui/fulfilment', body)).status).toBe(400)
+      expect((await client.postJson('/apis/ui/Fulfilment', body)).status).toBe(400)
     }
-    expect(site.pickupAddresses(null)).toEqual([9003105])
+    expect(site.pickupAddresses(null)).toEqual([null])
   })
 
   it('is behind Akamai like every API path', async () => {

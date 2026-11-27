@@ -115,7 +115,7 @@ describe('the shop', () => {
     expect(stores.text).toContain('Gumleaf Grocer Town Hall')
     expect(stores.text).not.toMatch(/\bWoolworths\b/)
     expect(
-      (await tools.postJson('/api/v3/ui/fulfilment', { addressId: 9001201, fulfilmentMethod: 'Pickup' }))
+      (await tools.postJson('/apis/ui/Fulfilment', { addressId: 9001201, fulfilmentMethod: 'Pickup' }))
         .status,
     ).toBe(200)
     const browser = await loggedIn(site)
