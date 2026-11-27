@@ -37,6 +37,7 @@ import { formatAgo, formatDay, plural } from '../../lib/format'
 import { href, navigate } from '../../lib/router'
 import { clientLabel, TRANSPORT_WORDING } from '../../lib/wording'
 import { AppsAccess } from './AppsAccess'
+import { BrowserNetwork } from './BrowserNetwork'
 import { SetupSnippets } from './SetupSnippets'
 import { AppTile, Failed, loginName, reportedAs, type SiteReach, toolSummary, useReach } from './shared'
 
@@ -246,6 +247,7 @@ function AppPage({ client }: { readonly client: ClientInfo }) {
         </Card>
         {revoked ? null : <AppsAccess clientId={`local:${client.id}`} name={client.name} />}
         {revoked ? null : <AppAccess client={client} />}
+        {revoked ? null : <BrowserNetwork agent={`local:${client.id}`} name={client.name} />}
         {revoked ? null : (
           <Card>
             <CardContent>
@@ -452,6 +454,7 @@ function AgentPage({ agent }: { readonly agent: RemoteClientItem }) {
         {items !== null ? (
           <CanReach title="Can reach" tools={items.tools} hosts={items.hosts} logins={items.logins} />
         ) : null}
+        {agent.grant === null ? null : <BrowserNetwork agent={`remote:${agent.id}`} name={agent.host} />}
         <Card>
           <CardHeader>
             <CardTitle>Access</CardTitle>

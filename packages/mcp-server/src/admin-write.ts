@@ -157,6 +157,16 @@ export interface AdminWriter {
    * tool isn't needed, as its site tools are on unless the person turned one off.
    */
   requestAccess(viewer: ClientIdentity, ask: AccessAsk, reason: string): Promise<WriteOutcome>
+  /**
+   * This agent's own browser sessions' network (docs/agent-browser.md, "Network"): the home network
+   * on or off, or the interface they leave from (null: the Mac's routing). Narrowing is done at
+   * once; widening is a request the person approves on their phone or Mac. One change per call.
+   */
+  setBrowserNetwork(
+    viewer: ClientIdentity,
+    change: { readonly homeNetwork: boolean } | { readonly interface: string | null },
+    note: string | null,
+  ): Promise<WriteOutcome>
   /** Turns one tool off for this agent only (Notify only). */
   turnOffTool(viewer: ClientIdentity, adapterId: string, tool: string): Promise<WriteOutcome>
   /**
@@ -364,6 +374,23 @@ export const writeInputs = {
       .describe('true or false; days for traceRetentionDays.'),
     note: noteInput,
   }),
+  setBrowserNetwork: z.object({
+    homeNetwork: z
+      .boolean()
+      .optional()
+      .describe(
+        'true: your browser sessions may reach devices on the person’s network; false: public internet only.',
+      ),
+    interface: z
+      .string()
+      .regex(/^[a-z][a-z0-9]{0,14}$/)
+      .nullable()
+      .optional()
+      .describe(
+        'The Mac’s network interface your sessions leave from, such as en0 or vlan20; null for the Mac’s own routing. The person names which to use.',
+      ),
+    note: noteInput,
+  }),
   requestSetting: z.object({
     adapterId: z
       .string()
@@ -480,6 +507,8 @@ export function isAgentSetting(value: unknown): value is AgentSetting {
 
 /** The arguments any write tool takes, as the SDK parsed them against the tool's input schema. */
 export interface WriteArgs {
+  readonly homeNetwork?: unknown
+  readonly interface?: unknown
   readonly setting?: unknown
   readonly value?: unknown
   readonly note?: unknown
@@ -565,6 +594,33 @@ export const WRITE_TOOLS: readonly WriteTool[] = [
       if ((setting === 'traceRetentionDays') !== (typeof value === 'number'))
         return { kind: 'outcome', outcome: { kind: 'refused', reason: 'not-found' } }
       return { kind: 'outcome', outcome: await writer.setSetting(viewer, setting, value, note(args)) }
+    },
+  },
+  {
+    name: 'valet_set_browser_network',
+    title: 'Change your browser sessions’ network',
+    description:
+      'Changes what your own browser sessions (browser_session_create) may reach: the person’s home ' +
+      'network, or one network interface of the Mac. Give homeNetwork or interface, not both. ' +
+      'Narrowing (home network off, interface back to null) is done at once; widening becomes a ' +
+      'request the person answers on their phone or Mac. Sessions opened after it take the change.',
+    input: writeInputs.setBrowserNetwork,
+    needs: 'ask',
+    annotations: CHANGE,
+    run: async (writer, args, viewer) => {
+      const home = typeof args.homeNetwork === 'boolean'
+      const nic = args.interface === null || typeof args.interface === 'string'
+      if (home === nic) return { kind: 'outcome', outcome: { kind: 'refused', reason: 'not-found' } }
+      return {
+        kind: 'outcome',
+        outcome: await writer.setBrowserNetwork(
+          viewer,
+          home
+            ? { homeNetwork: args.homeNetwork === true }
+            : { interface: (args.interface as string | null) ?? null },
+          note(args),
+        ),
+      }
     },
   },
   {

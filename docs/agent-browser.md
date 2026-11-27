@@ -15,7 +15,7 @@ takes. A session is a browser of its own:
 - **One wall, nothing limited inside it.** Whatever a fresh browser could do, the agent may: any
   public https page (sites the person is signed in to through Valet included: the session isn't
   signed in), forms that post, and the session's own cookies shown as they are. What it can't do
-  is reach outside the session: private addresses are refused (the public-only dial), and nothing
+  is reach outside the session: private addresses are refused (the public-only dial) unless the person turns on the agent's home network (see Network), and nothing
   of the person's is there to reach. As sessions gain privileges, each comes with boundaries
   declared at `browser_session_create`, matched to what it could do.
 - **Never types** a login secret or session value Valet knows, and never into a password or
@@ -121,6 +121,30 @@ covered by an overlay is refused rather than clicked through. A screenshot is ta
 DevTools' `Page.captureScreenshot` while the hidden window is made to draw (a frame subscription);
 it comes back as an image beside the output, never in it or in the audit log. The console comes from Electron's own console event and `browser_evaluate` from Electron's script calls, so neither turns on a DevTools domain a page could notice (Runtime or Console).
 
-Not yet: tabs, the page's own dialogs, plain http pages, home network and
-network interface settings, frames inside the page (an iframe's content isn't in the snapshot), and setting cookies or storage (browser*evaluate can, for what a page's script could).
-The drafts' `valet_browser*\*` tools are unchanged and still use the older snapshot.
+Not yet: tabs, the page's own dialogs, plain http pages, frames inside the page (an iframe's
+content isn't in the snapshot), and setting cookies or storage (`browser_evaluate` can, for what a
+page's script could). The drafts' `valet_browser_*` tools are unchanged and still use the older
+snapshot.
+
+## Network
+
+Each agent has two settings for its browser sessions, on its page in Valet (Connections, then the
+app or cloud agent: "Browser network"). Both are off by default.
+
+- **Home network.** On, its sessions may also reach private addresses: the home network
+  (10/8, 172.16/12, 192.168/16), shared address space (100.64/10, which includes a tailnet) and
+  unique local IPv6 (fc00::/7). Never loopback, link-local, or one of this Mac's own addresses, so a
+  session can't reach Valet or anything else listening on the Mac. Off, sessions reach public
+  addresses only.
+- **Network interface.** Automatic uses the Mac's own routing. Pinned, every connection leaves
+  from that interface's address (macOS then routes by that interface alone), for example a VLAN
+  made for one agent. An interface that isn't connected, or has no address of the family a site
+  needs, is refused rather than sent out another way. Name lookups still use the Mac's resolver.
+
+Turning the home network on, or pinning a different interface, is approved: Touch ID when the
+person does it on the page, or a request (`valet_set_browser_network`, with Ask for changes) the
+person approves on their phone or Mac. The approval is a `setting` card naming the agent
+(`bnet_home_<r|l>_<id>`, `bnet_nic_<r|l>_<id>`). Turning it off, or back to Automatic, is done at
+once. A session takes the settings it opened with; `browser_session_create` answers with them.
+A login session isn't affected by these settings and answers `network: null`: it reaches only the site's own hosts.
+Changes are audited (`agent-network-changed`), and an agent's settings go when it is revoked.

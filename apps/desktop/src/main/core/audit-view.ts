@@ -161,6 +161,7 @@ export const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent[
     'client-reset',
     'client-access-changed',
     'client-tool-on',
+    'agent-network-changed',
   ],
 }
 

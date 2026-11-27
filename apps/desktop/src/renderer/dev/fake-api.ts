@@ -672,6 +672,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
 
   // Every app starts with the defaults; the first one has turned a tool off for itself.
   const access = new Map<string, ClientAccess>()
+  const networks = new Map<string, { homeNetwork: boolean; interface: string | null }>()
   const accessOf = (clientId: string): ClientAccess =>
     access.get(clientId) ?? {
       seeValet: true,
@@ -1714,6 +1715,21 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         access.set(clientId, { ...accessOf(clientId), ...patch })
         emit({ type: 'clients-changed' })
       },
+      async network(agent) {
+        enter('clients.network', agent)
+        return {
+          ...(networks.get(agent) ?? { homeNetwork: false, interface: null }),
+          interfaces: [
+            { name: 'en0', addresses: [{ address: '192.168.1.20', family: 4 as const }] },
+            { name: 'vlan20', addresses: [{ address: '10.20.0.5', family: 4 as const }] },
+          ],
+        }
+      },
+      async setNetwork(agent, patch) {
+        enter('clients.setNetwork', agent, patch)
+        networks.set(agent, { ...(networks.get(agent) ?? { homeNetwork: false, interface: null }), ...patch })
+        emit({ type: agent.startsWith('remote:') ? 'remote-changed' : 'clients-changed' })
+      },
       async turnToolOn(clientId, qualified) {
         enter('clients.turnToolOn', clientId, qualified)
         const current = accessOf(clientId)
@@ -2423,6 +2439,7 @@ const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent['type']
     'client-reset',
     'client-access-changed',
     'client-tool-on',
+    'agent-network-changed',
   ],
 }
 

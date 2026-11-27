@@ -73,6 +73,7 @@ export const EVENT_WORDS = {
   'client-reset': { label: 'App access reset', tone: 'neutral' },
   'client-access-changed': { label: 'App access changed', tone: 'neutral' },
   'client-tool-on': { label: 'Tool turned back on', tone: 'warning' },
+  'agent-network-changed': { label: 'Browser network changed', tone: 'warning' },
   'app-paused': { label: 'Valet paused', tone: 'warning' },
   'call-refused': { label: 'Call refused', tone: 'danger' },
   'refusals-dropped': { label: 'More calls refused', tone: 'danger' },
@@ -526,6 +527,13 @@ export function details(event: AuditEvent, now: number): ReactNode {
         </>
       )
     }
+    case 'agent-network-changed':
+      return (
+        <Quiet>
+          {event.clientId}’s browser sessions: home network {event.homeNetwork ? 'on' : 'off'}, interface{' '}
+          {event.interface ?? 'automatic'}
+        </Quiet>
+      )
     case 'client-tool-on':
       return (
         <>
@@ -672,6 +680,7 @@ export const EVENT_FIELDS = {
   'client-reset': ['type', 'clientId'],
   'client-access-changed': ['type', 'clientId', 'before', 'after'],
   'client-tool-on': ['type', 'clientId', 'tool'],
+  'agent-network-changed': ['type', 'clientId', 'homeNetwork', 'interface'],
   'app-paused': ['type', 'paused'],
   'call-refused': ['type', 'client', 'clientId', 'tool', 'reason'],
   'refusals-dropped': ['type', 'client', 'clientId', 'count'],

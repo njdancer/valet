@@ -9,7 +9,7 @@
 
 import { applyPlatform, detectPlatform, GlassFilter, Toaster } from '@valet/ui'
 import { type ReactNode, StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
+import { createRoot, type Root } from 'react-dom/client'
 import type { ValetApi, WindowChrome } from '../shared/api'
 import { ApiProvider } from './lib/api-context'
 
@@ -50,10 +50,11 @@ export async function boot(
   root: HTMLElement,
   win: Window,
   fake: FakeLoader | null,
-): Promise<void> {
+): Promise<Root> {
   applyChrome(document.documentElement, win)
   const api = await resolveApi(win, fake)
-  createRoot(root).render(
+  const mounted = createRoot(root)
+  mounted.render(
     <StrictMode>
       {api === null ? (
         <div role="alert" className="flex h-full items-center justify-center p-6 text-md text-fg-muted">
@@ -66,4 +67,5 @@ export async function boot(
       <GlassFilter />
     </StrictMode>,
   )
+  return mounted
 }
