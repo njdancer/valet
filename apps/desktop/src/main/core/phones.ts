@@ -139,6 +139,7 @@ export class Phones implements PhoneOutbox {
     this.online.clear()
     this.options.tunnel?.setPhoneDoor(null)
     this.options.tunnel?.stop()
+    this.channel?.stop()
     this.channel = null
   }
 
@@ -159,6 +160,7 @@ export class Phones implements PhoneOutbox {
       relay: this.connection(),
       relayOrigin: this.options.tunnel?.origin ?? null,
       worksLocked: null,
+      sendingFailingSince: this.channel?.sealingFailingSince ?? null,
       phones: phones.map((p) => ({
         deviceId: p.deviceId,
         name: p.name,

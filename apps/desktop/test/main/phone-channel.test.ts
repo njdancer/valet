@@ -56,7 +56,14 @@ function p256() {
 }
 const tick = () => new Promise((r) => setTimeout(r, 20))
 
-async function setup() {
+interface SetupOptions {
+  /** Stands in for the Secure Enclave's key agreement: false makes it fail. */
+  readonly agreeWorks?: () => boolean
+  readonly timers?: { setTimeout(run: () => void, ms: number): unknown; clearTimeout(h: unknown): void }
+  readonly onChange?: () => void
+}
+
+async function setup(over: SetupOptions = {}) {
   const signer = new SoftwareSigner(() => true)
   const keys = await signer.keys()
   const ledger = await TrustedLedger.open(
@@ -94,7 +101,15 @@ async function setup() {
   channel = await PhoneChannel.open({
     devices,
     keys,
-    channel: signer.channel,
+    channel: {
+      ...signer.channel,
+      agree: async (peer) => {
+        if (over.agreeWorks !== undefined && !over.agreeWorks()) throw new Error('approver failed (exit 70)')
+        return signer.channel.agree(peer)
+      },
+    },
+    ...(over.timers === undefined ? {} : { timers: over.timers }),
+    ...(over.onChange === undefined ? {} : { onChange: over.onChange }),
     relayOrigin: () => 'https://relay.test',
     link,
     receive: (from, text) => inbox.receive(from, text),
@@ -370,5 +385,77 @@ describe('why a message could not be sealed (feedback #34)', () => {
     )
     expect(sealFailure(new Error('')).length).toBeLessThan(10)
     expect(sealFailure('nope')).toBe('not an error')
+  })
+})
+
+describe('a message that could not be sealed (feedback #34)', () => {
+  it('waits in the outbox, is sent again on a backoff, and the failure shows until sealing works', async () => {
+    let works = true
+    const timers: Array<{ run: () => void; ms: number; cleared: boolean }> = []
+    let changes = 0
+    const t = await setup({
+      agreeWorks: () => works,
+      timers: {
+        setTimeout: (run, ms) => {
+          const handle = { run, ms, cleared: false }
+          timers.push(handle)
+          return handle
+        },
+        clearTimeout: (h) => {
+          ;(h as { cleared: boolean }).cleared = true
+        },
+      },
+      onChange: () => {
+        changes += 1
+      },
+    })
+    const { p, code } = await pair(t)
+    await t.channel.confirmPairing(code)
+    const before = lastEnvelopes(t, p.deviceId).length
+    const changesBefore = changes
+    // The Secure Enclave stops answering: the card can't be sealed, so nothing goes.
+    works = false
+    t.channel.send(p.deviceId, {
+      type: 'status',
+      at: '2026-11-27T20:09:00.000Z',
+      safety: 'running',
+      sites: [],
+      agents: [],
+      devices: [],
+      recent: [],
+    } as never)
+    await tick()
+    expect(lastEnvelopes(t, p.deviceId)).toHaveLength(before)
+    expect(t.channel.sealingFailingSince).not.toBeNull()
+    expect(changes).toBe(changesBefore + 1)
+    // Retried after 5 s, then 10 s, still failing; still shown, told once.
+    expect(timers.at(-1)?.ms).toBe(5_000)
+    timers.at(-1)?.run()
+    await tick()
+    expect(timers.at(-1)?.ms).toBe(10_000)
+    expect(changes).toBe(changesBefore + 1)
+    // It works again: the waiting message goes, the failure clears, and the retry ends.
+    works = true
+    timers.at(-1)?.run()
+    await tick()
+    const opened = await openAll(t, p)
+    expect(opened.at(-1)).toMatchObject({ type: 'status' })
+    expect(t.channel.sealingFailingSince).toBeNull()
+    expect(changes).toBe(changesBefore + 2)
+    // Stopped, no retry is left to fire.
+    works = false
+    t.channel.send(p.deviceId, {
+      type: 'status',
+      at: '2026-11-27T20:10:00.000Z',
+      safety: 'running',
+      sites: [],
+      agents: [],
+      devices: [],
+      recent: [],
+    } as never)
+    await tick()
+    const pending = timers.at(-1)
+    t.channel.stop()
+    expect(pending?.cleared).toBe(true)
   })
 })

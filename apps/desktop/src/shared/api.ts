@@ -1573,6 +1573,11 @@ export interface PhonesStatus {
    * renewed (phones.renewKeys). Null where it doesn't apply (no Secure Enclave helper).
    */
   readonly worksLocked: boolean | null
+  /**
+   * Since when Valet couldn't seal messages to phones (its Secure Enclave key didn't answer), or
+   * null while it can. Those messages wait and are sent again as soon as it can (feedback #34).
+   */
+  readonly sendingFailingSince: string | null
   readonly phones: readonly {
     readonly deviceId: string
     readonly name: string

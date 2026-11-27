@@ -172,6 +172,11 @@ signed text), and the last seq numbers. All in the Keychain, this device only.
 - **Send.** Every phone message gets the next seq and is kept in an outbox until the Mac acks it.
   The outbox survives restarts. That's what drives "Not confirmed yet" on cards and commands.
 - **Reconnect** with backoff (1, 2, 4 … 60 s); `mac-online` frames drive the "Mac last seen" line.
+- **The Mac's side, when it can't seal** (feedback #34, 2026-11-27): the Mac keeps each message in
+  its outbox until acked too. A message it can't seal (its Secure Enclave key agreement failing, as
+  for two hours on Nick's Mac) stays there, and the whole outbox is sent again after 5 s, doubling to
+  every 5 minutes, until a seal works; `phones.status().sendingFailingSince` says since when, and
+  Settings › Devices shows it. The diagnostics log says why each seal failed.
 - **Mac state for the other tabs** (Activity, Sites, Agents, the Valet tab) needs a message the
   contract doesn't have yet: `status` (CR-3). Until it exists those tabs show what the fake sends,
   behind the proposed schema.

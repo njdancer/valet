@@ -17,6 +17,7 @@ function withStatus(over: Partial<PhonesStatus>) {
     relay: 'online',
     relayOrigin: 'https://0123abcd.valet.example',
     worksLocked: true,
+    sendingFailingSince: null,
     phones: [
       { deviceId: 'phone-1', name: 'Nick’s iPhone', pairedAt: '2026-11-22T00:00:00.000Z', online: true },
     ],
@@ -57,5 +58,18 @@ describe('Settings › Devices', () => {
     )
     expect(await screen.findByText(/Pairing a phone needs Valet’s relay/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Pair an iPhone' }).getAttribute('aria-disabled')).toBe('true')
+  })
+
+  it('says when Valet can’t send to the phone, and nothing while it can', async () => {
+    renderPage(withStatus({ sendingFailingSince: '2026-11-27T20:09:00.000Z' }), <DevicesSection />)
+    expect((await screen.findByRole('status')).textContent).toMatch(
+      /hasn’t been able to send to your phone since .*Messages wait/,
+    )
+  })
+
+  it('shows no such line while sending works', async () => {
+    renderPage(withStatus({}), <DevicesSection />)
+    await screen.findByText('Nick’s iPhone')
+    expect(document.body.textContent).not.toMatch(/hasn’t been able to send/)
   })
 })

@@ -959,6 +959,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     relay: 'online',
     relayOrigin: 'https://0123456789abcdef.valet.example',
     worksLocked,
+    sendingFailingSince: null,
     phones,
     pairing,
   })

@@ -92,6 +92,9 @@ export function DevicesSection() {
             </Button>
           </div>
           {s !== null && s.worksLocked === false ? <RenewKeys phones={s.phones.length} /> : null}
+          {s !== null && s.sendingFailingSince !== null && s.phones.length > 0 ? (
+            <SendingStuck since={s.sendingFailingSince} />
+          ) : null}
         </CardContent>
       </Card>
       <PairSheet open={pairing} onOpenChange={setPairing} view={s?.pairing ?? { step: 'idle' }} />
@@ -140,6 +143,17 @@ function RemovePhone({ deviceId, name }: { readonly deviceId: string; readonly n
  * Keys made before they could work while locked: Valet drops off the relay, and phones see the Mac
  * offline, whenever this Mac locks. Renewing replaces them, removes every phone and restarts.
  */
+/** Messages to the phone couldn't be sealed (feedback #34): they wait and go once Valet can. */
+function SendingStuck({ since }: { readonly since: string }) {
+  const at = new Date(since).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  return (
+    <Text tone="muted" role="status">
+      Valet hasn’t been able to send to your phone since {at}: this Mac’s key didn’t answer. Messages wait and
+      go as soon as it can, and Valet keeps trying. If this lasts, quit and reopen Valet.
+    </Text>
+  )
+}
+
 function RenewKeys({ phones }: { readonly phones: number }) {
   const api = useApi()
   const action = useAction()
