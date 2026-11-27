@@ -2,7 +2,7 @@
 // anything is stored. The renderer only offers what it should; this is where it is enforced:
 //
 // - the exact hash installed now (a grant reaches another hash only through an approved update that
-//   doesn't widen it: carriesOver, below);
+//   still uses it: carriedOrigins, below);
 // - a provider that is available in this launch (the fake only in demo mode);
 // - a secret the manifest requests (never the reserved Messages name for a vault item), or for
 //   Messages a sender the manifest declares, character for character, or for sign-in mail a mail
@@ -34,7 +34,6 @@ import {
 } from '@valet/core'
 import type { GrantInfo, GrantRequest, VaultItem } from '../../shared/api'
 import { VAULT } from './constants'
-import { permissionDiff } from './permission-diff'
 
 export interface GrantCheck {
   readonly manifest: AdapterManifest
@@ -190,54 +189,43 @@ export function grantInfo(
 }
 
 /**
- * Whether `grant`, made for the version with manifest `before`, can be kept by the update to
- * `after` without asking again (D47, docs/approval-broker.md#grants-across-an-update): the update
- * doesn't widen what the grant covers. The secret is still requested, for the same or fewer fields
- * and origins, and every origin the grant names is still among them; it is typed into no new field
- * or selector; the login loads no new frame origin. For a Messages grant, its sender is still read
- * with the same pattern and age, and the navigation origins it may be typed into don't grow.
- * Anything else is a widening, and the person grants again.
+ * The origins `grant`, made for the version with manifest `before`, keeps through the person's
+ * approval of the update to `after` (D47 as revised 2026-11-27, docs/approval-broker.md#grants-across-an-update),
+ * or null when it can't be kept. Approving an update the card said keeps the login is the
+ * person trusting the new version with it, so a login is kept whenever the new version still uses
+ * it: a changed field, selector, fill or frame doesn't drop it. What it may be typed into is the
+ * grant's own origins the new version still declares, and any origin the update itself added
+ * (shown on the card the person approved). For a Messages or Mail grant, the new version must
+ * still read that sender, and the origins are the grant's own within the new navigation.
  */
-export function carriesOver(grant: Grant, before: AdapterManifest, after: AdapterManifest): boolean {
-  if (grant.adapterId !== before.id || grant.adapterId !== after.id) return false
-  const diff = permissionDiff(before, after)
-  if (diff.frameOrigins.added.length > 0) return false
-  const within = (next: readonly string[], prev: readonly string[]) => next.every((o) => prev.includes(o))
+export function carriedOrigins(
+  grant: Grant,
+  before: AdapterManifest,
+  after: AdapterManifest,
+): string[] | null {
+  if (grant.adapterId !== before.id || grant.adapterId !== after.id) return null
+  const kept = (origins: readonly string[]) => (origins.length > 0 ? [...origins] : null)
   if (grant.provider === 'messages' || grant.secret === MESSAGES_SECRET) {
-    if (grant.provider !== 'messages' || grant.secret !== MESSAGES_SECRET) return false
-    const source = (m: AdapterManifest) =>
-      messagesSourcesIn(m.auth.steps).filter((s) => s.sender === grant.itemRef)
-    const was = source(before)
-    const now = source(after)
-    if (was.length === 0 || now.length === 0) return false
-    // Every way the new version reads this sender's codes is one the approved version had.
-    const same = (a: { pattern: string; maxAgeSeconds: number }, b: typeof a) =>
-      a.pattern === b.pattern && a.maxAgeSeconds === b.maxAgeSeconds
-    if (!now.every((n) => was.some((w) => same(n, w)))) return false
-    if (!within(after.navigation, before.navigation)) return false
-    return grant.origins.length > 0 && within(grant.origins, after.navigation)
+    if (grant.provider !== 'messages' || grant.secret !== MESSAGES_SECRET) return null
+    if (!messagesSourcesIn(after.auth.steps).some((s) => s.sender === grant.itemRef)) return null
+    return kept(grant.origins.filter((o) => after.navigation.includes(o)))
   }
   if (grant.provider === 'mail' || grant.secret === MAIL_SECRET) {
-    if (grant.provider !== 'mail' || grant.secret !== MAIL_SECRET) return false
+    if (grant.provider !== 'mail' || grant.secret !== MAIL_SECRET) return null
     const ref = parseMailGrantRef(grant.itemRef)
-    if (ref === null) return false
-    // Every way the new version reads this sender's mail is one the approved version had.
-    const key = (s: ReturnType<typeof mailSourcesIn>[number]) => canonicalJson(s)
-    const was = mailSourcesIn(before.auth.steps).map(key)
-    const now = mailSourcesIn(after.auth.steps)
-    if (was.length === 0 || now.length === 0) return false
-    if (!now.every((n) => n.from === ref.sender && was.includes(key(n)))) return false
-    if (!within(after.navigation, before.navigation)) return false
-    return grant.origins.length > 0 && within(grant.origins, after.navigation)
+    if (ref === null || !mailSourcesIn(after.auth.steps).some((s) => s.from === ref.sender)) return null
+    return kept(grant.origins.filter((o) => after.navigation.includes(o)))
   }
+  if (!Object.hasOwn(before.secrets, grant.secret) || !Object.hasOwn(after.secrets, grant.secret)) return null
   const was = before.secrets[grant.secret]
   const now = after.secrets[grant.secret]
-  if (!Object.hasOwn(before.secrets, grant.secret) || !Object.hasOwn(after.secrets, grant.secret))
-    return false
-  if (was === undefined || now === undefined) return false
-  if (!within(now.fields, was.fields) || !within(now.origins, was.origins)) return false
-  if (grant.origins.length === 0 || !within(grant.origins, now.origins)) return false
-  return !diff.secretFills.added.some((f) => f.secret === grant.secret)
+  if (was === undefined || now === undefined) return null
+  return kept(now.origins.filter((o) => grant.origins.includes(o) || !was.origins.includes(o)))
+}
+
+/** Whether `grant` is kept at all by an approved update (carriedOrigins). */
+export function carriesOver(grant: Grant, before: AdapterManifest, after: AdapterManifest): boolean {
+  return carriedOrigins(grant, before, after) !== null
 }
 
 /**

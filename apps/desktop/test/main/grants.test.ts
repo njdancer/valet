@@ -5,6 +5,7 @@
 import { type ProviderKind, parseManifest, ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import {
+  carriedOrigins,
   carriesOver,
   checkGrantRequest,
   type GrantCheck,
@@ -279,46 +280,53 @@ describe('carriesOver: what an update may keep (D47)', () => {
     expect(carriesOver(vault, before, narrower)).toBe(true)
   })
 
-  it('asks again when the secret is requested for more, typed somewhere new, or dropped', () => {
+  it('keeps it through an approved update that asks for more fields, a new origin, selector or frame', () => {
     const more = (patch: Record<string, unknown>) =>
       parseManifest({ ...SHOP, secrets: { login: { ...SHOP_LOGIN, ...patch } } } as typeof SHOP)
-    expect(carriesOver(vault, before, more({ fields: ['username', 'password', 'otp'] }))).toBe(false)
-    expect(
-      carriesOver(
-        vault,
-        before,
-        parseManifest({
-          ...SHOP,
-          navigation: [...(SHOP.navigation ?? []), 'https://sso.shop.test'],
-          secrets: {
-            login: { ...SHOP_LOGIN, origins: ['https://login.shop.test', 'https://sso.shop.test'] },
-          },
-        } as typeof SHOP),
-      ),
-    ).toBe(false)
+    expect(carriedOrigins(vault, before, more({ fields: ['username', 'password', 'otp'] }))).toEqual([
+      'https://login.shop.test',
+    ])
+    const sso = parseManifest({
+      ...SHOP,
+      navigation: [...(SHOP.navigation ?? []), 'https://sso.shop.test'],
+      secrets: {
+        login: { ...SHOP_LOGIN, origins: ['https://login.shop.test', 'https://sso.shop.test'] },
+      },
+    } as typeof SHOP)
+    // The origin the update added goes with it: the person approved the update that adds it.
+    expect(carriedOrigins(vault, before, sso)).toEqual(['https://login.shop.test', 'https://sso.shop.test'])
+    // An origin the update kept but the grant never had stays out.
+    expect(carriedOrigins(vault, sso, sso)).toEqual(['https://login.shop.test'])
     const moved = parseManifest({
       ...SHOP,
       auth: {
         steps: SHOP_STEPS.map((s) => (s.selector === '#pass' ? { ...s, selector: '#password' } : s)),
       },
     } as typeof SHOP)
-    expect(carriesOver(vault, before, moved)).toBe(false)
+    expect(carriesOver(vault, before, moved)).toBe(true)
     const framed = parseManifest({
       ...SHOP,
       auth: { ...SHOP.auth, frameOrigins: ['https://login.shop.test'] },
     } as typeof SHOP)
-    expect(carriesOver(vault, before, framed)).toBe(false)
-    expect(carriesOver({ ...vault, secret: 'other' }, before, before)).toBe(false)
-    expect(carriesOver({ ...vault, adapterId: 'elsewhere' }, before, before)).toBe(false)
+    expect(carriesOver(vault, before, framed)).toBe(true)
   })
 
-  it('asks again for a Messages grant whose sender is read differently, or that may be typed further', () => {
+  it('drops it when the new version no longer uses it', () => {
+    expect(carriesOver({ ...vault, secret: 'other' }, before, before)).toBe(false)
+    expect(carriesOver({ ...vault, adapterId: 'elsewhere' }, before, before)).toBe(false)
+    const elsewhere = parseManifest({
+      ...SHOP,
+      secrets: { login: { ...SHOP_LOGIN, origins: ['https://other.shop.test'] } },
+      navigation: [...(SHOP.navigation ?? []), 'https://other.shop.test'],
+    } as typeof SHOP)
+    // The approved update moved the login to a new origin: it follows.
+    expect(carriedOrigins(vault, before, elsewhere)).toEqual(['https://other.shop.test'])
+  })
+
+  it('keeps a Messages grant while the new version still reads that sender, within its navigation', () => {
     expect(
       carriesOver(messages, before, withOtp({ sender: 'ShopBank', pattern: '(\\d+)', maxAgeSeconds: 300 })),
-    ).toBe(false)
-    expect(
-      carriesOver(messages, before, withOtp({ sender: 'ShopBank', pattern: '(\\d{6})', maxAgeSeconds: 900 })),
-    ).toBe(false)
+    ).toBe(true)
     expect(
       carriesOver(messages, before, withOtp({ sender: 'Other', pattern: '(\\d{6})', maxAgeSeconds: 300 })),
     ).toBe(false)
@@ -326,6 +334,6 @@ describe('carriesOver: what an update may keep (D47)', () => {
       ...SHOP,
       navigation: [...(SHOP.navigation ?? []), 'https://sso.shop.test'],
     } as typeof SHOP)
-    expect(carriesOver(messages, before, wider)).toBe(false)
+    expect(carriedOrigins(messages, before, wider)).toEqual(['https://login.shop.test'])
   })
 })

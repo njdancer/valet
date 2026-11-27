@@ -232,7 +232,7 @@ import type { SignedInTrial } from './drafts/trial'
 import { type EraseKind, type EraseReport, type EraseStep, eraseEverything } from './erase'
 import { FeedbackDeskImpl } from './feedback'
 import { ensurePrivateDir, JsonDocument } from './files'
-import { carriesOver, checkGrantRequest, grantInfo } from './grants'
+import { carriedOrigins, checkGrantRequest, grantInfo } from './grants'
 import type { AppWindow, MainApi } from './ipc'
 import {
   KEYS_CHANGED_ID,
@@ -3223,17 +3223,7 @@ export class AppService {
    * A retired or rejected install takes its carried grants with it.
    */
   private grantCarried(grant: Grant): boolean {
-    const fingerprint = itemFingerprint(grant.itemRef)
-    const records = (this.ledger?.data.carried ?? []).filter(
-      (c) =>
-        c.adapterId === grant.adapterId &&
-        c.toHash === grant.adapterHash &&
-        c.secret === grant.secret &&
-        c.provider === subjectProvider(grant.provider) &&
-        c.itemFingerprint === fingerprint &&
-        grant.origins.every((o) => c.origins.includes(o)),
-    )
-    return records.some((c) => {
+    return this.carriedRecords(grant).some((c) => {
       const install = this.approvalBroker?.honoured(
         'adapter-install',
         (s) =>
@@ -3267,9 +3257,9 @@ export class AppService {
 
   /**
    * After a signed update that said it inherits the session (`inheritsSession`, shown on its card),
-   * keeps each of the replaced version's grants the update doesn't widen (carriesOver), for the
-   * new hash, so the person isn't asked for the same login again (D47). A grant the update widens
-   * stays behind, and the person grants it again as before. Never for a rollback, whose own
+   * keeps each of the replaced version's grants the new version still uses (carriedOrigins), for
+   * the new hash, so the person isn't asked for the same login again (D47): approving the update
+   * is trusting it with the login. A grant it no longer uses stays behind. Never for a rollback, whose own
    * version's grants come back as they were. Best effort: a grant not kept is only asked for again.
    */
   private async carryGrants(
@@ -3294,14 +3284,14 @@ export class AppService {
     )
     if (install === null || install === undefined) return
     const all = await this.grants.list().catch(() => [] as readonly Grant[])
-    const kept = all.filter(
-      (g) =>
-        g.adapterId === adapterId &&
+    const kept = all.flatMap((g) => {
+      const origins = carriedOrigins(g, previous.manifest, adapter.definition.manifest)
+      return g.adapterId === adapterId &&
         g.adapterHash === previous.hash &&
-        // Signed for the old version (its install may be retired by now, so not grantCarried's
-        // check of the install), and not widened by this update.
-        this.grantBackedFor(g, previous.manifest) &&
-        carriesOver(g, previous.manifest, adapter.definition.manifest) &&
+        origins !== null &&
+        // Signed for the old version, or carried to it by the update the person approved before
+        // (that install is superseded by now, so not grantCarried's check of it).
+        (this.grantBackedFor(g, previous.manifest) || this.carriedRecords(g).length > 0) &&
         // One already made for the new version, by the person, stands as it is.
         !all.some(
           (n) =>
@@ -3309,8 +3299,10 @@ export class AppService {
             n.adapterHash === adapterHash &&
             n.secret === g.secret &&
             (g.secret !== MESSAGES_SECRET || n.itemRef === g.itemRef),
-        ),
-    )
+        )
+        ? [{ ...g, origins }]
+        : []
+    })
     if (kept.length === 0) return
     const at = new Date(this.deps.now()).toISOString()
     try {
@@ -3355,6 +3347,20 @@ export class AppService {
       }
     }
     this.emit('grants-changed')
+  }
+
+  /** The ledger's records of an approved update keeping exactly `grant`. */
+  private carriedRecords(grant: Grant) {
+    const fingerprint = itemFingerprint(grant.itemRef)
+    return (this.ledger?.data.carried ?? []).filter(
+      (c) =>
+        c.adapterId === grant.adapterId &&
+        c.toHash === grant.adapterHash &&
+        c.secret === grant.secret &&
+        c.provider === subjectProvider(grant.provider) &&
+        c.itemFingerprint === fingerprint &&
+        grant.origins.every((o) => c.origins.includes(o)),
+    )
   }
 
   /** `grant` signed for its own version, whose manifest is `manifest` (active or not). */
