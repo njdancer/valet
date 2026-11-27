@@ -8,7 +8,7 @@ import { createServer, type Server } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolCall } from '@valet/mcp-server'
-import type { EventKit, EventKitAccess, SaveReminder } from '@valet/native-calendar'
+import { type EventKit, type EventKitAccess, EventKitError, type SaveReminder } from '@valet/native-calendar'
 import type { ToolCallResult } from '@valet/runtime'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
@@ -136,6 +136,7 @@ async function setup(app: EventKitApp = 'reminders') {
   return {
     service,
     access,
+    kit,
     saved,
     asked,
     refreshed,
@@ -205,8 +206,14 @@ describe('EventKitService', () => {
     const signal = new AbortController().signal
     const before = s.refreshed.count
     const found = await s.service.call(call('search', {}), signal)
-    // Each agent call sees lists added since the last one; nothing polls in the background.
+    // An agent call sees lists added since the last one; nothing polls in the background.
     expect(s.refreshed.count).toBe(before + 1)
+    // A burst refreshes once (feedback issue #28), and again once REFRESH_EVERY_MS has passed.
+    await s.service.call(call('search', {}), signal)
+    expect(s.refreshed.count).toBe(before + 1)
+    s.tick(10_000)
+    await s.service.call(call('search', {}), signal)
+    expect(s.refreshed.count).toBe(before + 2)
     expect(found).toMatchObject({ status: 'ok' })
     expect(await s.service.call(call('search', { listIds: ['L2'] }), signal)).toMatchObject({
       errorClass: 'not-found',
@@ -225,7 +232,7 @@ describe('EventKitService', () => {
       status: 'ok',
     })
     expect(s.saved).toHaveLength(CHANGES_PER_HOUR + 1)
-    expect(s.audited).toHaveLength(CHANGES_PER_HOUR + 4)
+    expect(s.audited).toHaveLength(CHANGES_PER_HOUR + 6)
 
     // Off: nothing is read or written, and the call is still audited.
     await s.service.update({ enabled: false })
@@ -233,7 +240,7 @@ describe('EventKitService', () => {
       status: 'failed',
       errorClass: 'not-found',
     })
-    expect(s.audited).toHaveLength(CHANGES_PER_HOUR + 5)
+    expect(s.audited).toHaveLength(CHANGES_PER_HOUR + 7)
   })
 
   it('keeps all its tools known for turning them off while off', async () => {
@@ -246,5 +253,17 @@ describe('EventKitService', () => {
       'update_event',
       'delete_event',
     ])
+  })
+
+  it('starts the reader again when it answers unavailable', async () => {
+    const s = await setup()
+    await s.service.update({ enabled: true, calendars: ['L1'] })
+    const startedBefore = s.started()
+    s.kit.calendars = async () => {
+      throw new EventKitError('unavailable')
+    }
+    const result = await s.service.call(call('lists', {}), new AbortController().signal)
+    expect(result).toMatchObject({ status: 'failed', errorClass: 'unavailable' })
+    expect(s.started()).toBe(startedBefore + 1)
   })
 })
