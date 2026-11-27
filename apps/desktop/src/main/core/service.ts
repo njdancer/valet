@@ -16,6 +16,7 @@ import {
   type AuditEvent,
   type AuditRecord,
   type AuditSink,
+  type AuthPage,
   approvalDecisionSchema,
   type BlockedRequest,
   bundleHash,
@@ -98,6 +99,7 @@ import {
   type ImapBackend,
   JsonFileStore,
   LoginAttemptMarker,
+  type LoginStepContext,
   noBrowserDriver,
   pruneOlderThan,
   type RuntimeDiagnostic,
@@ -163,7 +165,7 @@ import {
   NO_APP_ACCESS,
   withWidening,
 } from './agent-access'
-import { AgentBrowserService, type SessionBrowser, sessionPacer } from './agent-browser'
+import { AgentBrowserService, BrowserRefusal, type SessionBrowser, sessionPacer } from './agent-browser'
 import { agentRequestItem, draftReviewRequest } from './agent-requests'
 import { AppStateStore } from './app-state'
 import {
@@ -263,6 +265,7 @@ import {
   signedByOldKeys,
 } from './keys-changed'
 import { createAuthRunner, Handoffs, isBlockedPage, SessionTracker } from './login'
+import { LoginSession } from './login-session'
 import {
   MailService,
   type MailServiceDeps,
@@ -770,6 +773,8 @@ export class AppService {
   private messagesApp: MessagesService | null = null
   /** The agents' own signed-out browser (docs/agent-browser.md); null in builds without one. */
   private agentBrowser: AgentBrowserService | null = null
+  /** Open login sessions, one per adapter at most. */
+  private readonly loginSessions = new Map<string, LoginSession>()
   private endpoint: SessionReportingEndpoint | null = null
   /** The remote listener, its policy and the kill switch (relay.md). Off unless the person turns it on. */
   readonly remote: RemoteAccess
@@ -1277,6 +1282,7 @@ export class AppService {
         newId: () => `s${randomBytes(6).toString('hex')}`,
         downloads: { shelf: this.downloadShelf, origin: () => this.publicOrigin() },
         secretIn: (text) => this.knownSecretIn([text]),
+        openLogin: (adapterId, clientName) => this.openLoginSession(adapterId, clientName),
         notify: (text) => this.notifier.draftActivity(text),
         audit: (call, result, durationMs) => this.auditNativeCall(call, result, durationMs),
         now: this.deps.now,
@@ -4562,6 +4568,67 @@ export class AppService {
     if (!eligible.has(hash))
       throw new InstallError('Only a version you approved before can be rolled back to.')
     return this.packages.load(adapterId, hash)
+  }
+
+  /**
+   * A login session for an agent (login-session.ts): the adapter's own login page, in its auth
+   * partition, opened as one of the runtime's login steps. Only while developer mode is on, one per
+   * adapter, and never beside a login window handed to the person (they share the partition).
+   */
+  private async openLoginSession(adapterId: string, clientName: string): Promise<LoginSession> {
+    const until = this.devMode?.status().until ?? null
+    if (until === null || Date.parse(until) <= this.deps.now())
+      throw new BrowserRefusal(
+        'Login sessions open only while developer mode is on. Ask the person to turn it on from Valet’s menu bar icon.',
+      )
+    const adapter = this.adapter(adapterId)
+    const driver = this.drivers.get(adapterId)
+    if (adapter === null || driver === undefined)
+      throw new BrowserRefusal('No installed site has that id. valet_list_adapters lists them.')
+    const manifest = adapter.definition.manifest
+    if (manifest.session.probe.kind === 'none' || Object.keys(manifest.secrets).length === 0)
+      throw new BrowserRefusal(`${manifest.name} has no login to work on.`)
+    if (this.handoffs.has(adapterId))
+      throw new BrowserRefusal(
+        `${manifest.name}’s login window is open for the person. Try again once they have finished with it.`,
+      )
+    const open = this.loginSessions.get(adapterId)
+    if (open !== undefined && !open.isClosed())
+      throw new BrowserRefusal(`A login session for ${manifest.name} is already open. Close it first.`)
+    const loginStep = <T>(step: (ctx: LoginStepContext) => Promise<T>) =>
+      this.runtime().runLoginStep(adapterId, step, { waitMs: LOGIN_WAIT_MS })
+    let page: AuthPage
+    try {
+      page = await loginStep(() => driver.openAuthPage(this.blocked.authPage(adapterId, null)))
+    } catch {
+      throw new BrowserRefusal(`Valet couldn’t open ${manifest.name}’s login page just now.`)
+    }
+    const credentials =
+      this.mail === null
+        ? this.deps.credentials
+        : { ...this.deps.credentials, mailReader: () => this.mail as MailReader }
+    const session = new LoginSession({
+      adapterId,
+      manifest,
+      adapterHash: adapter.hash,
+      page,
+      grants: this.signedGrants,
+      credentials,
+      audit: this.audit,
+      clock: () => new Date(this.deps.now()),
+      sleep: this.deps.sleep,
+      typingDelayMs: TYPING_DELAY_MS,
+      secrets: this.loginSecrets.begin(adapterId),
+      holdsSecret: (text) => this.loginSecrets.occursIn(adapterId, text),
+      loginStep,
+      ...(this.deps.timers === undefined ? {} : { timers: this.deps.timers }),
+    })
+    this.loginSessions.set(adapterId, session)
+    session.onClosed(() => {
+      if (this.loginSessions.get(adapterId) === session) this.loginSessions.delete(adapterId)
+    })
+    this.notifier.draftActivity(`${clientName} opened a login session for ${manifest.name}.`)
+    return session
   }
 
   private adapter(adapterId: string): BuiltinAdapter | null {
