@@ -529,6 +529,7 @@ describe('audit views', () => {
       status: null,
       contentType: null,
       redirected: false,
+      shape: null,
       failed: 'unavailable' as const,
       at: start + 30_000,
       durationMs: 400,
@@ -553,6 +554,7 @@ describe('audit views', () => {
       blockedReason: null,
       answer: null,
       redirected: false,
+      shape: null,
       failed: 'unavailable',
       setting: 'apply_store',
     })

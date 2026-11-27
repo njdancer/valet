@@ -63,6 +63,11 @@ export interface SentRequest {
   readonly contentType: 'json' | 'html' | 'other' | 'none' | null
   /** The browser followed a redirect to get the answer. */
   readonly redirected: boolean
+  /**
+   * The answer's JSON shape: key names and value types, never a value (shapeOf). How an agent
+   * repairing an adapter sees that a field moved. Null when the answer wasn't JSON.
+   */
+  readonly shape: string | null
   /** Why the request failed when no answer came back: the class of the error it threw. */
   readonly failed: ErrorClass | null
   /** When it was sent (epoch ms, after any pacing wait) and how long its answer took. */
@@ -209,6 +214,10 @@ export class GuardedToolPage implements ToolPage {
         status: result === null ? null : result.status,
         contentType: result === null ? null : contentKind(result.contentType),
         redirected: result?.redirected === true,
+        shape:
+          result === null
+            ? null
+            : shapeOf(result.body, (key) => this.options.state.redactTarget(key) !== key),
         failed: result !== null ? null : error instanceof ValetError ? error.errorClass : 'internal',
         at: sent,
         durationMs: Math.max(0, this.now() - sent),
@@ -217,6 +226,51 @@ export class GuardedToolPage implements ToolPage {
       // The trace is for reading; a recorder's failure must not change the call.
     }
   }
+}
+
+/** Longest shape kept, in characters; past it the sketch ends with "…". */
+export const MAX_SHAPE_LENGTH = 2000
+const SHAPE_DEPTH = 6
+const SHAPE_KEYS = 40
+/**
+ * A key shown as written: a field name, as APIs write them. Letters, "_", "$" and "-", up to 32,
+ * with at most two digits at the end ("line2"). Ids, tokens, UUIDs and hex all carry digits inside
+ * or run long, so they show as "?".
+ */
+const PLAIN_KEY = /^[A-Za-z_$][A-Za-z_$-]{0,31}\d{0,2}$/
+
+/**
+ * A sketch of a JSON value's shape, with no value in it: `{Items:[{Stockcode:number,Price:null}],
+ * Total:number}`. An array shows its first element only. Keys that aren't field names (ids, emails,
+ * tokens used as keys) and keys `hide` names show as "?", digit-only keys as "#". A long sketch is
+ * cut between entries, never inside a key. Null for anything that isn't an object or array.
+ */
+export function shapeOf(body: unknown, hide: (key: string) => boolean = () => false): string | null {
+  if (body === null || typeof body !== 'object') return null
+  const text = sketch(body, 0, hide)
+  if (text.length <= MAX_SHAPE_LENGTH) return text
+  // Back to the last separator, so no key is ever cut short (a part of a value can't be matched).
+  const cut = Math.max(...[',', '{', '[', ':'].map((mark) => text.lastIndexOf(mark, MAX_SHAPE_LENGTH)))
+  return `${text.slice(0, cut + 1)}…`
+}
+
+function sketch(value: unknown, depth: number, hide: (key: string) => boolean): string {
+  if (value === null) return 'null'
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '[]'
+    return depth >= SHAPE_DEPTH ? '[…]' : `[${sketch(value[0], depth + 1, hide)}]`
+  }
+  if (typeof value === 'object') {
+    if (depth >= SHAPE_DEPTH) return '{…}'
+    const keys = Object.keys(value)
+    const shown = keys.slice(0, SHAPE_KEYS).map((key) => {
+      const name = /^\d+$/.test(key) ? '#' : PLAIN_KEY.test(key) && !hide(key) ? key : '?'
+      return `${name}:${sketch((value as Record<string, unknown>)[key], depth + 1, hide)}`
+    })
+    if (keys.length > SHAPE_KEYS) shown.push('…')
+    return `{${shown.join(',')}}`
+  }
+  return typeof value
 }
 
 /** The host when the manifest names it literally; a wildcard's match could carry anything. */

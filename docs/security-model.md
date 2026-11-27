@@ -506,7 +506,10 @@ sensitive value (**Enforced**, the inputs marked are a **Contract**):
 - **What is sensitive:** every secret resolved for this run; the tool partition's cookie values
   on `cookieDomains`; and the values of handed-off storage keys (`sessionSecrets()`,
   **Contract**). Cookie values shorter than 8 characters are flags like `1` or `en-AU`, not
-  credentials, and are ignored.
+  credentials, and are ignored. So is a value that appears in a host name the manifest itself
+  names (the hosts of `home` and `cartUrl`, egress hosts and navigation origins' hosts, compared
+  case-insensitively; never a path or query, which the author could fill): it is public already, and a site cookie holding the site's own host name otherwise redacted every link to the
+  site, the cart page included (seen live on Woolworths, 2026-11-28).
 - **Run-scoped clones.** The filler disposes each secret as soon as it has typed it, which zeroes
   it, and a zeroed secret can't be matched. So the runtime keeps a `SecretValue.clone()` of each
   for the length of the run and disposes the clones when the run ends (**Contract**). In round 1

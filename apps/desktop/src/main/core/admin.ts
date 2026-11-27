@@ -342,6 +342,7 @@ const STEP_FIELDS: Readonly<Record<TraceStep['type'], readonly string[]>> = {
     'blockedReason',
     'answer',
     'redirected',
+    'shape',
     'failed',
     'setting',
   ],
