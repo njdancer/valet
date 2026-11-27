@@ -80,7 +80,8 @@ while Valet still remembers the call (until it restarts): the method, the manife
 (never the request's own path, query or body), the host when the manifest names it literally, the
 status, whether the answer was JSON or HTML, whether a redirect was followed, the answer's JSON
 shape (key names and types, e.g. `{Items:[{Stockcode:number,Price:null}]}`, never a value; keys
-that aren't identifiers show as `?`, and a shape naming a session value is withheld), and for no
+that aren't plain field names, such as ids, tokens or UUIDs, and keys holding a session value show
+as `?`, and the whole shape is checked again when the run ends), and for no
 answer the error class. A setting's run before the call (the store, say) is the runtime's own call and no
 agent's, so its requests are shown in the call it ran for too, marked with `setting`. Answers from
 the read cache sent nothing and aren't listed. Requests the page itself made appear only when

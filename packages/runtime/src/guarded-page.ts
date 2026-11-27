@@ -214,7 +214,10 @@ export class GuardedToolPage implements ToolPage {
         status: result === null ? null : result.status,
         contentType: result === null ? null : contentKind(result.contentType),
         redirected: result?.redirected === true,
-        shape: result === null ? null : shapeOf(result.body),
+        shape:
+          result === null
+            ? null
+            : shapeOf(result.body, (key) => this.options.state.redactTarget(key) !== key),
         failed: result !== null ? null : error instanceof ValetError ? error.errorClass : 'internal',
         at: sent,
         durationMs: Math.max(0, this.now() - sent),
@@ -229,33 +232,40 @@ export class GuardedToolPage implements ToolPage {
 export const MAX_SHAPE_LENGTH = 2000
 const SHAPE_DEPTH = 6
 const SHAPE_KEYS = 40
-/** A key shown as written: an identifier, as API field names are. Anything else is a "?". */
-const PLAIN_KEY = /^[A-Za-z_$][\w$-]{0,63}$/
+/**
+ * A key shown as written: a field name, as APIs write them. Letters, "_", "$" and "-", up to 32,
+ * with at most two digits at the end ("line2"). Ids, tokens, UUIDs and hex all carry digits inside
+ * or run long, so they show as "?".
+ */
+const PLAIN_KEY = /^[A-Za-z_$][A-Za-z_$-]{0,31}\d{0,2}$/
 
 /**
  * A sketch of a JSON value's shape, with no value in it: `{Items:[{Stockcode:number,Price:null}],
- * Total:number}`. An array shows its first element and its length's absence; keys that aren't
- * identifier-like (ids, emails, tokens used as keys) show as "?" and digit-only keys as "#". Null for
- * anything that isn't an object or array (a string body, HTML, nothing).
+ * Total:number}`. An array shows its first element only. Keys that aren't field names (ids, emails,
+ * tokens used as keys) and keys `hide` names show as "?", digit-only keys as "#". A long sketch is
+ * cut between entries, never inside a key. Null for anything that isn't an object or array.
  */
-export function shapeOf(body: unknown): string | null {
+export function shapeOf(body: unknown, hide: (key: string) => boolean = () => false): string | null {
   if (body === null || typeof body !== 'object') return null
-  const text = sketch(body, 0)
-  return text.length > MAX_SHAPE_LENGTH ? `${text.slice(0, MAX_SHAPE_LENGTH)}…` : text
+  const text = sketch(body, 0, hide)
+  if (text.length <= MAX_SHAPE_LENGTH) return text
+  // Back to the last separator, so no key is ever cut short (a part of a value can't be matched).
+  const cut = Math.max(...[',', '{', '[', ':'].map((mark) => text.lastIndexOf(mark, MAX_SHAPE_LENGTH)))
+  return `${text.slice(0, cut + 1)}…`
 }
 
-function sketch(value: unknown, depth: number): string {
+function sketch(value: unknown, depth: number, hide: (key: string) => boolean): string {
   if (value === null) return 'null'
   if (Array.isArray(value)) {
     if (value.length === 0) return '[]'
-    return depth >= SHAPE_DEPTH ? '[…]' : `[${sketch(value[0], depth + 1)}]`
+    return depth >= SHAPE_DEPTH ? '[…]' : `[${sketch(value[0], depth + 1, hide)}]`
   }
   if (typeof value === 'object') {
     if (depth >= SHAPE_DEPTH) return '{…}'
     const keys = Object.keys(value)
     const shown = keys.slice(0, SHAPE_KEYS).map((key) => {
-      const name = /^\d+$/.test(key) ? '#' : PLAIN_KEY.test(key) ? key : '?'
-      return `${name}:${sketch((value as Record<string, unknown>)[key], depth + 1)}`
+      const name = /^\d+$/.test(key) ? '#' : PLAIN_KEY.test(key) && !hide(key) ? key : '?'
+      return `${name}:${sketch((value as Record<string, unknown>)[key], depth + 1, hide)}`
     })
     if (keys.length > SHAPE_KEYS) shown.push('…')
     return `{${shown.join(',')}}`

@@ -4,7 +4,7 @@
 import { defineAdapter, type ToolContext, tool, ValetError } from '@valet/core'
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { shapeOf } from '../src/guarded-page'
+import { MAX_SHAPE_LENGTH, shapeOf } from '../src/guarded-page'
 import { json } from './fakes'
 import { COOKIE, call, fixture, HOME, manifest } from './fixtures'
 
@@ -876,6 +876,25 @@ describe('requests for the trace', () => {
 })
 
 describe('shapeOf', () => {
+  it('shows field names only: ids, tokens and UUIDs used as keys are "?"', () => {
+    expect(
+      shapeOf({ line2: 1, cus_AbCd3fGh: 1, 'd3b07384-d9a0-4c9b-8f2a-1b2c3d4e5f60': 1, deadbeefcafe0123: 1 }),
+    ).toBe('{line2:number,?:number,?:number,?:number}')
+  })
+
+  it('cuts a long sketch between entries, never inside a key', () => {
+    const wide = Object.fromEntries(
+      Array.from({ length: 30 }, (_, i) => [
+        `FieldNameNumber${String.fromCharCode(65 + i)}x`,
+        { Inner: [{ More: 'a', Most: 'b' }] },
+      ]),
+    )
+    const shape = shapeOf({ a: wide, b: wide, c: wide }) ?? ''
+    expect(shape.length).toBeLessThanOrEqual(MAX_SHAPE_LENGTH + 1)
+    expect(shape.endsWith('…')).toBe(true)
+    expect(/[,{[:]…$/.test(shape)).toBe(true)
+  })
+
   it('sketches keys and types and never a value', () => {
     const shape = shapeOf({
       Items: [{ Stockcode: 37687, Name: 'Table Salt', Price: null, Tags: ['a'] }],
@@ -899,15 +918,19 @@ describe('shapeOf', () => {
     expect(shapeOf([[[[[[[[1]]]]]]]])).toBe('[[[[[[[…]]]]]]]')
   })
 
-  it('withholds a shape whose key names hold a session value', async () => {
+  it('hides a key holding a session value, even one shaped like a field name', async () => {
     const requests = vi.fn()
-    const { host, page } = fixture(
+    const { host, page, driver } = fixture(
       adapterRunning(async (ctx) => (await ctx.page.fetch('/api/trolley')).status),
       { requests },
     )
-    page.route('GET', `${HOME}/api/trolley`, json({ [COOKIE]: 1 }))
+    driver.cookieValues = [COOKIE, 'SessionKeyAbc']
+    page.route('GET', `${HOME}/api/trolley`, json({ SessionKeyAbc: 1, [COOKIE]: 2, Total: 3 }))
     expect(await host.call(call)).toEqual({ status: 'ok', output: 200 })
-    expect(requests).toHaveBeenCalledWith('call-1', expect.objectContaining({ shape: '[redacted]' }))
+    expect(requests).toHaveBeenCalledWith(
+      'call-1',
+      expect.objectContaining({ shape: '{?:number,?:number,Total:number}' }),
+    )
   })
 })
 
@@ -919,5 +942,18 @@ describe('session values the manifest already says', () => {
       status: 'ok',
       output: { cartUrl: `${HOME}/cart`, other: '[redacted]' },
     })
+  })
+})
+
+describe('only host names count as public', () => {
+  it('still redacts a session value an adapter put in its home URL query', async () => {
+    const adapter = defineAdapter({
+      manifest: { ...manifest, home: `${HOME}/?store=${COOKIE}` },
+      tools: {
+        run_test: tool({ input: z.object({}), output: z.unknown(), run: async () => ({ v: COOKIE }) }),
+      },
+    })
+    const { host } = fixture(adapter)
+    expect(await host.call(call)).toEqual({ status: 'ok', output: { v: '[redacted]' } })
   })
 })

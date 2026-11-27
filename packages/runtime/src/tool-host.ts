@@ -351,6 +351,11 @@ export class ToolHost {
   private readonly loginWatchers = new Map<string, Set<() => void>>()
   /** A setting's run (by its call id) and the call it runs before, while it runs. */
   private readonly settingFor = new Map<string, string>()
+  /** Each running call's sent requests, held until its run ends and the shapes are checked last. */
+  private readonly traced = new Map<
+    string,
+    { readonly forCall: string | undefined; readonly tool: string; readonly sent: SentRequest[] }
+  >()
   private readonly protection: SiteProtection
   private readonly clock: Clock
   private readonly sleep: Sleep
@@ -1082,25 +1087,77 @@ export class ToolHost {
     return result
   }
 
-  /** A run's sent request, to its own call's trace and, for a setting's run, to the call it ran for. */
+  /**
+   * Holds a run's sent request until the run ends (flushTrace), for its own call's trace and, for a
+   * setting's run, for the call it ran for, marked with the apply tool's name.
+   */
   private traceRequest(state: CallState, tool: string, request: SentRequest): void {
+    if (this.options.requests === undefined) return
+    let held = this.traced.get(state.callId)
+    if (held === undefined) {
+      held = { forCall: this.settingFor.get(state.callId), tool, sent: [] }
+      this.traced.set(state.callId, held)
+    }
+    held.sent.push(request)
+  }
+
+  /**
+   * Reports a finished run's requests. Shapes are checked once more against the session values as
+   * they are now, since the site may have set a new cookie after an answer that named it; a shape
+   * that can't be checked (the values can't be read) isn't shown.
+   */
+  private async flushTrace(entry: Entry, state: CallState): Promise<void> {
+    const held = this.traced.get(state.callId)
+    this.traced.delete(state.callId)
     const report = this.options.requests
-    if (report === undefined) return
-    const callId = state.callId
-    const forCall = this.settingFor.get(callId)
+    if (held === undefined || report === undefined) return
+    let readable = true
     try {
-      // A key name is the site's to choose: one holding a session value or secret goes whole.
-      const shape = request.shape
-      const sent =
-        shape !== null && state.redactTarget(shape) !== shape ? { ...request, shape: REDACTED } : request
-      report(callId, { ...sent, setting: null })
-      if (forCall !== undefined) report(forCall, { ...sent, setting: tool })
+      await this.collectSessionSecrets(entry, state)
+    } catch {
+      readable = false
+    }
+    try {
+      for (const request of held.sent) {
+        const shape = request.shape
+        // A key name is the site's to choose: one holding a session value or secret goes whole.
+        const safe = shape === null || (readable && state.redactTarget(shape) === shape)
+        const sent = safe ? request : { ...request, shape: REDACTED }
+        report(state.callId, { ...sent, setting: null })
+        if (held.forCall !== undefined) report(held.forCall, { ...sent, setting: held.tool })
+      }
     } catch {
       // The trace is for reading; a recorder's failure must not change the call.
     }
   }
 
   private async run(
+    entry: Entry,
+    declaration: ToolDeclaration,
+    implementation: ToolImplementation,
+    client: string,
+    transport: ClientTransport | undefined,
+    input: unknown,
+    state: CallState,
+    controller: AbortController,
+  ): Promise<ToolCallResult> {
+    try {
+      return await this.runTool(
+        entry,
+        declaration,
+        implementation,
+        client,
+        transport,
+        input,
+        state,
+        controller,
+      )
+    } finally {
+      await this.flushTrace(entry, state)
+    }
+  }
+
+  private async runTool(
     entry: Entry,
     declaration: ToolDeclaration,
     implementation: ToolImplementation,
@@ -2136,9 +2193,26 @@ function confirmQuestion(
   return { kind: 'tool-request', requests, note: parsed.data.note ?? null }
 }
 
-/** What a manifest says in the open about where it goes, lower-cased, one line per item. */
+/**
+ * The host names a manifest says in the open, lower-cased, one per line: home's and cartUrl's
+ * hosts, egress hosts and navigation origins' hosts. Hosts only: a URL's path or query is the
+ * author's to fill, and would let any guessable value count as public.
+ */
 function publicText(manifest: RegisteredAdapter['definition']['manifest']): string {
-  return [manifest.home, manifest.cartUrl ?? '', ...manifest.egress, ...manifest.navigation]
+  const hostOf = (url: string | undefined): string => {
+    if (url === undefined) return ''
+    try {
+      return new URL(url).hostname
+    } catch {
+      return ''
+    }
+  }
+  return [
+    hostOf(manifest.home),
+    hostOf(manifest.cartUrl),
+    ...manifest.egress,
+    ...manifest.navigation.map(hostOf),
+  ]
     .join('\n')
     .toLowerCase()
 }
