@@ -94,7 +94,7 @@ import type { LoginMarkerStore } from './login-marker'
 import { KeyedMutex } from './mutex'
 import { probeDeclaration } from './probe'
 import { CachedToolPage, ReadCache } from './read-cache'
-import { redactOutput } from './redaction'
+import { REDACTED, redactOutput } from './redaction'
 import { knownReason, type LoginBackoff, SessionGate } from './session'
 import { breakerRefusal, isSiteRefusal, type SiteGuards, SiteProtection } from './site-protection'
 import {
@@ -1083,11 +1083,16 @@ export class ToolHost {
   }
 
   /** A run's sent request, to its own call's trace and, for a setting's run, to the call it ran for. */
-  private traceRequest(callId: string, tool: string, sent: SentRequest): void {
+  private traceRequest(state: CallState, tool: string, request: SentRequest): void {
     const report = this.options.requests
     if (report === undefined) return
+    const callId = state.callId
     const forCall = this.settingFor.get(callId)
     try {
+      // A key name is the site's to choose: one holding a session value or secret goes whole.
+      const shape = request.shape
+      const sent =
+        shape !== null && state.redactTarget(shape) !== shape ? { ...request, shape: REDACTED } : request
       report(callId, { ...sent, setting: null })
       if (forCall !== undefined) report(forCall, { ...sent, setting: tool })
     } catch {
@@ -1131,7 +1136,7 @@ export class ToolHost {
       state,
       audit: (event) => this.record(event),
       clock: this.clock,
-      onRequest: (sent) => this.traceRequest(state.callId, declaration.name, sent),
+      onRequest: (sent) => this.traceRequest(state, declaration.name, sent),
     })
     const ctx: ToolContext = {
       // Declared reads may be answered from the session's cache; everything sent goes through the guard.
@@ -1530,11 +1535,22 @@ export class ToolHost {
     for (const wake of [...(this.loginWatchers.get(adapterId) ?? [])]) wake()
   }
 
-  /** Cookie values and handed-off storage values, old and new, so output can't carry them. */
+  /**
+   * Cookie values and handed-off storage values, old and new, so output can't carry them. A value
+   * that is part of what the manifest itself says (its home, cart page, hosts) is public already:
+   * a site's cookie holding its own host name would otherwise redact every link to the site, the
+   * cart page the person checks out on included.
+   */
   private async collectSessionSecrets(entry: Entry, state: CallState): Promise<void> {
-    const { cookieDomains, storage } = entry.definition.manifest.session
+    const manifest = entry.definition.manifest
+    const { cookieDomains, storage } = manifest.session
     const values = await entry.driver.sessionSecrets(cookieDomains, storage)
-    for (const value of values) if (typeof value === 'string') state.sessionValues.add(value)
+    const known = publicText(manifest)
+    for (const value of values) {
+      if (typeof value !== 'string') continue
+      if (known.includes(value.toLowerCase())) continue
+      state.sessionValues.add(value)
+    }
   }
 
   private isApproved(entry: Entry): Promise<boolean> {
@@ -2118,4 +2134,11 @@ function confirmQuestion(
     if (!requests.includes(declared)) requests.push(declared)
   }
   return { kind: 'tool-request', requests, note: parsed.data.note ?? null }
+}
+
+/** What a manifest says in the open about where it goes, lower-cased, one line per item. */
+function publicText(manifest: RegisteredAdapter['definition']['manifest']): string {
+  return [manifest.home, manifest.cartUrl ?? '', ...manifest.egress, ...manifest.navigation]
+    .join('\n')
+    .toLowerCase()
 }

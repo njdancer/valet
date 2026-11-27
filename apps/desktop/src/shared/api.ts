@@ -774,6 +774,8 @@ export type TraceStep = {
       /** Allowed requests only, while the app remembers the call: what the answer was. */
       readonly answer?: 'json' | 'html' | 'other' | 'none' | null
       readonly redirected?: boolean
+      /** The answer's JSON shape: key names and value types, never a value. */
+      readonly shape?: string | null
       /** Why no answer came back, as the error's class. */
       readonly failed?: ErrorClass | null
       /** The apply tool that sent it, run before this call for a setting (a store, say). */

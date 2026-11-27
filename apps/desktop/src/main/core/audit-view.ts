@@ -386,6 +386,7 @@ export function runTrace(
       blockedReason: null,
       answer: sent.contentType,
       redirected: sent.redirected,
+      shape: sent.shape,
       failed: sent.failed,
       setting: sent.setting,
     })

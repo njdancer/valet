@@ -4,6 +4,7 @@
 import { defineAdapter, type ToolContext, tool, ValetError } from '@valet/core'
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
+import { shapeOf } from '../src/guarded-page'
 import { json } from './fakes'
 import { COOKIE, call, fixture, HOME, manifest } from './fixtures'
 
@@ -820,6 +821,7 @@ describe('requests for the trace', () => {
       status: 200,
       contentType: 'json',
       redirected: true,
+      shape: '{items:[]}',
       failed: null,
       at: expect.any(Number),
       durationMs: expect.any(Number),
@@ -870,5 +872,52 @@ describe('requests for the trace', () => {
       },
     )
     expect(await host.call(call)).toEqual({ status: 'ok', output: 200 })
+  })
+})
+
+describe('shapeOf', () => {
+  it('sketches keys and types and never a value', () => {
+    const shape = shapeOf({
+      Items: [{ Stockcode: 37687, Name: 'Table Salt', Price: null, Tags: ['a'] }],
+      'nick@example.com': { token: 'abc' },
+      '12345': true,
+    })
+    expect(shape).toBe(
+      '{#:boolean,Items:[{Stockcode:number,Name:string,Price:null,Tags:[string]}],?:{token:string}}',
+    )
+    expect(shape).not.toContain('Table Salt')
+    expect(shape).not.toContain('nick@example.com')
+  })
+
+  it('is null for anything but an object or array, and bounded', () => {
+    expect(shapeOf('<html>')).toBeNull()
+    expect(shapeOf(null)).toBeNull()
+    const wide = Object.fromEntries(
+      Array.from({ length: 100 }, (_, i) => [`Field${i}`, { Deep: { Deeper: 1 } }]),
+    )
+    expect(shapeOf(wide)?.endsWith('…}')).toBe(true)
+    expect(shapeOf([[[[[[[[1]]]]]]]])).toBe('[[[[[[[…]]]]]]]')
+  })
+
+  it('withholds a shape whose key names hold a session value', async () => {
+    const requests = vi.fn()
+    const { host, page } = fixture(
+      adapterRunning(async (ctx) => (await ctx.page.fetch('/api/trolley')).status),
+      { requests },
+    )
+    page.route('GET', `${HOME}/api/trolley`, json({ [COOKIE]: 1 }))
+    expect(await host.call(call)).toEqual({ status: 'ok', output: 200 })
+    expect(requests).toHaveBeenCalledWith('call-1', expect.objectContaining({ shape: '[redacted]' }))
+  })
+})
+
+describe('session values the manifest already says', () => {
+  it('does not redact a link to the site because a cookie holds the site host', async () => {
+    const { host, driver } = fixture(adapterRunning(async () => ({ cartUrl: `${HOME}/cart`, other: COOKIE })))
+    driver.cookieValues = [COOKIE, 'www.example.com']
+    expect(await host.call(call)).toEqual({
+      status: 'ok',
+      output: { cartUrl: `${HOME}/cart`, other: '[redacted]' },
+    })
   })
 })
