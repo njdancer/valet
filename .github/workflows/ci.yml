@@ -233,7 +233,7 @@ jobs:
       - run: swift build --package-path swift-bridge
       - name: helper contract suites
         run: |
-          pnpm exec vitest run --project credentials test/keychain-contract test/otp-contract
+          pnpm exec vitest run --project credentials test/keychain-contract
           pnpm exec vitest run --project native-mail test/helper-contract
           pnpm exec vitest run --project native-calendar test/helper-contract
           pnpm exec vitest run --project native-messages test/helper-contract

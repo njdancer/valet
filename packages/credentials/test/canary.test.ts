@@ -5,19 +5,16 @@
 import * as fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
 import { inspect } from 'node:util'
 import { type Grant, SecretValue } from '@valet/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeCredentialProvider } from '../src/fake'
 import { FileGrantStore } from '../src/grant-store'
 import { KeychainTokenSource } from '../src/keychain'
-import { MessagesOtpReader } from '../src/messages-otp'
 import { OnePasswordCliProvider } from '../src/onepassword-cli'
 import { OnePasswordServiceAccountProvider } from '../src/onepassword-sdk'
 import { CredentialResolver } from '../src/resolver'
 import { ManualTimers, scriptedSpawner } from './fake-process'
-import { archived } from './typedstream-fixture'
 
 const PASSWORD = 'canary-pw-91e0d7b4'
 const TOKEN = 'ops_canary-token-3c55aa10'
@@ -152,29 +149,6 @@ describe('canary secrets', () => {
     expectNoCanary(
       rendered(await caught(resolver.resolve({ ...grant, provider: 'onepassword-cli' }, 'password'))),
     )
-    expectNoCanary(output.join('\n'))
-  })
-
-  it('never appear in errors or output from the Messages reader', async () => {
-    const path = join(dir, 'chat.db')
-    const db = new DatabaseSync(path)
-    db.exec(`
-      CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT NOT NULL, service TEXT NOT NULL);
-      CREATE TABLE message (ROWID INTEGER PRIMARY KEY, text TEXT, attributedBody BLOB, handle_id INTEGER, date INTEGER, is_from_me INTEGER);
-      INSERT INTO handle (ROWID, id, service) VALUES (1, 'Woolworths', 'SMS');
-    `)
-    const date = BigInt(Date.parse('2026-11-07T00:09:00Z') - Date.UTC(2001, 0, 1)) * 1_000_000n
-    db.prepare(
-      'INSERT INTO message (text, attributedBody, handle_id, date, is_from_me) VALUES (?, ?, 1, ?, 0)',
-    ).run(null, archived(`Your code is ${CODE}`), date)
-    db.close()
-    const reader = new MessagesOtpReader({ path, now: () => new Date('2026-11-07T00:10:00Z') })
-    const query = { sender: 'Woolworths', pattern: 'code is (\\d{6})', maxAgeSeconds: 300 }
-    const code = await reader.latest(query, new Date('2026-11-07T00:08:00Z'))
-    expect(code.reveal((plaintext) => plaintext)).toBe(CODE)
-    expectNoCanary(inspect(code))
-    expectNoCanary(rendered(await caught(reader.latest({ ...query, sender: 'Coles' }, new Date(0)))))
-    expectNoCanary(rendered(await caught(reader.latest({ ...query, pattern: `(${CODE}` }, new Date(0)))))
     expectNoCanary(output.join('\n'))
   })
 

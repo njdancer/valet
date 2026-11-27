@@ -58,65 +58,6 @@ final class TypedStreamTests: XCTestCase {
   }
 }
 
-final class CodeTests: XCTestCase {
-  func testFirstCaptureWins() throws {
-    XCTAssertEqual(try firstCode(pattern: "code is (\\d{6})", texts: ["no", "code is 111111", "code is 222222"]), "111111")
-  }
-
-  func testWholeMatchWhenNoGroup() throws {
-    XCTAssertEqual(try firstCode(pattern: "\\d{6}", texts: ["use 123456 now"]), "123456")
-  }
-
-  func testCaptureMustLookLikeACode() throws {
-    XCTAssertNil(try firstCode(pattern: "(.*)", texts: ["a whole private message"]))
-    XCTAssertEqual(try firstCode(pattern: "is (\\w+)", texts: ["is x", "is ab12"]), "ab12")
-  }
-
-  func testBadPattern() {
-    XCTAssertThrowsError(try firstCode(pattern: "(", texts: ["x"]))
-  }
-}
-
-final class RequestTests: XCTestCase {
-  let now: Int64 = 1_793_000_000_000
-
-  func line(_ object: [String: Any]) -> Data {
-    try! JSONSerialization.data(withJSONObject: object)
-  }
-
-  var valid: [String: Any] {
-    ["v": 1, "handle": "woolworths", "services": ["SMS", "RCS"], "pattern": "(\\d{6})", "sinceMs": now - 60_000]
-  }
-
-  func testValid() throws {
-    let request = try parseOtpRequest(line(valid), nowMs: now)
-    XCTAssertEqual(request.handle, "woolworths")
-    XCTAssertEqual(request.services, ["SMS", "RCS"])
-  }
-
-  func testRefusesWiderQuestions() {
-    var tooOld = valid
-    tooOld["sinceMs"] = now - maxLookbackMs - 60_001
-    var extra = valid
-    extra["limit"] = 1000
-    var unknownService = valid
-    unknownService["services"] = ["SMS", "Fax"]
-    var wildcard = valid
-    wildcard["handle"] = "%"
-    var future = valid
-    future["sinceMs"] = now + 1
-    for object in [tooOld, extra, unknownService, wildcard, future] {
-      XCTAssertThrowsError(try parseOtpRequest(line(object), nowMs: now))
-    }
-    XCTAssertThrowsError(try parseOtpRequest(Data("not json".utf8), nowMs: now))
-  }
-
-  func testResponseLines() {
-    XCTAssertEqual(String(decoding: responseLine(.success("123456")), as: UTF8.self), "{\"code\":\"123456\"}\n")
-    XCTAssertEqual(String(decoding: responseLine(.failure(.notFound)), as: UTF8.self), "{\"error\":\"not-found\"}\n")
-  }
-}
-
 final class ApprovalTests: XCTestCase {
   let macId = String(repeating: "a", count: 32)
 

@@ -80,20 +80,17 @@ is a symlink, FIFO or other non-regular file; `invalid` when its contents don't 
 
 ## Messages OTP
 
-Two readers make the same checks first (`prepareOtpLookup`): `MessagesOtpReader` reads `chat.db` in
-process (development builds), and `MessagesHelperOtpReader` asks `valet-messages-helper`, the
-launch agent that alone holds Full Disk Access in a packaged app, over its user-only socket. It
-refuses a socket this user doesn't own, never asks further back than 30 minutes, and re-checks
-that the answer is code-shaped. `test/otp-contract.test.ts` runs one set of cases against both.
-
-`MessagesOtpReader` opens `chat.db` read-only per lookup and returns only a code-shaped capture
-from exactly the named sender. The query's `sender` is required by type; the reader still refuses
-a query without a usable sender, for queries built from untyped data. Patterns are screened
-(`isScreenedPattern`) and run in a worker under a deadline.
+The reader is `MessagesOtpReader` in `@valet/native-messages` (`otp.ts`): it reads Messages through
+the same reader helper and the same `MessagesStore` as the Messages tools, and only takes a code
+from a message the tools would hide as a one-time code. This package keeps the checks every lookup
+makes first (`prepareOtpLookup`, `otp-lookup.ts`), the sender rules (`otp-sender.ts`) and the
+pattern worker. The query's `sender` is required by type; the checks still refuse a query without
+a usable sender, for queries built from untyped data. Patterns are screened (`isScreenedPattern`)
+and run in a worker under a deadline.
 
 The sender the person approved is the messages grant's `itemRef`; a query's sender comes from the
 manifest. Pass the grant as `latest(query, notBefore, grant)` and the reader refuses, with
-`otp: not-granted` and before opening the database, any query whose sender is not that grant's
+`otp: not-granted` and before reading Messages, any query whose sender is not that grant's
 (or a grant that is not a messages grant). `messagesQueryFor(grant, source)` makes the same check
 and builds the query with the granted sender. Construct the reader with `requireGrant: true` to
 refuse every lookup that comes without a grant. Core's `OtpReader.latest` takes no grant yet, so a

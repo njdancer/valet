@@ -9,10 +9,10 @@
 // Registered with SMAppService, launchd starts it, so it is responsible for itself and the Full
 // Disk Access grant names it, not Valet: adapter tool code running under the app never inherits the
 // grant. It listens on a Unix socket only this user can reach,
-// ~/Library/Application Support/<label>/helper.sock, and answers one request per connection: the
-// newest code from one sender since a time (ValetHelperKit's Messages.swift), or one of Mail's
-// read-only questions (MailAccess.swift, docs/mail.md), or one of the Messages tools' read-only
-// questions (MessagesAccess.swift, docs/messages.md). A signed helper answers
+// ~/Library/Application Support/<label>/helper.sock, and answers one request per connection: one of
+// Mail's read-only questions (MailAccess.swift, docs/mail.md), one of the Messages read-only
+// questions (MessagesAccess.swift, docs/messages.md), which Valet's own one-time-code lookup asks
+// too, or one of Calendar and Reminders' (EventKitAccess.swift). A signed helper answers
 // only a peer signed with its own Team ID. Node can't speak XPC without a native addon, so the
 // socket stands in for the XPC service D8 sketched; the peer check is the same audit-token check.
 
@@ -134,9 +134,7 @@ func sendData(_ fd: Int32, _ data: Data) {
   }
 }
 
-func serve(
-  label: String, socketPath: String?, databasePath: String, mail: MailRoots, messages: MessagesRoots
-) -> Never {
+func serve(label: String, socketPath: String?, mail: MailRoots, messages: MessagesRoots) -> Never {
   let team = Caller.ownTeamID()
   let path = socketPath ?? prepareSocket(dir: applicationSupport() + "/" + label)
   let server = listen(at: path)
@@ -150,7 +148,7 @@ func serve(
     setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, socklen_t(MemoryLayout<Int32>.size))
     defer { close(client) }
     guard peerAllowed(client, team: team) else {
-      sendData(client, responseLine(.failure(.unavailable)))
+      sendData(client, mailResponseLine(["error": MailFailure.unavailable.rawValue]))
       continue
     }
     guard let line = readRequest(client) else { continue }
@@ -199,22 +197,9 @@ func serve(
       }
       continue
     }
-    let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
-    let request: OtpRequest
-    do {
-      request = try parseOtpRequest(line, nowMs: nowMs)
-    } catch {
-      sendData(client, responseLine(.failure(.invalid)))
-      continue
-    }
-    let result = answer(request, databasePath: databasePath) {
-      // A match that overran its deadline is still running on another thread: answer, then exit so
-      // launchd starts a fresh agent.
-      sendData(client, responseLine(.failure(.invalid)))
-      close(client)
-      exit(70)
-    }
-    sendData(client, responseLine(result))
+    // Nothing else is asked here. Valet's own one-time-code lookup is a messages.query like any
+    // other (packages/native-messages, otp.ts).
+    sendData(client, mailResponseLine(["error": MailFailure.invalid.rawValue]))
   }
 }
 
@@ -226,7 +211,6 @@ switch args.first {
 case "serve":
   guard args.count >= 2, isLabel(args[1]) else { fail(64, "usage: valet-messages-helper serve <label>") }
   var socketPath: String?
-  var databasePath = home() + "/Library/Messages/chat.db"
   var mail = MailRoots.standard(home: home())
   var messages = MessagesRoots.standard(home: home())
   // The contract suite runs the agent by hand on a fixture database and a socket in a temporary
@@ -239,7 +223,6 @@ case "serve":
       rest = rest.dropFirst()
       switch flag {
       case "--socket": socketPath = value
-      case "--db": databasePath = value
       case "--mail-dir": mail = MailRoots(mailDir: value, accountsDB: mail.accountsDB)
       case "--accounts-db": mail = MailRoots(mailDir: mail.mailDir, accountsDB: value)
       case "--messages-dir": messages = MessagesRoots(messagesDir: value, addressBookDir: messages.addressBookDir)
@@ -250,7 +233,7 @@ case "serve":
   #else
     guard args.count == 2 else { fail(64, "usage: valet-messages-helper serve <label>") }
   #endif
-  serve(label: args[1], socketPath: socketPath, databasePath: databasePath, mail: mail, messages: messages)
+  serve(label: args[1], socketPath: socketPath, mail: mail, messages: messages)
 case "register":
   do {
     try service.register()

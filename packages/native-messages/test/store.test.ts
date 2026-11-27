@@ -137,10 +137,19 @@ describe('MessagesStore', () => {
     const shown = store({ hideCodes: false })
     expect((await shown.search({ text: '482913' })).messages.map((m) => m.id)).toEqual([15])
     // Valet's own code lookup sees them either way.
-    expect(await s.recentFrom(BANK, Date.parse('2026-11-25T00:00:00Z'))).toEqual([
+    expect(await s.recentFrom(BANK, ['SMS', 'RCS'], Date.parse('2026-11-25T00:00:00Z'))).toEqual([
       'Your statement is ready to view.',
       'Your Example Bank verification code is 482913. Do not share it.',
     ])
+    // Only from that handle over those services, since that time, cut to length.
+    expect(await s.recentFrom(BANK, ['iMessage'], Date.parse('2026-11-25T00:00:00Z'))).toEqual([])
+    expect(await s.recentFrom(BANK, [], Date.parse('2026-11-25T00:00:00Z'))).toEqual([])
+    expect(await s.recentFrom(BANK, ['SMS'], Date.parse('2026-11-25T03:00:00.001Z'))).toEqual([
+      'Your statement is ready to view.',
+    ])
+    expect(
+      await s.recentFrom(BANK, ['SMS'], Date.parse('2026-11-25T00:00:00Z'), { limit: 1, chars: 4 }),
+    ).toEqual(['Your'])
   })
 
   it('searches by words, sender, conversation, dates, own messages and attachments', async () => {

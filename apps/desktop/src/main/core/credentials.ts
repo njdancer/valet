@@ -13,8 +13,9 @@
 //   the valet-keychain helper. Offered when the helper is there and a 1Password account is set:
 //   making the grant copies the item, with the person approving in 1Password (DesktopAuth, C7).
 //   The helper also reads the service-account token, so neither read goes through `security`.
-// - messages: only while the setting is on. Through the Messages helper (D8) when the app ships
-//   it, so only the helper needs Full Disk Access; else MessagesOtpReader in process (dev builds).
+// - messages: only while the setting is on. Read by native-messages' MessagesOtpReader through the
+//   reader helper (D8), the same reader and store as the Messages tools, so only the helper needs
+//   Full Disk Access. A build without the reader helper has no Messages codes (unavailable).
 // - fake: demo mode only (demo.ts); a normal launch never has it.
 
 import { lstat, realpath } from 'node:fs/promises'
@@ -42,8 +43,6 @@ import {
   KeychainHelper,
   type KeychainStore,
   KeychainTokenSource,
-  MessagesHelperOtpReader,
-  MessagesOtpReader,
   nodeSpawner,
   nodeTimers,
   OnePasswordCliProvider,
@@ -55,6 +54,7 @@ import {
   type Timers,
   ValetKeys,
 } from '@valet/credentials'
+import { type MessagesFiles, MessagesOtpReader } from '@valet/native-messages'
 import type { OnePasswordAccount, ProviderStatus, Settings, VaultItem } from '../../shared/api'
 import { KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE, ONEPASSWORD_TEAM_ID, VAULT } from './constants'
 
@@ -246,10 +246,14 @@ export interface RealCredentialsDeps extends OpCheckDeps {
   /** The Keychain service Valet-made SSH keys live under; the dev build keeps its own. */
   readonly keyService?: string
   /**
-   * The Messages helper (D8) when this build ships it: its binary, which registers the launch agent
-   * with SMAppService, and the socket the agent listens on. Null in development builds.
+   * The packaged app's reader helper (D8): its binary, which a reset unregisters from SMAppService.
+   * Null in development builds.
    */
-  readonly messagesHelper?: { readonly binary: string; readonly socketPath: string } | null
+  readonly messagesHelper?: { readonly binary: string } | null
+  /** Messages through the reader helper, as the Messages tools read it. Null: no reader in this build. */
+  readonly messagesFiles?: MessagesFiles | null
+  /** Starts (or registers) the reader helper, once, when Messages codes are turned on. */
+  readonly startMessagesReader?: () => Promise<unknown>
   /** The desktop app's SDK client, for tests; the real SDK by default. */
   readonly desktopClient?: DesktopClientFactory
   /**
@@ -405,23 +409,21 @@ export function realCredentials(deps: RealCredentialsDeps): Credentials {
               timers: deps.timers,
             })
       messagesEnabled = settings.messagesOtpEnabled
-      const helper = deps.messagesHelper ?? null
-      if (messagesEnabled && helper !== null && !registered) {
-        // launchd starts the agent from here on; the person may still have to allow it in System
-        // Settings > General > Login Items, and grant it Full Disk Access. Until then reads are
-        // unavailable, which a login reports.
+      if (messagesEnabled && deps.startMessagesReader !== undefined && !registered) {
+        // The packaged app's agent registers here, and launchd starts it from then on; the person
+        // may still have to allow it in Login Items and grant it Full Disk Access. Until then reads
+        // are unavailable, which a login reports.
         registered = true
-        const outcome = await run(helper.binary, ['register'], 1024, 10_000)
-        if (outcome.kind === 'exited') outcome.stdout.fill(0)
+        await deps.startMessagesReader().catch(() => undefined)
       }
-      const socket = helper?.socketPath ?? null
+      const files = deps.messagesFiles ?? null
       reader = !messagesEnabled
         ? disabledOtpReader
         : deps.messagesReader !== undefined
           ? deps.messagesReader()
-          : socket !== null
-            ? new MessagesHelperOtpReader({ socketPath: socket })
-            : new MessagesOtpReader()
+          : files !== null
+            ? new MessagesOtpReader({ files })
+            : disabledOtpReader
       // A changed account means a new approval; the same one keeps the approval that is up.
       if (desktop?.account !== (settings.onePasswordAccount ?? undefined)) {
         desktop =

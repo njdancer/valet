@@ -6,7 +6,6 @@
 import * as nodeFs from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { attributedBodyText } from '@valet/credentials'
 import {
   MAIN_CONTACT_SOURCE,
   type MessagesDb,
@@ -16,6 +15,7 @@ import {
   type MessagesRow,
   type MessagesValue,
 } from './files'
+import { attributedBodyText } from './typedstream'
 
 const TABLES: Readonly<Record<MessagesDb, ReadonlySet<string>>> = {
   chat: new Set([

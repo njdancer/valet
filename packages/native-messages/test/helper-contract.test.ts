@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { DirectMessagesFiles } from '../src/direct-files'
 import { HelperMessagesFiles, type MessagesFiles, MessagesFilesError } from '../src/files'
+import { MessagesOtpReader } from '../src/otp'
 import { MessagesStore } from '../src/store'
 import { ADA, BANK, BOB, buildFixture, GROUP, PHOTO, SECRET_CHAT } from './fixture'
 
@@ -85,9 +86,22 @@ describe.skipIf(HELPER === undefined || HELPER === '')('valet-messages-helper: M
     )
     expect((await viaHelper.attachment(4, 1)).data).toEqual(PHOTO)
     expect(await viaHelper.attachment(4, 2)).toEqual(await inProcess.attachment(4, 2))
-    expect(await viaHelper.recentFrom(BANK, Date.parse('2026-11-25T00:00:00Z'))).toEqual(
-      await inProcess.recentFrom(BANK, Date.parse('2026-11-25T00:00:00Z')),
+    const since = Date.parse('2026-11-25T00:00:00Z')
+    expect(await viaHelper.recentFrom(BANK, ['SMS', 'RCS'], since)).toEqual(
+      await inProcess.recentFrom(BANK, ['SMS', 'RCS'], since),
     )
+    expect(await viaHelper.recentFrom(BANK, ['SMS'], since, { chars: 10 })).toEqual(
+      await inProcess.recentFrom(BANK, ['SMS'], since, { chars: 10 }),
+    )
+    // Valet's own sign-in code lookup, through the helper as the app reads it.
+    const now = () => new Date('2026-11-25T03:05:00Z')
+    const query = { sender: BANK, pattern: 'code is (\\d{6})', maxAgeSeconds: 600 }
+    const notBefore = new Date('2026-11-25T02:59:00Z')
+    const code = await new MessagesOtpReader({ files, now }).latest(query, notBefore)
+    expect(code.reveal((plaintext) => plaintext)).toBe('482913')
+    await expect(
+      new MessagesOtpReader({ files, now }).latest({ ...query, sender: '72346' }, notBefore),
+    ).rejects.toMatchObject({ failure: 'not-found' })
   })
 
   it('refuses writes, other tables and files outside Attachments', async () => {

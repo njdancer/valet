@@ -3,13 +3,8 @@
 
 import { EventEmitter } from 'node:events'
 import { CredentialError, SecretValue } from '@valet/core'
-import {
-  type ChildLike,
-  type DesktopClientFactory,
-  MemoryKeychain,
-  MessagesHelperOtpReader,
-  type Spawner,
-} from '@valet/credentials'
+import { type ChildLike, type DesktopClientFactory, MemoryKeychain, type Spawner } from '@valet/credentials'
+import { HelperMessagesFiles, MessagesOtpReader } from '@valet/native-messages'
 import { describe, expect, it } from 'vitest'
 import { fakeKeychain } from '../../../../packages/credentials/test/fake-keychain'
 import {
@@ -601,6 +596,7 @@ describe('realCredentials with the native helpers', () => {
   function setup() {
     const keychain = fakeKeychain()
     const creates: string[] = []
+    const starts: string[] = []
     const credentials = realCredentials({
       files: files({}),
       spawner: keychain.spawner,
@@ -610,13 +606,16 @@ describe('realCredentials with the native helpers', () => {
       serviceAccountReady: async () => true,
       keychainHelper: HELPER,
       copyService: 'valet.dev.copy',
-      messagesHelper: {
-        binary: '/Applications/Valet.app/Contents/MacOS/valet-messages-helper',
+      messagesHelper: { binary: '/Applications/Valet.app/Contents/MacOS/valet-messages-helper' },
+      messagesFiles: new HelperMessagesFiles({
         socketPath: '/Users/nick/Library/Application Support/me.dncr.valet.messages-helper/helper.sock',
+      }),
+      startMessagesReader: async () => {
+        starts.push('start')
       },
       desktopClient: desktopClient(creates),
     })
-    return { keychain, creates, credentials }
+    return { keychain, creates, credentials, starts }
   }
 
   it('offers the Keychain copy only once a 1Password account is set', async () => {
@@ -685,18 +684,27 @@ describe('realCredentials with the native helpers', () => {
     expect((await credentials.status())[0]?.available).toBe(true)
   })
 
-  it('reads Messages codes through the helper when the app ships it, registering its agent once', async () => {
-    const { credentials, keychain } = setup()
+  it('reads Messages codes through the reader helper, as the Messages tools do, starting it once', async () => {
+    const { credentials, starts } = setup()
     await credentials.configure(DEFAULT_SETTINGS)
-    const registers = () =>
-      keychain.calls.filter(
-        (call) => call.command.endsWith('/valet-messages-helper') && call.args[0] === 'register',
-      )
-    expect(registers()).toHaveLength(0)
+    expect(starts).toHaveLength(0)
+    expect(credentials.otpReader()).toBe(disabledOtpReader)
     await credentials.configure({ ...DEFAULT_SETTINGS, messagesOtpEnabled: true })
-    expect(credentials.otpReader()).toBeInstanceOf(MessagesHelperOtpReader)
+    expect(credentials.otpReader()).toBeInstanceOf(MessagesOtpReader)
     await credentials.configure({ ...DEFAULT_SETTINGS, messagesOtpEnabled: true })
-    expect(registers()).toHaveLength(1)
+    expect(starts).toHaveLength(1)
+  })
+
+  it('has no Messages codes in a build without the reader helper', async () => {
+    const credentials = realCredentials({
+      files: files({}),
+      spawner: fakeKeychain().spawner,
+      timers,
+      uid: UID,
+      groups: GROUPS,
+    })
+    await credentials.configure({ ...DEFAULT_SETTINGS, messagesOtpEnabled: true })
+    expect(credentials.otpReader()).toBe(disabledOtpReader)
   })
 })
 
@@ -736,7 +744,7 @@ describe('erasing for a reset or an uninstall', () => {
       copyService: 'valet.dev.copy',
       keyService: 'valet.dev.key',
       ...(options.ownsToken === undefined ? {} : { ownsToken: options.ownsToken }),
-      messagesHelper: { binary: MESSAGES_HELPER, socketPath: '/tmp/helper.sock' },
+      messagesHelper: { binary: MESSAGES_HELPER },
     })
     for (const name of ['valet.dev.copy\u0000a#password', 'valet.dev.copy\u0000orphan#username']) {
       keychain.items.set(name, { secret: Buffer.from('pw'), comment: '' })

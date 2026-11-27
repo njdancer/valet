@@ -15,18 +15,22 @@ One package, four binaries for `Valet.app/Contents/MacOS`, signed with the app:
   `apps/desktop/test/main/approver-contract.test.ts`; release builds ignore all three.
 - **valet-messages-helper** (D8): the SMAppService launch agent that alone holds Full Disk Access
   (`serve <label>`, `register`, `unregister`, `status`). The plists are in
-  `apps/desktop/build/launch-agents`. See `packages/credentials/src/messages-helper.ts`.
+  `apps/desktop/build/launch-agents`. It answers Mail, Messages, Calendar and Reminders' read-only
+  questions; Valet's own one-time-code lookup is a Messages read like any other
+  (`packages/native-messages/src/otp.ts`).
 
 A signed helper answers only a caller signed by its own Team ID. Debug builds take a throwaway
-keychain (`VALET_KEYCHAIN_PATH`) and a fixture database and socket (`serve <label> --db --socket`)
-for the contract suites; release builds ignore both.
+keychain (`VALET_KEYCHAIN_PATH`) and made-up folders and a socket (`serve <label> --socket
+--messages-dir --address-book-dir --mail-dir --accounts-db`) for the contract suites; release builds
+ignore both.
 
 ```bash
 swift test --package-path swift-bridge
 swift build --package-path swift-bridge
 VALET_SWIFT_KEYCHAIN="$PWD/swift-bridge/.build/debug/valet-keychain" \
+  pnpm vitest run --project credentials test/keychain-contract
 VALET_SWIFT_MESSAGES_HELPER="$PWD/swift-bridge/.build/debug/valet-messages-helper" \
-  pnpm vitest run --project credentials test/keychain-contract test/otp-contract
+  pnpm vitest run --project native-messages test/helper-contract
 ```
 
 ## Valet's secure store
