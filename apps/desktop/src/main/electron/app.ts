@@ -39,6 +39,7 @@ import type { HashRoute } from '../../shared/api'
 import { builtinPackages } from '../adapters'
 import { APP_SCHEME, APP_SCHEME_PRIVILEGES, createAppSchemeHandler } from '../core/app-scheme'
 import { ANCHOR_SERVICE, guardPrompts, macApprovalKeys, type PromptGuard } from '../core/approvals'
+import { fileDevModeKeep, keychainDevModeKeep } from '../core/approvals/dev-mode-keep'
 import {
   approverWanted,
   blindRelaySetup,
@@ -598,6 +599,15 @@ async function main(): Promise<void> {
     demo: mode.demo,
     // Unpackaged builds only (Nick's dev build): never a release, never demo mode.
     developerMode: !app.isPackaged && !mode.demo,
+    // Kept across a restart until its 8 hours end: the Keychain, or a file in the data folder.
+    ...(!app.isPackaged && !mode.demo
+      ? {
+          developerModeKeep:
+            keychainHelper === null || mode.e2e
+              ? fileDevModeKeep(paths.devModeKey)
+              : keychainDevModeKeep(new KeychainHelper({ helperPath: keychainHelper })),
+        }
+      : {}),
     now: () => Date.now(),
     timers: {
       setTimeout: (run, ms) => setTimeout(run, ms),

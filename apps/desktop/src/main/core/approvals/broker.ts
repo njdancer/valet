@@ -141,6 +141,12 @@ export interface RequestExtras {
    * keep raising cards the person keeps saying no to.
    */
   readonly onBehalfOf?: string
+  /**
+   * Asked again inside the broker's lock, just before a new request is made: false makes none
+   * (`not-wanted`). The app's own review requests use it, so an answer that lands while one is
+   * being made (its version approved meanwhile) never leaves a second card behind it.
+   */
+  readonly stillWanted?: () => boolean
 }
 
 /** What the person entered on the Mac's card, signed into the decision. */
@@ -175,6 +181,8 @@ export type RequestRefusal =
   | 'daily-limit'
   | 'too-many-consents'
   | 'unavailable'
+  /** The asker's `stillWanted` said no. */
+  | 'not-wanted'
 
 export type RequestResult =
   | {
@@ -343,6 +351,7 @@ export class ApprovalBroker {
       consentCode,
       replaces,
       onBehalfOf,
+      stillWanted,
     } = typeof extras === 'string' || extras === null ? { agentNote: extras } : extras
     const asked = await this.exclusive(async (): Promise<RequestResult> => {
       const earlier = replaces === undefined ? undefined : this.pending.get(replaces)
@@ -381,6 +390,7 @@ export class ApprovalBroker {
         }
       }
 
+      if (stillWanted !== undefined && !stillWanted()) return { ok: false, reason: 'not-wanted' }
       const now = this.now()
       const serialized = serializeRequest({
         v: 1,

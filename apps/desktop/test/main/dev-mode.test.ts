@@ -1,6 +1,11 @@
 // Developer mode's key (docs/approval-broker.md#developer-mode): one prompt turns it on, it signs
 // only while on, it ends on its timer or when turned off, and a key left by a run before is revoked.
 
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { CredentialError, SecretValue } from '@valet/core'
+import type { KeychainStore } from '@valet/credentials'
 import { describe, expect, it } from 'vitest'
 import {
   AnchoredFile,
@@ -13,6 +18,12 @@ import {
   SoftwareSigner,
   TrustedLedger,
 } from '../../src/main/core/approvals'
+import type { DevModeKeep, KeptDevMode } from '../../src/main/core/approvals/dev-mode'
+import {
+  DEV_MODE_SERVICE,
+  fileDevModeKeep,
+  keychainDevModeKeep,
+} from '../../src/main/core/approvals/dev-mode-keep'
 
 class MemoryFiles implements FileOps {
   readonly files = new Map<string, string>()
@@ -24,7 +35,25 @@ class MemoryFiles implements FileOps {
   }
 }
 
-async function setup(over: { available?: boolean; present?: boolean; noChannel?: boolean } = {}) {
+class MemoryKeep implements DevModeKeep {
+  kept: KeptDevMode | null = null
+  fail = false
+  async read() {
+    if (this.fail) throw new Error('keychain unavailable')
+    return this.kept
+  }
+  async write(kept: KeptDevMode) {
+    if (this.fail) throw new Error('keychain unavailable')
+    this.kept = kept
+  }
+  async clear() {
+    this.kept = null
+  }
+}
+
+async function setup(
+  over: { available?: boolean; present?: boolean; noChannel?: boolean; keep?: DevModeKeep } = {},
+) {
   const signer = new SoftwareSigner(() => over.present ?? true)
   const keys = await signer.keys()
   const ledger = await TrustedLedger.open(
@@ -34,7 +63,7 @@ async function setup(over: { available?: boolean; present?: boolean; noChannel?:
   let now = Date.parse('2026-11-27T00:00:00Z')
   const pending = new Map<number, () => void>()
   let next = 0
-  const changes: Array<[boolean, 'on' | DevModeEnd]> = []
+  const changes: Array<[boolean, 'on' | 'resumed' | DevModeEnd]> = []
   const options = {
     available: over.available ?? true,
     devices,
@@ -50,9 +79,10 @@ async function setup(over: { available?: boolean; present?: boolean; noChannel?:
         pending.delete(handle as number)
       },
     },
-    changed: (on: boolean, why: 'on' | DevModeEnd) => {
+    changed: (on: boolean, why: 'on' | 'resumed' | DevModeEnd) => {
       changes.push([on, why])
     },
+    ...(over.keep === undefined ? {} : { keep: over.keep }),
   }
   const dev = new DevMode(options)
   return {
@@ -140,5 +170,165 @@ describe('developer mode', () => {
     expect(await restarted.revokeLeftovers()).toBe(0)
     expect(devices.activeDev().map((r) => r.deviceId)).toEqual([restarted.deviceId()])
     expect(left).not.toBe(restarted.deviceId())
+  })
+
+  describe('across a restart', () => {
+    it('stays on with the kept key until the same end, and then ends', async () => {
+      const keep = new MemoryKeep()
+      const { dev, devices, options, pending, advance } = await setup({ keep })
+      await dev.turnOn()
+      const id = dev.deviceId()
+      const until = dev.status().until
+      expect(keep.kept?.deviceId).toBe(id)
+      expect(keep.kept?.until).toBe(until)
+      advance(3 * 3600_000)
+      // A new process, the old one's timer gone with it.
+      pending.clear()
+      const changes: Array<[boolean, string]> = []
+      const restarted = new DevMode({ ...options, changed: (on, why) => changes.push([on, why]) })
+      expect(await restarted.resume(true)).toBe(true)
+      expect(await restarted.revokeLeftovers()).toBe(0)
+      expect(restarted.deviceId()).toBe(id)
+      expect(restarted.status().until).toBe(until)
+      expect(devices.activeDev().map((r) => r.deviceId)).toEqual([id])
+      expect(changes).toEqual([[true, 'resumed']])
+      // Its signature is the kept key's: the record's own approval key verifies it.
+      expect(typeof (await restarted.sign('payload'))).toBe('string')
+      // The rest of its 8 hours, not 8 more.
+      expect(pending.size).toBe(1)
+      advance(5 * 3600_000)
+      expect(await restarted.sign('payload')).toBeNull()
+      for (const run of pending.values()) run()
+      await new Promise((r) => setTimeout(r, 10))
+      expect(restarted.deviceId()).toBeNull()
+      expect(devices.activeDev()).toEqual([])
+      expect(keep.kept).toBeNull()
+      expect(changes).toEqual([
+        [true, 'resumed'],
+        [false, 'expired'],
+      ])
+    })
+
+    it('does not resume once its time is up, when locked down, turned off, or without the record', async () => {
+      const cases: Array<(s: Awaited<ReturnType<typeof setup>>, keep: MemoryKeep) => Promise<boolean>> = [
+        // Its 8 hours ran out while Valet was stopped.
+        async (s) => {
+          s.advance(DEV_MODE_MS)
+          return true
+        },
+        // Locked down at launch.
+        async () => false,
+        // Its record was revoked (a phone's lockdown, say), the kept key still there.
+        async (s, keep) => {
+          const kept = keep.kept
+          await s.dev.turnOff('lockdown')
+          keep.kept = kept
+          return true
+        },
+        // A kept time past 8 hours from now: never trusted.
+        async (s, keep) => {
+          if (keep.kept !== null)
+            keep.kept = {
+              ...keep.kept,
+              until: new Date(Date.parse(keep.kept.until) + DEV_MODE_MS).toISOString(),
+            }
+          return true
+        },
+        // A key that isn't the record's.
+        async (s, keep) => {
+          const other = await setup({ keep: new MemoryKeep() })
+          await other.dev.turnOn()
+          if (keep.kept !== null)
+            keep.kept = { ...keep.kept, keys: (other.options.keep as MemoryKeep).kept!.keys }
+          return true
+        },
+      ]
+      for (const prepare of cases) {
+        const keep = new MemoryKeep()
+        const s = await setup({ keep })
+        await s.dev.turnOn()
+        const allowed = await prepare(s, keep)
+        const restarted = new DevMode(s.options)
+        expect(await restarted.resume(allowed)).toBe(false)
+        expect(restarted.deviceId()).toBeNull()
+        expect(keep.kept).toBeNull()
+        await restarted.revokeLeftovers()
+        expect(s.devices.activeDev()).toEqual([])
+      }
+    })
+
+    it('turning off clears what was kept, and a store that fails only means no resume', async () => {
+      const keep = new MemoryKeep()
+      const { dev, options } = await setup({ keep })
+      await dev.turnOn()
+      await dev.turnOff('turned-off')
+      expect(keep.kept).toBeNull()
+      expect(await new DevMode(options).resume(true)).toBe(false)
+      keep.fail = true
+      expect(await dev.turnOn()).toBe(true)
+      expect(await new DevMode(options).resume(true)).toBe(false)
+      // Without a store at all, a restart ends it as before.
+      const plain = await setup()
+      await plain.dev.turnOn()
+      expect(await new DevMode(plain.options).resume(true)).toBe(false)
+    })
+
+    it('keeps it in a file only the person can read, and reads a damaged one as nothing', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'valet-devkeep-'))
+      try {
+        const path = join(dir, 'dev-mode-key.json')
+        const keep = fileDevModeKeep(path)
+        expect(await keep.read()).toBeNull()
+        const s = await setup({ keep })
+        await s.dev.turnOn()
+        expect(((await stat(path)).mode & 0o777).toString(8)).toBe('600')
+        expect(JSON.parse(await readFile(path, 'utf8')).deviceId).toBe(s.dev.deviceId())
+        const restarted = new DevMode(s.options)
+        expect(await restarted.resume(true)).toBe(true)
+        await restarted.turnOff('turned-off')
+        expect(await keep.read()).toBeNull()
+        await keep.clear()
+        const { writeFile } = await import('node:fs/promises')
+        await writeFile(path, '{"keys":1}')
+        expect(await keep.read()).toBeNull()
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    })
+    it('keeps it in the dev build’s own Keychain item, and reads a missing or damaged one as nothing', async () => {
+      const items = new Map<string, string>()
+      const key = (service: string, account: string) => `${service}/${account}`
+      let broken = false
+      const keychain: KeychainStore = {
+        read: async (service, account) => {
+          if (broken) throw new CredentialError('unavailable')
+          const text = items.get(key(service, account))
+          if (text === undefined) throw new CredentialError('not-found')
+          return SecretValue.fromString(text)
+        },
+        info: async () => null,
+        write: async (service, account, secret) => {
+          items.set(key(service, account), secret.toString('utf8'))
+        },
+        delete: async (service, account) => {
+          if (broken) throw new CredentialError('unavailable')
+          if (!items.delete(key(service, account))) throw new CredentialError('not-found')
+        },
+        purge: async () => undefined,
+      }
+      const keep = keychainDevModeKeep(keychain)
+      expect(await keep.read()).toBeNull()
+      await keep.clear()
+      const s = await setup({ keep })
+      await s.dev.turnOn()
+      expect([...items.keys()]).toEqual([`${DEV_MODE_SERVICE}/key`])
+      const restarted = new DevMode(s.options)
+      expect(await restarted.resume(true)).toBe(true)
+      items.set(`${DEV_MODE_SERVICE}/key`, '{"keys":1}')
+      expect(await keep.read()).toBeNull()
+      broken = true
+      await expect(keep.read()).rejects.toThrow()
+      await expect(keep.clear()).rejects.toThrow()
+    })
   })
 })

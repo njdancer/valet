@@ -339,7 +339,8 @@ export type AuditEvent =
       readonly on: boolean
       /** When it turns itself off, if on. */
       readonly until: string | null
-      readonly reason: 'on' | 'expired' | 'turned-off' | 'lockdown' | 'restart'
+      /** `resumed`: on again after a restart, with the key the last run kept, until the same end. */
+      readonly reason: 'on' | 'resumed' | 'expired' | 'turned-off' | 'lockdown' | 'restart'
     }
   | {
       /**

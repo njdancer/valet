@@ -22,6 +22,7 @@ import {
   bundleHash,
   CredentialError,
   type CredentialGrant,
+  canonicalJson,
   credentialsOf,
   DEFAULT_SANDBOX,
   describeCredentialUse,
@@ -218,7 +219,7 @@ import {
   type WideningSetting,
 } from './approvals'
 import { ApnsSender } from './approvals/apns'
-import { DevMode } from './approvals/dev-mode'
+import { DevMode, type DevModeKeep } from './approvals/dev-mode'
 import { MissedItems, sortAttention } from './attention'
 import {
   type AdapterLookup,
@@ -454,6 +455,8 @@ export interface ServiceDeps {
    * Absent: never.
    */
   readonly developerMode?: boolean
+  /** Where developer mode's key waits across a restart (dev-mode-keep.ts). Absent: a restart ends it. */
+  readonly developerModeKeep?: DevModeKeep
   /**
    * The blind relay (docs/blind-relay.md): where this Mac's tunnel dials, and where its
    * certificate is kept. None: no tunnel.
@@ -887,6 +890,13 @@ export class AppService {
   private readonly stagedAdapters = new Map<string, BuiltinAdapter>()
   /** Staged drafts' swaps and tidying, one after another, outside the broker's lock. */
   private staging: Promise<unknown> = Promise.resolve()
+  /** fileReviewsSoon's run, and whether another is queued behind it. */
+  private reviewFiling: Promise<unknown> = Promise.resolve()
+  private reviewsQueued = false
+  /** The review requests fileWaitingReviews made or found, while they wait (watchFiledReview). */
+  private readonly filedReviews = new Set<string>()
+  private leftoverReviewsAdopted = false
+  private stopping = false
   /** Adapters whose last call-started login the person closed without finishing, not yet told to a call. */
   private readonly gaveUp = new Set<string>()
 
@@ -1380,6 +1390,7 @@ export class AppService {
     this.authoring = await this.startAuthoring()
     // Reads approval times into the cache the confirmation panel uses.
     await this.states()
+    this.fileReviewsSoon()
     await this.startListening().catch(() => undefined)
     // The same caller: remote calls go through the same pause, runtime and audit as local ones.
     await this.remote
@@ -1930,6 +1941,7 @@ export class AppService {
   }
 
   async stop(): Promise<void> {
+    this.stopping = true
     this.updates?.stop()
     this.phones.stop()
     if (this.phoneStatusTimer !== null) clearTimeout(this.phoneStatusTimer)
@@ -1940,6 +1952,7 @@ export class AppService {
     // Calls still running are cancelled: each ends failed tool-run/aborted, its prompt declined.
     this.caller?.cancelAll()
     this.broker.declineAll()
+    await this.reviewFiling
     this.approvalBroker?.stop()
     this.handoffs.closeAll()
     this.agentBrowser?.closeAll()
@@ -2055,6 +2068,7 @@ export class AppService {
         ...this.missed.list(),
       ])
     if (PHONE_STATUS_EVENTS.has(type)) this.schedulePhoneStatus()
+    if (type === 'adapters-changed' || type === 'approvals-changed') this.fileReviewsSoon()
     this.deps.emit({ type })
   }
 
@@ -2473,6 +2487,14 @@ export class AppService {
       await devMode.turnOff('lockdown')
       return false
     }
+    await this.devApproveWaiting()
+    return true
+  }
+
+  /** Developer mode's answer to each waiting request it may approve; the rest wait for the person. */
+  private async devApproveWaiting(): Promise<void> {
+    const broker = this.approvalBroker
+    if (broker === null) return
     for (const pending of broker.list()) {
       try {
         await broker.approveByDevMode(pending.request.id)
@@ -2480,7 +2502,6 @@ export class AppService {
         // That one stays waiting for the person.
       }
     }
-    return true
   }
 
   /**
@@ -2515,6 +2536,7 @@ export class AppService {
         channel: keys.signer.channel,
         now: this.deps.now,
         timers: this.deps.timers,
+        ...(this.deps.developerModeKeep === undefined ? {} : { keep: this.deps.developerModeKeep }),
         changed: (on, why) => {
           const until = devMode.status().until
           void this.audit.append({ type: 'developer-mode', on, until, reason: why }).catch(() => undefined)
@@ -2543,7 +2565,16 @@ export class AppService {
       // diagnostics log and Needs you (keysChangedItems) say why.
       if (signedByOldKeys(ledger.data.evidence, devices.macId) !== null)
         this.deps.diagnostics?.({ type: 'approval-keys-changed' })
-      // A key the last run held went with it: its record is revoked, keeping what it approved.
+      // On again with the key the last run kept, while its 8 hours last (and never while locked
+      // down). Any other key the last run held went with it: its record is revoked, keeping what
+      // it approved.
+      let resumed = false
+      try {
+        resumed = await devMode.resume(!this.lockedDown)
+      } catch {
+        // Off, as a restart left it before.
+      }
+      if (resumed) await this.devApproveWaiting()
       if ((await devMode.revokeLeftovers().catch(() => 0)) > 0)
         await this.audit
           .append({ type: 'developer-mode', on: false, until: null, reason: 'restart' })
@@ -2750,9 +2781,10 @@ export class AppService {
           if (subject.source === 'rollback') return
           if (this.adapter(subject.adapterId)?.hash === subject.adapterHash) {
             await this.applyInstall(subject.adapterId, subject.adapterHash)
-            // An agent's request has no signInstall around it to retire the others; that revokes
-            // through the broker, so after its lock is let go.
-            if (subject.source === 'draft') {
+            // An agent's request, or one answered from the phone or by developer mode, has no
+            // signInstall around it to retire the others; that revokes through the broker, so
+            // after its lock is let go. (Approved at the Mac, signInstall does it again: harmless.)
+            {
               const { adapterId, adapterHash } = subject
               this.staging = this.staging
                 .then(() => this.retireOthers(adapterId, adapterHash))
@@ -3514,8 +3546,21 @@ export class AppService {
     source: 'draft' | 'local-folder' | 'rollback' | 'builtin',
     against?: BuiltinAdapter,
   ): Promise<boolean> {
-    const broker = this.approvalBroker
-    if (broker === null) throw new ValetError('config', 'unavailable')
+    if (this.approvalBroker === null) throw new ValetError('config', 'unavailable')
+    const id = adapter.definition.manifest.id
+    const subject = await this.installSubjectFor(adapter, source, against)
+    if (!(await this.approveHere('adapter-install', subject))) return false
+    // A rollback retires the others only once its swap has worked (rollbackNow).
+    if (source !== 'rollback') await this.retireOthers(id, adapter.hash)
+    return true
+  }
+
+  /** The signed subject for installing `adapter`, diffed against `against` or the last approved snapshot. */
+  private async installSubjectFor(
+    adapter: BuiltinAdapter,
+    source: 'draft' | 'local-folder' | 'rollback' | 'builtin',
+    against?: BuiltinAdapter,
+  ): Promise<ApprovalSubject<'adapter-install'>> {
     const id = adapter.definition.manifest.id
     const snapshot = await this.snapshots.get(id)
     const previous =
@@ -3524,7 +3569,7 @@ export class AppService {
         : snapshot !== null && snapshot.hash !== adapter.hash
           ? { hash: snapshot.hash, manifest: snapshot.manifest }
           : null
-    const subject = installSubject({
+    return installSubject({
       manifest: adapter.definition.manifest,
       hash: adapter.hash,
       files: adapter.files,
@@ -3533,10 +3578,105 @@ export class AppService {
       inheritsSession: previous !== null && (await this.inheritsSession(id)),
       unsandboxed: this.runsUnsandboxed(adapter),
     })
-    if (!(await this.approveHere('adapter-install', subject))) return false
-    // A rollback retires the others only once its swap has worked (rollbackNow).
-    if (source !== 'rollback') await this.retireOthers(id, adapter.hash)
-    return true
+  }
+
+  /** Where a version waiting for review came from, as its signed subject says. */
+  private reviewSource(adapter: BuiltinAdapter): 'builtin' | 'draft' | 'local-folder' {
+    // A version this app ships is labelled built in; anything else by where it came from.
+    return this.isBuiltIn(adapter) ? 'builtin' : adapter.source === 'draft' ? 'draft' : 'local-folder'
+  }
+
+  /**
+   * Each installed version waiting for review (a built-in update, a folder's version, a first
+   * install) asked for at once, as the person's own request, so the phone's Needs you shows it and
+   * developer mode can answer it (feedback #33): before, the request was made only when Approve was
+   * pressed on the Mac. The Mac's Approve then answers this same request (the broker reuses one
+   * with the same subject). An agent's draft has its own request already. A request for a version
+   * no longer waiting, or whose card no longer says what approving it would do, is taken back.
+   * Debounced: one run at a time, and one more queued at most.
+   */
+  private fileReviewsSoon(): void {
+    if (this.reviewsQueued || this.stopping) return
+    this.reviewsQueued = true
+    this.reviewFiling = this.reviewFiling.then(async () => {
+      this.reviewsQueued = false
+      try {
+        if (!this.stopping) await this.fileWaitingReviews()
+      } catch {
+        // The next change asks again; the Mac's Approve still asks meanwhile.
+      }
+    })
+  }
+
+  private async fileWaitingReviews(): Promise<void> {
+    const broker = this.approvalBroker
+    if (broker === null || this.lockedDown) return
+    // The first run, at launch: a review request the last run made, still waiting in the ledger, is
+    // one of these (no Approve of this run can be holding it yet).
+    if (!this.leftoverReviewsAdopted) {
+      this.leftoverReviewsAdopted = true
+      for (const { request: r } of broker.list())
+        if (r.kind === 'adapter-install' && r.requester.kind === 'person' && r.subject.source !== 'rollback')
+          this.watchFiledReview(r.id, r.subject.adapterId, r.subject.adapterHash)
+    }
+    const wanted = new Set<string>()
+    for (const state of await this.states()) {
+      if (state.approved || state.rejected) continue
+      const adapter = state.adapter
+      const id = adapter.definition.manifest.id
+      if (this.draftRequestFor(id, adapter.hash) !== null) continue
+      const subject = await this.installSubjectFor(adapter, this.reviewSource(adapter))
+      wanted.add(canonicalJson(subject))
+      // Approved, or replaced, while the subject was made: not asked for again. Asked inside the
+      // broker's lock, so an answer that lands meanwhile never leaves a second card.
+      const stillWanted = () =>
+        this.adapter(id)?.hash === adapter.hash && !this.installSigned(id, adapter.hash)
+      // Refused (locked down, the broker unavailable): the Mac's own Approve still asks then.
+      let asked: Awaited<ReturnType<typeof broker.request>> | null = null
+      try {
+        asked = await broker.request('adapter-install', subject, { kind: 'person' }, { stillWanted })
+      } catch {
+        asked = null
+      }
+      if (asked?.ok === true && asked.autoApproved !== true)
+        this.watchFiledReview(asked.requestId, id, adapter.hash)
+    }
+    // Only requests made here: one the Mac's Approve made itself (a turned-down version approved
+    // again, its Touch ID prompt still up) is that Approve's to keep or take back.
+    for (const pending of broker.list()) {
+      const r = pending.request
+      if (r.kind !== 'adapter-install' || !this.filedReviews.has(r.id)) continue
+      if (!wanted.has(canonicalJson(r.subject)))
+        try {
+          await broker.withdraw(r.id, { kind: 'person' })
+        } catch {
+          // Still waiting; its precheck refuses an answer once it's stale.
+        }
+    }
+  }
+
+  /**
+   * A review request made (or found again) by fileWaitingReviews. Declined (on the phone) is the
+   * person turning the version down, as the Mac's Reject does, so it isn't asked for again.
+   */
+  private watchFiledReview(requestId: string, adapterId: string, hash: string): void {
+    const broker = this.approvalBroker
+    if (broker === null || this.filedReviews.has(requestId)) return
+    this.filedReviews.add(requestId)
+    void broker.wait(requestId).then(async (closed) => {
+      this.filedReviews.delete(requestId)
+      if (closed?.outcome !== 'declined' || this.stopping) return
+      const adapter = this.adapter(adapterId)
+      if (adapter?.hash !== hash || this.installSigned(adapterId, hash)) return
+      try {
+        await this.revokeInstall(adapterId, hash)
+        await this.approvals.reject(adapterId, hash, adapter.definition.manifest.version)
+        await this.refreshToolsOf(adapterId)
+      } catch {
+        // Still not approved: only tightens, and the review stays on the Mac.
+      }
+      this.emit('adapters-changed')
+    })
   }
 
   /**
@@ -3569,6 +3709,9 @@ export class AppService {
     // Busy: another prompt is up and this one may still be answered, unless it's a consent,
     // which is never reused and would only pile up.
     // An access Save the page reported as not saved mustn't stay signable from the phone either.
+    // A review request made when the version began waiting stays for the phone: cancelling Touch
+    // ID here isn't turning it down.
+    if (kind === 'adapter-install' && this.filedReviews.has(asked.requestId)) return false
     if (answered.reason !== 'busy' || kind === 'remote-client' || kind === 'agent-access')
       await broker
         .withdraw(asked.requestId, kind === 'remote-client' ? { kind: 'app' } : { kind: 'person' })
@@ -6175,14 +6318,10 @@ export class AppService {
           }
           // Only the bundle installed and waiting now; a stale review's hash is refused.
           if (adapter.hash !== hash) throw new ValetError('manifest', 'invalid')
+          // The request filed for it when it began waiting is the one answered (fileReviewsSoon).
+          await this.reviewFiling
           // Touch ID at this Mac signs it; the handler applies it (approvalHandlers).
-          // A version this app ships is labelled built in; anything else by where it came from.
-          const source = this.isBuiltIn(adapter)
-            ? 'builtin'
-            : adapter.source === 'draft'
-              ? 'draft'
-              : 'local-folder'
-          await this.signInstall(adapter, source)
+          await this.signInstall(adapter, this.reviewSource(adapter))
         },
         reject: async (adapterId, hash, note) => {
           const adapter = this.requireAdapter(adapterId)
