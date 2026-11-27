@@ -1183,6 +1183,8 @@ export interface AgentRequestItem {
     | 'private-network'
     | 'tool-enable'
     | 'secret-grant'
+    /** An agent asks for Read or Edit on a Mail account, calendar or list of its own (docs/access.md). */
+    | 'agent-access'
     /** An agent asks to remove a site. Not signed: it only narrows, so Approve needs no Touch ID. */
     | 'uninstall'
     /**
