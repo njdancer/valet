@@ -226,7 +226,10 @@ export class EventKitService implements NativeTools {
           allowed: allowed.has(c.id),
         })),
       }
-    } catch {
+    } catch (error) {
+      // The reader exits when its EventKit link breaks: start it again so the screen recovers.
+      if (error instanceof EventKitError && error.code === 'unavailable')
+        await this.deps.reader.start().catch(() => 'failed')
       return off('not-running')
     }
   }

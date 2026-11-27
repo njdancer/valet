@@ -332,13 +332,19 @@ public var eventKitBroken = false
 /// every caller first) but no sources at all, not even "Other". Seen after a burst of agent calls;
 /// new stores in the same process stayed empty for days. The helper answers unavailable and exits
 /// once it has answered, so it starts again whole (feedback issue #28).
+/// A store just made may not have loaded yet, so it counts as broken only if a second fresh store,
+/// after refreshing, has no sources either.
 func liveStore() throws -> EKEventStore {
   let store = eventKitStores.get()
-  if store.sources.isEmpty {
-    eventKitBroken = true
-    throw EventKitFailure.unavailable
-  }
-  return store
+  if !store.sources.isEmpty { return store }
+  store.refreshSourcesIfNecessary()
+  if !store.sources.isEmpty { return store }
+  eventKitStores.reset()
+  let again = eventKitStores.get()
+  again.refreshSourcesIfNecessary()
+  if !again.sources.isEmpty { return again }
+  eventKitBroken = true
+  throw EventKitFailure.unavailable
 }
 
 private let isoFormatter: ISO8601DateFormatter = {
