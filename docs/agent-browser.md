@@ -57,7 +57,9 @@ sign-in with tools alone (src/main/core/login-session.ts). It takes four tools:
   (login-stall.ts): origin and path only, no field values, and any line holding a secret this login
   typed replaced. No scripts, cookies, storage, network bodies, screenshots or downloads.
 - **One of the runtime's login steps each.** Each batch runs under the adapter's lock (no real login
-  or call runs beside it), paced by the site's budget, and a block opens the site's breaker.
+  or call runs beside it), paced by the site's budget, and a block opens the site's breaker. A batch
+  takes 40 s at most, waits for a one-time code included, so it ends inside a client's usual 60 s
+  tool timeout; to wait longer, send another batch.
 - **Nothing is handed to tools.** The session is never copied to the tool partition. A later real
   login starts from the auth partition as it was left, as any login does.
 - **The person's call.** Today a login session opens only while developer mode is on, one per

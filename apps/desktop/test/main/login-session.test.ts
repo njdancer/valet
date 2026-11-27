@@ -8,7 +8,12 @@ import { describe, expect, it } from 'vitest'
 import { LoginSecrets } from '../../src/main/core/blocked'
 import { disabledOtpReader } from '../../src/main/core/credentials'
 import { DEMO_ACCOUNT } from '../../src/main/core/demo'
-import { LOGIN_SESSION_MS, LoginSession, loginOrigins } from '../../src/main/core/login-session'
+import {
+  LOGIN_BATCH_MS,
+  LOGIN_SESSION_MS,
+  LoginSession,
+  loginOrigins,
+} from '../../src/main/core/login-session'
 import { FakeAuthPage, SHOP } from './fixtures'
 import { testCredentials } from './test-credentials'
 
@@ -209,5 +214,12 @@ describe('a login session', () => {
     await expect(session.loginSteps([{ op: 'pause', ms: 1 }])).rejects.toMatchObject({
       detail: expect.stringMatching(/closed/),
     })
+  })
+})
+
+describe('a batch’s time', () => {
+  it('ends well inside the 60 s an MCP client usually gives a tool call', () => {
+    // The agent has to hear how a batch ended, a wait for a one-time code included (issue #30).
+    expect(LOGIN_BATCH_MS).toBeLessThanOrEqual(45_000)
   })
 })
