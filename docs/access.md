@@ -4,11 +4,11 @@ Each agent, whether an app on this Mac (`local:<id>`) or a cloud agent (`remote:
 own record of what it may use in the Mac's own apps. It covers each Mail account, calendar and
 reminder list, at one of three levels:
 
-| Level | Mail                                         | Calendar                                              | Reminders                                    |
-| ----- | -------------------------------------------- | ----------------------------------------------------- | -------------------------------------------- |
-| Off   | The account doesn't exist for this agent     | The calendar doesn't exist for this agent             | The list doesn't exist for this agent        |
-| Read  | Search, read and thread its messages         | See its events                                        | See its reminders                            |
-| Edit  | Read, plus drafts, moves and marks. Never sends | Read, plus adding, changing and deleting events    | Read, plus adding, changing and completing   |
+| Level | Mail                                            | Calendar                                        | Reminders                                  |
+| ----- | ----------------------------------------------- | ----------------------------------------------- | ------------------------------------------ |
+| Off   | The account doesn't exist for this agent        | The calendar doesn't exist for this agent       | The list doesn't exist for this agent      |
+| Read  | Search, read and thread its messages            | See its events                                  | See its reminders                          |
+| Edit  | Read, plus drafts, moves and marks. Never sends | Read, plus adding, changing and deleting events | Read, plus adding, changing and completing |
 
 The person chooses these on the agent's page in Connections (the **Mail, Calendar and Reminders**
 card). Settings › Mail, Calendar and Reminders only set the apps up and list what is on the Mac.
