@@ -667,10 +667,11 @@ async function createDraft(
     const own = new Set(
       readable.map((a) => a.address?.toLowerCase()).filter((a): a is string => a !== undefined),
     )
-    // Only an address of an account the person allowed, when Valet knows them.
-    if (own.size > 0 && !own.has(address)) return fail('tool-input', 'invalid')
+    // Only an address of an account this agent may use: one Valet can't place is refused, since
+    // Mail would put the draft in whichever account has it.
+    if (!own.has(address)) return fail('tool-input', 'invalid')
     const account = readable.find((a) => a.address?.toLowerCase() === address)
-    if (account !== undefined && !mayEdit(deps, account.id)) return readOnlyAccount('from')
+    if (account === undefined || !mayEdit(deps, account.id)) return readOnlyAccount('from')
   } else if (accounts.length === 0 && input.replyToId === undefined) return readOnlyAccount('from')
   let replyTo: DraftRequest['replyTo'] = null
   let subject = input.subject ?? ''
@@ -692,7 +693,11 @@ async function createDraft(
   // address when there is just one. A reply stays with Mail, which answers from the address the
   // message was sent to.
   const addresses = [...new Set(accounts.map((a) => a.address).filter((a): a is string => a != null))]
-  const from = input.from ?? (replyTo === null && addresses.length === 1 ? (addresses[0] ?? null) : null)
+  // A new draft with no From would land in Mail's default account, which may not be one this
+  // agent may change: it says which, unless there is just one it may.
+  if (input.from === undefined && replyTo === null && addresses.length !== 1)
+    return fail('tool-input', 'invalid')
+  const from = input.from ?? (replyTo === null ? (addresses[0] ?? null) : null)
   const draft: DraftRequest = {
     from,
     to,

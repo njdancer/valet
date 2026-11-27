@@ -159,6 +159,7 @@ import {
   accessWidening,
   applyAccessChange,
   type ClientAccess,
+  MAX_ACCESS_ITEMS,
   NO_APP_ACCESS,
   withWidening,
 } from './agent-access'
@@ -1401,6 +1402,7 @@ export class AppService {
       }
       const before = this.agentAccess.app(label, app)
       const after = applyAccessChange(before, { items: levels })
+      if (Object.keys(after.items).length > MAX_ACCESS_ITEMS) throw new ValetError('config', 'invalid')
       next.push({ app, after })
       for (const { id, level } of accessWidening(before, after).items) {
         const item = shown?.items.find((i) => i.id === id)
@@ -1417,6 +1419,8 @@ export class AppService {
       }
       if (!(await this.approveHere('agent-access', subject))) return false
     }
+    // Revoked while the prompt was up: nothing is kept for it.
+    if (!this.accessClientKnown(label)) throw new ValetError('config', 'not-found')
     for (const { app, after } of next) await this.agentAccess.set(label, app, after)
     await this.accessChanged(label)
     return true
@@ -1486,10 +1490,12 @@ export class AppService {
    */
   private async seedAgentAccess(): Promise<void> {
     if (this.agentAccess.seeded) return
+    // `edits`: the changing tools an agent had to hold for Edit. Mail's Edit is drafts and moves
+    // together, so it needs both, or it would widen whichever was off; otherwise Read.
     const apps: {
       app: AccessApp
       items: readonly string[]
-      edits: boolean
+      edits: readonly string[] | null
       tools: readonly ToolDeclaration[]
     }[] = []
     const mail = this.mailApp?.settings
@@ -1497,7 +1503,7 @@ export class AppService {
       apps.push({
         app: 'mail',
         items: mail.accounts,
-        edits: mail.drafts || mail.organize,
+        edits: mail.drafts && mail.organize ? ['create_draft', 'move', 'mark'] : null,
         tools: mailTools({ drafts: true, organize: true }).map((t) => t.declaration),
       })
     for (const [app, service] of this.eventKitApps) {
@@ -1505,7 +1511,12 @@ export class AppService {
       apps.push({
         app,
         items: settings.calendars,
-        edits: settings.writes,
+        edits: settings.writes
+          ? (app === 'calendar' ? calendarTools({ writes: true }) : reminderTools({ writes: true }))
+              .map((t) => t.declaration)
+              .filter((t) => t.sideEffect !== 'read')
+              .map((t) => t.name)
+          : null,
         tools: (app === 'calendar' ? calendarTools({ writes: true }) : reminderTools({ writes: true })).map(
           (t) => t.declaration,
         ),
@@ -1533,7 +1544,13 @@ export class AppService {
         if (items.length === 0) continue
         const reads = tools.some((t) => t.sideEffect === 'read' && agent.held(app, t))
         if (!reads) continue
-        const changes = edits && tools.some((t) => t.sideEffect !== 'read' && agent.held(app, t))
+        // Edit only for an agent that held every changing tool Edit gives: never wider than before.
+        const changes =
+          edits !== null &&
+          edits.every((name) => {
+            const tool = tools.find((t) => t.name === name)
+            return tool !== undefined && agent.held(app, tool)
+          })
         const level = changes ? 'edit' : 'read'
         access[app] = { items: Object.fromEntries(items.map((id) => [id, level])), full: false }
       }
@@ -1624,6 +1641,9 @@ export class AppService {
     const tools: RemoteSetupTool[] = []
     // Built-in tools first (Mail on this Mac), while the person has them on.
     for (const listed of this.natives().flatMap((n) => n.listTools())) {
+      // Mail's, Calendar's and Reminders' own tools follow from each agent's access to them
+      // (docs/access.md), not from a switch for every cloud agent.
+      if (accessAppOf(listed.adapterId) !== null) continue
       const ref = `${listed.adapterId}.${listed.declaration.name}`
       tools.push({
         ref,
@@ -3292,7 +3312,8 @@ export class AppService {
     if (answered.ok) return true
     // Busy: another prompt is up and this one may still be answered, unless it's a consent,
     // which is never reused and would only pile up.
-    if (answered.reason !== 'busy' || kind === 'remote-client')
+    // An access Save the page reported as not saved mustn't stay signable from the phone either.
+    if (answered.reason !== 'busy' || kind === 'remote-client' || kind === 'agent-access')
       await broker
         .withdraw(asked.requestId, kind === 'remote-client' ? { kind: 'app' } : { kind: 'person' })
         .catch(() => false)
@@ -5236,6 +5257,7 @@ export class AppService {
           await this.approvalBroker?.withdrawClient(`remote:${id}`).catch(() => 0)
           this.dropAgentAsks(`remote:${id}`)
           await this.dropRemoteCapabilities(id)
+          await this.agentAccess.forget(`remote:${id}`).catch(() => undefined)
           // Just after, so this call's own result still reaches the agent.
           const timer = setTimeout(() => void this.remote.revokeClient(id).catch(() => false), 1000)
           timer.unref?.()
@@ -5246,6 +5268,7 @@ export class AppService {
         await this.clients.revoke(clientId)
         this.cancelConfirmationsOf(`local:${clientId}`)
         await this.approvalBroker?.withdrawClient(`local:${clientId}`).catch(() => 0)
+        await this.agentAccess.forget(`local:${clientId}`).catch(() => undefined)
         await rm(this.clients.configPath(clientId), { force: true }).catch(() => undefined)
         // The token is refused from the next request on; the session itself ends just after, so
         // this call's own result still reaches the agent.

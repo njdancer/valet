@@ -205,6 +205,11 @@ describe('MailService', () => {
     expect((await s.service.call(call('create_draft', draft), signal)).status).not.toBe('ok')
     expect(s.saved).toEqual([])
     s.accounts.items = { [ALLOWED]: 'edit' }
+    // A From that isn't an account it may change is refused, not left to Mail's default account.
+    expect(
+      (await s.service.call(call('create_draft', { ...draft, from: 'someone@else.example' }), signal)).status,
+    ).not.toBe('ok')
+    expect(s.saved).toEqual([])
     expect((await s.service.call(call('create_draft', draft), signal)).status).toBe('ok')
     expect(s.saved).toHaveLength(1)
   })

@@ -11,6 +11,7 @@
 // Widening a record needs the person's signature (an `agent-access` approval); narrowing never
 // does. agent-access.json is the cautious side when it doesn't validate: nobody has anything.
 
+import { lstat } from 'node:fs/promises'
 import { isDisplayText } from '@valet/core'
 import { z } from 'zod'
 import { JsonDocument } from './files'
@@ -51,13 +52,16 @@ export type ClientAccess = Readonly<Partial<Record<AccessApp, AppAccess>>>
 
 export const NO_APP_ACCESS: AppAccess = { items: {}, full: false }
 
+/** Items one agent may have in one app: more than any Mac has, and what the file allows. */
+export const MAX_ACCESS_ITEMS = 500
+
 const RANK: Readonly<Record<AccessLevel | 'off', number>> = { off: 0, read: 1, edit: 2 }
 
 const itemId = z.string().min(1).max(200)
 const level = z.enum(['read', 'edit'])
 const appAccess = z
   .object({
-    items: z.record(itemId, level).refine((r) => Object.keys(r).length <= 500, 'too many items'),
+    items: z.record(itemId, level).refine((r) => Object.keys(r).length <= MAX_ACCESS_ITEMS, 'too many items'),
     full: z.boolean(),
   })
   .strict()
@@ -144,12 +148,17 @@ export class AgentAccessStore {
   private readonly document: JsonDocument<AccessDocument>
   private current: AccessDocument = EMPTY
 
-  constructor(path: string) {
+  constructor(private readonly path: string) {
     this.document = new JsonDocument(path, documentSchema, () => EMPTY, true)
   }
 
   async load(): Promise<void> {
     this.current = await this.document.read()
+    // Only `seed` writes a file, and always seeded: one read back unseeded didn't validate. The
+    // seed must not run again from the old per-app picks (it could give back what the person took
+    // away), so it counts as seeded, with nobody having anything.
+    if (!this.current.seeded && (await exists(this.path)))
+      await this.update(() => ({ ...EMPTY, seeded: true }))
   }
 
   /** False until `seed` ran once. */
@@ -243,5 +252,14 @@ export class AgentAccessStore {
 
   private async update(change: (doc: AccessDocument) => AccessDocument): Promise<void> {
     this.current = await this.document.update(change)
+  }
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await lstat(path)
+    return true
+  } catch {
+    return false
   }
 }

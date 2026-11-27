@@ -2882,13 +2882,19 @@ describe('remote access', () => {
         reader: await runningReader(),
         files: new DirectMailFiles(lib),
         drafts: { save: async () => ({ kind: 'saved' }) },
+        organizer: {
+          apply: async (request) => ({ kind: 'done', results: request.items.map(() => 'done' as const) }),
+        },
       },
     })
-    // As an earlier version left it: accounts picked for every agent, drafts on, tools by switches.
-    await s.api.mail.update({ enabled: true, accounts: [MAIL_ALLOWED], drafts: true })
-    await s.service.setRemoteTool('mail', 'search', true)
-    await s.service.setRemoteTool('mail', 'create_draft', true)
-    const writer = approvedClient(s, ['mail.search', 'mail.create_draft'])
+    // As an earlier version left it: accounts picked for every agent, drafts and organising on,
+    // tools by switches.
+    await s.api.mail.update({ enabled: true, accounts: [MAIL_ALLOWED], drafts: true, organize: true })
+    for (const tool of ['search', 'create_draft', 'move', 'mark'])
+      await s.service.setRemoteTool('mail', tool, true)
+    const writer = approvedClient(s, ['mail.search', 'mail.create_draft', 'mail.move', 'mail.mark'])
+    // Drafts but not moves: Edit gives both, so it stays at Read rather than widen.
+    const drafter = approvedClient(s, ['mail.search', 'mail.create_draft'])
     const reader = approvedClient(s, ['mail.search'])
     const none = approvedClient(s, [])
     const local = await s.api.clients.add('Claude Desktop')
@@ -2904,6 +2910,7 @@ describe('remote access', () => {
         .find((a) => a.app === 'mail')
         ?.items.find((i) => i.id === MAIL_ALLOWED)?.level
     expect(await level(`remote:${writer.id}`)).toBe('edit')
+    expect(await level(`remote:${drafter.id}`)).toBe('read')
     expect(await level(`remote:${reader.id}`)).toBe('read')
     expect(await level(`remote:${none.id}`)).toBe('off')
     expect(await level(`local:${local.id}`)).toBe('edit')

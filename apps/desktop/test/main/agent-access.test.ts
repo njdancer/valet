@@ -130,5 +130,10 @@ describe('agent access', () => {
     const store = new AgentAccessStore(file)
     await store.load()
     expect(store.app('local:a', 'mail')).toEqual(NO_APP_ACCESS)
+    // And never seeds from the old picks again, which could give back what was taken away.
+    expect(store.seeded).toBe(true)
+    const again = new AgentAccessStore(file)
+    await again.load()
+    expect(again.seeded).toBe(true)
   })
 })
