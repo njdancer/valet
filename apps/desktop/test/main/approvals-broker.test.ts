@@ -283,6 +283,21 @@ describe('asking', () => {
     expect(
       await t.broker.request('tool-enable', tool({ scope: 'remote', clientId: 'local:claude' }), agent()),
     ).toMatchObject({ ok: true })
+    // More access only for itself.
+    const access = (clientId: string) => ({
+      clientId,
+      items: [{ app: 'calendar' as const, id: 'cal-1', label: 'Work', level: 'edit' as const }],
+      full: [],
+      tools: [],
+      capabilities: [],
+    })
+    expect(await t.broker.request('agent-access', access('remote:other'), agent())).toEqual({
+      ok: false,
+      reason: 'not-allowed',
+    })
+    expect(await t.broker.request('agent-access', access('local:claude'), agent())).toMatchObject({
+      ok: true,
+    })
   })
 
   it('keeps an agent note out of requests the app or the person raise', async () => {

@@ -18,7 +18,16 @@ const CARD_KINDS: ReadonlySet<string> = new Set<CardKind>([
   'private-network',
   'tool-enable',
   'secret-grant',
+  'agent-access',
 ])
+
+const ACCESS_APP_NAMES = { mail: 'Mail', calendar: 'Calendar', reminders: 'Reminders' } as const
+/** What each level gives, by app, as the access card words it. */
+const ACCESS_LEVEL_WORDS = {
+  mail: { read: 'search and read it', edit: 'read it, draft, move and mark (never send)' },
+  calendar: { read: 'see its events', edit: 'see, add, change and delete its events' },
+  reminders: { read: 'see its reminders', edit: 'see, add, change and complete its reminders' },
+} as const
 
 /**
  * An agent's request to install its draft, as the Mac's review shows it: the ref the agent was told
@@ -149,6 +158,22 @@ export function agentRequestItem(
         details: [
           `The 1Password item “${s.itemTitle}” (${s.fields.join(', ')}), typed only into ${s.origins.join(', ')}.`,
         ],
+        choices: null,
+      }
+    }
+    case 'agent-access': {
+      const s = request.subject
+      const n = s.items.length
+      return {
+        ...base,
+        requestKind: 'agent-access',
+        adapterId: null,
+        title: n === 1 ? `Give ${base.agentName} more access` : `Give ${base.agentName} access to ${n} items`,
+        // The names are the Mac's own (an account, a calendar), never the agent's words.
+        details: s.items.map(
+          (i) =>
+            `${ACCESS_APP_NAMES[i.app]}, “${i.label}”: ${i.level === 'edit' ? 'Edit' : 'Read'}, to ${ACCESS_LEVEL_WORDS[i.app][i.level]}.`,
+        ),
         choices: null,
       }
     }

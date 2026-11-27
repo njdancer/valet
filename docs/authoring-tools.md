@@ -172,8 +172,8 @@ trial or a case, under the guards.
     agent's session gets Valet's own tools only when `ownTools` says so when it opens. Changing the
     grant closes the agent's sessions (`reopenClient`, tokens kept), so its next session has the
     change. The same per-call checks then apply as for a local app.
-  - _Asking for its own tools._ `valet_request_tool` (Ask for changes) asks for one tool of an
-    approved adapter for this cloud agent: a `tool-enable` subject with its `clientId`, answered on
+  - _Asking for its own tools._ `valet_request_access` (Ask for changes), with a reason, asks for
+    one tool of an approved adapter for this cloud agent: a `tool-enable` subject with its `clientId`, answered on
     the phone or the Mac. Approved, the tool is on for cloud agents and in this agent's grant only.
     An app on this Mac is told it doesn't need it (`not-needed`).
   - _Gates kept._ `valet_request_session` and signed-in `valet_live_trial` refuse a cloud agent
