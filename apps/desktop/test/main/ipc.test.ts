@@ -334,6 +334,7 @@ describe('every channel', () => {
     'adapters.clearSetting': ['woolworths', 'store'],
     'adapters.openCart': ['woolworths'],
     'adapters.setPaused': ['woolworths', true],
+    'adapters.clearLoginHold': ['woolworths'],
     'adapters.versions': ['woolworths'],
     'adapters.rollbackPreview': ['woolworths', HASH64],
     'adapters.rollback': ['woolworths', HASH64],

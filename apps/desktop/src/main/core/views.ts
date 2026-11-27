@@ -25,6 +25,7 @@ import type {
   AdapterSummary,
   ApprovalState,
   GrantInfo,
+  LoginHold,
   LoginMissingItem,
   MailSourceInfo,
   MessagesSourceInfo,
@@ -68,6 +69,8 @@ export interface AdapterState {
   readonly chosen: Readonly<Record<string, ChosenSetting>>
   /** The person paused this site (app-state.ts). Absent: not paused. */
   readonly paused?: boolean
+  /** The hold on its automatic logins (login-marker.ts). Absent: none. */
+  readonly loginHold?: LoginHold | null
   /**
    * Grants for the installed hash that are stored but not signed now (keys-changed.ts): never
    * handed out, shown as to give again. Absent: none.
@@ -233,6 +236,7 @@ export function adapterSummary(state: AdapterState): AdapterSummary {
       .map((s) => s.title),
     cartUrl: approvalState(state) === 'approved' ? (manifest.cartUrl ?? null) : null,
     paused: state.paused ?? false,
+    loginHold: state.loginHold ?? null,
   }
 }
 

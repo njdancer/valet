@@ -428,6 +428,17 @@ export type AuditEvent =
       readonly records: number
     }
   | {
+      /**
+       * A hold on a site's automatic logins was lifted (login-marker.ts): by the person, from the
+       * site's page, or because they approved a new version, which may fix what the login failed on.
+       * `reason` is the hold's needsUser reason, when it had one.
+       */
+      readonly type: 'login-hold-cleared'
+      readonly adapterId: string
+      readonly by: 'person' | 'new-version'
+      readonly reason?: NeedsUserReason
+    }
+  | {
       /** The person paused one site, or resumed it: its calls are refused without reaching it. */
       readonly type: 'site-paused'
       readonly adapterId: string

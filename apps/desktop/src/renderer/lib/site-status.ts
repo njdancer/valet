@@ -3,7 +3,7 @@
 // never disagree about whether Woolworths is fine.
 
 import type { DotTone } from '@valet/ui'
-import type { AdapterSummary, SiteHealth } from '../../shared/api'
+import type { AdapterSummary, LoginHold, SiteHealth } from '../../shared/api'
 import { formatClock } from './format'
 import { needsUserWording } from './wording'
 
@@ -12,7 +12,15 @@ export interface SiteStatus {
   /** "Ready", "Woolworths is limiting requests · calls resume at 9:52 pm". */
   readonly text: string
   /** What fixes it, when the person can: the IA's "do the task where you notice it". */
-  readonly fix: 'review' | 'review-update' | 'login' | 'show-login' | 'choose-setting' | 'resume' | null
+  readonly fix:
+    | 'review'
+    | 'review-update'
+    | 'login'
+    | 'show-login'
+    | 'choose-setting'
+    | 'resume'
+    | 'retry-login'
+    | null
 }
 
 /**
@@ -109,6 +117,10 @@ export function siteStatus(
       text: `Allow ${adapter.name} its SMS codes again · the permission you gave no longer counts`,
       fix: 'login',
     }
+  // Valet has stopped logging in by itself (issue #32): without this the site read "Ready · logs
+  // in again on the next call" while every call was turned away, and nothing offered to lift it.
+  const hold = adapter.loginHold ?? null
+  if (hold !== null) return { tone: 'warning', text: loginHoldText(adapter.name, hold), fix: 'retry-login' }
   if (adapter.pendingUpdate !== null)
     return {
       tone: 'success',
@@ -125,4 +137,15 @@ export function siteStatus(
       fix: null,
     }
   return { tone: 'success', text: 'Ready', fix: null }
+}
+
+/** Why Valet won't log in to a site by itself, and until when. */
+export function loginHoldText(site: string, hold: LoginHold): string {
+  if (hold.unfinished)
+    return `Valet’s last login to ${site} didn’t finish · it won’t log in again by itself until you check the account`
+  if (hold.reason !== null)
+    return `Valet stopped logging in to ${site} (${needsUserWording(hold.reason).short.toLowerCase()}) · it won’t try again by itself`
+  if (hold.until !== null)
+    return `Valet’s last login to ${site} didn’t work · it tries again at ${formatClock(hold.until)}`
+  return `Valet’s last login to ${site} didn’t work · it won’t try again by itself`
 }

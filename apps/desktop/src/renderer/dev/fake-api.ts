@@ -1342,6 +1342,13 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         enter('adapters.installFromFolder')
         return null
       },
+      async clearLoginHold(adapterId) {
+        enter('adapters.clearLoginHold', adapterId)
+        const base = adapters.get(adapterId)
+        if (base === undefined) throw new Error('refused')
+        adapters.set(adapterId, { ...base, loginHold: null })
+        emit({ type: 'adapters-changed' })
+      },
       async setPaused(adapterId, paused) {
         enter('adapters.setPaused', adapterId, paused)
         const base = adapters.get(adapterId)
@@ -2408,7 +2415,7 @@ const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent['type']
     'refusals-dropped',
     'mail-moved',
   ],
-  logins: ['login-started', 'login-finished'],
+  logins: ['login-started', 'login-finished', 'login-hold-cleared'],
   'secret-use': ['secret-used'],
   blocked: ['request-blocked', 'breaker-opened', 'breaker-closed'],
   confirmations: ['confirmation'],

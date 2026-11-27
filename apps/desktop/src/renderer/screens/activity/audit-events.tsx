@@ -56,6 +56,7 @@ export const EVENT_WORDS = {
   confirmation: { label: 'Confirmation answered', tone: 'warning' },
   'lock-down': { label: 'Lock down', tone: 'danger' },
   'site-paused': { label: 'Site paused', tone: 'warning' },
+  'login-hold-cleared': { label: 'Logins resumed', tone: 'success' },
   'approval-requested': { label: 'Approval asked', tone: 'warning' },
   'approval-answered': { label: 'Approval answered', tone: 'neutral' },
   'agent-change': { label: 'Agent change', tone: 'neutral' },
@@ -451,6 +452,13 @@ export function details(event: AuditEvent, now: number): ReactNode {
       ) : (
         <>Unlocked</>
       )
+    case 'login-hold-cleared':
+      return (
+        <>
+          {event.adapterId}{' '}
+          <Quiet>{event.by === 'person' ? 'by you' : 'after a new version was approved'}</Quiet>
+        </>
+      )
     case 'site-paused':
       return (
         <>
@@ -663,6 +671,7 @@ export const EVENT_FIELDS = {
   confirmation: ['type', 'adapterId', 'tool', 'client', 'callId', 'answer'],
   'lock-down': ['type', 'locked', 'revokedClients'],
   'site-paused': ['type', 'adapterId', 'paused'],
+  'login-hold-cleared': ['type', 'adapterId', 'by', 'reason'],
   'approval-requested': ['type', 'requestId', 'kind', 'digest', 'clientId'],
   'approval-answered': ['type', 'requestId', 'answer', 'deviceId', 'reason', 'by'],
   'agent-change': ['type', 'clientId', 'action', 'target', 'value'],

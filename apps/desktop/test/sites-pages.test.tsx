@@ -98,6 +98,26 @@ describe('the Sites list', () => {
     expect(called(api, 'openLoginWindow')).toEqual([['woolworths']])
   })
 
+  it('says when Valet has stopped logging in by itself, and lifts it in one click (issue #32)', async () => {
+    const user = userEvent.setup()
+    const api = withAdapter(createFakeApi({ now: NOW }), (a) =>
+      a.id === 'woolworths'
+        ? {
+            session: { ...loggedIn, state: 'expired' as const },
+            loginHold: { until: null, reason: 'site-changed' as const, unfinished: false },
+          }
+        : {},
+    )
+    renderAt('#/sites', api)
+    const list = await screen.findByRole('list', { name: 'All sites' })
+    expect(within(list).getAllByRole('listitem')[0]?.textContent).toMatch(
+      /Valet stopped logging in to Woolworths \(site changed\) · it won’t try again by itself/,
+    )
+    expect(within(list).getAllByRole('listitem')[0]?.textContent).not.toMatch(/Ready/)
+    await user.click(screen.getByRole('button', { name: 'Let Valet log in again' }))
+    expect(called(api, 'adapters.clearLoginHold')).toEqual([['woolworths']])
+  })
+
   it('shows an update waiting with its tools off, and its review one click away', async () => {
     renderAt('#/sites', createFakeApi({ now: NOW, updateWaiting: true }))
     const review = await screen.findByRole('link', { name: 'Review Woolworths update' })

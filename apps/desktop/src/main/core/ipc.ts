@@ -202,6 +202,7 @@ const HANDLERS: Readonly<
     api.adapters.clearSetting(id, s),
   ),
   'adapters.openCart': entry(z.tuple([ADAPTER_ID]), (api, [id]) => api.adapters.openCart(id)),
+  'adapters.clearLoginHold': entry(z.tuple([ADAPTER_ID]), (api, [id]) => api.adapters.clearLoginHold(id)),
   'adapters.setPaused': entry(z.tuple([ADAPTER_ID, z.boolean()]), (api, [id, paused]) =>
     api.adapters.setPaused(id, paused),
   ),

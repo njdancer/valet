@@ -17,6 +17,7 @@ export const INVOKE_METHODS = [
   'adapters.clearSetting',
   'adapters.openCart',
   'adapters.setPaused',
+  'adapters.clearLoginHold',
   'adapters.versions',
   'adapters.rollbackPreview',
   'adapters.rollback',

@@ -152,6 +152,20 @@ export function SiteFixButton({
           <ActionError failed={show.failed} what="open the login window" />
         </>
       )
+    case 'retry-login':
+      return (
+        <>
+          <Button
+            size="sm"
+            variant={variant}
+            loading={show.busy}
+            onClick={() => void show.run(() => api.adapters.clearLoginHold(adapter.id))}
+          >
+            Let Valet log in again
+          </Button>
+          <ActionError failed={show.failed} what="let Valet log in again" />
+        </>
+      )
     case 'choose-setting':
       return setting == null ? (
         <Button size="sm" variant={variant} asChild>

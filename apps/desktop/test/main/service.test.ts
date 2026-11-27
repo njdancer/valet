@@ -1285,6 +1285,51 @@ describe('a grant and the runtime’s login hold', () => {
   })
 })
 
+describe('the person lifting a login hold from the app (issue #32)', () => {
+  const markers = (s: Awaited<ReturnType<typeof approved>>) =>
+    new LoginAttemptMarker(s.paths.loginMarkers, { now: () => Date.parse('2026-11-07T00:00:00.000Z') })
+  const hold = async (s: Awaited<ReturnType<typeof approved>>) =>
+    (await s.api.adapters.list()).find((a) => a.id === 'shop')?.loginHold
+
+  it('shows the hold on the site and lifts it, audited, so the next call logs in', async () => {
+    const s = await approved()
+    expect(await hold(s)).toBeNull()
+    await markers(s).hold('shop', 1, null, 'captcha')
+    expect(await hold(s)).toEqual({ until: null, reason: 'captcha', unfinished: false })
+    await s.api.adapters.clearLoginHold('shop')
+    expect(await markers(s).read('shop')).toEqual({ kind: 'unset' })
+    expect(await hold(s)).toBeNull()
+    expect(readAudit(s.paths.audit).filter((e) => e.type === 'login-hold-cleared')).toEqual([
+      { type: 'login-hold-cleared', adapterId: 'shop', by: 'person', reason: 'captcha' },
+    ])
+    // Nothing held: nothing to lift, nothing audited.
+    await s.api.adapters.clearLoginHold('shop')
+    expect(readAudit(s.paths.audit).filter((e) => e.type === 'login-hold-cleared')).toHaveLength(1)
+  })
+
+  it('shows a backoff until its time and an unfinished login until lifted', async () => {
+    const s = await approved()
+    await markers(s).hold('shop', 1, Date.parse('2026-11-07T01:00:00.000Z'))
+    expect(await hold(s)).toEqual({ until: '2026-11-07T01:00:00.000Z', reason: null, unfinished: false })
+    await markers(s).hold('shop', 1, Date.parse('2026-11-06T23:00:00.000Z'))
+    expect(await hold(s)).toBeNull()
+    await markers(s).set('shop', 'call_1')
+    await markers(s).markAttempted('shop')
+    expect(await hold(s)).toEqual({ until: null, reason: null, unfinished: true })
+    await s.api.adapters.clearLoginHold('shop')
+    expect(await markers(s).read('shop')).toEqual({ kind: 'unset' })
+  })
+
+  it('refuses while the login window is open, and for a site that isn’t installed', async () => {
+    const s = await approved()
+    await s.api.openLoginWindow('shop')
+    await markers(s).hold('shop', 1, null, 'site-changed')
+    await expect(s.api.adapters.clearLoginHold('shop')).rejects.toThrow(/login window/)
+    expect(await markers(s).read('shop')).toMatchObject({ kind: 'held', reason: 'site-changed' })
+    await expect(s.api.adapters.clearLoginHold('nope')).rejects.toThrow()
+  })
+})
+
 describe('tool calls', () => {
   it('runs an approved tool and shows the run with its input and output', async () => {
     const s = await approved()
@@ -5814,6 +5859,48 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
       .map((e) => e.type)
       .filter((t) => t.startsWith('adapter-'))
     expect(types.slice(-2)).toEqual(['adapter-approved', 'adapter-activated'])
+  })
+
+  it('lifts a hold a new version may fix when the person approves one, and keeps the rest (issue #32)', async () => {
+    const s = await withPackages(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
+    const v1 = s.hashOf(shopPackage('v1:'))
+    const v2 = s.hashOf(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
+    const markers = new LoginAttemptMarker(s.paths.loginMarkers, {
+      now: () => Date.parse('2026-11-07T00:00:00.000Z'),
+    })
+    await s.api.approvals.approve('shop', v1)
+    await markers.hold('shop', 1, null, 'site-changed')
+    expect((await s.api.adapters.list()).find((a) => a.id === 'shop')?.loginHold).toEqual({
+      until: null,
+      reason: 'site-changed',
+      unfinished: false,
+    })
+    // Installing alone changes nothing: the person hasn't approved the fix yet.
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true, hash: v2 })
+    expect(await markers.read('shop')).toMatchObject({ kind: 'held', reason: 'site-changed' })
+    await s.api.approvals.approve('shop', v2)
+    expect(await markers.read('shop')).toEqual({ kind: 'unset' })
+    expect((await s.api.adapters.list()).find((a) => a.id === 'shop')?.loginHold).toBeNull()
+    expect(readAudit(s.paths.audit).filter((e) => e.type === 'login-hold-cleared')).toEqual([
+      { type: 'login-hold-cleared', adapterId: 'shop', by: 'new-version', reason: 'site-changed' },
+    ])
+    // A rollback runs other steps too, so it lifts the same holds.
+    await markers.hold('shop', 2, Date.parse('2026-11-07T01:00:00.000Z'))
+    await s.api.adapters.rollback('shop', v1)
+    expect(await markers.read('shop')).toEqual({ kind: 'unset' })
+    // Only the person lifts these: the site wants them, whatever the adapter's steps.
+    for (const reason of ['account-locked', 'captcha', 'terms-update'] as const) {
+      await markers.hold('shop', 1, null, reason)
+      await s.api.adapters.rollback('shop', v2)
+      expect(await markers.read('shop'), reason).toMatchObject({ kind: 'held', reason })
+      await s.api.adapters.rollback('shop', v1)
+    }
+    // Nor an attempt that never finished: it may have typed the password.
+    await markers.clear('shop')
+    await markers.set('shop', 'call_1')
+    await markers.markAttempted('shop')
+    await s.api.adapters.rollback('shop', v2)
+    expect(await markers.read('shop')).toEqual({ kind: 'in-progress' })
   })
 
   it('never carries over a stored version that only claims to be built in', async () => {

@@ -57,6 +57,21 @@ export interface SessionStatus {
   readonly since: IsoTime | null
 }
 
+/**
+ * A hold on a site's automatic logins (the runtime's login marker): after a login that failed, or
+ * one that never finished, Valet doesn't log in to the site by itself until `until` passes, or, when
+ * `until` is null, until the person acts. Logging in from the login window lifts it; so does
+ * adapters.clearLoginHold, and approving a new version lifts one a new version may fix.
+ */
+export interface LoginHold {
+  /** When automatic logins may start again; null: only once the person acts. */
+  readonly until: IsoTime | null
+  /** What the failed login ended with, when it ended needing the person. */
+  readonly reason: NeedsUserReason | null
+  /** A login started and never finished: it may have typed the password before it stopped. */
+  readonly unfinished: boolean
+}
+
 export interface SecretSummary {
   readonly name: string
   readonly granted: boolean
@@ -112,6 +127,8 @@ export interface AdapterSummary {
    * not a Needs you item.
    */
   readonly paused: boolean
+  /** The hold on its automatic logins, if any. Absent: none (older fakes). */
+  readonly loginHold?: LoginHold | null
 }
 
 /**
@@ -1773,6 +1790,11 @@ export interface ValetApi {
      * (config: site-paused). Audited, and kept across restarts.
      */
     setPaused(adapterId: string, paused: boolean): Promise<void>
+    /**
+     * Lifts the hold on the site's automatic logins (LoginHold), so the next call logs in again.
+     * Refused while the person has its login window open. Audited.
+     */
+    clearLoginHold(adapterId: string): Promise<void>
     /** The stored versions of an adapter (docs/adapter-packages.md). */
     versions(adapterId: string): Promise<AdapterVersions>
     /** What rolling back to `hash` would change against the active version. */

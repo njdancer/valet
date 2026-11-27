@@ -135,6 +135,7 @@ import type {
   EndpointStatus,
   HashRoute,
   KeysChangedItem,
+  LoginHold,
   MailUndo,
   OnePasswordAccount,
   PendingReview,
@@ -630,6 +631,7 @@ const EVENTS_FOR: Readonly<Partial<Record<AuditEvent['type'], readonly AppEvent[
   'setting-changed': ['adapters-changed', 'attention-changed'],
   'lock-down': ['app-changed', 'adapters-changed', 'health-changed', 'attention-changed'],
   'site-paused': ['adapters-changed', 'health-changed'],
+  'login-hold-cleared': ['adapters-changed', 'attention-changed'],
 }
 
 /** What a phone's tabs show (relay-protocol's `status`), before the channel numbers it. */
@@ -659,6 +661,13 @@ const NEEDS_REPAIR: ReadonlySet<string> = new Set(['site-changed'])
  * The runtime's needs-person reasons (packages/runtime session.ts): a hold for one of these waits for
  * the person whatever they grant, since another automatic login could only make it worse.
  */
+/** Holds a new version can't fix either: the site or the account wants the person. */
+const ONLY_THE_PERSON_LIFTS: ReadonlySet<NeedsUserReason> = new Set<NeedsUserReason>([
+  'account-locked',
+  'captcha',
+  'terms-update',
+])
+
 const HOLDS_A_GRANT_CANNOT_FIX: ReadonlySet<NeedsUserReason> = new Set<NeedsUserReason>([
   'account-locked',
   'captcha',
@@ -3418,6 +3427,7 @@ export class AppService {
       version,
       previousHash: active.hash,
     })
+    if (hash !== active.hash) await this.releaseHoldForNewVersion(adapterId).catch(() => undefined)
     // Swapped and applied: the version it replaces loses its approval, as any signed install's
     // would. Last, so the rolled-back version reads as approved as soon as it is in use.
     await this.retireOthers(adapterId, hash)
@@ -4053,6 +4063,7 @@ export class AppService {
     // Before the snapshot moves on: the grants kept are the approved version's.
     const previous = await this.snapshots.get(adapterId).catch(() => null)
     await this.carryGrants(adapterId, adapterHash, previous?.hash === adapterHash ? null : previous)
+    if (previous?.hash !== adapterHash) await this.releaseHoldForNewVersion(adapterId).catch(() => undefined)
     if (previous !== null && previous.hash !== adapterHash && snapshotIntact(previous))
       await this.credentialKeeper.carry(adapterId, adapterHash, previous).catch(() => undefined)
     const at = new Date(this.deps.now()).toISOString()
@@ -5062,7 +5073,76 @@ export class AppService {
       handedOver: null,
       chosen: await this.adapterSettings.chosen(manifest.id),
       paused: this.appState.sitePaused(manifest.id),
+      loginHold: await this.loginHold(manifest.id),
     }
+  }
+
+  /** The hold on a site's automatic logins, for the app (LoginHold); null for none. */
+  private async loginHold(adapterId: string): Promise<LoginHold | null> {
+    const marker = await this.markers.read(adapterId).catch(() => null)
+    if (marker === null || marker.kind === 'unset') return null
+    // A backoff that has run out holds nothing: the next call logs in.
+    if (marker.kind === 'held' && marker.retryAt !== null && marker.retryAt <= this.deps.now()) return null
+    if (marker.kind === 'held')
+      return {
+        until: marker.retryAt === null ? null : new Date(marker.retryAt).toISOString(),
+        reason: marker.reason ?? null,
+        unfinished: false,
+      }
+    // D35: one that stopped before typing anything holds only for a first failure's backoff.
+    if (marker.attempted === false && marker.startedAt !== undefined) {
+      const until = marker.startedAt + DEFAULT_LOGIN_BACKOFF.baseMs
+      return until > this.deps.now()
+        ? { until: new Date(until).toISOString(), reason: null, unfinished: true }
+        : null
+    }
+    return { until: null, reason: null, unfinished: true }
+  }
+
+  /**
+   * The person lifts the hold on a site's automatic logins from its page. Not while its login
+   * window is open: that window is theirs to finish or give up. Nor while a login runs: its marker
+   * is the runtime's lock against a second login, so it stays until that login ends.
+   */
+  private async clearLoginHold(adapterId: string): Promise<void> {
+    this.requireAdapter(adapterId)
+    if (this.handoffs.has(adapterId))
+      throw new InstallError('Finish or close the login window for this site first.')
+    if (this.sessions.get(adapterId).state === 'logging-in')
+      throw new InstallError('Valet is logging in to this site now. Try again once it has finished.')
+    const marker = await this.markers.read(adapterId).catch(() => null)
+    if (marker === null || marker.kind === 'unset') return
+    await this.markers.clear(adapterId)
+    if (this.sessions.get(adapterId).state === 'needs-user') this.sessions.set(adapterId, 'expired')
+    this.gaveUp.delete(adapterId)
+    await this.audit.append({
+      type: 'login-hold-cleared',
+      adapterId,
+      by: 'person',
+      ...(marker.kind === 'held' && marker.reason !== undefined ? { reason: marker.reason } : {}),
+    })
+  }
+
+  /**
+   * A new version the person approved may fix what the last login failed on (its steps, the page
+   * it expected: site-changed, or a failure with no reason), so its hold goes and the next call
+   * logs in with the new steps. A hold only the person can lift stays: a locked account, a CAPTCHA,
+   * new terms, and a login that never finished (it may have typed the password). So does any hold
+   * while the person has the login window open.
+   */
+  private async releaseHoldForNewVersion(adapterId: string): Promise<void> {
+    if (this.handoffs.has(adapterId)) return
+    const marker = await this.markers.read(adapterId).catch(() => null)
+    if (marker?.kind !== 'held') return
+    if (marker.reason !== undefined && ONLY_THE_PERSON_LIFTS.has(marker.reason)) return
+    await this.markers.clear(adapterId)
+    if (this.sessions.get(adapterId).state === 'needs-user') this.sessions.set(adapterId, 'expired')
+    await this.audit.append({
+      type: 'login-hold-cleared',
+      adapterId,
+      by: 'new-version',
+      ...(marker.reason === undefined ? {} : { reason: marker.reason }),
+    })
   }
 
   private async states(): Promise<AdapterState[]> {
@@ -6035,6 +6115,7 @@ export class AppService {
           deps.ui.openExternal(url)
         },
         setPaused: (adapterId, paused) => this.setSitePaused(adapterId, paused),
+        clearLoginHold: (adapterId) => this.clearLoginHold(adapterId),
         versions: (adapterId) => this.adapterVersions(adapterId),
         rollbackPreview: (adapterId, hash) => this.rollbackPreview(adapterId, hash),
         rollback: (adapterId, hash) => this.rollback(adapterId, hash),
