@@ -21,6 +21,10 @@ const FRAME_WAIT_CAP_MS = 1_000
 /** How often, and how many times, awaitPageFocus() asks the page whether focus has reached it. */
 const PAGE_FOCUS_POLL_MS = 20
 const PAGE_FOCUS_POLLS = 100
+/** How long focus() watches focus stay put by default, how often it looks, and how often it retries. */
+const FOCUS_HOLD_MS = 150
+const FOCUS_HOLD_POLL_MS = 25
+const FOCUS_RETRIES = 2
 
 /**
  * Waits until the page says it has keyboard focus, after the surface was given it. The browser
@@ -64,6 +68,8 @@ export interface PageTiming {
   readonly random?: () => number
   /** Which key events make up one typed character: char events alone unless set. */
   readonly keyEvents?: KeyEvents
+  /** How long focus() watches focus stay on the field before typing (FOCUS_HOLD_MS unless set). */
+  readonly focusHoldMs?: number
 }
 
 /** What typing checks before each keystroke. See PageCore.beforeKey. */
@@ -223,6 +229,31 @@ export class PageCore {
     this.surface.focus()
     const main = this.surface.frames()[0]
     if (main !== undefined) await awaitPageFocus((script) => main.run(script), this.timing.timers, signal)
+    for (let attempt = 0; ; attempt++) {
+      const target = await this.focusElement(stage, selector, signal)
+      if (await this.focusHolds(stage, target, signal)) return target
+      if (attempt >= FOCUS_RETRIES) throw new ValetError(stage, 'element-unsuitable')
+    }
+  }
+
+  /**
+   * Watches focus stay on `target` for a moment before typing may start. Giving a hidden window
+   * focus has effects that reach the page some milliseconds later, on their own channel (seen on
+   * macOS: keyboard focus moved back to the main frame's body just after an iframe's field took
+   * it). Typing would then stop at its first key; nothing has been typed yet here, so focus() can
+   * safely focus the field again instead.
+   */
+  private async focusHolds(stage: Stage, target: FocusTarget, signal: AbortSignal): Promise<boolean> {
+    const polls = Math.ceil((this.timing.focusHoldMs ?? FOCUS_HOLD_MS) / FOCUS_HOLD_POLL_MS)
+    for (let poll = 0; poll < polls; poll++) {
+      await sleep(this.timing.timers, FOCUS_HOLD_POLL_MS)
+      assertLive(stage, signal)
+      if (!(await this.stillFocused(target))) return false
+    }
+    return true
+  }
+
+  private async focusElement(stage: Stage, selector: string, signal: AbortSignal): Promise<FocusTarget> {
     assertLive(stage, signal)
     const match = await this.locate(stage, signal, focusScript(selector), parseFocus)
     assertLive(stage, signal)

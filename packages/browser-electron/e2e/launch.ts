@@ -26,7 +26,7 @@ export async function launchHarness(env: Record<string, string> = {}): Promise<E
       const t0 = Date.now()
       g.flog = (s: string) => {
         g.focusLog.push(`${Date.now() - t0} ${s}`)
-        if (g.focusLog.length > 300) g.focusLog.shift()
+        if (g.focusLog.length > 800) g.focusLog.shift()
       }
       const log = g.flog
       const watch = (wc: Electron.WebContents) => {
@@ -34,6 +34,16 @@ export async function launchHarness(env: Record<string, string> = {}): Promise<E
         wc.on('blur', () => log(`wc${wc.id} blur`))
         wc.on('did-frame-navigate', (_e, url, _c, _s, isMain) => log(`wc${wc.id} nav main=${isMain} ${url}`))
         wc.on('destroyed', () => log(`wc${wc.id} destroyed`))
+        const send = wc.sendInputEvent.bind(wc)
+        wc.sendInputEvent = (event) => {
+          log(`wc${wc.id} input ${event.type}`)
+          send(event)
+        }
+        const focusWc = wc.focus.bind(wc)
+        wc.focus = () => {
+          log(`wc${wc.id} focus()`)
+          focusWc()
+        }
       }
       for (const wc of webContents.getAllWebContents()) watch(wc)
       electronApp.on('web-contents-created', (_e, wc) => {
