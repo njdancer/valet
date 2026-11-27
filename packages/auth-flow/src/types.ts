@@ -130,4 +130,10 @@ export interface AuthFlowInput {
    * a ValetError as it is (aborted, say), anything else as `navigate: internal`.
    */
   readonly paceNavigation?: () => Promise<void>
+  /**
+   * Awaited before each `click`, `fill` and `otp`, the steps that act on the page. What it throws
+   * ends the flow as any step's error would. The login workbench uses it to keep an agent's
+   * actions to the login's own pages.
+   */
+  readonly beforeAct?: () => Promise<void>
 }

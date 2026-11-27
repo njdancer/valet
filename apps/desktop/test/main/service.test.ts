@@ -3110,6 +3110,7 @@ describe('remote access', () => {
       'storage_list',
       'take_screenshot',
       'file_upload',
+      'login_steps',
     ])
     expect(tools.every((t) => !t.enabled)).toBe(true)
     await s.service.remote.setHosts([HOST])

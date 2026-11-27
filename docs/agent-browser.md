@@ -34,6 +34,35 @@ takes. A session is a browser of its own:
 - **Every call is audited** like any built-in tool's. Agents on the Mac get the tools at once;
   remote agents (claude.ai and others) once the person turns them on on the agent's page.
 
+## Login sessions
+
+`browser_session_create` with `login: { site }` opens a login session instead: the installed
+adapter's own login page, in its auth partition, so that an agent can work out or repair a site's
+sign-in with tools alone (src/main/core/login-session.ts). It takes four tools:
+`browser_login_steps`, `browser_navigate`, `browser_snapshot` and `browser_session_close`.
+
+- **Steps, not clicks.** `browser_login_steps` runs auth steps in the manifest's own vocabulary
+  through auth-flow's `LoginWorkbench`: the same interpreter, secret filler and checks a real login
+  has. `fill` with `{ secret, field }` types the person's login from their grant, only into a
+  matching field on the secret's origins; `otp` reads a code from Messages when the person allowed
+  it. The password is typed at most once in a session's life. Steps that log in are the fix, written
+  straight into the manifest's `auth.steps`.
+- **Look anywhere on the site, act only on the login origins.** Clicks and typing need the main
+  frame on an origin the manifest's secrets may be typed on (for Woolworths, the Auth0 origin), so a
+  session that has logged in can't go on to change anything in the account.
+- **No reading back what was typed.** Selectors may not test `value` or use `:has()`: a React field
+  mirrors its value into the attribute, so `input[value^="a"]` would spell a password out a guess at
+  a time.
+- **The page only cleaned.** The snapshot is the one a stalled login keeps for `valet_get_call`
+  (login-stall.ts): origin and path only, no field values, and any line holding a secret this login
+  typed replaced. No scripts, cookies, storage, network bodies, screenshots or downloads.
+- **One of the runtime's login steps each.** Each batch runs under the adapter's lock (no real login
+  or call runs beside it), paced by the site's budget, and a block opens the site's breaker.
+- **Nothing is handed to tools.** The session is never copied to the tool partition. A later real
+  login starts from the auth partition as it was left, as any login does.
+- **The person's call.** Today a login session opens only while developer mode is on, one per
+  adapter, never beside a login window handed to the person, for 30 minutes at most.
+
 ## Tools
 
 | Tool                                                                          | What it does                                                                                                          |
