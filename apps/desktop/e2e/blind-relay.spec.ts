@@ -325,11 +325,20 @@ test('the person edits the approved agent’s tools on its page: one Touch ID pe
     await page.getByRole('button', { name: label, exact: true }).click()
     await expect(page.getByText(/not saved/)).toHaveCount(0)
   }
-  const listed = async () => {
-    const client = await claude.connect()
-    const names = (await client.listTools()).tools.map((t) => t.name).sort()
-    await client.close()
-    return names
+  // A Save closes the agent's sessions so it lists again; a session caught closing answers 404
+  // ("Session not found"), and a client starts a new one, as MCP has it.
+  const listed = async (): Promise<string[]> => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const client = await claude.connect()
+        const names = (await client.listTools()).tools.map((t) => t.name).sort()
+        await client.close()
+        return names
+      } catch (error) {
+        if (attempt >= 3 || !String(error).includes('Session not found')) throw error
+        await new Promise((r) => setTimeout(r, 500))
+      }
+    }
   }
 
   // On is a draft until Save: the Mac's Touch ID step (answered yes in e2e builds), then the
