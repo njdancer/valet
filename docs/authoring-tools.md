@@ -632,6 +632,20 @@ changes, and only that (`drafts/changes.ts`):
   developer mode (no login sessions at all), or when Valet couldn't compare the draft's manifest
   with the installed one. The card then says "not tried" and the auth-steps permission lines are
   the person's check, as before.
+- **Approving the fix lifts the hold that asked for it** (issue #32). Valet's hold on a site's
+  automatic logins is kept per site, not per version, so a "site changed" hold used to outlive the
+  approved fix, and the site page still read "Ready" while every call was turned away. Now approving
+  a version that differs from the last approved one (an install, an update or a rollback) lifts a
+  hold a new version may fix: a changed site, a refused login, a backoff. Rolling back to the
+  approved version from an update never approved, or approving the same version again, lifts
+  nothing. A hold only the person can lift stays (a locked account, a verification check, new
+  terms), as does any hold while the login window is open. A login in progress, or one that never
+  finished, is the runtime's lock and is never touched; the login window settles that one. The
+  audit says `login-hold-cleared` with `by: 'new-version'`. The site's page shows a hold ("Valet
+  stopped logging in to Woolworths (site changed)"), or the update that would fix it when one waits
+  for review, with **Let Valet log in again**, which lifts it (`adapters.clearLoginHold`, the
+  control panel only, never an agent or an adapter's window; refused while the login window is
+  open; audited with `by: 'person'`).
 
 The steps get a real login's three minutes, so the call may outlast the client's timeout; the trial still
 finishes and the next check reads it. Each trial holds the adapter's lock for its batches, and a

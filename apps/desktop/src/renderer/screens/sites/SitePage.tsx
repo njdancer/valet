@@ -229,6 +229,7 @@ function SiteBadge({ data }: { readonly data: SiteData }) {
     )
   if (isPaused(adapter)) return <Badge>Paused</Badge>
   if (status.fix === 'show-login') return <Badge tone="warning">Waiting for your login</Badge>
+  if (status.fix === 'retry-login') return <Badge tone="warning">Not logging in</Badge>
   if (status.fix === 'choose-setting')
     return <Badge tone="warning">Needs a {adapter.settingsNeeded[0]?.toLowerCase() ?? 'setting'}</Badge>
   if (status.fix === 'login')

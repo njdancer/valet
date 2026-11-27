@@ -135,6 +135,7 @@ import type {
   EndpointStatus,
   HashRoute,
   KeysChangedItem,
+  LoginHold,
   MailUndo,
   OnePasswordAccount,
   PendingReview,
@@ -630,6 +631,7 @@ const EVENTS_FOR: Readonly<Partial<Record<AuditEvent['type'], readonly AppEvent[
   'setting-changed': ['adapters-changed', 'attention-changed'],
   'lock-down': ['app-changed', 'adapters-changed', 'health-changed', 'attention-changed'],
   'site-paused': ['adapters-changed', 'health-changed'],
+  'login-hold-cleared': ['adapters-changed', 'attention-changed'],
 }
 
 /** What a phone's tabs show (relay-protocol's `status`), before the channel numbers it. */
@@ -655,10 +657,22 @@ const SETTING_SUBJECT_NAMES = {
 /** Error classes only an adapter update fixes: the site's last call raises a repair item. */
 const NEEDS_REPAIR: ReadonlySet<string> = new Set(['site-changed'])
 
+/** Holds a new version can't fix either: the site or the account wants the person. */
+const ONLY_THE_PERSON_LIFTS: ReadonlySet<NeedsUserReason> = new Set<NeedsUserReason>([
+  'account-locked',
+  'captcha',
+  'terms-update',
+])
+
 /**
  * The runtime's needs-person reasons (packages/runtime session.ts): a hold for one of these waits for
  * the person whatever they grant, since another automatic login could only make it worse.
  */
+/** A backoff this close to its end is over: the next call may already be starting a login. */
+const HOLD_ENDING_MS = 5_000
+
+type Held = Extract<Awaited<ReturnType<LoginAttemptMarker['read']>>, { kind: 'held' }>
+
 const HOLDS_A_GRANT_CANNOT_FIX: ReadonlySet<NeedsUserReason> = new Set<NeedsUserReason>([
   'account-locked',
   'captcha',
@@ -3408,6 +3422,9 @@ export class AppService {
         version,
         previousHash: hash,
       })
+    // The hold was earned under the last approved version, not the active one: an update installed
+    // and never approved ran no login. Rolling back to the approved version keeps its hold.
+    const approvedBefore = await this.snapshots.get(adapterId).catch(() => null)
     const at = new Date(this.deps.now()).toISOString()
     await this.snapshots.put(adapterId, target, at)
     this.approvedAt.set(`${adapterId}:${hash}`, at)
@@ -3419,6 +3436,8 @@ export class AppService {
       version,
       previousHash: active.hash,
     })
+    if (approvedBefore !== null && approvedBefore.hash !== hash)
+      await this.releaseHoldForNewVersion(adapterId).catch(() => undefined)
     // Swapped and applied: the version it replaces loses its approval, as any signed install's
     // would. Last, so the rolled-back version reads as approved as soon as it is in use.
     await this.retireOthers(adapterId, hash)
@@ -4054,6 +4073,10 @@ export class AppService {
     // Before the snapshot moves on: the grants kept are the approved version's.
     const previous = await this.snapshots.get(adapterId).catch(() => null)
     await this.carryGrants(adapterId, adapterHash, previous?.hash === adapterHash ? null : previous)
+    // Only a version known to differ from the approved one the hold was earned under: with no
+    // snapshot (a failed read, an install from before them) a re-approval may be the same version.
+    if (previous !== null && previous.hash !== adapterHash)
+      await this.releaseHoldForNewVersion(adapterId).catch(() => undefined)
     if (previous !== null && previous.hash !== adapterHash && snapshotIntact(previous))
       await this.credentialKeeper.carry(adapterId, adapterHash, previous).catch(() => undefined)
     const at = new Date(this.deps.now()).toISOString()
@@ -5063,7 +5086,76 @@ export class AppService {
       handedOver: null,
       chosen: await this.adapterSettings.chosen(manifest.id),
       paused: this.appState.sitePaused(manifest.id),
+      loginHold: await this.loginHold(manifest.id),
     }
+  }
+
+  /**
+   * The runtime's hold on a site's automatic logins while it is in force: a held marker with no
+   * retry time, or one still ahead. Only held markers: an in-progress one is the runtime's lock for
+   * a login running now (or one that never finished, which the login window settles), never this.
+   * A backoff about to run out counts as over, so nothing here races a login starting at its end.
+   */
+  private async heldLogin(adapterId: string): Promise<Held | null> {
+    const marker = await this.markers.read(adapterId).catch(() => null)
+    if (marker?.kind !== 'held') return null
+    if (marker.retryAt !== null && marker.retryAt <= this.deps.now() + HOLD_ENDING_MS) return null
+    return marker
+  }
+
+  /** The hold on a site's automatic logins, for the app (LoginHold); null for none. */
+  private async loginHold(adapterId: string): Promise<LoginHold | null> {
+    const marker = await this.heldLogin(adapterId)
+    if (marker === null) return null
+    return {
+      until: marker.retryAt === null ? null : new Date(marker.retryAt).toISOString(),
+      reason: marker.reason ?? null,
+    }
+  }
+
+  /**
+   * The person lifts the hold on a site's automatic logins from its page. Not while its login
+   * window is open: that window is theirs to finish or give up. A held marker is no lock (the
+   * runtime starts no login under one), so lifting it races nothing.
+   */
+  private async clearLoginHold(adapterId: string): Promise<void> {
+    this.requireAdapter(adapterId)
+    if (this.handoffs.has(adapterId))
+      throw new InstallError('Finish or close the login window for this site first.')
+    const marker = await this.heldLogin(adapterId)
+    if (marker === null) return
+    await this.liftHold(adapterId, 'person', marker.reason)
+  }
+
+  /**
+   * A new version the person approved may fix what the last login failed on (its steps, the page
+   * it expected: site-changed, or a failure with no reason), so its hold goes and the next call
+   * logs in with the new steps. A hold only the person can lift stays: a locked account, a CAPTCHA,
+   * new terms. So does a login that never finished (an in-progress marker: it may have typed the
+   * password), and any hold while the person has the login window open.
+   */
+  private async releaseHoldForNewVersion(adapterId: string): Promise<void> {
+    if (this.handoffs.has(adapterId)) return
+    const marker = await this.heldLogin(adapterId)
+    if (marker === null) return
+    if (marker.reason !== undefined && ONLY_THE_PERSON_LIFTS.has(marker.reason)) return
+    await this.liftHold(adapterId, 'new-version', marker.reason)
+  }
+
+  private async liftHold(
+    adapterId: string,
+    by: 'person' | 'new-version',
+    reason: NeedsUserReason | undefined,
+  ): Promise<void> {
+    await this.markers.clear(adapterId)
+    if (this.sessions.get(adapterId).state === 'needs-user') this.sessions.set(adapterId, 'expired')
+    this.gaveUp.delete(adapterId)
+    await this.audit.append({
+      type: 'login-hold-cleared',
+      adapterId,
+      by,
+      ...(reason === undefined ? {} : { reason }),
+    })
   }
 
   private async states(): Promise<AdapterState[]> {
@@ -6036,6 +6128,7 @@ export class AppService {
           deps.ui.openExternal(url)
         },
         setPaused: (adapterId, paused) => this.setSitePaused(adapterId, paused),
+        clearLoginHold: (adapterId) => this.clearLoginHold(adapterId),
         versions: (adapterId) => this.adapterVersions(adapterId),
         rollbackPreview: (adapterId, hash) => this.rollbackPreview(adapterId, hash),
         rollback: (adapterId, hash) => this.rollback(adapterId, hash),

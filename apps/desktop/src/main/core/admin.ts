@@ -436,6 +436,7 @@ const EVENT_FIELDS: Readonly<Record<AuditEvent['type'], readonly string[]>> = {
   'remote-token-reuse': ['clientId', 'token'],
   'lock-down': ['locked', 'revokedClients'],
   'site-paused': ['adapterId', 'paused'],
+  'login-hold-cleared': ['adapterId', 'by', 'reason'],
   'call-waited': ['adapterId', 'callId', 'reason', 'waitedMs', 'ahead'],
   confirmation: ['adapterId', 'tool', 'client', 'callId', 'answer'],
   // The approval broker's (D). The request's digest names its text, which isn't here.

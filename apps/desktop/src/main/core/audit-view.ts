@@ -126,7 +126,7 @@ export const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent[
     'refusals-dropped',
     'mail-moved',
   ],
-  logins: ['login-started', 'login-finished'],
+  logins: ['login-started', 'login-finished', 'login-hold-cleared'],
   'secret-use': ['secret-used'],
   blocked: ['request-blocked', 'breaker-opened', 'breaker-closed'],
   confirmations: ['confirmation'],
