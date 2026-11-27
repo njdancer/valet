@@ -273,6 +273,7 @@ service's gates use it:
 | A kept grant may be used         | a `carried` ledger record of exactly it, and the `adapter-install` that kept it (`inheritsSession`) still honoured |
 | A tool is on for a remote client | `tool-enable` with the adapter hash, tool, `scope: 'remote'`, and `clientId` null or this client                   |
 | A remote client may connect      | `remote-client` with its client id                                                                                 |
+| An agent's access widens         | `agent-access` with its client id and each item added; the record itself is `agent-access.json` ([access.md](access.md)) |
 | A loosened setting stands        | `setting` with the scope, adapter, setting and `to` value                                                          |
 
 Revoking one of these removes its evidence from the ledger (a tightening, no signature).

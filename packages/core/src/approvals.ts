@@ -46,6 +46,17 @@ export const requestIdSchema = z.string().regex(/^[A-Za-z0-9_-]{22}$/)
 export const APPROVAL_TIERS = ['none', 'notify', 'approve', 'approve-each-use'] as const
 export type ApprovalTier = (typeof APPROVAL_TIERS)[number]
 
+/** One account, calendar or list of a Mac app, at the level an agent may use it (docs/access.md). */
+const accessItem = z
+  .object({
+    app: z.enum(['mail', 'calendar', 'reminders']),
+    /** The app's own id for it: a Mail account id, an EventKit calendar identifier. */
+    id: z.string().min(1).max(200),
+    label: displayText(80),
+    level: z.enum(['read', 'edit']),
+  })
+  .strict()
+
 const subjects = {
   /**
    * Install a new adapter, update one, or roll one back. Shows the diff against what is active.
@@ -155,6 +166,46 @@ const subjects = {
       sideEffect: z.enum(['read', 'write', 'irreversible']),
     })
     .strict(),
+  /**
+   * What one agent may use, widened in one go (docs/access.md): the Save on an agent's access page,
+   * the connect screen's choices, or an agent's own request. Lists only what it gains; anything a
+   * Save takes away needs no signature and isn't here. Items are a Mac app's accounts, calendars
+   * or lists by the Mac's own ids and names; tools are a site's or Valet's own, at the version and
+   * side effect shown. One signature covers every line, so one Save is one Touch ID.
+   */
+  'agent-access': z
+    .object({
+      clientId: clientIdSchema,
+      items: z.array(accessItem).max(100),
+      /** Calendar or Reminders: may add and remove whole calendars or lists. */
+      full: z
+        .array(z.enum(['calendar', 'reminders']))
+        .max(2)
+        .refine((f) => new Set(f).size === f.length, 'each at most once'),
+      tools: z
+        .array(
+          z
+            .object({
+              adapterId,
+              adapterHash: hash,
+              tool: name,
+              label: displayText(80),
+              sideEffect: z.enum(['read', 'write', 'irreversible']),
+            })
+            .strict(),
+        )
+        .max(100),
+      /** Beyond Use tools, as `remote-client` signs them: cloud agents only. */
+      capabilities: z
+        .array(z.enum(['see-valet', 'ask-for-changes']))
+        .max(2)
+        .refine((c) => new Set(c).size === c.length, 'each at most once'),
+    })
+    .strict()
+    .refine(
+      (s) => s.items.length + s.full.length + s.tools.length + s.capabilities.length > 0,
+      'grants nothing',
+    ),
   /** A remote MCP client asking to connect (D80): the host, the address, the tools it will see. */
   'remote-client': z
     .object({
@@ -176,6 +227,8 @@ const subjects = {
         .max(2)
         .refine((c) => new Set(c).size === c.length, 'each at most once')
         .optional(),
+      /** The Mac apps' accounts, calendars and lists ticked on the connect screen (docs/access.md). */
+      items: z.array(accessItem).max(100).optional(),
     })
     .strict(),
   /** A setting that loosens something. Values are shown, never secrets (settings hold none). */
@@ -347,6 +400,7 @@ export const KIND_TIER: Readonly<Record<ApprovalKind, 'approve' | 'approve-each-
   'secret-grant': 'approve',
   'credential-grant': 'approve',
   'tool-enable': 'approve',
+  'agent-access': 'approve',
   'remote-client': 'approve',
   setting: 'approve',
   'authoring-session': 'approve',
@@ -363,6 +417,7 @@ export const APPROVAL_TTL_MS: Readonly<Record<ApprovalKind, number>> = {
   'secret-grant': 24 * 3600_000,
   'credential-grant': 24 * 3600_000,
   'tool-enable': 24 * 3600_000,
+  'agent-access': 24 * 3600_000,
   'remote-client': 10 * 60_000,
   setting: 24 * 3600_000,
   'authoring-session': 30 * 60_000,
@@ -477,6 +532,7 @@ export const approvalRequestSchema = z
     requestOf('secret-grant'),
     requestOf('credential-grant'),
     requestOf('tool-enable'),
+    requestOf('agent-access'),
     requestOf('remote-client'),
     requestOf('setting'),
     requestOf('authoring-session'),

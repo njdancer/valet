@@ -9,8 +9,11 @@
 import type { AuditEvent, AuditRecord, ProviderKind, RequestDeclaration } from '@valet/core'
 import { missedTitle, needsYouTitle } from '@valet/core/vocabulary'
 import type {
+  AccessApp,
+  AccessChoice,
   AdapterDetail,
   AdapterSummary,
+  AgentAccessView,
   AgentRequestItem,
   AppEvent,
   AppStatus,
@@ -802,6 +805,42 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     { id: '0A1B2C3D-0000-4000-8000-000000000002', name: 'Work', address: 'someone@example.com' },
     { id: 'local', name: 'On My Mac', address: null },
   ]
+  // Each agent's own access, by app and item id (docs/access.md).
+  const appAccess = new Map<string, Partial<Record<AccessApp, Record<string, 'read' | 'edit'>>>>()
+  const accessView = (clientId: string): AgentAccessView => {
+    const level = (app: AccessApp, id: string): AccessChoice => appAccess.get(clientId)?.[app]?.[id] ?? 'off'
+    const mail = mailStatus()
+    return {
+      clientId,
+      apps: [
+        {
+          app: 'mail',
+          ready: mail.state === 'ready',
+          items: mail.accounts.map((a) => ({
+            id: a.id,
+            label: a.name,
+            detail: a.address,
+            level: level('mail', a.id),
+            editable: true,
+          })),
+        },
+        ...(['calendar', 'reminders'] as const).map((app) => {
+          const status = eventKitStatus(app)
+          return {
+            app,
+            ready: status.state === 'ready',
+            items: status.calendars.map((c) => ({
+              id: c.id,
+              label: c.title,
+              detail: c.account,
+              level: level(app, c.id),
+              editable: c.writable,
+            })),
+          }
+        }),
+      ],
+    }
+  }
   const mailStatus = (): MailStatus => {
     if (!mailSettings.enabled) return { state: 'off', settings: clone(mailSettings), accounts: [] }
     if (mailStage !== 'ready') return { state: mailStage, settings: clone(mailSettings), accounts: [] }
@@ -1824,6 +1863,27 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       async action(action) {
         enter('messages.action', action)
         if (action === 'full-disk-access') messagesStage = 'ready'
+      },
+    },
+    agentAccess: {
+      async view(clientId) {
+        enter('agentAccess.view', clientId)
+        return accessView(clientId)
+      },
+      async save(clientId, changes) {
+        enter('agentAccess.save', clientId, changes)
+        const record = { ...(appAccess.get(clientId) ?? {}) }
+        for (const [app, levels] of Object.entries(changes)) {
+          const items = { ...(record[app as AccessApp] ?? {}) }
+          for (const [id, level] of Object.entries(levels ?? {})) {
+            if (level === 'off') delete items[id]
+            else items[id] = level
+          }
+          record[app as AccessApp] = items
+        }
+        appAccess.set(clientId, record)
+        emit({ type: 'clients-changed' })
+        return true
       },
     },
     eventKit: {

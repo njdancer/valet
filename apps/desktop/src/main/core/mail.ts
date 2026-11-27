@@ -5,6 +5,7 @@
 // Off until the person turns it on and picks the accounts agents may read. Drafts are a second,
 // separate switch. Nothing here sends mail.
 
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFile } from 'node:child_process'
 import { lstat } from 'node:fs/promises'
 import type { ListedTool, ToolCall } from '@valet/mcp-server'
@@ -26,6 +27,7 @@ import {
 import type { ToolCallResult } from '@valet/runtime'
 import { z } from 'zod'
 import type { MailSettings, MailSettingsPatch, MailStatus } from '../../shared/api'
+import { type AppAccess, editableIds, NO_APP_ACCESS, readableIds } from './agent-access'
 import type { NativeTools } from './caller'
 import { JsonDocument } from './files'
 
@@ -162,6 +164,11 @@ export interface MailServiceDeps {
   readonly reader: ReaderControl | null
   readonly files: MailFiles | null
   readonly drafts: Pick<MailDrafts, 'save'>
+  /**
+   * The calling agent's Mail accounts, each at Read or Edit (agent-access.ts). Absent, or a call
+   * without an identity: none.
+   */
+  readonly access?: (call: ToolCall) => AppAccess
   /** Moves and marks messages through Mail. Absent: agents can't organise mail in this build. */
   readonly organizer?: Pick<MailOrganizer, 'apply'> & Partial<Pick<MailOrganizer, 'source'>>
   /** A PDF attachment's text. Absent: agents get PDFs' names only. */
@@ -188,13 +195,19 @@ export class MailService implements NativeTools {
   private readonly store: MailStore | null
   /** When each move of the last hour happened, oldest first. */
   private moves: number[] = []
+  /** The calling agent's access while its call runs: the store reads its accounts from here. */
+  private readonly calling = new AsyncLocalStorage<AppAccess>()
 
   constructor(private readonly deps: MailServiceDeps) {
     this.store =
       deps.files === null
         ? null
         : new MailStore(deps.files, {
-            allowedAccounts: () => new Set(this.current.enabled ? this.current.accounts : []),
+            // Only the calling agent's own accounts; outside a call (the settings screen), none.
+            allowedAccounts: () =>
+              this.current.enabled
+                ? readableIds(this.calling.getStore() ?? NO_APP_ACCESS)
+                : new Set<string>(),
             ...(deps.pdfText === undefined ? {} : { pdfText: deps.pdfText }),
             ...(deps.organizer?.source === undefined
               ? {}
@@ -213,9 +226,13 @@ export class MailService implements NativeTools {
     if (this.current.enabled) await this.deps.reader?.start().catch(() => 'failed')
   }
 
+  /**
+   * Every tool while Mail is on: which of them an agent holds follows from its own access
+   * (agent-access.ts), and every call is checked against it.
+   */
   listTools(): readonly ListedTool[] {
-    if (!this.current.enabled || this.current.accounts.length === 0 || this.store === null) return []
-    return mailTools({ drafts: this.current.drafts, organize: this.organizing() }).map((tool) => ({
+    if (!this.current.enabled || this.store === null) return []
+    return mailTools({ drafts: true, organize: this.deps.organizer !== undefined }).map((tool) => ({
       adapterId: MAIL_ADAPTER_ID,
       adapterName: MAIL_ADAPTER_NAME,
       declaration: tool.declaration,
@@ -232,40 +249,41 @@ export class MailService implements NativeTools {
       result = { status: 'failed', stage: 'config', errorClass: 'not-found' }
     else {
       const approve = this.deps.approveDraft
-      result = await callMailTool(
-        {
-          store: this.store,
-          drafts: this.deps.drafts,
-          ...(this.deps.render === undefined ? {} : { render: this.deps.render }),
-          draftsEnabled: () => this.current.drafts,
-          approveDraft:
-            approve === undefined
-              ? null
-              : () => (this.current.approveDrafts ? (draft) => approve(draft, call) : null),
-          ...(this.deps.organizer === undefined
-            ? {}
-            : {
-                organize: {
-                  organizer: this.deps.organizer,
-                  enabled: () => this.organizing(),
-                  spend: (count: number) => this.spendMoves(count),
-                  moved: async (moves: readonly MoveRecord[]) => {
-                    await this.deps.moved?.(moves, call)
+      const access = this.deps.access?.(call) ?? NO_APP_ACCESS
+      const editable = editableIds(access)
+      const store = this.store
+      result = await this.calling.run(access, () =>
+        callMailTool(
+          {
+            store,
+            drafts: this.deps.drafts,
+            ...(this.deps.render === undefined ? {} : { render: this.deps.render }),
+            draftsEnabled: () => editable.size > 0,
+            editableAccounts: () => editable,
+            approveDraft:
+              approve === undefined
+                ? null
+                : () => (this.current.approveDrafts ? (draft) => approve(draft, call) : null),
+            ...(this.deps.organizer === undefined
+              ? {}
+              : {
+                  organize: {
+                    organizer: this.deps.organizer,
+                    enabled: () => editable.size > 0,
+                    spend: (count: number) => this.spendMoves(count),
+                    moved: async (moves: readonly MoveRecord[]) => {
+                      await this.deps.moved?.(moves, call)
+                    },
                   },
-                },
-              }),
-        },
-        call.tool,
-        call.input,
+                }),
+          },
+          call.tool,
+          call.input,
+        ),
       )
     }
     await this.deps.audit(call, result, Math.max(0, this.deps.now() - started)).catch(() => undefined)
     return result
-  }
-
-  /** Whether agents may move and mark messages now: the person's switch, in a build that can. */
-  private organizing(): boolean {
-    return this.current.organize && this.deps.organizer !== undefined
   }
 
   private spendMoves(count: number): boolean {
@@ -303,6 +321,11 @@ export class MailService implements NativeTools {
       if (outcome.results.some((r) => r !== 'done')) all = false
     }
     return all ? 'done' : 'not-found'
+  }
+
+  /** The person's settings as they stand. */
+  get settings(): MailSettings {
+    return this.current
   }
 
   async status(): Promise<MailStatus> {

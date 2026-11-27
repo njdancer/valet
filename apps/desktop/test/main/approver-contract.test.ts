@@ -178,6 +178,66 @@ describe.skipIf(HELPER === undefined || HELPER === '')('valet-approver with soft
     ],
     ['resume', { from: 'lockdown' }],
     [
+      'agent-access',
+      {
+        clientId: 'remote:abc',
+        items: [{ app: 'calendar', id: 'CAL-1', label: 'Home', level: 'edit' }],
+        full: [],
+        tools: [
+          {
+            adapterId: 'yahoo-finance',
+            adapterHash: 'a'.repeat(64),
+            tool: 'get_quote',
+            label: 'Get a quote',
+            sideEffect: 'read',
+          },
+        ],
+        capabilities: [],
+      },
+    ],
+    [
+      'agent-access',
+      {
+        clientId: 'local:abc',
+        items: [{ app: 'reminders', id: 'L1', label: 'Groceries', level: 'read' }],
+        full: [],
+        tools: [],
+        capabilities: [],
+      },
+    ],
+    [
+      'browser-grant',
+      {
+        adapterId: 'woolworths',
+        draftId: 'd1',
+        origins: ['https://www.woolworths.com.au'],
+        purpose: 'Study the orders page',
+        mode: 'read',
+        minutes: 30,
+      },
+    ],
+    [
+      'remote-client',
+      {
+        clientId: 'remote:abc',
+        host: 'claude.ai',
+        sourceAddress: null,
+        tools: [],
+        capabilities: ['see-valet', 'ask-for-changes'],
+      },
+    ],
+    [
+      'setting',
+      {
+        scope: 'valet',
+        adapterId: null,
+        setting: 'remote_ask_abc',
+        label: 'Let claude.ai ask for changes',
+        from: 'Off',
+        to: 'On',
+      },
+    ],
+    [
       'private-network',
       { adapterId: 'home-hub', draftId: 'd1', address: '192.168.1.20', port: 8080, minutes: 30 },
     ],

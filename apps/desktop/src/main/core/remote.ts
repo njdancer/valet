@@ -160,6 +160,12 @@ export interface RemoteAccessDeps {
   readonly log?: (line: string) => void
   /** Files agents' browsers downloaded, served at /d/<id>/<name> (mcp-server downloads.ts). */
   readonly downloads?: (id: string) => ServedFile | null
+  /**
+   * For Mail's, Calendar's and Reminders' own tools: whether this client (no `remote:` prefix)
+   * holds the tool, which follows from its own access to items there (agent-access.ts), not from
+   * the per-tool switches. Null for any other tool.
+   */
+  readonly appTool?: (clientId: string, adapter: string, declaration: ToolDeclaration) => boolean | null
 }
 
 /**
@@ -248,6 +254,19 @@ export class RemoteAccess {
    * (for one client) ticked when the person approved that client.
    */
   allows(adapter: string, declaration: ToolDeclaration, clientId: string | null = null): boolean {
+    if (clientId !== null) {
+      const app = this.deps.appTool?.(clientId, adapter, declaration) ?? null
+      // A client the person revoked holds nothing, whatever its access record still says.
+      if (app !== null) return app && this.clients.get(clientId)?.grant != null
+    }
+    return this.heldBySwitches(adapter, declaration, clientId)
+  }
+
+  /**
+   * The per-tool switches alone: on for remote clients, and (for one client) in its grant. What
+   * Mail's, Calendar's and Reminders' tools were held by before per-agent access, for its seeding.
+   */
+  heldBySwitches(adapter: string, declaration: ToolDeclaration, clientId: string | null = null): boolean {
     const entry = this.current.tools[adapter]?.[declaration.name]
     if (entry === undefined || RANK[declaration.sideEffect] > RANK[entry.sideEffect]) return false
     if (clientId === null) return true

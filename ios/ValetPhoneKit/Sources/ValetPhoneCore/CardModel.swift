@@ -223,6 +223,28 @@ public enum CardModel {
       row("Turns on", tool, s.sideEffect == "read" ? .neutral : .caution)
       row("Can", s.sideEffect == "read" ? "read only" : s.sideEffect == "write" ? "change things" : "do things that can't be undone",
           s.sideEffect == "irreversible" ? .strong : s.sideEffect == "write" ? .caution : .neutral)
+    case let .agentAccess(s):
+      kindWord = "Access"
+      let who = agentName(clientId: s.clientId, status: status)
+      let count = s.items.count + s.full.count + s.tools.count + s.capabilities.count
+      title = count == 1 ? "Let \(who) use one more thing" : "Let \(who) use \(count) more things"
+      faceIDReason = "Change what an agent can use"
+      let edits = s.items.filter { $0.level == "edit" }
+      if !edits.isEmpty || s.tools.contains(where: { $0.sideEffect != "read" }) {
+        risks.append((.caution, "\(who) could change things, not just read them."))
+      }
+      if !s.full.isEmpty { risks.append((.caution, "\(who) could add and remove whole calendars or lists.")) }
+      for item in s.items {
+        row(item.level == "edit" ? "Edit" : "Read", "\(appName(item.app)) › \(isolate(item.label))", item.level == "edit" ? .caution : .neutral)
+      }
+      for app in s.full { row("Full access", appName(app), .caution) }
+      for tool in s.tools {
+        // The tool's id, not its title: the title is the adapter author's text (red team 4).
+        row(tool.sideEffect == "read" ? "Use" : "Use (changes things)", "\(tool.adapterId).\(tool.tool)",
+            tool.sideEffect == "read" ? .neutral : tool.sideEffect == "write" ? .caution : .strong)
+      }
+      if s.capabilities.contains("ask-for-changes") { row("May", "ask you for changes", .caution) }
+      else if s.capabilities.contains("see-valet") { row("May", "see Valet's status", .neutral) }
     case let .remoteClient(s):
       kindWord = "Connect"
       title = "Did you just add Valet to an agent?"
@@ -230,6 +252,10 @@ public enum CardModel {
       needsTypedCode = true
       risks.append((.strong, "Only approve if you started this. Type the code the page shows you."))
       row("Sees", s.tools.isEmpty ? "no tools yet" : "\(s.tools.count) \(s.tools.count == 1 ? "tool" : "tools"): \(s.tools.joined(separator: ", "))", .caution)
+      for item in s.items {
+        row(item.level == "edit" ? "Edit" : "Read", "\(appName(item.app)) › \(isolate(item.label))", item.level == "edit" ? .caution : .neutral)
+      }
+      if s.capabilities.contains("ask-for-changes") { row("May", "ask you for changes", .caution) }
       details.append(CardDetail(label: "Returns to (the agent says)", value: s.host, isClaim: true))
       if let address = s.sourceAddress {
         details.append(CardDetail(label: "From address (as reported)", value: address, isClaim: true))
@@ -473,6 +499,14 @@ public enum CardModel {
 
   /// Wraps text from outside the Mac in Unicode first-strong isolates, so a right-to-left value
   /// can't reorder the words around it (red team 6).
+  static func appName(_ app: String) -> String {
+    switch app {
+    case "mail": return "Mail"
+    case "calendar": return "Calendar"
+    default: return "Reminders"
+    }
+  }
+
   static func isolate(_ text: String) -> String { "\u{2068}\(text)\u{2069}" }
 
   static func providerName(_ provider: String) -> String {

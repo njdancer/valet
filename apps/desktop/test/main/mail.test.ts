@@ -61,6 +61,8 @@ interface Setup {
   audited: { call: ToolCall; result: ToolCallResult }[]
   saved: DraftRequest[]
   changes: () => number
+  /** The calling agent's own accounts (agent-access.ts): ALLOWED at Read unless a test changes it. */
+  accounts: { items: Record<string, 'read' | 'edit'> }
 }
 
 function setup(
@@ -82,10 +84,12 @@ function setup(
     options.files === undefined
       ? new DirectMailFiles(buildLibrary(mkdtempSync(join(root, 'lib-'))))
       : options.files
+  const accounts: Setup['accounts'] = { items: { [ALLOWED]: 'read' } }
   const service = new MailService({
     settings: new MailSettingsStore(settingsPath),
     reader: options.reader === false ? null : r,
     files,
+    access: () => ({ items: accounts.items, full: false }),
     drafts: {
       save: async (draft) => {
         saved.push(draft)
@@ -102,7 +106,7 @@ function setup(
       changes += 1
     },
   })
-  return { service, reader: r, audited, saved, changes: () => changes }
+  return { service, reader: r, audited, saved, changes: () => changes, accounts }
 }
 
 const call = (tool: string, input: unknown = {}): ToolCall => ({
@@ -115,36 +119,32 @@ const call = (tool: string, input: unknown = {}): ToolCall => ({
 const signal = new AbortController().signal
 
 describe('MailService', () => {
-  it('lists nothing until Mail is on with an account picked, and drafts only when allowed', async () => {
+  it('lists nothing until Mail is on, then every tool: which an agent holds follows its access', async () => {
     const s = setup()
     await s.service.load()
     expect(s.service.listTools()).toEqual([])
     await s.service.update({ enabled: true })
-    expect(s.service.listTools()).toEqual([])
-    await s.service.update({ accounts: [ALLOWED] })
-    expect(s.service.listTools().map((t) => t.declaration.name)).toEqual([
-      'accounts',
-      'search',
-      'read',
-      'thread',
-    ])
-    await s.service.update({ drafts: true })
-    expect(s.service.listTools().map((t) => t.declaration.name)).toContain('create_draft')
+    expect(s.service.listTools().map((t) => t.declaration.name)).toEqual(
+      expect.arrayContaining(['accounts', 'search', 'read', 'thread', 'create_draft']),
+    )
+    // Moving and marking need Mail's organizer, which this build has none of.
+    expect(s.service.listTools().map((t) => t.declaration.name)).not.toContain('move')
     expect(s.service.listTools().every((t) => t.adapterId === 'mail' && t.adapterName === 'Mail')).toBe(true)
-    // Each change to what agents see tells the app to re-list; the reader starts when Mail turns on.
-    expect(s.changes()).toBe(3)
+    // Turning Mail on tells the app to re-list, and starts the reader.
+    expect(s.changes()).toBe(1)
     expect(s.reader.started).toBe(1)
     await s.service.update({ approveDrafts: true })
-    expect(s.changes()).toBe(3)
+    expect(s.changes()).toBe(1)
   })
 
   it('keeps the choices across a restart, and reads a damaged settings file as off', async () => {
     const first = setup()
     await first.service.load()
-    await first.service.update({ enabled: true, accounts: [ALLOWED] })
+    await first.service.update({ enabled: true })
     const again = setup()
     await again.service.load()
-    expect(again.service.listTools()).toHaveLength(4)
+    expect(again.service.listTools()).toHaveLength(first.service.listTools().length)
+    expect(again.service.listTools()).not.toEqual([])
     expect(again.reader.started).toBe(1)
 
     rmSync(join(root, 'mail.json'))
@@ -161,10 +161,10 @@ describe('MailService', () => {
     await expect(s.service.update({ sending: true } as never)).rejects.toThrow()
   })
 
-  it('shows agents only the accounts the person picked, and audits every call', async () => {
+  it('shows each agent only its own accounts, and audits every call', async () => {
     const s = setup()
     await s.service.load()
-    await s.service.update({ enabled: true, accounts: [ALLOWED] })
+    await s.service.update({ enabled: true })
     const result = await s.service.call(call('search', {}), signal)
     expect(result.status).toBe('ok')
     const ids = (result as { output: { messages: { id: number }[] } }).output.messages.map((m) => m.id)
@@ -172,7 +172,7 @@ describe('MailService', () => {
     expect(ids).not.toContain(11)
     expect((await s.service.call(call('read', { id: 11 }), signal)).status).toBe('failed')
 
-    await s.service.update({ accounts: [OTHER] })
+    s.accounts.items = { [OTHER]: 'read' }
     const other = await s.service.call(call('search', {}), signal)
     const otherIds = (other as { output: { messages: { id: number }[] } }).output.messages.map((m) => m.id)
     expect(otherIds).toEqual([11])
@@ -197,14 +197,14 @@ describe('MailService', () => {
     expect(s.audited).toHaveLength(1)
   })
 
-  it('saves a draft only while drafts are on', async () => {
+  it('saves a draft only for an agent with Edit on an account', async () => {
     const s = setup()
     await s.service.load()
-    await s.service.update({ enabled: true, accounts: [ALLOWED] })
+    await s.service.update({ enabled: true })
     const draft = { to: ['ada@example.com'], subject: 'Hi', body: 'Hello' }
     expect((await s.service.call(call('create_draft', draft), signal)).status).not.toBe('ok')
     expect(s.saved).toEqual([])
-    await s.service.update({ drafts: true })
+    s.accounts.items = { [ALLOWED]: 'edit' }
     expect((await s.service.call(call('create_draft', draft), signal)).status).toBe('ok')
     expect(s.saved).toHaveLength(1)
   })
@@ -284,16 +284,15 @@ describe('organising mail', () => {
     return { ...s, asked, moved }
   }
 
-  it('lists move and mark only with its own switch, and records every move', async () => {
+  it('moves and marks only for an agent with Edit, and records every move', async () => {
     const s = organizing()
     await s.service.load()
-    await s.service.update({ enabled: true, accounts: [ALLOWED] })
-    expect(s.service.listTools().map((t) => t.declaration.name)).not.toContain('move')
-    expect((await s.service.call(call('move', { ids: [7], to: 'trash' }), signal)).status).toBe('failed')
-    await s.service.update({ organize: true })
+    await s.service.update({ enabled: true })
     expect(s.service.listTools().map((t) => t.declaration.name)).toEqual(
       expect.arrayContaining(['move', 'mark']),
     )
+    expect((await s.service.call(call('move', { ids: [7], to: 'trash' }), signal)).status).toBe('failed')
+    s.accounts.items = { [ALLOWED]: 'edit' }
     const result = await s.service.call(call('move', { ids: [7], to: 'trash' }), signal)
     expect(result.status).toBe('ok')
     expect(s.moved).toEqual([expect.objectContaining({ from: 'INBOX', to: 'Deleted Messages' })])
@@ -308,7 +307,8 @@ describe('organising mail', () => {
     const s = organizing()
     ;(s.service as unknown as { deps: { now: () => number } }).deps.now = () => now
     await s.service.load()
-    await s.service.update({ enabled: true, accounts: [ALLOWED], organize: true })
+    await s.service.update({ enabled: true })
+    s.accounts.items = { [ALLOWED]: 'edit' }
     // The made-up Mail moves nothing, so the same two messages count again each time: 250 calls of two.
     for (let i = 0; i < 250; i++)
       expect((await s.service.call(call('move', { ids: [7, 8], to: 'trash' }), signal)).status).toBe('ok')

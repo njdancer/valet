@@ -9,6 +9,10 @@ They read the Mac's own store through EventKit, so every account the Calendar an
 show (iCloud, Google, Exchange, On My Mac) is there, recurring events are expanded, and neither app
 needs to be open.
 
+Which calendars and lists each agent may use, at Read or Edit, is that agent's own, chosen on its
+page in Connections ([access.md](access.md)). Where this page says "picked", read "the calling
+agent may use"; "writes on" is now Edit on that calendar or list.
+
 ## What agents get
 
 Calendar (adapter id `calendar`):

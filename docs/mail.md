@@ -10,7 +10,10 @@ so Valet doesn't download mailboxes over IMAP or build an index of its own.
 
 ## What agents get
 
-Once Mail is on and at least one account is picked, agents see these tools (adapter id `mail`):
+Which accounts each agent may use, at Read or Edit, is that agent's own, chosen on its page in
+Connections ([access.md](access.md)). Where this page says "a picked account", read "an account
+the calling agent may use"; "drafts on" and "organising on" are now Edit on that account. Once
+Mail is on, an agent with access to an account sees these tools (adapter id `mail`):
 
 | Tool                | What it does                                                                                                    |
 | ------------------- | --------------------------------------------------------------------------------------------------------------- |

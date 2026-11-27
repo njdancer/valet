@@ -14,6 +14,7 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs'
+import { createServer, type Server } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -76,6 +77,7 @@ import { z } from 'zod'
 import { DirectMailFiles } from '../../../../packages/native-mail/src/direct-files'
 import { buildLibrary, ALLOWED as MAIL_ALLOWED } from '../../../../packages/native-mail/test/fixture-library'
 import type { WriterSource } from '../../src/main/core/admin-writer'
+import type { AgentAccessStore } from '../../src/main/core/agent-access'
 import {
   type ApprovalBroker,
   adapterSettingSubject,
@@ -90,7 +92,7 @@ import { dataPaths } from '../../src/main/core/constants'
 import { type Credentials, disabledOtpReader } from '../../src/main/core/credentials'
 import { DEMO_ACCOUNT } from '../../src/main/core/demo'
 import type { EraseKind, EraseReport } from '../../src/main/core/erase'
-import type { MailService } from '../../src/main/core/mail'
+import type { MailService, ReaderControl } from '../../src/main/core/mail'
 import type { AppNotification } from '../../src/main/core/notifications'
 import { builtinAdapter } from '../../src/main/core/registry'
 import type { RemoteAccess } from '../../src/main/core/remote'
@@ -137,6 +139,28 @@ afterEach(async () => {
   // ENOTEMPTY seen on CI), so removing retries briefly.
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
 })
+
+const readerSockets: Server[] = []
+afterEach(async () => {
+  await Promise.all(readerSockets.splice(0).map((r) => new Promise((done) => r.close(done))))
+})
+
+/** A Mail reader that is running (a socket at its path), so Mail's status lists its accounts. */
+async function runningReader(): Promise<ReaderControl> {
+  const dir = mkdtempSync(join(tmpdir(), 'sa-r-'))
+  dirs.push(dir)
+  const socketPath = join(dir, 'r.sock')
+  const server = createServer((socket) => socket.end())
+  readerSockets.push(server)
+  await new Promise<void>((done) => server.listen(socketPath, done))
+  return {
+    socketPath,
+    start: async () => 'started',
+    openFullDiskAccess: async () => {},
+    openLoginItems: async () => {},
+    reveal: async () => {},
+  }
+}
 
 async function setup(
   options: {
@@ -2779,54 +2803,125 @@ describe('remote access', () => {
     expect(s.service.remote.status()).toMatchObject({ enabled: false, hosts: [], tools: [] })
   })
 
-  it('offers Mail on this Mac to cloud agents once it is on, each tool starting off', async () => {
+  it('gives a cloud agent Mail by its own access: one Touch ID to add, none to take away', async () => {
     const lib = buildLibrary(mkdtempSync(join(tmpdir(), 'sa-mail-')))
     const s = await setup({
       mail: {
-        reader: null,
+        reader: await runningReader(),
         files: new DirectMailFiles(lib),
         drafts: { save: async () => ({ kind: 'saved' }) },
       },
     })
-    expect((await s.api.remote.setup()).tools.filter((t) => t.adapterId === 'mail')).toEqual([])
-    await expect(s.api.remote.setTool('mail', 'search', true)).rejects.toMatchObject({
-      errorClass: 'not-found',
-    })
-    await s.api.mail.update({ enabled: true, accounts: [MAIL_ALLOWED] })
-    const mail = (await s.api.remote.setup()).tools.filter((t) => t.adapterId === 'mail')
-    expect(mail.map((t) => [t.tool, t.adapterName, t.enabled])).toEqual([
-      ['accounts', 'Mail', false],
-      ['search', 'Mail', false],
-      ['read', 'Mail', false],
-      ['thread', 'Mail', false],
-    ])
-
+    await s.api.mail.update({ enabled: true })
     await s.service.remote.setHosts([HOST])
     await s.service.remote.setEnabled(true)
     const port = Number(new URL(s.service.remote.status().url as string).port)
-    const agent = approvedClient(s, ['mail.search'])
-    const first = await remoteClient(port, agent.token)
-    expect((await first.listTools()).tools).toEqual([])
-    // On for every cloud agent asks for Touch ID; a cancelled prompt changes nothing.
+    const agent = approvedClient(s, [])
+    const other = approvedClient(s, [])
+    const label = `remote:${agent.id}`
+    const names = async (token = agent.token) =>
+      (await (await remoteClient(port, token)).listTools()).tools.map((t) => t.name)
+    expect(await names()).toEqual([])
+    const view = await s.api.agentAccess.view(label)
+    expect(view.apps.find((a) => a.app === 'mail')?.items).toContainEqual(
+      expect.objectContaining({ id: MAIL_ALLOWED, level: 'off', editable: true }),
+    )
+    // A session opened before the change is closed, so the agent lists again (claude.ai never
+    // reads the list-changed notice).
+    const before = await remoteClient(port, agent.token)
+    // Adding asks for Touch ID, and a cancelled prompt changes nothing.
     s.presence.answer = false
-    await expect(s.api.remote.setTool('mail', 'search', true)).rejects.toBeInstanceOf(ValetError)
-    expect((await first.listTools()).tools).toEqual([])
+    expect(await s.api.agentAccess.save(label, { mail: { [MAIL_ALLOWED]: 'read' } })).toBe(false)
+    expect(await names()).toEqual([])
     s.presence.answer = true
-    const before = s.presence.prompts.length
-    await s.api.remote.setTool('mail', 'search', true)
-    expect(s.presence.prompts.length).toBe(before + 1)
+    const prompts = s.presence.prompts.length
+    expect(await s.api.agentAccess.save(label, { mail: { [MAIL_ALLOWED]: 'read' } })).toBe(true)
+    expect(s.presence.prompts.length).toBe(prompts + 1)
+    await expect(before.listTools()).rejects.toThrow()
+    const reading = await names()
+    expect(reading).toEqual(
+      expect.arrayContaining(['mail_accounts', 'mail_search', 'mail_read', 'mail_thread']),
+    )
+    expect(reading).not.toContain('mail_create_draft')
     const client = await remoteClient(port, agent.token)
-    expect((await client.listTools()).tools.map((t) => t.name)).toEqual(['mail_search'])
     const found = await client.callTool({ name: 'mail_search', arguments: { from: 'ada' } })
     expect(found.isError).not.toBe(true)
-    expect((found.structuredContent as { messages: { id: number }[] }).messages.length).toBeGreaterThan(0)
+    expect((found.structuredContent as { messages: unknown[] }).messages.length).toBeGreaterThan(0)
+    // Another agent has none of it.
+    expect(await names(other.token)).toEqual([])
+    // Edit: one more prompt, and the changing tools.
+    expect(await s.api.agentAccess.save(label, { mail: { [MAIL_ALLOWED]: 'edit' } })).toBe(true)
+    expect(s.presence.prompts.length).toBe(prompts + 2)
+    expect(await names()).toContain('mail_create_draft')
+    expect((await s.api.agentAccess.view(label)).apps.find((a) => a.app === 'mail')?.items).toContainEqual(
+      expect.objectContaining({ id: MAIL_ALLOWED, level: 'edit' }),
+    )
+    // Back to Read, then off: no prompt, and the tools go.
+    expect(await s.api.agentAccess.save(label, { mail: { [MAIL_ALLOWED]: 'read' } })).toBe(true)
+    expect(await names()).not.toContain('mail_create_draft')
+    expect(await s.api.agentAccess.save(label, { mail: { [MAIL_ALLOWED]: 'off' } })).toBe(true)
+    expect(s.presence.prompts.length).toBe(prompts + 2)
+    expect(await names()).toEqual([])
+    // An account that isn't on the Mac, or an agent that isn't approved, refuses.
+    await expect(s.api.agentAccess.save(label, { mail: { nope: 'read' } })).rejects.toMatchObject({
+      errorClass: 'invalid',
+    })
+    await expect(s.api.agentAccess.view('remote:nobody')).rejects.toMatchObject({ errorClass: 'not-found' })
+    // Revoked: its access goes with it.
+    expect(await s.api.agentAccess.save(label, { mail: { [MAIL_ALLOWED]: 'read' } })).toBe(true)
+    await s.api.remote.revokeClient(agent.id)
+    expect(
+      (s.service as unknown as { agentAccess: { get(id: string): object } }).agentAccess.get(label),
+    ).toEqual({})
+  })
 
-    // Turned off in Settings › Mail: gone for the agent, and still switchable off remotely.
-    await s.api.mail.update({ enabled: false })
-    await vi.waitFor(() => expect(client.listTools()).rejects.toThrow(/Session not found/))
-    expect((await (await remoteClient(port, agent.token)).listTools()).tools).toEqual([])
-    await s.api.remote.setTool('mail', 'search', false)
-    expect(s.service.remote.status().tools).toEqual([])
+  it('keeps what each agent could reach in Mail the first time access is per agent', async () => {
+    const lib = buildLibrary(mkdtempSync(join(tmpdir(), 'sa-mail-')))
+    const s = await setup({
+      mail: {
+        reader: await runningReader(),
+        files: new DirectMailFiles(lib),
+        drafts: { save: async () => ({ kind: 'saved' }) },
+      },
+    })
+    // As an earlier version left it: accounts picked for every agent, drafts on, tools by switches.
+    await s.api.mail.update({ enabled: true, accounts: [MAIL_ALLOWED], drafts: true })
+    await s.service.setRemoteTool('mail', 'search', true)
+    await s.service.setRemoteTool('mail', 'create_draft', true)
+    const writer = approvedClient(s, ['mail.search', 'mail.create_draft'])
+    const reader = approvedClient(s, ['mail.search'])
+    const none = approvedClient(s, [])
+    const local = await s.api.clients.add('Claude Desktop')
+    await s.service.stop()
+    rmSync(s.paths.agentAccess)
+    const restarted = new AppService({
+      ...(s.service as unknown as { deps: ConstructorParameters<typeof AppService>[0] }).deps,
+    })
+    services.push(restarted)
+    await restarted.start()
+    const level = async (label: string) =>
+      (await restarted.api.agentAccess.view(label)).apps
+        .find((a) => a.app === 'mail')
+        ?.items.find((i) => i.id === MAIL_ALLOWED)?.level
+    expect(await level(`remote:${writer.id}`)).toBe('edit')
+    expect(await level(`remote:${reader.id}`)).toBe('read')
+    expect(await level(`remote:${none.id}`)).toBe('off')
+    expect(await level(`local:${local.id}`)).toBe('edit')
+    // Once only: what the person changes afterwards stays.
+    expect(
+      await restarted.api.agentAccess.save(`local:${local.id}`, { mail: { [MAIL_ALLOWED]: 'off' } }),
+    ).toBe(true)
+    await restarted.stop()
+    const third = new AppService({
+      ...(s.service as unknown as { deps: ConstructorParameters<typeof AppService>[0] }).deps,
+    })
+    services.push(third)
+    await third.start()
+    expect(
+      (await third.api.agentAccess.view(`local:${local.id}`)).apps
+        .find((a) => a.app === 'mail')
+        ?.items.find((i) => i.id === MAIL_ALLOWED)?.level,
+    ).toBe('off')
   })
 
   it('offers the agents’ browser to cloud agents, audits each call, and closes it on pause', async () => {
@@ -2992,7 +3087,12 @@ describe('remote access', () => {
         },
       },
     })
-    await s.api.mail.update({ enabled: true, accounts: [MAIL_ALLOWED], organize: true })
+    await s.api.mail.update({ enabled: true })
+    // The cloud agent's own Edit on the account (a Save on its page, tested above).
+    await (s.service as unknown as { agentAccess: AgentAccessStore }).agentAccess.set('remote:rc1', 'mail', {
+      items: { [MAIL_ALLOWED]: 'edit' },
+      full: false,
+    })
     const mail = (s.service as unknown as { mailApp: MailService }).mailApp
     const moved = await mail.call(
       {
@@ -3042,53 +3142,6 @@ describe('remote access', () => {
     expect(await s.api.mail.undoMove(back?.seq as number)).toBe('not-found')
     expect(await s.api.mail.undoMove(seq + 1)).toBe('not-found')
     expect(asked).toHaveLength(2)
-  })
-
-  it('gives an approved agent a Mail tool from its page, and takes it away, keeping its approval', async () => {
-    const lib = buildLibrary(mkdtempSync(join(tmpdir(), 'sa-mail-')))
-    const s = await setup({
-      mail: {
-        reader: null,
-        files: new DirectMailFiles(lib),
-        drafts: { save: async () => ({ kind: 'saved' }) },
-      },
-    })
-    await s.api.mail.update({ enabled: true, accounts: [MAIL_ALLOWED] })
-    await s.service.remote.setHosts([HOST])
-    await s.service.remote.setEnabled(true)
-    const port = Number(new URL(s.service.remote.status().url as string).port)
-    const agent = approvedClient(s, [])
-    const names = async () =>
-      (await (await remoteClient(port, agent.token)).listTools()).tools.map((t) => t.name)
-    expect(await names()).toEqual([])
-    // A session opened before the change, as claude.ai keeps one: it is closed, so the agent has to
-    // open a new one, which lists the new tools (claude.ai never reads the list-changed notice).
-    const before = await remoteClient(port, agent.token)
-    expect((await before.listTools()).tools).toEqual([])
-    // Reading mail is a wide grant: on asks for Touch ID, and a cancelled prompt changes nothing.
-    s.presence.answer = false
-    await expect(s.api.remote.setClientTool(agent.id, 'mail', 'search', true)).rejects.toBeInstanceOf(
-      ValetError,
-    )
-    expect(await names()).toEqual([])
-    expect(s.service.remote.status().tools).toEqual([])
-    s.presence.answer = true
-    const prompts = s.presence.prompts.length
-    await s.api.remote.setClientTool(agent.id, 'mail', 'search', true)
-    expect(s.presence.prompts.length).toBe(prompts + 1)
-    await expect(before.listTools()).rejects.toThrow()
-    expect(await names()).toEqual(['mail_search'])
-    // On for remote clients now, but another agent still needs it in its own grant.
-    expect(s.service.remote.status().tools).toEqual(['mail.search'])
-    await s.api.remote.setClientTool(agent.id, 'mail', 'search', false)
-    expect(s.presence.prompts.length).toBe(prompts + 1)
-    expect(await names()).toEqual([])
-    expect((await s.api.remote.clients()).find((c) => c.id === agent.id)?.grant?.tools).toEqual([])
-    // A Mail tool that isn't offered (Mail off) can't be given.
-    await s.api.mail.update({ enabled: false })
-    await expect(s.api.remote.setClientTool(agent.id, 'mail', 'search', true)).rejects.toBeInstanceOf(
-      ValetError,
-    )
   })
 
   it('serves only remote-enabled tools through the same runtime, audited as remote', async () => {
