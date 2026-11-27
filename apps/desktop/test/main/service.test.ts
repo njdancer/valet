@@ -3404,6 +3404,21 @@ describe('remote access', () => {
     expect(await s.api.clients.network(key)).toMatchObject({ homeNetwork: false })
     expect(await broker.approveOnMac(pending?.request.id ?? '')).toEqual({ ok: true })
     expect(await s.api.clients.network(key)).toMatchObject({ homeNetwork: true })
+    // The agent narrows it itself at once, with no request; an interface the Mac lacks is refused.
+    const narrowed = await client.callTool({
+      name: 'valet_set_browser_network',
+      arguments: { homeNetwork: false },
+    })
+    expect(narrowed.isError).not.toBe(true)
+    expect(await s.api.clients.network(key)).toMatchObject({ homeNetwork: false })
+    const missing = await client.callTool({
+      name: 'valet_set_browser_network',
+      arguments: { interface: 'nosuch0' },
+    })
+    expect(JSON.stringify(missing.content)).toMatch(/not|refused|unknown/i)
+    expect(await s.api.clients.network(key)).toMatchObject({ interface: null })
+    expect(broker.list().filter((p) => p.request.kind === 'setting')).toEqual([])
+    await s.api.clients.setNetwork(key, { homeNetwork: true })
     const events = (await s.api.audit.page({})).records.map((r) => r.event)
     expect(events).toContainEqual({
       type: 'agent-network-changed',

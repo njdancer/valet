@@ -973,3 +973,58 @@ describe('a login session', () => {
     })
   })
 })
+
+describe('a session’s network', () => {
+  const service = (
+    network: (client: string) => Promise<{ homeNetwork: boolean; interface: string | null }>,
+  ) => {
+    const opened: unknown[] = []
+    const asked: string[] = []
+    const s = new AgentBrowserService({
+      open: async (_rules, net) => {
+        opened.push(net)
+        return browser()
+      },
+      network: (client) => {
+        asked.push(client)
+        return network(client)
+      },
+      pace: async () => undefined,
+      secretIn: async () => false,
+      notify: () => undefined,
+      audit: async () => undefined,
+      now: () => 0,
+      newId: () => 's00000001',
+    })
+    const create = async () =>
+      (await s.call(
+        {
+          adapterId: 'browser',
+          tool: 'session_create',
+          input: {},
+          client: 'Test agent',
+          identity: { origin: 'remote', clientId: 'abc_123' },
+          callId: 'c',
+        } as ToolCall,
+        new AbortController().signal,
+      )) as { status: string; output: Record<string, unknown> }
+    return { create, opened, asked }
+  }
+
+  it('opens with the agent’s settings and answers with them', async () => {
+    const pinned = { homeNetwork: true, interface: 'vlan20' }
+    const { create, opened, asked } = service(async () => pinned)
+    expect((await create()).output).toEqual({ session: 's00000001', network: pinned, problem: null })
+    expect(opened).toEqual([pinned])
+    expect(asked).toHaveLength(1)
+  })
+
+  it('opens with the narrow default when the settings can’t be read', async () => {
+    const { create, opened } = service(async () => {
+      throw new Error('disk')
+    })
+    const narrow = { homeNetwork: false, interface: null }
+    expect((await create()).output).toEqual({ session: 's00000001', network: narrow, problem: null })
+    expect(opened).toEqual([narrow])
+  })
+})

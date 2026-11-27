@@ -41,6 +41,8 @@ describe('an agent’s browser network', () => {
     await store.forget(LOCAL)
     expect(await store.get(LOCAL)).toEqual(DEFAULT_NETWORK)
     await expect(store.set('local:../x', { homeNetwork: true })).rejects.toThrow()
+    // Forgetting is best effort: revoking an agent never fails on its network settings.
+    await expect(store.forget('local:../x')).resolves.toBeUndefined()
     expect(await store.get('__proto__')).toEqual(DEFAULT_NETWORK)
   })
 
