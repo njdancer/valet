@@ -109,6 +109,24 @@ export interface PhoneChannelOptions {
   readonly now?: () => number
   readonly onChange?: () => void
   readonly log?: (line: string) => void
+  /** For the retry after a message couldn't be sealed; the process's own timers by default. */
+  readonly timers?: {
+    setTimeout(run: () => void, ms: number): unknown
+    clearTimeout(handle: unknown): void
+  }
+}
+
+/** The first retry after a message couldn't be sealed, doubling each time up to the last. */
+export const SEAL_RETRY_FIRST_MS = 5_000
+export const SEAL_RETRY_MAX_MS = 5 * 60_000
+
+const nodeTimers = {
+  setTimeout: (run: () => void, ms: number): unknown => {
+    const handle = setTimeout(run, ms)
+    handle.unref?.()
+    return handle
+  },
+  clearTimeout: (handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 }
 
 const stateSchema = z
@@ -155,10 +173,32 @@ export class PhoneChannel implements PhoneOutbox {
   private inbound: Promise<void> = Promise.resolve()
   private readonly now: () => number
   private readonly agree: Agree
+  /**
+   * Since when messages to phones couldn't be sealed (the Secure Enclave's key agreement failing),
+   * and how many tries since. A message that can't be sealed stays in its phone's outbox, as every
+   * unacked one does, and the outbox is sent again on a backoff until sealing works (feedback #34).
+   */
+  private sealFailure: { readonly since: number; attempts: number } | null = null
+  private sealRetry: unknown = null
+  private stopped = false
+  private readonly timers: NonNullable<PhoneChannelOptions['timers']>
 
   private constructor(private readonly options: PhoneChannelOptions) {
     this.now = options.now ?? Date.now
     this.agree = (peer) => options.channel.agree(peer)
+    this.timers = options.timers ?? nodeTimers
+  }
+
+  /** Since when messages to phones couldn't be sealed, or null while they can. */
+  get sealingFailingSince(): string | null {
+    return this.sealFailure === null ? null : new Date(this.sealFailure.since).toISOString()
+  }
+
+  /** Ends the retry; nothing more is sent. */
+  stop(): void {
+    this.stopped = true
+    if (this.sealRetry !== null) this.timers.clearTimeout(this.sealRetry)
+    this.sealRetry = null
   }
 
   static async open(options: PhoneChannelOptions): Promise<PhoneChannel> {
@@ -254,7 +294,7 @@ export class PhoneChannel implements PhoneOutbox {
 
   private async seal(record: DeviceRecord, text: string): Promise<Envelope | null> {
     try {
-      return await sealEnvelope(
+      const envelope = await sealEnvelope(
         text,
         {
           from: this.macId,
@@ -264,12 +304,42 @@ export class PhoneChannel implements PhoneOutbox {
         },
         this.agree,
       )
+      this.sealed()
+      return envelope
     } catch (error) {
       // Why, without the message: the key agreement is the Secure Enclave helper's (feedback #34:
       // these went on for two hours with nothing to say why).
       this.options.log?.(`phone channel: could not seal a message: ${sealFailure(error)}`)
+      this.sealFailed()
       return null
     }
+  }
+
+  private sealed(): void {
+    if (this.sealFailure === null) return
+    this.options.log?.(
+      `phone channel: sealing works again after ${this.sealFailure.attempts} failed ${this.sealFailure.attempts === 1 ? 'try' : 'tries'}`,
+    )
+    this.sealFailure = null
+    if (this.sealRetry !== null) this.timers.clearTimeout(this.sealRetry)
+    this.sealRetry = null
+    this.options.onChange?.()
+  }
+
+  /** Every phone's unacked messages, sent again after a backoff, until a seal works. */
+  private sealFailed(): void {
+    const first = this.sealFailure === null
+    if (this.sealFailure === null) this.sealFailure = { since: this.now(), attempts: 0 }
+    this.sealFailure.attempts += 1
+    if (first) this.options.onChange?.()
+    if (this.sealRetry !== null || this.stopped) return
+    const delay = Math.min(SEAL_RETRY_FIRST_MS * 2 ** (this.sealFailure.attempts - 1), SEAL_RETRY_MAX_MS)
+    this.sealRetry = this.timers.setTimeout(() => {
+      this.sealRetry = null
+      if (this.stopped) return
+      for (const [deviceId, phone] of Object.entries(this.state.phones))
+        if (phone.outbox.length > 0 && this.options.devices.isActivePhone(deviceId)) this.resend(deviceId)
+    }, delay)
   }
 
   /** Everything unacked, again, in order: the phone drops what it already has. */
