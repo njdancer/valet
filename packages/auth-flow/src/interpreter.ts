@@ -87,12 +87,14 @@ async function runStep(ctx: FlowContext, step: AuthStep): Promise<void> {
       await waitFor(ctx, step.condition, step.timeoutMs)
       return
     case 'click':
+      await beforeAct(ctx)
       await requireVisible(ctx, step.selector)
       // A click may submit a form and load the next page, so it waits for a slot like a goto.
       await paceNavigation(ctx)
       await guarded('auth-step', () => page.click(step.selector))
       return
     case 'fill':
+      await beforeAct(ctx)
       if ('literal' in step.value) {
         const literal = step.value.literal
         await requireVisible(ctx, step.selector)
@@ -103,6 +105,7 @@ async function runStep(ctx: FlowContext, step: AuthStep): Promise<void> {
       }
       return
     case 'otp':
+      await beforeAct(ctx)
       if ('secret' in step.source) {
         await fillSecret(ctx, step.selector, { secret: step.source.secret, field: 'otp' })
       } else if ('mail' in step.source) {
@@ -165,6 +168,12 @@ async function waitFor(ctx: FlowContext, condition: Condition, timeoutMs: number
     if (now(ctx) >= stepDeadline) throw new ValetError('auth-step', 'condition-timeout')
     await pause(ctx, POLL_MS)
   }
+}
+
+/** The caller's check before a step that acts on the page. A ValetError ends the flow as it is. */
+async function beforeAct(ctx: FlowContext): Promise<void> {
+  const hook = ctx.input.beforeAct
+  if (hook !== undefined) await guarded('auth-step', hook)
 }
 
 /** Waits for the site's budget, then checks the caller hasn't given up while it waited. */
