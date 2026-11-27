@@ -117,6 +117,7 @@ import type {
   AdapterVersions,
   AgentAccessApp,
   AgentAccessChanges,
+  AgentAccessTool,
   AgentAccessView,
   AgentRequestItem,
   AppEvent,
@@ -1416,7 +1417,61 @@ export class AppService {
         })),
       })
     }
-    return { clientId: label, apps }
+    const { tools, gone } = await this.accessTools(label)
+    return { clientId: label, apps, tools, gone }
+  }
+
+  /**
+   * A cloud agent's tools as its access page shows them: every tool it could be given (each
+   * approved site's, then Valet's own such as the browser's), on only where it may call it now,
+   * and what its grant still names that Valet doesn't offer. None for an app on this Mac, which
+   * has every approved site's tools unless it turned one off.
+   */
+  private async accessTools(
+    label: string,
+  ): Promise<{ readonly tools: AgentAccessTool[]; readonly gone: string[] }> {
+    if (!label.startsWith('remote:')) return { tools: [], gone: [] }
+    const id = label.slice('remote:'.length)
+    const offered = (await this.remoteSetup()).tools
+    const tools: AgentAccessTool[] = []
+    for (const t of offered) {
+      const declaration =
+        this.nativeDeclaration(t.adapterId, t.tool) ?? this.remoteDeclared(t.adapterId, t.tool)
+      if (declaration === null) continue
+      tools.push({
+        ref: t.ref,
+        adapterId: t.adapterId,
+        siteName: plainName(t.adapterName),
+        tool: t.tool,
+        title: t.toolTitle,
+        sideEffect: t.sideEffect,
+        on: this.remote.allows(t.adapterId, declaration, id),
+      })
+    }
+    // Valet's own first (the browser), as the person meets them, then each site in turn.
+    tools.sort((a, b) => Number(this.isNative(b.adapterId)) - Number(this.isNative(a.adapterId)))
+    const listed = new Set(tools.map((t) => t.ref))
+    const granted = this.remote.clients.get(id)?.grant?.tools ?? []
+    const gone = granted.filter(
+      (ref) => !listed.has(ref) && accessAppOf(ref.slice(0, ref.indexOf('.'))) === null,
+    )
+    return { tools, gone }
+  }
+
+  /** The tool an `agent-access` line names, as listed now at the version and side effect signed; else null. */
+  private signedToolDeclaration(t: ApprovalSubject<'agent-access'>['tools'][number]): ToolDeclaration | null {
+    // Mail's, Calendar's and Reminders' own tools follow from the items, never from a line here.
+    if (accessAppOf(t.adapterId) !== null) return null
+    const native = this.nativeDeclaration(t.adapterId, t.tool)
+    if (native !== null)
+      return t.adapterHash === BUILTIN_TOOLS_HASH && native.sideEffect === t.sideEffect ? native : null
+    const declaration = this.remoteDeclared(t.adapterId, t.tool)
+    if (declaration === null || this.adapter(t.adapterId)?.hash !== t.adapterHash) return null
+    return declaration.sideEffect === t.sideEffect ? declaration : null
+  }
+
+  private isNative(adapterId: string): boolean {
+    return this.natives().some((n) => n.adapterId === adapterId)
   }
 
   /**
@@ -1447,12 +1502,50 @@ export class AppService {
         items.push({ app, id, label: accessLabel(item?.label ?? id), level })
       }
     }
-    if (items.length > 0) {
+    // A cloud agent's tools: on is signed with the rest, off is at once. An app on this Mac has
+    // none to give here.
+    const tools: ApprovalSubject<'agent-access'>['tools'][number][] = []
+    const off: AgentAccessTool[] = []
+    const toolChanges = Object.entries(changes.tools ?? {})
+    if (toolChanges.length > 0 && !label.startsWith('remote:')) throw new ValetError('config', 'invalid')
+    for (const [ref, on] of toolChanges) {
+      const shown = view.tools.find((t) => t.ref === ref)
+      if (!on) {
+        const dot = ref.indexOf('.')
+        if (shown?.on === true || view.gone.includes(ref))
+          off.push(
+            shown ?? {
+              ref,
+              adapterId: ref.slice(0, dot),
+              siteName: ref.slice(0, dot),
+              tool: ref.slice(dot + 1),
+              title: ref,
+              sideEffect: 'read',
+              on: true,
+            },
+          )
+        continue
+      }
+      if (shown === undefined) throw new ValetError('config', 'invalid')
+      if (shown.on) continue
+      const hash = this.isNative(shown.adapterId) ? BUILTIN_TOOLS_HASH : this.adapter(shown.adapterId)?.hash
+      if (hash === undefined) throw new ValetError('config', 'invalid')
+      tools.push({
+        adapterId: shown.adapterId,
+        adapterHash: hash,
+        tool: shown.tool,
+        label: accessLabel(`${shown.siteName}: ${shown.title}`),
+        sideEffect: shown.sideEffect,
+      })
+    }
+    // One request lists at most 100 of each; a Save that adds more is refused, changing nothing.
+    if (items.length > 100 || tools.length > 100) throw new ValetError('config', 'invalid')
+    if (items.length > 0 || tools.length > 0) {
       const subject: ApprovalSubject<'agent-access'> = {
         clientId: label,
         items,
         full: [],
-        tools: [],
+        tools,
         capabilities: [],
       }
       if (!(await this.approveHere('agent-access', subject))) return false
@@ -1460,6 +1553,8 @@ export class AppService {
     // Revoked while the prompt was up: nothing is kept for it.
     if (!this.accessClientKnown(label)) throw new ValetError('config', 'not-found')
     for (const { app, after } of next) await this.agentAccess.set(label, app, after)
+    for (const t of off)
+      await this.setRemoteClientTool(label.slice('remote:'.length), t.adapterId, t.tool, false)
     await this.accessChanged(label)
     return true
   }
@@ -2745,10 +2840,12 @@ export class AppService {
       // applies only what was signed; the Save then writes the rest, which only narrows.
       'agent-access': {
         precheck: async (subject) => {
-          // Tools and capabilities ride on this kind later; nothing asks for them yet.
-          if (subject.tools.length > 0 || subject.capabilities.length > 0 || subject.full.length > 0)
-            return false
+          // Capabilities and full access ride on this kind later; nothing asks for them yet.
+          if (subject.capabilities.length > 0 || subject.full.length > 0) return false
           if (!this.accessClientKnown(subject.clientId)) return false
+          // Tools are a cloud agent's, each at the version and side effect signed for.
+          if (subject.tools.length > 0 && !subject.clientId.startsWith('remote:')) return false
+          if (!subject.tools.every((t) => this.signedToolDeclaration(t) !== null)) return false
           let view: AgentAccessView
           try {
             view = await this.accessView(subject.clientId)
@@ -2770,6 +2867,19 @@ export class AppService {
               app,
               withWidening(before, { items: raised, full: false }),
             )
+          }
+          if (subject.tools.length > 0) {
+            const client = subject.clientId.slice('remote:'.length)
+            for (const t of subject.tools) {
+              const declaration = this.signedToolDeclaration(t)
+              if (declaration === null) throw new ValetError('config', 'not-found')
+              // On for cloud agents if it isn't (each still needs it in its own grant), then in this
+              // agent's grant.
+              if (!this.remote.allows(t.adapterId, declaration))
+                await this.setRemoteTool(t.adapterId, t.tool, true)
+              if (!this.remote.allows(t.adapterId, declaration, client))
+                await this.remote.allowForClient(t.adapterId, declaration, client)
+            }
           }
           // An agent's own ask, approved here or on the phone, has no Save to refresh after it.
           await this.accessChanged(subject.clientId)

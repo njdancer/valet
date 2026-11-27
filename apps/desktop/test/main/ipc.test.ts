@@ -415,7 +415,14 @@ describe('every channel', () => {
     'mail.action': ['full-disk-access'],
     'mail.undoMove': [12],
     'agentAccess.view': ['local:c_1'],
-    'agentAccess.save': ['remote:r_1', { mail: { acc1: 'edit' }, calendar: { cal1: 'off' } }],
+    'agentAccess.save': [
+      'remote:r_1',
+      {
+        mail: { acc1: 'edit' },
+        calendar: { cal1: 'off' },
+        tools: { 'shop.add': true, 'browser.session_create': false },
+      },
+    ],
     'eventKit.status': ['calendar'],
     'eventKit.update': ['reminders', { enabled: true, calendars: ['L1'] }],
     'eventKit.action': ['calendar', 'request-access'],

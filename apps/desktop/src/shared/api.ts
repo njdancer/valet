@@ -1645,14 +1645,38 @@ export interface AgentAccessApp {
   readonly items: readonly AgentAccessItem[]
 }
 
-/** What one agent (`local:<id>` or `remote:<id>`) may use in the Mac's apps. */
+/** One tool a cloud agent could be given: an approved site's, or Valet's own (the browser's). */
+export interface AgentAccessTool {
+  /** `<adapterId>.<tool>`. */
+  readonly ref: string
+  readonly adapterId: string
+  readonly siteName: string
+  readonly tool: string
+  readonly title: string
+  readonly sideEffect: 'read' | 'write' | 'irreversible'
+  /** It may call it now. */
+  readonly on: boolean
+}
+
+/** What one agent (`local:<id>` or `remote:<id>`) may use in the Mac's apps and, for a cloud agent, its tools. */
 export interface AgentAccessView {
   readonly clientId: string
   readonly apps: readonly AgentAccessApp[]
+  /** Cloud agents only: every tool it could be given, off by default. Empty for an app on this Mac. */
+  readonly tools: readonly AgentAccessTool[]
+  /** Tools in a cloud agent's grant that Valet doesn't offer now (a site since removed): shown, never callable. */
+  readonly gone: readonly string[]
 }
 
-/** A Save on the access page: each changed item's new level, by app. */
-export type AgentAccessChanges = Readonly<Partial<Record<AccessApp, Readonly<Record<string, AccessChoice>>>>>
+/**
+ * A Save on the access page: each changed item's new level, by app, and (cloud agents only) each
+ * changed tool, on or off, by ref.
+ */
+export type AgentAccessChanges = Readonly<
+  Partial<Record<AccessApp, Readonly<Record<string, AccessChoice>>>>
+> & {
+  readonly tools?: Readonly<Record<string, boolean>>
+}
 
 /** Messages on this Mac (docs/messages.md). */
 export interface MessagesSettings {

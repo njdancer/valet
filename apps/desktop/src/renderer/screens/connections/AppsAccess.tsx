@@ -1,15 +1,20 @@
-// What one agent may use in the Mac's own apps (docs/access.md): each Mail account, calendar and
-// reminder list at Off, Read or Edit. Changes are a draft until Save, and one Save is one Touch ID
-// for everything it adds. Taking things away needs no Touch ID.
+// What one agent may use (docs/access.md): each Mail account, calendar and reminder list at Off,
+// Read or Edit, and for a cloud agent each tool of an approved site and Valet's own (the browser's),
+// on or off. Changes are a draft until Save, and one Save is one Touch ID for everything it adds.
+// Taking things away needs no Touch ID.
 
 import {
+  Badge,
   Button,
   Card,
   CardContent,
   CardHeader,
   CardTitle,
+  Code,
   Inline,
+  RiskBadge,
   Segmented,
+  SiteAvatar,
   Stack,
   Text,
   TextLink,
@@ -22,6 +27,7 @@ import type {
   AgentAccessApp,
   AgentAccessChanges,
   AgentAccessItem,
+  AgentAccessTool,
 } from '../../../shared/api'
 import { useAction, useApi, useLoad } from '../../lib/api-context'
 import { href } from '../../lib/router'
@@ -42,16 +48,27 @@ const EDIT_MEANS: Readonly<Record<AccessApp, string>> = {
 
 const RANK: Readonly<Record<AccessChoice, number>> = { off: 0, read: 1, edit: 2 }
 
-type Draft = Partial<Record<AccessApp, Record<string, AccessChoice>>>
+type Draft = Partial<Record<AccessApp, Record<string, AccessChoice>>> & { tools?: Record<string, boolean> }
 
 /** The draft's changes against what is saved, and whether any of them adds something. */
 export function accessChanges(
   apps: readonly AgentAccessApp[],
   draft: Draft,
+  tools: readonly AgentAccessTool[] = [],
+  gone: readonly string[] = [],
 ): { readonly changes: AgentAccessChanges; readonly count: number; readonly widens: boolean } {
-  const changes: Partial<Record<AccessApp, Record<string, AccessChoice>>> = {}
+  const changes: Partial<Record<AccessApp, Record<string, AccessChoice>>> & {
+    tools?: Record<string, boolean>
+  } = {}
   let count = 0
   let widens = false
+  for (const [ref, on] of Object.entries(draft.tools ?? {})) {
+    const saved = tools.find((t) => t.ref === ref)?.on ?? gone.includes(ref)
+    if (on === saved) continue
+    changes.tools = { ...(changes.tools ?? {}), [ref]: on }
+    count += 1
+    if (on) widens = true
+  }
   for (const app of apps) {
     for (const item of app.items) {
       const next = draft[app.app]?.[item.id]
@@ -75,9 +92,14 @@ export function AppsAccess({ clientId, name }: { readonly clientId: string; read
   const [draft, setDraft] = useState<Draft>({})
   if (view.status !== 'ready')
     return view.status === 'error' ? <Failed failed what="load its access" /> : null
-  const apps = view.data.apps
-  if (apps.length === 0) return null
-  const pending = accessChanges(apps, draft)
+  const { apps, tools, gone } = view.data
+  if (apps.length === 0 && tools.length === 0 && gone.length === 0) return null
+  const pending = accessChanges(apps, draft, tools, gone)
+  const toolOn = (t: { readonly ref: string; readonly on: boolean }) => draft.tools?.[t.ref] ?? t.on
+  const chooseTool = (ref: string, on: boolean) =>
+    setDraft((d) => ({ ...d, tools: { ...(d.tools ?? {}), [ref]: on } }))
+  const sites = new Map<string, AgentAccessTool[]>()
+  for (const t of tools) sites.set(t.adapterId, [...(sites.get(t.adapterId) ?? []), t])
   const level = (app: AccessApp, item: AgentAccessItem) => draft[app]?.[item.id] ?? item.level
   const choose = (app: AccessApp, id: string, next: AccessChoice) =>
     setDraft((d) => ({ ...d, [app]: { ...(d[app] ?? {}), [id]: next } }))
@@ -100,7 +122,7 @@ export function AppsAccess({ clientId, name }: { readonly clientId: string; read
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Mail, Calendar and Reminders</CardTitle>
+        <CardTitle>What it may use</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
         <Failed failed={action.failed} what="save its access" />
@@ -157,6 +179,72 @@ export function AppsAccess({ clientId, name }: { readonly clientId: string; read
             )}
           </section>
         ))}
+        {tools.length === 0 && gone.length === 0 ? null : (
+          <section aria-label="Tools" className="flex flex-col gap-3">
+            <Stack gap={0.5}>
+              <Text weight="medium">Tools</Text>
+              <Text size="sm" tone="muted">
+                Each approved site’s tools, and Valet’s own. A cloud agent has none until you turn them on.
+              </Text>
+            </Stack>
+            <ul className="m-0 flex list-none flex-col gap-4 p-0" data-testid="access-tools">
+              {[...sites.entries()].map(([siteId, siteTools]) => (
+                <li key={siteId} className="flex flex-col gap-2">
+                  <Inline gap={2}>
+                    <SiteAvatar id={siteId} name={siteTools[0]?.siteName ?? siteId} size="xs" />
+                    <Text weight="medium">{siteTools[0]?.siteName ?? siteId}</Text>
+                  </Inline>
+                  <ul className="m-0 flex list-none flex-col gap-2 p-0 pl-6">
+                    {siteTools.map((t) => {
+                      const on = toolOn(t)
+                      return (
+                        <li key={t.ref} className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="flex min-w-0 flex-wrap items-center gap-2">
+                            <span>{t.title}</span>
+                            <Code>{t.tool}</Code>
+                            <RiskBadge purpose={t.sideEffect} />
+                            {on !== t.on ? <span className="text-fg-muted text-sm">· not saved</span> : null}
+                          </span>
+                          <Segmented<'off' | 'on'>
+                            size="sm"
+                            label={`${t.siteName}: ${t.title}`}
+                            value={on ? 'on' : 'off'}
+                            onValueChange={(next) => chooseTool(t.ref, next === 'on')}
+                            options={[
+                              { value: 'off', label: 'Off' },
+                              { value: 'on', label: 'On' },
+                            ]}
+                          />
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </li>
+              ))}
+            </ul>
+            {/* Granted on a site that is no longer offered: shown, so nothing is hidden. */}
+            {gone.map((ref) => {
+              const on = toolOn({ ref, on: true })
+              return (
+                <div key={ref} className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <Code>{ref}</Code>
+                    <Badge size="sm">not offered now</Badge>
+                  </span>
+                  {on ? (
+                    <Button size="sm" variant="ghost" onClick={() => chooseTool(ref, false)}>
+                      Take away
+                    </Button>
+                  ) : (
+                    <Text size="sm" tone="muted">
+                      Taken away · not saved
+                    </Text>
+                  )}
+                </div>
+              )
+            })}
+          </section>
+        )}
         <Stack gap={2}>
           <Inline gap={2}>
             <Button
