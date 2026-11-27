@@ -346,3 +346,33 @@ describe('settingChoices', () => {
     })
   })
 })
+
+describe('a setting run in the call trace', () => {
+  it('reports its requests under its own call and under the call it ran for, named by its tool', async () => {
+    const requests = vi.fn()
+    const settings = chosen({ store: '101' })
+    let next = 0
+    const made = fixture(shop(), {
+      settings: settings.lookup,
+      newCallId: () => {
+        next += 1
+        return `apply-${next}`
+      },
+      requests,
+    })
+    made.page.route('POST', `${HOME}/api/store`, json({ ok: false }, 500))
+
+    // The fake apply tool hands back whatever the site answered, so the call goes on.
+    expect(await made.host.call(call)).toEqual({ status: 'ok', output: 'ran' })
+    expect(requests).toHaveBeenCalledWith(
+      'apply-1',
+      expect.objectContaining({ method: 'POST', path: '/api/store', status: 500, setting: null }),
+    )
+    expect(requests).toHaveBeenCalledWith(
+      'call-1',
+      expect.objectContaining({ path: '/api/store', setting: 'apply_store' }),
+    )
+    // The call's own tool sent nothing.
+    expect(requests.mock.calls.filter(([id]) => id === 'call-1')).toHaveLength(1)
+  })
+})

@@ -29,10 +29,13 @@ import {
   ambiguousPath,
   decideRequest,
   declarationOnHost,
+  type ErrorClass,
   type FetchInit,
   type FetchResult,
   hostAllowed,
+  type Purpose,
   pathMatches,
+  type RequestDeclaration,
   type ToolPage,
   touchesDeniedSegment,
   ValetError,
@@ -40,8 +43,37 @@ import {
 import { CallGate, type CallGateOptions, headerValue, isRoutingOverride, SURFACE_CLASS } from './call-gate'
 import { blockCause, isHtml, navigationBlocked } from './site-protection'
 
+/**
+ * One fetch tool code sent through the capability API and the answer it got, for the call's trace
+ * (kept in memory, never written to disk). Nothing of the request's own is kept: the path is the
+ * manifest's declaration, the host is a literal home or egress host or null, and no body, header,
+ * query value or redirect target is read. A read answered from the session's cache sent nothing and
+ * is not recorded.
+ */
+export interface SentRequest {
+  readonly method: string
+  /** The declaration's path as the manifest writes it, so no id or value from the request shows. */
+  readonly path: string
+  /** The host when the manifest names it literally (home or egress); null for a wildcard's match. */
+  readonly host: string | null
+  readonly purpose: Purpose
+  /** The HTTP status; null when no answer came. */
+  readonly status: number | null
+  /** What the answer was, by its content type ('none' for no type); null when no answer came. */
+  readonly contentType: 'json' | 'html' | 'other' | 'none' | null
+  /** The browser followed a redirect to get the answer. */
+  readonly redirected: boolean
+  /** Why the request failed when no answer came back: the class of the error it threw. */
+  readonly failed: ErrorClass | null
+  /** When it was sent (epoch ms, after any pacing wait) and how long its answer took. */
+  readonly at: number
+  readonly durationMs: number
+}
+
 export interface GuardedPageOptions extends CallGateOptions {
   readonly inner: ToolPage
+  /** Told of each fetch sent and how it ended. A throw is ignored. */
+  readonly onRequest?: (request: SentRequest) => void
 }
 
 export class GuardedToolPage implements ToolPage {
@@ -134,7 +166,15 @@ export class GuardedToolPage implements ToolPage {
       return this.gate.deny('request-surface', 'denied-path', method, target, pathOrUrl)
     }
     const admitted = await this.gate.admit(method, target, pathOrUrl)
-    const result = await state.track(inner.fetch(target.href, request))
+    const sent = this.now()
+    let result: FetchResult
+    try {
+      result = await state.track(inner.fetch(target.href, request))
+    } catch (error) {
+      this.report(method, target, decision.declaration, sent, null, error)
+      throw error
+    }
+    this.report(method, target, decision.declaration, sent, result, null)
     const cause = blockCause(result)
     if (cause !== null) this.gate.siteBlocked(cause)
     site.breaker.recordSuccess(admitted)
@@ -145,6 +185,59 @@ export class GuardedToolPage implements ToolPage {
     }
     return result
   }
+
+  private now(): number {
+    return this.options.clock?.now() ?? Date.now()
+  }
+
+  private report(
+    method: string,
+    target: URL,
+    declared: RequestDeclaration,
+    sent: number,
+    result: FetchResult | null,
+    error: unknown,
+  ): void {
+    const { onRequest, manifest } = this.options
+    if (onRequest === undefined) return
+    try {
+      onRequest({
+        method,
+        path: declared.path,
+        host: namedHost(target.hostname, manifest.home, manifest.egress),
+        purpose: declared.purpose,
+        status: result === null ? null : result.status,
+        contentType: result === null ? null : contentKind(result.contentType),
+        redirected: result?.redirected === true,
+        failed: result !== null ? null : error instanceof ValetError ? error.errorClass : 'internal',
+        at: sent,
+        durationMs: Math.max(0, this.now() - sent),
+      })
+    } catch {
+      // The trace is for reading; a recorder's failure must not change the call.
+    }
+  }
+}
+
+/** The host when the manifest names it literally; a wildcard's match could carry anything. */
+function namedHost(host: string, home: string, egress: readonly string[]): string | null {
+  const lower = host.toLowerCase()
+  let homeHost: string | null
+  try {
+    homeHost = new URL(home).hostname.toLowerCase()
+  } catch {
+    homeHost = null
+  }
+  if (lower === homeHost) return lower
+  return egress.some((pattern) => pattern.toLowerCase() === lower) ? lower : null
+}
+
+function contentKind(type: string | null | undefined): SentRequest['contentType'] {
+  if (typeof type !== 'string' || type.length === 0) return 'none'
+  const lower = type.toLowerCase()
+  if (lower.includes('json')) return 'json'
+  if (lower.includes('html')) return 'html'
+  return 'other'
 }
 
 function resolve(pathOrUrl: string, home: string): URL | null {
