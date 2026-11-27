@@ -234,6 +234,8 @@ export interface AuthoringDeps {
 }
 
 export interface LoginTrialRequest {
+  /** The agent asking: it must hold browser_login_steps, which a trial does the work of. */
+  readonly viewer: ClientIdentity
   readonly adapterId: string
   readonly draftId: string
   /** Names the trial's own in-memory partitions, as a live trial's label does. */
@@ -256,6 +258,8 @@ export type LoginTrialResult =
       readonly stage: string | null
       readonly errorClass: string | null
     }
+  /** Valet refused or cut short a batch once the steps had started; `words` are Valet's own. */
+  | { readonly kind: 'refused'; readonly at: 'steps' | 'after'; readonly words: string }
 
 interface CheckOutcome {
   readonly report: CheckReport
@@ -285,6 +289,8 @@ export class DraftAuthoring implements Authoring {
   /** Per draft, the times of its trials this hour. */
   private readonly trialTimes = new Map<string, number[]>()
   private readonly trialing = new Set<string>()
+  /** Login trials per adapter (site), whichever draft asked. */
+  private readonly loginTrialTimes = new Map<string, number[]>()
   private trialCount = 0
 
   constructor(private readonly deps: AuthoringDeps) {}
@@ -859,7 +865,17 @@ export class DraftAuthoring implements Authoring {
     findings.push(...caseErrors)
     steps.push({ step: 'cases', ok: !caseErrors.some((f) => f.level === 'error') })
     // 6b: login steps the draft changed, signed in with in a login trial.
-    if (tool === undefined && changed.loginChanged) {
+    // A draft from installed whose manifests couldn't be compared: its login may have changed.
+    const uncompared = record.basedOn !== null && installed !== null && !changed.compared
+    if (tool === undefined && uncompared) {
+      login = 'not-tried'
+      findings.push({
+        level: 'caution',
+        check: 'login',
+        text: 'Valet couldn’t compare this draft’s manifest with the installed version’s, so no tool counts as unchanged and its login steps aren’t known to be the same.',
+      })
+      steps.push({ step: 'login', ok: true })
+    } else if (tool === undefined && changed.loginChanged) {
       const finding = this.loginFinding(record, changed)
       login = finding === null ? 'tried' : 'not-tried'
       if (finding !== null) findings.push(finding)
@@ -971,11 +987,13 @@ export class DraftAuthoring implements Authoring {
         check: 'login',
         text: 'The login steps changed, and this Valet can’t try login steps, so only the person’s review checks them.',
       }
+    // A trial runs behind the installed walls, so it can't try steps behind new ones. That is an
+    // error, not a caution: otherwise any wall change would be a way past the trial.
     if (!changed.loginWallsSame)
       return {
-        level: 'caution',
+        level: 'error',
         check: 'login',
-        text: 'The login steps changed along with what a login depends on (home, navigation, egress, secrets, session or auth.frameOrigins), so no login trial can try them: only the person’s review checks them.',
+        text: 'The login steps changed along with what a login depends on (home, navigation, egress, secrets, session, auth.frameOrigins or runtime), so no login trial can try them. Change those in a draft of their own first, keeping the steps; once the person has approved it, change the steps and try them.',
       }
     const trial = record.loginTrials.findLast((t) => t.loginKey === changed.loginKey)
     if (trial?.ok === true) return null
@@ -1497,6 +1515,21 @@ export class DraftAuthoring implements Authoring {
     if (run === undefined) throw new AuthoringRefusal('This build of Valet can’t try login steps.')
     if (this.trialing.has(draftId))
       throw new AuthoringRefusal('One trial at a time: this draft’s last one is still running.')
+    // Held from here, before any await, so two calls can't both get through and type twice.
+    this.trialing.add(draftId)
+    try {
+      return await this.loginTrialNow(viewer, record, run)
+    } finally {
+      this.trialing.delete(draftId)
+    }
+  }
+
+  private async loginTrialNow(
+    viewer: ClientIdentity,
+    record: DraftRecord,
+    run: NonNullable<AuthoringDeps['loginTrial']>,
+  ): Promise<TrialReport> {
+    const draftId = record.id
     const installed = record.basedOn === null ? null : await this.deps.installed(record.adapterId)
     if (installed === null)
       throw new AuthoringRefusal(
@@ -1518,25 +1551,32 @@ export class DraftAuthoring implements Authoring {
       )
     if (manifest.auth.steps.length === 0)
       throw new AuthoringRefusal('Not tried: the draft has no login steps (auth.steps).')
+    // Each trial types the person's login on the real site: few, whichever drafts ask, so failed
+    // attempts can't add up to locking the person's account.
+    const siteWait = take(
+      this.loginTrialTimes,
+      record.adapterId,
+      LOGIN_TRIALS_PER_SITE_PER_HOUR,
+      this.deps.now(),
+    )
+    if (siteWait > 0)
+      throw new AuthoringRefusal(
+        `Not tried: ${LOGIN_TRIALS_PER_SITE_PER_HOUR} login trials an hour per site is the most. Try again in ${seconds(siteWait)} seconds.`,
+      )
     const trialWait = take(this.trialTimes, draftId, TRIAL_LIMITS.perDraftPerHour, this.deps.now())
     if (trialWait > 0)
       throw new AuthoringRefusal(
         `Not tried: ${TRIAL_LIMITS.perDraftPerHour} trials an hour per draft is the most. Try again in ${seconds(trialWait)} seconds.`,
       )
     const started = this.deps.now()
-    this.trialing.add(draftId)
-    let result: LoginTrialResult
-    try {
-      result = await run({
-        adapterId: record.adapterId,
-        draftId,
-        label: `${draftId.toLowerCase()}-${++this.trialCount}`,
-        steps: manifest.auth.steps,
-        clientName: this.deps.clientName(viewer).slice(0, 100),
-      })
-    } finally {
-      this.trialing.delete(draftId)
-    }
+    const result = await run({
+      viewer,
+      adapterId: record.adapterId,
+      draftId,
+      label: `${draftId.toLowerCase()}-${++this.trialCount}`,
+      steps: manifest.auth.steps,
+      clientName: this.deps.clientName(viewer).slice(0, 100),
+    })
     if (result.kind === 'signed-in-before')
       throw new AuthoringRefusal(
         `Not tried: the trial’s new browser was signed in to ${manifest.name} before any step ran, so the steps would prove nothing.`,
@@ -1564,11 +1604,13 @@ export class DraftAuthoring implements Authoring {
       outcome:
         result.kind === 'signed-in'
           ? 'output'
-          : result.status === 'needsUser'
-            ? 'needs-user'
-            : result.status === 'blocked'
-              ? 'site-resting'
-              : 'error',
+          : result.kind === 'refused'
+            ? 'error'
+            : result.status === 'needsUser'
+              ? 'needs-user'
+              : result.status === 'blocked'
+                ? 'site-resting'
+                : 'error',
       login: true,
     })
     this.deps.notify(`${this.deps.clientName(viewer)} tried new login steps on ${siteDomain(host)}.`)
@@ -1814,6 +1856,9 @@ function trialLines(trials: readonly TrialSummary[], packageHash: string | null)
     )
 }
 
+/** Login trials per site in any hour, across drafts: each types the person's login. */
+export const LOGIN_TRIALS_PER_SITE_PER_HOUR = 4
+
 /** What a login trial is called where a tool's name would be: in its report and the audit log. */
 export const LOGIN_TRIAL = 'auth.steps'
 
@@ -1821,6 +1866,8 @@ export const LOGIN_TRIAL = 'auth.steps'
 export function loginTrialProblem(result: LoginTrialResult): string | null {
   if (result.kind === 'signed-in') return null
   if (result.kind === 'signed-in-before') return 'Valet was signed in before the steps ran.'
+  if (result.kind === 'refused')
+    return `${result.at === 'steps' ? 'The steps' : 'Checking for signed in after the steps'} didn’t finish: ${result.words}`
   if (result.at === 'after')
     return result.status === 'failed' && result.errorClass === 'not-logged-in'
       ? 'The steps all ran, but the site didn’t say signed in after them.'

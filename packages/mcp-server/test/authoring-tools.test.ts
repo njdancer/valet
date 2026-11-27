@@ -275,6 +275,8 @@ describe('authoring tools', () => {
       expect(refused.isError).toBe(true)
       expect(text(refused)).toContain('give either tool, or login: true')
     }
+    expect(text(await run({ draftId: DRAFT, login: true, signedIn: true }))).toContain('takes no input')
+    expect(text(await run({ draftId: DRAFT, login: true, input: { id: 'x' } }))).toContain('takes no input')
     expect(asked).toEqual([DRAFT])
   })
 

@@ -973,7 +973,7 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
       'login: Valet opens a login session on the site’s login page (developer mode must be on), checks it ' +
       'is signed out, runs the steps as a real login would, typing the person’s login without you seeing ' +
       'it, and checks it is signed in after. The draft must keep what a login depends on (home, navigation, ' +
-      'egress, secrets, session, auth.frameOrigins) as installed. A trial that signed in lets these steps ' +
+      'egress, secrets, session, auth.frameOrigins) as installed, and you need browser_login_steps. A trial that signed in lets these steps ' +
       'pass valet_check_draft, and shows on the person’s card. It can take as long as a real login (three ' +
       'minutes at most); if your call times out, it still finishes, and valet_check_draft shows how it ended.',
     input: z.object({
@@ -994,6 +994,10 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
       const tool = args['tool']
       if ((args['login'] === true) === (typeof tool === 'string'))
         throw new AuthoringRefusal('Not tried: give either tool, or login: true.')
+      const input = args['input']
+      const hasInput = typeof input === 'object' && input !== null && Object.keys(input).length > 0
+      if (args['login'] === true && (args['signedIn'] === true || hasInput))
+        throw new AuthoringRefusal('Not tried: a login trial takes no input and no signedIn.')
       return args['login'] === true
         ? a.loginTrial(s.viewer, args['draftId'] as string)
         : a.liveTrial(

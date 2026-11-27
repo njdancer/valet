@@ -5,6 +5,7 @@
 import { type AuditEvent, parseManifest, ValetError } from '@valet/core'
 import type { LoginStepContext } from '@valet/runtime'
 import { describe, expect, it } from 'vitest'
+import { BrowserRefusal } from '../../src/main/core/agent-browser'
 import { LoginSecrets } from '../../src/main/core/blocked'
 import { disabledOtpReader } from '../../src/main/core/credentials'
 import { DEMO_ACCOUNT } from '../../src/main/core/demo'
@@ -272,16 +273,31 @@ describe('a draft’s login trial', () => {
       status: 'blocked',
     })
     const user: Outcome = { status: 'needsUser', reason: 'captcha', stage: null, errorClass: null }
-    expect(await runLoginTrial(scripted([SIGNED_OUT, user]).session, STEPS)).toMatchObject({
+    expect(await runLoginTrial(scripted([SIGNED_OUT, user]).session, STEPS, 180_000)).toMatchObject({
       kind: 'stopped',
       at: 'steps',
       status: 'needsUser',
       reason: 'captcha',
     })
-    expect(await runLoginTrial(scripted([SIGNED_OUT, OK, SIGNED_OUT]).session, STEPS)).toMatchObject({
-      kind: 'stopped',
-      at: 'after',
-      errorClass: 'not-logged-in',
+    // Valet cutting the steps short (the runtime's time-out) is how the trial ended, not a refusal.
+    const cut = scripted([SIGNED_OUT])
+    const refusing = {
+      runSteps: async (steps: readonly unknown[]) => {
+        if (cut.batches.length === 0) return cut.session.runSteps(steps as never)
+        throw new BrowserRefusal('The steps ran out of time, or waited too long to start.')
+      },
+    } as unknown as Pick<LoginSession, 'runSteps'>
+    expect(await runLoginTrial(refusing, STEPS, 180_000)).toEqual({
+      kind: 'refused',
+      at: 'steps',
+      words: 'The steps ran out of time, or waited too long to start.',
     })
+    expect(await runLoginTrial(scripted([SIGNED_OUT, OK, SIGNED_OUT]).session, STEPS, 180_000)).toMatchObject(
+      {
+        kind: 'stopped',
+        at: 'after',
+        errorClass: 'not-logged-in',
+      },
+    )
   })
 })

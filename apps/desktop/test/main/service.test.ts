@@ -534,11 +534,20 @@ describe('developer mode (docs/approval-broker.md#developer-mode)', () => {
         },
       } as unknown as SessionDriver
     }
-    const s = await setup({ developerMode: true, trialDriver })
+    const s = await setup({
+      developerMode: true,
+      trialDriver,
+      // The agents' browser, so browser_login_steps is a tool an agent can hold.
+      sessionBrowser: async () => {
+        throw new Error('no session is opened here')
+      },
+    })
+    let viewer: { origin: 'local' | 'remote'; clientId: string } = { origin: 'remote', clientId: 'nobody' }
     const trial = (steps: readonly unknown[]) =>
       (
         s.service as unknown as {
           loginTrial(request: {
+            viewer: { origin: 'local' | 'remote'; clientId: string }
             adapterId: string
             draftId: string
             label: string
@@ -547,6 +556,7 @@ describe('developer mode (docs/approval-broker.md#developer-mode)', () => {
           }): Promise<unknown>
         }
       ).loginTrial({
+        viewer,
         adapterId: 'shop',
         draftId: 'dr-aaaaaaaaaa',
         label: 'dr-aaaaaaaaaa-1',
@@ -560,6 +570,10 @@ describe('developer mode (docs/approval-broker.md#developer-mode)', () => {
     expect(labels).toEqual([])
     await s.api.app.setDeveloperMode(true)
     await s.api.approvals.approve('shop', s.adapter.hash)
+    // A cloud agent without browser_login_steps may not have it done for them by a trial.
+    await expect(trial(steps)).rejects.toThrow(/needs the browser tool browser_login_steps/)
+    expect(labels).toEqual([])
+    viewer = { origin: 'local', clientId: (await s.api.clients.add('Claude Code')).id }
     expect(await trial(steps)).toEqual({ kind: 'signed-in' })
     expect(labels).toEqual(['shop:dr-aaaaaaaaaa-1'])
     expect(pages[0]?.gone).toEqual(['https://login.shop.test/login'])

@@ -4957,9 +4957,16 @@ export class AppService {
       return refused(error)
     }
     const { adapter, manifest } = site
+    // A trial types the person's login as a login session's browser_login_steps does, so only an
+    // agent that may use that tool may ask for one.
+    if (!this.mayRunLoginSteps(request.viewer))
+      throw new AuthoringRefusal(
+        'Not tried: a login trial needs the browser tool browser_login_steps, which you don’t have. valet_request_access asks the person for it.',
+      )
     let driver: SessionDriver
     try {
-      driver = await trialDriver(manifest, request.label, this.privateAllowance(request.draftId), null)
+      // The site's own hosts only, as a login session reaches: never the draft's private addresses.
+      driver = await trialDriver(manifest, request.label, () => false, null)
     } catch {
       throw new AuthoringRefusal('Not tried: Valet couldn’t open a browser for the trial.')
     }
@@ -4981,6 +4988,18 @@ export class AppService {
     } finally {
       await driver.close().catch(() => undefined)
     }
+  }
+
+  /** Whether this agent may call the agents' browser's browser_login_steps now. */
+  private mayRunLoginSteps(viewer: {
+    readonly origin: 'local' | 'remote'
+    readonly clientId: string
+  }): boolean {
+    const native = this.nativeDeclaration(BROWSER_ADAPTER_ID, 'login_steps')
+    if (native === null) return false
+    return viewer.origin === 'local'
+      ? !this.localToolsOff(viewer.clientId).has(`${BROWSER_ADAPTER_ID}.login_steps`)
+      : this.remote.allows(BROWSER_ADAPTER_ID, native, viewer.clientId)
   }
 
   private adapter(adapterId: string): BuiltinAdapter | null {

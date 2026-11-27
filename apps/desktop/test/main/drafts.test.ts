@@ -2001,11 +2001,16 @@ describe('repairing an installed adapter', () => {
   const INSTALLED_HASH = 'b'.repeat(64)
 
   async function loginDraft(overrides: Partial<AuthoringDeps> = {}) {
-    const tried: { adapterId: string; draftId: string; steps: unknown }[] = []
+    const tried: { adapterId: string; draftId: string; steps: unknown; viewer: ClientIdentity }[] = []
     let answer: LoginTrialResult = { kind: 'signed-in' }
     const h = await harness({
       loginTrial: async (request) => {
-        tried.push({ adapterId: request.adapterId, draftId: request.draftId, steps: request.steps })
+        tried.push({
+          adapterId: request.adapterId,
+          draftId: request.draftId,
+          steps: request.steps,
+          viewer: request.viewer,
+        })
         return answer
       },
       ...overrides,
@@ -2056,7 +2061,9 @@ describe('repairing an installed adapter', () => {
 
     const trial = await d.authoring.loginTrial(AGENT, d.draftId)
     expect(trial).toMatchObject({ tool: 'auth.steps', ok: true, problem: null, login: true })
-    expect(d.tried).toEqual([{ adapterId: 'shop', draftId: d.draftId, steps: d.newSteps.steps }])
+    expect(d.tried).toEqual([
+      { adapterId: 'shop', draftId: d.draftId, steps: d.newSteps.steps, viewer: AGENT },
+    ])
     expect(d.audit.at(-1)).toMatchObject({
       type: 'draft-trial',
       tool: 'auth.steps',
@@ -2148,13 +2155,56 @@ describe('repairing an installed adapter', () => {
     })
     await expect(d.authoring.loginTrial(AGENT, d.draftId)).rejects.toThrow(/must keep home, navigation/)
     const walls = await d.authoring.check(AGENT, d.draftId)
-    expect(walls.findings.find((f) => f.check === 'login')).toMatchObject({ level: 'caution' })
+    expect(walls.findings.find((f) => f.check === 'login')).toMatchObject({
+      level: 'error',
+      text: expect.stringMatching(/Change those in a draft of their own first/),
+    })
     expect(walls.findings.map((f) => f.text)).toContain(
       'get_item has no passing case that checks its output.',
     )
+    // Only reordered: the same walls, so the earlier failed trial still stands for these steps.
+    await d.write({ version: '0.5.3', auth: d.newSteps, navigation: [...d.manifest.navigation].reverse() })
+    const reordered = await d.authoring.check(AGENT, d.draftId)
+    expect(reordered.unchangedTools).toEqual(['get_item'])
+    expect(reordered.findings.map((f) => f.text)).toContain(
+      'The login steps changed, and their last login trial didn’t sign in: The steps stopped (auth-step: element-missing).',
+    )
+    // Removing every step isn't a manifest the package rules take, so it never gets this far.
+    await d.write({ version: '0.5.3', auth: { steps: [] } })
+    expect((await d.authoring.check(AGENT, d.draftId)).findings.map((f) => f.check)).toEqual(['package'])
     // Another agent's draft isn't theirs to try.
     await expect(d.authoring.loginTrial(OTHER, d.draftId)).rejects.toThrow()
     expect(d.tried).toHaveLength(2)
+  }, 60_000)
+
+  it('keeps a trial Valet cut short, and holds login trials to a few an hour per site', async () => {
+    const d = await loginDraft()
+    await d.write({ version: '0.5.3', auth: d.newSteps })
+    d.answer({
+      kind: 'refused',
+      at: 'steps',
+      words: 'The steps ran out of time, or waited too long to start.',
+    })
+    const cut = await d.authoring.loginTrial(AGENT, d.draftId)
+    expect(cut).toMatchObject({
+      ok: false,
+      problem: 'The steps didn’t finish: The steps ran out of time, or waited too long to start.',
+    })
+    expect(d.audit.at(-1)).toMatchObject({ type: 'draft-trial', login: true, outcome: 'error' })
+    expect((await d.authoring.check(AGENT, d.draftId)).ok).toBe(false)
+    // A second draft of the same site shares the site's login trials.
+    const { draft: second } = await d.authoring.createDraft(AGENT, { adapterId: 'shop', from: 'installed' })
+    await d.authoring.writeFile(
+      AGENT,
+      second.draftId,
+      'manifest.json',
+      JSON.stringify({ ...d.manifest, version: '0.5.3', auth: d.newSteps }),
+    )
+    for (let i = 0; i < 3; i++) await d.authoring.loginTrial(AGENT, i % 2 === 0 ? second.draftId : d.draftId)
+    await expect(d.authoring.loginTrial(AGENT, second.draftId)).rejects.toThrow(
+      /4 login trials an hour per site is the most/,
+    )
+    expect(d.tried).toHaveLength(4)
   }, 60_000)
 
   it('makes a changed login a caution where this Valet can’t try login steps', async () => {

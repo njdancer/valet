@@ -24,6 +24,11 @@ export interface DraftChanges {
   readonly loginWallsSame: boolean
   /** The hash a login trial is bound to: the draft's login steps and the walls they ran behind. */
   readonly loginKey: string
+  /**
+   * The draft is from the installed adapter and both manifests parsed, so the rest means what it
+   * says. When false, nothing is known to be unchanged, the login included.
+   */
+  readonly compared: boolean
 }
 
 export const NO_CHANGES_KNOWN: DraftChanges = {
@@ -31,17 +36,21 @@ export const NO_CHANGES_KNOWN: DraftChanges = {
   loginChanged: false,
   loginWallsSame: false,
   loginKey: '',
+  compared: false,
 }
+
+/** A list whose order means nothing, in one order, so reordering it is no change. */
+const asSet = (list: readonly string[]): string[] => [...new Set(list)].sort()
 
 /** What a login depends on besides its steps. */
 function loginWalls(m: AdapterManifest): unknown {
   return {
     home: m.home ?? null,
-    navigation: m.navigation,
-    egress: m.egress,
+    navigation: asSet(m.navigation),
+    egress: asSet(m.egress),
     secrets: m.secrets,
     session: m.session,
-    frameOrigins: m.auth.frameOrigins,
+    frameOrigins: asSet(m.auth.frameOrigins),
     runtime: m.runtime ?? 'browser',
   }
 }
@@ -96,5 +105,5 @@ export function draftChanges(
           })
           .map((tool) => tool.name)
       : []
-  return { unchangedTools, loginChanged, loginWallsSame, loginKey: key }
+  return { unchangedTools, loginChanged, loginWallsSame, loginKey: key, compared: true }
 }

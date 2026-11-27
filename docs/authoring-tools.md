@@ -614,18 +614,29 @@ changes, and only that (`drafts/changes.ts`):
   the steps as one batch, then `assertLoggedIn` again. The session's walls are the installed
   version's (navigation, secret origins, the password at most once, no value-probing selectors, a
   block opens the site's breaker), so the trial is refused unless the draft keeps `home`,
-  `navigation`, `egress`, `secrets`, `session`, `auth.frameOrigins` and `runtime` as installed. A
+  `navigation`, `egress`, `secrets`, `session`, `auth.frameOrigins` and `runtime` as installed
+  (lists compared as sets, so reordering is no change). It does what `browser_login_steps` does,
+  so the agent must hold that tool (a local app that turned it off, or a cloud agent never given
+  it, is refused), reaches only the site's own hosts (never the draft's private addresses), and is
+  held to 4 an hour per site across drafts, since each types the person's login and failed ones
+  could add up to an account lock-out. A trial Valet cuts short once the steps have started (its
+  time-out, the breaker) is kept as a failed trial, since the login may have been typed by then. A
   trial is kept on the draft record (`loginTrials`, the last 10) under a hash of the steps and those
   walls, so changing the version or a tool afterwards keeps it, and changing the steps doesn't. The
   card says "Login steps: changed, and a login trial signed in with them from signed out", or "…
   and not tried". It needs developer mode on, as every login session does.
+- **Steps and walls changed together are an error,** not a caution, or changing a wall would be a
+  way past the trial: the walls go in a draft of their own first, which the person approves, then
+  the steps are changed and tried.
 - **Where no trial can run,** a changed login is a caution, not a requirement: in a build without
-  developer mode (no login sessions at all), or when the draft also changed the walls above. The
-  card then says "not tried" and the auth-steps permission lines are the person's check, as before.
+  developer mode (no login sessions at all), or when Valet couldn't compare the draft's manifest
+  with the installed one. The card then says "not tried" and the auth-steps permission lines are
+  the person's check, as before.
 
 The steps get a real login's three minutes, so the call may outlast the client's timeout; the trial still
-finishes and the next check reads it. Not built: walls changed
-with the steps (they need the person's approval before a trial could use them).
+finishes and the next check reads it. Each trial holds the adapter's lock for its batches, and a
+successful one leaves a signed-in session at the site that Valet never signs out (a new-device
+email is possible). Not built: trying new walls before the person approves them.
 
 ## Signed-in authoring sessions (PR 3)
 
