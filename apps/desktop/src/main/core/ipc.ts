@@ -202,7 +202,12 @@ const HANDLERS: Readonly<
     api.adapters.clearSetting(id, s),
   ),
   'adapters.openCart': entry(z.tuple([ADAPTER_ID]), (api, [id]) => api.adapters.openCart(id)),
-  'adapters.clearLoginHold': entry(z.tuple([ADAPTER_ID]), (api, [id]) => api.adapters.clearLoginHold(id)),
+  // Lifting a hold lets Valet type a login again: the control panel only, never a confirmation
+  // panel or a hand-off banner, which show adapter text.
+  'adapters.clearLoginHold': entry(z.tuple([ADAPTER_ID]), (api, [id], sender) => {
+    if (sender.role !== 'control') throw new IpcRefused()
+    return api.adapters.clearLoginHold(id)
+  }),
   'adapters.setPaused': entry(z.tuple([ADAPTER_ID, z.boolean()]), (api, [id, paused]) =>
     api.adapters.setPaused(id, paused),
   ),

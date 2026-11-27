@@ -56,7 +56,7 @@ export const EVENT_WORDS = {
   confirmation: { label: 'Confirmation answered', tone: 'warning' },
   'lock-down': { label: 'Lock down', tone: 'danger' },
   'site-paused': { label: 'Site paused', tone: 'warning' },
-  'login-hold-cleared': { label: 'Logins resumed', tone: 'success' },
+  'login-hold-cleared': { label: 'Login hold lifted', tone: 'success' },
   'approval-requested': { label: 'Approval asked', tone: 'warning' },
   'approval-answered': { label: 'Approval answered', tone: 'neutral' },
   'agent-change': { label: 'Agent change', tone: 'neutral' },
@@ -456,7 +456,10 @@ export function details(event: AuditEvent, now: number): ReactNode {
       return (
         <>
           {event.adapterId}{' '}
-          <Quiet>{event.by === 'person' ? 'by you' : 'after a new version was approved'}</Quiet>
+          <Quiet>
+            {event.reason === undefined ? '' : `${needsUserWording(event.reason).short.toLowerCase()}, `}
+            {event.by === 'person' ? 'by you' : 'after a new version was approved'}
+          </Quiet>
         </>
       )
     case 'site-paused':

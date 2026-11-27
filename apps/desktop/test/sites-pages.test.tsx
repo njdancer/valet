@@ -104,7 +104,7 @@ describe('the Sites list', () => {
       a.id === 'woolworths'
         ? {
             session: { ...loggedIn, state: 'expired' as const },
-            loginHold: { until: null, reason: 'site-changed' as const, unfinished: false },
+            loginHold: { until: null, reason: 'site-changed' as const },
           }
         : {},
     )

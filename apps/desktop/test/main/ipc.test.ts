@@ -297,6 +297,18 @@ describe('developer mode', () => {
   })
 })
 
+describe('lifting a login hold', () => {
+  it('is for the control panel only: it lets Valet type a login again', async () => {
+    const { d, calls } = dispatcher()
+    for (const role of ['tray', 'confirmation', 'needs-user'] as const)
+      await expect(
+        d.dispatch(invokeChannel('adapters.clearLoginHold'), ['woolworths'], { ...control, role }),
+      ).rejects.toBeInstanceOf(IpcRefused)
+    await d.dispatch(invokeChannel('adapters.clearLoginHold'), ['woolworths'], control)
+    expect(calls.map((c) => c.args)).toEqual([['woolworths']])
+  })
+})
+
 describe('lock down', () => {
   it('can be pulled from any window, but only the control panel and the menu bar unlock', async () => {
     const { d, calls } = dispatcher()

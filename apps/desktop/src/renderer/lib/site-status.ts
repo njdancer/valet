@@ -119,7 +119,15 @@ export function siteStatus(
     }
   // Valet has stopped logging in by itself (issue #32): without this the site read "Ready · logs
   // in again on the next call" while every call was turned away, and nothing offered to lift it.
+  // A fix waiting for review leads: approving it lifts a hold it may fix, and logging in again with
+  // the old steps would only fail the same way.
   const hold = adapter.loginHold ?? null
+  if (hold !== null && adapter.pendingUpdate !== null)
+    return {
+      tone: 'warning',
+      text: `${loginHoldText(adapter.name, hold)} · update ${adapter.pendingUpdate.version} waiting for review`,
+      fix: 'review-update',
+    }
   if (hold !== null) return { tone: 'warning', text: loginHoldText(adapter.name, hold), fix: 'retry-login' }
   if (adapter.pendingUpdate !== null)
     return {
@@ -141,11 +149,8 @@ export function siteStatus(
 
 /** Why Valet won't log in to a site by itself, and until when. */
 export function loginHoldText(site: string, hold: LoginHold): string {
-  if (hold.unfinished)
-    return `Valet’s last login to ${site} didn’t finish · it won’t log in again by itself until you check the account`
-  if (hold.reason !== null)
-    return `Valet stopped logging in to ${site} (${needsUserWording(hold.reason).short.toLowerCase()}) · it won’t try again by itself`
+  const why = hold.reason === null ? '' : ` (${needsUserWording(hold.reason).short.toLowerCase()})`
   if (hold.until !== null)
-    return `Valet’s last login to ${site} didn’t work · it tries again at ${formatClock(hold.until)}`
-  return `Valet’s last login to ${site} didn’t work · it won’t try again by itself`
+    return `Valet’s last login to ${site} didn’t work${why} · it tries again at ${formatClock(hold.until)}`
+  return `Valet stopped logging in to ${site}${why} · it won’t try again by itself`
 }

@@ -1295,7 +1295,7 @@ describe('the person lifting a login hold from the app (issue #32)', () => {
     const s = await approved()
     expect(await hold(s)).toBeNull()
     await markers(s).hold('shop', 1, null, 'captcha')
-    expect(await hold(s)).toEqual({ until: null, reason: 'captcha', unfinished: false })
+    expect(await hold(s)).toEqual({ until: null, reason: 'captcha' })
     await s.api.adapters.clearLoginHold('shop')
     expect(await markers(s).read('shop')).toEqual({ kind: 'unset' })
     expect(await hold(s)).toBeNull()
@@ -1307,17 +1307,25 @@ describe('the person lifting a login hold from the app (issue #32)', () => {
     expect(readAudit(s.paths.audit).filter((e) => e.type === 'login-hold-cleared')).toHaveLength(1)
   })
 
-  it('shows a backoff until its time and an unfinished login until lifted', async () => {
+  it('shows a backoff until its time, and never touches a login in progress (the runtime’s lock)', async () => {
     const s = await approved()
-    await markers(s).hold('shop', 1, Date.parse('2026-11-07T01:00:00.000Z'))
-    expect(await hold(s)).toEqual({ until: '2026-11-07T01:00:00.000Z', reason: null, unfinished: false })
-    await markers(s).hold('shop', 1, Date.parse('2026-11-06T23:00:00.000Z'))
-    expect(await hold(s)).toBeNull()
+    await markers(s).hold('shop', 1, Date.parse('2026-11-07T01:00:00.000Z'), 'otp-required')
+    expect(await hold(s)).toEqual({ until: '2026-11-07T01:00:00.000Z', reason: 'otp-required' })
+    // Over, or about to be: the next call may be starting a login, so nothing to show or lift.
+    for (const at of ['2026-11-06T23:00:00.000Z', '2026-11-07T00:00:03.000Z']) {
+      await markers(s).hold('shop', 1, Date.parse(at))
+      expect(await hold(s), at).toBeNull()
+      await s.api.adapters.clearLoginHold('shop')
+      expect(await markers(s).read('shop'), at).toMatchObject({ kind: 'held' })
+    }
+    // A login running now, or one that never finished (the login window settles that one).
     await markers(s).set('shop', 'call_1')
-    await markers(s).markAttempted('shop')
-    expect(await hold(s)).toEqual({ until: null, reason: null, unfinished: true })
+    expect(await hold(s)).toBeNull()
     await s.api.adapters.clearLoginHold('shop')
-    expect(await markers(s).read('shop')).toEqual({ kind: 'unset' })
+    await markers(s).markAttempted('shop')
+    await s.api.adapters.clearLoginHold('shop')
+    expect(await markers(s).read('shop')).toEqual({ kind: 'in-progress' })
+    expect(readAudit(s.paths.audit).filter((e) => e.type === 'login-hold-cleared')).toEqual([])
   })
 
   it('refuses while the login window is open, and for a site that isn’t installed', async () => {
@@ -5873,11 +5881,17 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     expect((await s.api.adapters.list()).find((a) => a.id === 'shop')?.loginHold).toEqual({
       until: null,
       reason: 'site-changed',
-      unfinished: false,
     })
     // Installing alone changes nothing: the person hasn't approved the fix yet.
     expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true, hash: v2 })
     expect(await markers.read('shop')).toMatchObject({ kind: 'held', reason: 'site-changed' })
+    // Turning the update down by rolling back to v1 keeps the hold v1 itself earned.
+    await s.api.adapters.rollback('shop', v1)
+    expect(await markers.read('shop')).toMatchObject({ kind: 'held', reason: 'site-changed' })
+    // Approving the version already approved is no new version either.
+    await s.api.approvals.approve('shop', v1)
+    expect(await markers.read('shop')).toMatchObject({ kind: 'held', reason: 'site-changed' })
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true, hash: v2 })
     await s.api.approvals.approve('shop', v2)
     expect(await markers.read('shop')).toEqual({ kind: 'unset' })
     expect((await s.api.adapters.list()).find((a) => a.id === 'shop')?.loginHold).toBeNull()
