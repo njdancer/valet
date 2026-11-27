@@ -19,6 +19,8 @@ export const PATHS = {
   /** Assumed, never seen live: see stores.ts. */
   pickupStores: '/api/v3/ui/fulfilment/stores',
   fulfilment: '/apis/ui/Fulfilment',
+  /** A store's pick-up times, by its AreaId (live, anonymous, 2026-11-28). */
+  pickupWindows: '/api/v3/ui/fulfilment/windows',
 } as const
 
 /**

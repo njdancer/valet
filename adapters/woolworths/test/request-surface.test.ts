@@ -16,6 +16,8 @@ const INPUTS: Readonly<Record<string, unknown>> = {
   set_cart_quantity: { stockcode: 88436, quantity: 4 },
   remove_from_cart: { stockcode: 88436 },
   update_cart: { items: [{ stockcode: 88436 }, { stockcode: 888137, quantity: 0, mode: 'set' }] },
+  list_pickup_times: { postcode: '4017', store: 'Bracken Ridge' },
+  choose_pickup_time: { postcode: '4017', store: 'Bracken Ridge', timeId: 1116912 },
   find_stores: { query: '2000' },
   apply_store: { value: '9001201' },
 }
@@ -26,7 +28,15 @@ function serveEverything(ctx: FakeToolContext): FakeToolContext {
     .on('GET', '/apis/ui/product/detail/88436', json(loadFixture('product-detail-88436.json')))
     .on('GET', '/apis/ui/Trolley', json(loadFixture('trolley-two-items.json')))
     .on('POST', '/api/v3/ui/trolley/update', json(loadFixture('trolley-two-items.json')))
-    .on('GET', '/api/v3/ui/fulfilment/stores', json([{ AddressId: 9001201, Description: 'Town Hall' }]))
+    .on(
+      'GET',
+      '/api/v3/ui/fulfilment/stores',
+      json([
+        { AddressId: 9001201, Description: 'Town Hall' },
+        { AddressId: 12929425, Description: 'Bracken Ridge', AreaId: 4147, FulfilmentMethod: 'DriveUp' },
+      ]),
+    )
+    .on('GET', '/api/v3/ui/fulfilment/windows', json(loadFixture('pickup-windows-bracken-ridge.json')))
     .on('POST', '/apis/ui/Fulfilment', json({ IsSuccessful: true, AddressId: 9001201 }))
 }
 

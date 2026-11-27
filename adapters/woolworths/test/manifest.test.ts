@@ -55,7 +55,7 @@ function stepsIn(steps: readonly unknown[]): any[] {
 describe('the real manifest', () => {
   it('is the default export and points at the live site', () => {
     expect(realManifest.home).toBe('https://www.woolworths.com.au/')
-    expect(realManifest.version).toBe('0.5.5')
+    expect(realManifest.version).toBe('0.6.0')
     expect(manifestSchema.parse(realManifest)).toEqual(realManifest)
   })
 
@@ -356,6 +356,7 @@ describe('the request surface', () => {
       { method: 'GET', path: '/apis/ui/product/detail/:stockcode', purpose: 'read', cacheSeconds: 900 },
       { method: 'GET', path: '/apis/ui/Trolley', purpose: 'read', cacheSeconds: 120 },
       { method: 'GET', path: '/api/v3/ui/fulfilment/stores', purpose: 'read' },
+      { method: 'GET', path: '/api/v3/ui/fulfilment/windows', purpose: 'read' },
     ])
   })
 
@@ -441,6 +442,8 @@ describe('the tool declarations', () => {
       set_cart_quantity: 'write',
       remove_from_cart: 'write',
       update_cart: 'write',
+      list_pickup_times: 'read',
+      choose_pickup_time: 'write',
       find_stores: 'read',
       apply_store: 'write',
     })
@@ -455,6 +458,7 @@ describe('the tool declarations', () => {
       set_cart_quantity: { destructive: true, idempotent: true },
       remove_from_cart: { destructive: true, idempotent: true },
       update_cart: { destructive: true, idempotent: false },
+      choose_pickup_time: { destructive: true, idempotent: true },
       apply_store: { destructive: true, idempotent: true },
     })
   })

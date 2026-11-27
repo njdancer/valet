@@ -51,7 +51,7 @@ import {
   searchQueryFromParams,
   searchResponse,
 } from './search'
-import { pickupStores, storeChosenBy, storesForPostcode } from './stores'
+import { fulfilmentChosenBy, pickupStores, pickupWindows, storesForPostcode } from './stores'
 import {
   applyTrolleyUpdate,
   MINIMUM_SPEND,
@@ -147,6 +147,8 @@ export interface FakeWoolworths {
    * first: the sessions logged in to `username`, or the anonymous ones for null.
    */
   pickupAddresses(username: string | null): readonly (number | null)[]
+  /** The pick-up time each session logged in to `username` reserved, by id (null: none). */
+  pickupTimes(username: string): readonly (number | null)[]
   /** Replaces the rate limit (null turns it off) and lifts any current blocks. */
   setRateLimit(limit: RateLimit | null): void
   /** While on, every www request gets the Access Denied page, as if the client's IP were blocked. */
@@ -430,12 +432,23 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
       if (stores === null) return json(exchange, 400, INVALID_REQUEST)
       return json(exchange, 200, options.houseBrand === undefined ? stores : rebrandJson(stores, STORE_NAME))
     }
+    if (method === 'GET' && path === '/api/v3/ui/fulfilment/windows') {
+      // Signed out too, as live (2026-11-28).
+      const areaId = Number(exchange.params.get('areaId'))
+      const windows = Number.isInteger(areaId) ? pickupWindows(areaId) : null
+      if (windows === null) return json(exchange, 400, INVALID_REQUEST)
+      return json(exchange, 200, windows)
+    }
     if (method === 'POST' && path === '/apis/ui/fulfilment') {
-      const chosen = storeChosenBy(parseJson(exchange.body))
+      const chosen = fulfilmentChosenBy(parseJson(exchange.body))
       if (chosen === null) return json(exchange, 400, INVALID_REQUEST)
       // The live site answers 401 with an empty body to a guest choosing a store (probe, 2026-11-27).
       if (store.firstNameOf(exchange.visitor) === null) return send(exchange, 401, 'text/plain', '')
-      exchange.visitor.fulfilment.addressId = chosen.AddressId
+      const previous = exchange.visitor.fulfilment.addressId
+      exchange.visitor.fulfilment.addressId = chosen.store.AddressId
+      // Choosing a store without a time keeps a time already reserved at it; another store drops it.
+      if (chosen.timeslotId !== null) exchange.visitor.fulfilment.timeslotId = chosen.timeslotId
+      else if (previous !== chosen.store.AddressId) exchange.visitor.fulfilment.timeslotId = null
       // Signed in, the live site answers with a 200 and nothing else: no body, no content type
       // (2026-11-27). The site's scripts read { IsSuccessful, ... } only when a body comes.
       return empty(exchange, 200)
@@ -651,6 +664,9 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     outbox: auth0.outbox,
     close: async () => {
       await Promise.all([closeServer(server), closeServer(authServer)])
+    },
+    pickupTimes(username) {
+      return store.pickupTimesOf(username)
     },
     pickupAddresses(username) {
       return username === null ? store.anonymousPickupAddresses() : store.pickupAddressesOf(username)

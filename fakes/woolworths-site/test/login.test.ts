@@ -873,6 +873,33 @@ describe('after the login', () => {
     expect(site.pickupAddresses(PLAIN.username)).toEqual([9001310])
   })
 
+  it('reserves an available pick-up time, signed in, as the site’s “Reserve time” button sends it', async () => {
+    const site = await start()
+    const b = await browser(site)
+    await b.www.get(location(await signIn(site, b, PLAIN)))
+    const reserve = (
+      timeslotId: number,
+      windowDate = '2030-03-05T00:00:00.0000000',
+      fulfilmentMethod = 'DriveUp',
+    ) =>
+      b.www.postJson('/apis/ui/Fulfilment', { addressId: 9004224, fulfilmentMethod, timeslotId, windowDate })
+    // Not a time of that day, a full time, "from 30 minutes": refused, nothing kept.
+    expect((await reserve(1422400)).status).toBe(400)
+    expect((await reserve(1422401, '2030-03-04T00:00:00.0000000')).status).toBe(400)
+    expect((await reserve(1422499, '2030-03-04T00:00:00.0000000')).status).toBe(400)
+    expect(site.pickupTimes(PLAIN.username)).toEqual([null])
+    const reply = await reserve(1422412)
+    expect(reply.status).toBe(200)
+    expect(reply.text).toBe('')
+    expect(site.pickupAddresses(PLAIN.username)).toEqual([9004224])
+    expect(site.pickupTimes(PLAIN.username)).toEqual([1422412])
+    // Choosing the same store again keeps the time; another store drops it.
+    await b.www.postJson('/apis/ui/Fulfilment', { addressId: 9004224, fulfilmentMethod: 'Pickup' })
+    expect(site.pickupTimes(PLAIN.username)).toEqual([1422412])
+    await b.www.postJson('/apis/ui/Fulfilment', { addressId: 9001310, fulfilmentMethod: 'Pickup' })
+    expect(site.pickupTimes(PLAIN.username)).toEqual([null])
+  })
+
   it('logs out to a fresh anonymous session; the old token is dead', async () => {
     const site = await start()
     const b = await browser(site)

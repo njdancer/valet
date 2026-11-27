@@ -8,9 +8,16 @@ import { checkShape, type DriftReport, type FetchInit, mergeReports } from '@val
 import { TILE_BUCKETS } from './cart'
 import { searchRequest } from './products'
 import { PATHS } from './site'
-import { productDetailWire, searchWire, supplyLimitGroupWire, trolleyLineWire, trolleyWire } from './wire'
+import {
+  pickupWindowsWire,
+  productDetailWire,
+  searchWire,
+  supplyLimitGroupWire,
+  trolleyLineWire,
+  trolleyWire,
+} from './wire'
 
-export const DRIFT_ENDPOINTS = ['search', 'productDetail', 'trolley'] as const
+export const DRIFT_ENDPOINTS = ['search', 'productDetail', 'trolley', 'pickupWindows'] as const
 export type DriftEndpoint = (typeof DRIFT_ENDPOINTS)[number]
 
 /** Checks one response body from `endpoint` against what the adapter reads it with. */
@@ -22,6 +29,8 @@ export function checkResponse(endpoint: DriftEndpoint, body: unknown): DriftRepo
       return checkShape(productDetailWire, body)
     case 'trolley':
       return checkTrolley(body)
+    case 'pickupWindows':
+      return checkShape(pickupWindowsWire, body)
   }
 }
 
