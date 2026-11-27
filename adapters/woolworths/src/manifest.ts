@@ -219,7 +219,7 @@ export function createManifest({
     schemaVersion: 1,
     id: 'woolworths',
     name: 'Woolworths',
-    version: '0.5.4',
+    version: '0.5.5',
     description: 'Search Woolworths (Australia) products and manage the online shopping cart.',
     home: `${origin}/`,
     // Opened in the person's own browser to check out: Valet never places orders.
@@ -281,7 +281,8 @@ export function createManifest({
         cacheSeconds: CATALOGUE_CACHE_SECONDS,
       },
       { method: 'GET', path: '/apis/ui/Trolley', purpose: 'read', cacheSeconds: TROLLEY_CACHE_SECONDS },
-      { method: 'POST', path: '/api/v3/ui/trolley/update', purpose: 'write', refreshes: '/apis/ui/Trolley' },
+      // No `refreshes`: the live reply is the changed lines, not the trolley (2026-11-27).
+      { method: 'POST', path: '/api/v3/ui/trolley/update', purpose: 'write' },
       // The store setting's two calls (stores.ts). Assumed paths, never seen live.
       { method: 'GET', path: '/api/v3/ui/fulfilment/stores', purpose: 'read' },
       { method: 'POST', path: '/apis/ui/Fulfilment', purpose: 'write' },

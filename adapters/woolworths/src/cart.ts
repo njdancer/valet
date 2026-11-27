@@ -15,10 +15,11 @@ import { productName, stockcodeSchema } from './products'
 import { CART_PAGE, getHeldJson, getJson, PATHS, postJson } from './site'
 import { cents, text } from './text'
 import {
-  type ProductTileWire,
-  productTileWire,
   supplyLimitGroupWire,
+  type TrolleyLineWire,
   type TrolleyWire,
+  trolleyLineWire,
+  trolleyUpdateWire,
   trolleyWire,
   updateStatusWire,
 } from './wire'
@@ -103,15 +104,16 @@ export const cartSchema = z.object({
 })
 export type Cart = z.infer<typeof cartSchema>
 
-function toCartItem(tile: ProductTileWire, available: boolean): Cart['items'][number] {
+function toCartItem(tile: TrolleyLineWire, available: boolean): Cart['items'][number] {
   const quantity = tile.QuantityInTrolley ?? 0
-  const price = tile.Price ?? null
+  const price = tile.UnitSalePrice ?? null
+  const lineTotal = tile.SalePrice ?? (price === null ? null : cents(price * quantity))
   return {
     stockcode: tile.Stockcode,
     name: productName(tile),
     quantity,
     price,
-    lineTotal: price === null ? null : cents(price * quantity),
+    lineTotal,
     available,
   }
 }
@@ -128,7 +130,7 @@ interface TrolleyRead {
 }
 
 function readTrolley(trolley: TrolleyWire): TrolleyRead {
-  const unavailable: { tile: ProductTileWire; reason: UnavailableReason }[] = []
+  const unavailable: { tile: TrolleyLineWire; reason: UnavailableReason }[] = []
   let unreadable = 0
   for (const tile of trolley.UnavailableItems) unavailable.push({ tile, reason: 'unavailable' })
   for (const element of trolley.ExceededSupplyLimitGroups ?? []) {
@@ -138,7 +140,7 @@ function readTrolley(trolley: TrolleyWire): TrolleyRead {
   }
   for (const [bucket, reason] of TILE_BUCKETS) {
     for (const element of trolley[bucket] ?? []) {
-      const tile = productTileWire.safeParse(element)
+      const tile = trolleyLineWire.safeParse(element)
       if (tile.success) unavailable.push({ tile: tile.data, reason })
       else unreadable++
     }
@@ -197,9 +199,38 @@ interface LineOutcome {
 }
 
 /**
+ * What the live site's update reply says about each line asked for: the lines it changed, in
+ * UpdatedItems, and none for a line set to 0. A line asked for more than 0 that the reply leaves out,
+ * or shows twice, is unconfirmed.
+ */
+function readUpdatedItems(
+  items: readonly TrolleyLineWire[],
+  lines: readonly { readonly stockcode: number; readonly quantity: number }[],
+): LineOutcome[] {
+  const counts = new Map<number, number>()
+  for (const tile of items) counts.set(tile.Stockcode, (counts.get(tile.Stockcode) ?? 0) + 1)
+  return lines.map(({ stockcode, quantity: requested }): LineOutcome => {
+    const count = counts.get(stockcode) ?? 0
+    if (count === 0) {
+      return requested === 0
+        ? { quantity: 0, confirmed: true, notices: [] }
+        : { quantity: null, confirmed: false, notices: [NOTICES.lineUnreadable] }
+    }
+    const tile = items.find((item) => item.Stockcode === stockcode)
+    const stored = tile?.QuantityInTrolley
+    if (count > 1 || stored === null || stored === undefined)
+      return { quantity: null, confirmed: false, notices: [NOTICES.lineUnreadable] }
+    const notices = stored === requested ? [] : [NOTICES.differs(stored, requested)]
+    if (stored > 0 && tile?.IsAvailable === false) notices.push(NOTICES.setAside('unavailable'))
+    return { quantity: stored, confirmed: true, notices }
+  })
+}
+
+/**
  * Sets each line's absolute quantity in one update request, and reports what the site stored for
- * each. The response is assumed to be the updated trolley; when it isn't, every line is reported as
- * unconfirmed rather than spending another request to fetch the cart.
+ * each. The live site answers with the lines it changed (trolleyUpdateWire), so the whole cart comes
+ * back null; a reply that is the whole trolley (the fake's older answer) is read as one. Any other
+ * reply leaves every line unconfirmed rather than spending another request to fetch the cart.
  */
 async function setQuantities(
   ctx: ToolContext,
@@ -225,6 +256,9 @@ async function setQuantities(
   const trolley = trolleyWire.safeParse(body)
   if (reportsRejection(body, trolley.success)) throw new ValetError('tool-run', 'invalid')
   if (!trolley.success) {
+    const updated = trolleyUpdateWire.safeParse(body)
+    if (updated.success)
+      return { lines: readUpdatedItems(updated.data.UpdatedItems, lines), cart: null, notices: [] }
     const unconfirmed = { quantity: null, confirmed: false, notices: [NOTICES.unconfirmed] }
     return { lines: lines.map(() => unconfirmed), cart: null, notices: [NOTICES.unconfirmed] }
   }

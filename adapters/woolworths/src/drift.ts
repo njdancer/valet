@@ -8,7 +8,7 @@ import { checkShape, type DriftReport, type FetchInit, mergeReports } from '@val
 import { TILE_BUCKETS } from './cart'
 import { searchRequest } from './products'
 import { PATHS } from './site'
-import { productDetailWire, productTileWire, searchWire, supplyLimitGroupWire, trolleyWire } from './wire'
+import { productDetailWire, searchWire, supplyLimitGroupWire, trolleyLineWire, trolleyWire } from './wire'
 
 export const DRIFT_ENDPOINTS = ['search', 'productDetail', 'trolley'] as const
 export type DriftEndpoint = (typeof DRIFT_ENDPOINTS)[number]
@@ -42,7 +42,7 @@ function checkTrolley(body: unknown): DriftReport {
   }
   for (const [bucket] of TILE_BUCKETS) {
     for (const element of trolley[bucket] ?? []) {
-      parts.push({ at: `${bucket}[]`, report: checkShape(productTileWire, element) })
+      parts.push({ at: `${bucket}[]`, report: checkShape(trolleyLineWire, element) })
     }
   }
   if ((trolley.BundleItems?.length ?? 0) > 0) {

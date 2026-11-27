@@ -173,15 +173,27 @@ describe('get_cart', () => {
 
   it('gives no line total for an item with no price', async () => {
     const body = loadFixture('trolley-two-items.json')
-    body.AvailableItems[0].Price = null
+    body.AvailableItems[0].UnitSalePrice = null
+    delete body.AvailableItems[0].SalePrice
     const ctx = new FakeToolContext().on('GET', TROLLEY, json(body))
     const cart = await getCart.run(ctx, {})
     expect(cart.items[0]).toMatchObject({ price: null, lineTotal: null })
   })
 
-  it('rounds line totals to cents', async () => {
+  it("takes a line's prices from UnitSalePrice and SalePrice, as the live site sends them", async () => {
     const body = loadFixture('trolley-two-items.json')
-    body.AvailableItems[0].Price = 1.1
+    body.AvailableItems[0].UnitSalePrice = 2
+    body.AvailableItems[0].SalePrice = 3.5
+    const ctx = new FakeToolContext().on('GET', TROLLEY, json(body))
+    const cart = await getCart.run(ctx, {})
+    // The site's own line total wins, even when it isn't price times quantity (a multi-buy, say).
+    expect(cart.items[0]).toMatchObject({ price: 2, lineTotal: 3.5 })
+  })
+
+  it('rounds line totals to cents when the site sends no line total', async () => {
+    const body = loadFixture('trolley-two-items.json')
+    body.AvailableItems[0].UnitSalePrice = 1.1
+    delete body.AvailableItems[0].SalePrice
     body.AvailableItems[0].QuantityInTrolley = 3
     const ctx = new FakeToolContext().on('GET', TROLLEY, json(body))
     const cart = await getCart.run(ctx, {})
@@ -191,6 +203,7 @@ describe('get_cart', () => {
   it('treats an item with no quantity as zero', async () => {
     const body = loadFixture('trolley-two-items.json')
     delete body.AvailableItems[0].QuantityInTrolley
+    delete body.AvailableItems[0].SalePrice
     const ctx = new FakeToolContext().on('GET', TROLLEY, json(body))
     const cart = await getCart.run(ctx, {})
     expect(cart.items[0]).toMatchObject({ quantity: 0, lineTotal: 0 })
@@ -580,6 +593,98 @@ describe('set_cart_quantity', () => {
     expect(result).toMatchObject({ requestedQuantity: 2, quantity: 2, confirmed: true, notices: [] })
     expect(result.cart?.subtotal).toBe(11.8)
     expect(setCartQuantity.output.parse(result)).toEqual(result)
+  })
+
+  describe("the live site's reply: the changed lines, not the trolley", () => {
+    // As captured signed in on 2026-11-27, keys only; the values here are made up.
+    function line(stockcode: number, quantityInTrolley: number, isAvailable = true) {
+      return {
+        DisplayName: 'Salt 500g',
+        IsAvailable: isAvailable,
+        ListPrice: 2 * quantityInTrolley,
+        MatchedPromotions: [],
+        MissedPromotions: [],
+        PriceLevel: null,
+        ProfileId: null,
+        Quantity: quantityInTrolley,
+        QuantityInTrolley: quantityInTrolley,
+        SalePrice: 2 * quantityInTrolley,
+        Stockcode: stockcode,
+        UnitSalePrice: 2,
+        WasPrice: null,
+      }
+    }
+    function reply(updatedItems: unknown[]) {
+      return {
+        Message: null,
+        UpdatedItems: updatedItems,
+        DeliveryFee: { Total: 0 },
+        PotentialOrderPromotions: [],
+        Totals: { SubTotal: 4, Total: 4, TotalSavings: 0 },
+        TotalTrolleyItemQuantity: 2,
+        TrolleyItemCount: 1,
+      }
+    }
+
+    it('confirms the quantity the reply shows for the line', async () => {
+      const ctx = new FakeToolContext().on('POST', UPDATE, json(reply([line(37687, 2)])))
+      const result = await set(ctx, 37687, 2)
+      expect(result).toEqual({
+        stockcode: 37687,
+        requestedQuantity: 2,
+        quantity: 2,
+        confirmed: true,
+        cart: null,
+        notices: [],
+      })
+      expect(setCartQuantity.output.parse(result)).toEqual(result)
+    })
+
+    it('confirms a removal: a line set to 0 is left out of the reply', async () => {
+      const ctx = new FakeToolContext().on('POST', UPDATE, json(reply([])))
+      expect(await set(ctx, 37687, 0)).toMatchObject({ quantity: 0, confirmed: true, notices: [] })
+    })
+
+    it('leaves a line asked for more than 0 that the reply leaves out unconfirmed', async () => {
+      const ctx = new FakeToolContext().on('POST', UPDATE, json(reply([line(99999, 1)])))
+      expect(await set(ctx, 37687, 2)).toMatchObject({
+        quantity: null,
+        confirmed: false,
+        notices: [NOTICES.lineUnreadable],
+      })
+    })
+
+    it('leaves a line the reply shows twice unconfirmed', async () => {
+      const ctx = new FakeToolContext().on('POST', UPDATE, json(reply([line(37687, 2), line(37687, 3)])))
+      expect(await set(ctx, 37687, 2)).toMatchObject({ quantity: null, confirmed: false })
+    })
+
+    it('says when the site stored less than asked, and when it set the product aside', async () => {
+      const ctx = new FakeToolContext().on('POST', UPDATE, json(reply([line(37687, 1, false)])))
+      expect(await set(ctx, 37687, 2)).toMatchObject({
+        quantity: 1,
+        confirmed: true,
+        notices: [NOTICES.differs(1, 2), NOTICES.setAside('unavailable')],
+      })
+    })
+
+    it('confirms every line of a batch', async () => {
+      const ctx = new FakeToolContext().on('POST', UPDATE, json(reply([line(37687, 2)])))
+      const result = await updateCart.run(
+        ctx,
+        updateCart.input.parse({
+          items: [
+            { stockcode: 37687, quantity: 2, mode: 'set' },
+            { stockcode: 88436, quantity: 0, mode: 'set' },
+          ],
+        }),
+      )
+      expect(result.items.map(({ quantity, confirmed }) => ({ quantity, confirmed }))).toEqual([
+        { quantity: 2, confirmed: true },
+        { quantity: 0, confirmed: true },
+      ])
+      expect(result.cart).toBeNull()
+    })
   })
 
   it('reports a reply that is not a trolley as unconfirmed, not as the quantity asked for', async () => {

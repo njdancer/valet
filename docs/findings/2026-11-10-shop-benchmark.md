@@ -34,6 +34,24 @@ What each call sends now:
 - `set_cart_quantity` and `remove_from_cart`: one, plus the probe once a minute.
 - `get_cart`: two, always. The probe and the site's own trolley.
 
+## Update, 2026-11-27: the live update reply isn't the trolley
+
+Signed in, the live `POST /api/v3/ui/trolley/update` answers with only the lines it changed
+(`UpdatedItems`) and the totals, not the trolley. The cache had been filled from that reply as if
+it were the trolley, which the live answer can't be, so every `add_to_cart` reads the trolley from
+the site before its write: two requests an add. The benchmark now answers the update as the live
+site does, and the numbers are:
+
+| How the agent shops                                | Calls | Requests | Time                  |
+| -------------------------------------------------- | ----- | -------- | --------------------- |
+| `search_products` then `add_to_cart` for each item | 59    | 102      | hourly cap at item 30 |
+| `add_to_cart` only, stockcodes already known       | 31    | 77       | 19 min                |
+| `set_cart_quantity` only, stockcodes already known | 31    | 40       | 9.6 min               |
+| `search_products` for each, then one `update_cart` | 32    | 35       | 8.4 min               |
+
+So a whole shop goes in one `update_cart`, which the server's instructions already suggest for a
+list. Search-then-add item by item no longer fits the hour's 100 requests.
+
 ## And with the rest of D28's pacing
 
 D28's jitter (each gap 10 to 15 s) and its cap of four requests a minute are now built too, after

@@ -377,7 +377,7 @@ describe('the trolley', () => {
     expect(body.Errors[0].Type).toBe('InvalidSubtotal')
   })
 
-  it('updates and returns the updated trolley', async () => {
+  it('updates, and answers with the changed lines as the live site does', async () => {
     const site = await start()
     const client = await browsing(site)
     const reply = await client.postJson('/api/v3/ui/trolley/update', {
@@ -388,8 +388,13 @@ describe('the trolley', () => {
     })
     expect(reply.status).toBe(200)
     const body = JSON.parse(reply.text)
-    expect(body.AvailableItems.map((i: { Stockcode: number }) => i.Stockcode)).toEqual([88436])
-    expect(body.UnavailableItems.map((i: { Stockcode: number }) => i.Stockcode)).toEqual([900303])
+    // Live (2026-11-27): the reply is not the trolley but the lines changed, with totals.
+    expect(body.AvailableItems).toBeUndefined()
+    expect(body.UpdatedItems).toMatchObject([
+      { Stockcode: 88436, QuantityInTrolley: 2, UnitSalePrice: 4.2, SalePrice: 8.4, IsAvailable: true },
+      { Stockcode: 900303, QuantityInTrolley: 1, IsAvailable: false },
+    ])
+    expect(body.UpdatedItems[0].Price).toBeUndefined()
     expect(body.TotalTrolleyItemQuantity).toBe(3)
     const again = JSON.parse((await client.get('/apis/ui/Trolley')).text)
     expect(again.Totals.SubTotal).toBe(8.4)
@@ -402,7 +407,8 @@ describe('the trolley', () => {
     const reply = await client.postJson('/api/v3/ui/trolley/update', {
       items: [{ stockcode: 88436, quantity: 0 }],
     })
-    expect(JSON.parse(reply.text).AvailableItems).toEqual([])
+    // Live (2026-11-27): a line set to 0 is left out of UpdatedItems.
+    expect(JSON.parse(reply.text).UpdatedItems).toEqual([])
   })
 
   it('keeps each anonymous visitor in their own trolley', async () => {

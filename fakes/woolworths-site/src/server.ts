@@ -59,6 +59,7 @@ import {
   type TrolleyLine,
   trolleyLines,
   trolleyResponse,
+  trolleyUpdateResponse,
 } from './trolley'
 
 export interface FakeWoolworthsOptions {
@@ -422,7 +423,7 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     if (method === 'POST' && path === '/api/v3/ui/trolley/update') {
       const outcome = applyTrolleyUpdate(trolley, parseJson(exchange.body))
       if (!outcome.ok) return json(exchange, 400, INVALID_REQUEST)
-      return productJson(exchange, 200, trolleyResponse(trolley))
+      return productJson(exchange, 200, trolleyUpdateResponse(trolley, outcome.changed))
     }
     if (method === 'GET' && path === '/api/v3/ui/fulfilment/stores') {
       const stores = storesForPostcode(exchange.params.get('postcode'))
