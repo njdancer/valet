@@ -250,6 +250,16 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
       expect(w.site.authRequests.some((r) => r.target.includes('canary'))).toBe(false)
     })
 
+    it('chooses SMS on the phone page, then declines the passkey offer, as live (2026-11-27)', async () => {
+      const w = await world(SMS)
+      await w.runtime.call('get_cart', {})
+      const [choice] = posts(w.site, '/u/mfa-phone-challenge')
+      expect(new URLSearchParams(choice).get('type')).toBe('text')
+      expect(new URLSearchParams(choice).get('action')).toBe('default')
+      const offers = posts(w.site, '/u/custom-prompt/ap_passkeyoffer')
+      expect(offers.map((body) => new URLSearchParams(body).get('action'))).toEqual(['skip'])
+    })
+
     it('never navigates the auth partition off the two origins', async () => {
       const w = await world(SMS)
       await w.runtime.call('get_cart', {})

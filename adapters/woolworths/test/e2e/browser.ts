@@ -150,20 +150,38 @@ class Tab {
     // Navigating a frame isn't modelled; the guards stop every framed flow before a submit.
     if (doc !== this.doc) throw new ValetError('auth-step', 'unsupported')
     if (submitter.form === null) return
-    const form = this.doc.forms[submitter.form] as Element
+    await this.submitForm(submitter.form, submitter)
+  }
+
+  /**
+   * What the passkey offer's script does for a type="button" naming a form in data-submits-form:
+   * submits that form, with no submitter. A button naming none does nothing, as without script.
+   */
+  async scriptClick({ element, doc }: Located): Promise<void> {
+    if (doc !== this.doc) throw new ValetError('auth-step', 'unsupported')
+    const id = element.attrs.get('data-submits-form')
+    if (id === undefined) return
+    const index = this.doc.forms.findIndex((form) => form.attrs.get('id') === id)
+    if (index !== -1) await this.submitForm(index, null)
+  }
+
+  private async submitForm(formIndex: number, submitter: Element | null): Promise<void> {
+    const form = this.doc.forms[formIndex] as Element
     const fields = new URLSearchParams()
     for (const element of this.doc.elements) {
       const name = element.attrs.get('name')
-      if (element.form !== submitter.form || name === undefined) continue
+      if (element.form !== formIndex || name === undefined) continue
       if (element.tag === 'button') continue
-      if (element.tag === 'input' && element.attrs.get('type') === 'checkbox') {
+      const type = element.attrs.get('type')
+      if (element.tag === 'input' && (type === 'checkbox' || type === 'radio')) {
         if (element.checked) fields.append(name, element.attrs.get('value') ?? 'on')
         continue
       }
       fields.append(name, element.value)
     }
-    const submitterName = submitter.attrs.get('name')
-    if (submitterName !== undefined) fields.append(submitterName, submitter.attrs.get('value') ?? '')
+    const submitterName = submitter?.attrs.get('name')
+    if (submitter !== null && submitterName !== undefined)
+      fields.append(submitterName, submitter.attrs.get('value') ?? '')
     const method = (form.attrs.get('method') ?? 'GET').toUpperCase()
     const action = new URL(form.attrs.get('action') || this.url, this.url)
     if (method === 'GET') {
@@ -251,6 +269,10 @@ export class HarnessAuthPage implements AuthPage {
     }
     if (element.tag === 'button' && (element.attrs.get('type') ?? 'submit') === 'submit') {
       await this.tab.submit(located)
+      return
+    }
+    if (element.tag === 'button' && element.attrs.get('type') === 'button') {
+      await this.tab.scriptClick(located)
       return
     }
     const href = element.attrs.get('href')

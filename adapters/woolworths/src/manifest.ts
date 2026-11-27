@@ -52,21 +52,33 @@ export const SELECTORS = {
   auth0Widget: 'main._widget',
   fieldError: '.ulp-input-error-message',
   accountBlocked: '[data-error-code="user-blocked"]',
+  /**
+   * "Continue without passkeys" on the passkey offer after sign-in. Seen live 2026-11-27: the
+   * offer's only visible type="button", alone in the last of its wrappers ("Create Passkey" is not
+   * one). Picked by structure because a login's selectors may not test text or values.
+   */
+  skipPasskey: '*:last-child > button[type="button"]:only-child',
 } as const
 
 /** Paths on the auth origin. Conditions see only a URL's path and query, never its host. */
 export const AUTH_PATHS = {
   identifier: '/u/login/identifier',
   password: '/u/login/password',
+  /** Seen live 2026-11-27: "Verify Your Identity", SMS or Call (SMS chosen), then Continue. */
+  phoneChallenge: '/u/mfa-phone-challenge',
   smsChallenge: '/u/mfa-sms-challenge',
   otpChallenge: '/u/mfa-otp-challenge',
+  /** Seen live 2026-11-27: the passkey offer after a successful sign-in. */
+  passkeyOffer: '/u/custom-prompt/',
 } as const
 
 /**
- * Who sends the SMS code, as Messages shows the sender. TO BE CONFIRMED: a placeholder until Nick
- * receives a Woolworths code. The person approves the real sender when granting Messages access.
+ * Who sends the SMS code, as Messages shows the sender: an alphanumeric sender ID, confirmed live
+ * 2026-11-27. The person approves it when granting Messages access.
  */
 export const MESSAGES_SENDER = 'Woolworths'
+/** The code SMS, as received live 2026-11-27: "123456 is your Woolworths one-time verification code. ..." */
+export const SMS_CODE_PATTERN = '\\b(\\d{6}) is your Woolworths'
 
 /** The live site's login link: www's /auth/login, which redirects to Auth0 and back to `path`. */
 export function loginUrl(origin: string): string {
@@ -105,6 +117,13 @@ const ON_IDENTIFIER: Condition = {
 }
 const ON_PASSWORD: Condition = {
   all: [{ urlContains: AUTH_PATHS.password }, { visible: SELECTORS.password }],
+}
+/** The choice of SMS or a call; SMS is already chosen, so Continue sends the text. */
+const ON_PHONE_CHOICE: Condition = {
+  all: [{ urlContains: AUTH_PATHS.phoneChallenge }, { visible: SELECTORS.submit }],
+}
+const ON_PASSKEY_OFFER: Condition = {
+  all: [{ urlContains: AUTH_PATHS.passkeyOffer }, { visible: SELECTORS.skipPasskey }],
 }
 const ON_CHALLENGE: Condition = {
   all: [{ urlRegex: '^/u/mfa-(sms|email|otp)-challenge' }, { visible: SELECTORS.code }],
@@ -200,7 +219,7 @@ export function createManifest({
     schemaVersion: 1,
     id: 'woolworths',
     name: 'Woolworths',
-    version: '0.5.2',
+    version: '0.5.3',
     description: 'Search Woolworths (Australia) products and manage the online shopping cart.',
     home: `${origin}/`,
     // Opened in the person's own browser to check out: Valet never places orders.
@@ -384,7 +403,8 @@ export function createManifest({
 function authSteps(origin: string, totp: boolean): AuthStep[] {
   return [
     { op: 'goto', url: loginUrl(origin) },
-    ...settle({ any: [ON_IDENTIFIER, ON_PASSWORD, LEFT_LOGIN, CAPTCHA] }),
+    // Auth0 may remember the shopper and go straight to the password or the second factor.
+    ...settle({ any: [ON_IDENTIFIER, ON_PASSWORD, ON_PHONE_CHOICE, ON_CHALLENGE, LEFT_LOGIN, CAPTCHA] }),
     { op: 'when', condition: CAPTCHA, steps: [needsUser('captcha', 'captcha')] },
 
     // Page 1, the identifier. Auth0 skips it when it remembers who is signing in.
@@ -412,7 +432,9 @@ function authSteps(origin: string, totp: boolean): AuthStep[] {
         { op: 'when', condition: CAPTCHA, steps: [needsUser('captcha', 'captcha')] },
         { op: 'fill', selector: SELECTORS.password, value: { secret: 'login', field: 'password' } },
         { op: 'click', selector: SELECTORS.submit },
-        ...settle({ any: [ON_CHALLENGE, LEFT_LOGIN, FIELD_ERROR, CAPTCHA] }),
+        ...settle({
+          any: [ON_PHONE_CHOICE, ON_CHALLENGE, ON_PASSKEY_OFFER, LEFT_LOGIN, FIELD_ERROR, CAPTCHA],
+        }),
         {
           op: 'when',
           condition: { urlContains: AUTH_PATHS.password },
@@ -426,6 +448,17 @@ function authSteps(origin: string, totp: boolean): AuthStep[] {
             needsUser('login-required', 'passwordRefused'),
           ],
         },
+      ],
+    },
+
+    // Before the code: how to send it. SMS is chosen already; Continue sends the text.
+    {
+      op: 'when',
+      condition: ON_PHONE_CHOICE,
+      steps: [
+        { op: 'click', selector: SELECTORS.submit },
+        ...settle({ any: [ON_CHALLENGE, LEFT_LOGIN, CAPTCHA] }),
+        { op: 'when', condition: CAPTCHA, steps: [needsUser('captcha', 'captcha')] },
       ],
     },
 
@@ -449,7 +482,7 @@ function authSteps(origin: string, totp: boolean): AuthStep[] {
                   op: 'otp',
                   selector: SELECTORS.code,
                   source: {
-                    messages: { sender: MESSAGES_SENDER, pattern: '\\b(\\d{6})\\b', maxAgeSeconds: 300 },
+                    messages: { sender: MESSAGES_SENDER, pattern: SMS_CODE_PATTERN, maxAgeSeconds: 300 },
                   },
                 },
               ],
@@ -463,9 +496,21 @@ function authSteps(origin: string, totp: boolean): AuthStep[] {
           steps: [{ op: 'click', selector: SELECTORS.rememberDevice }],
         },
         { op: 'click', selector: SELECTORS.submit },
-        ...settle({ any: [LEFT_LOGIN, FIELD_ERROR] }),
-        { op: 'when', condition: { not: LEFT_LOGIN }, steps: [needsUser('otp-required', 'codeRefused')] },
+        ...settle({ any: [LEFT_LOGIN, ON_PASSKEY_OFFER, FIELD_ERROR] }),
+        {
+          op: 'when',
+          condition: { any: [LEFT_LOGIN, ON_PASSKEY_OFFER] },
+          steps: [],
+          otherwise: [needsUser('otp-required', 'codeRefused')],
+        },
       ],
+    },
+
+    // After signing in, Auth0 may offer to make a passkey. Valet never makes one: it declines.
+    {
+      op: 'when',
+      condition: ON_PASSKEY_OFFER,
+      steps: [{ op: 'click', selector: SELECTORS.skipPasskey }, ...settle(LEFT_LOGIN)],
     },
 
     // Anything else still on a login page: new terms, no page loaded, or one nobody scripted. The

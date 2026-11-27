@@ -189,6 +189,49 @@ export function mfaPage({ channel, state, error, codeType = 'text' }: MfaPageOpt
   )
 }
 
+/**
+ * Before an SMS code: SMS or a call, SMS already chosen. Seen live 2026-11-27 at
+ * /u/mfa-phone-challenge ("Verify Your Identity"); Continue sends the text.
+ */
+export function phoneChallengePage(state: string, maskedNumber: string): string {
+  const action = escapeHtml(`/u/mfa-phone-challenge?state=${encodeURIComponent(state)}`)
+  return document(
+    `Use your phone number to log in | ${STORE_NAME}`,
+    `    <h1>Verify Your Identity</h1>
+    <p>We will send a 6-digit code to the following number: ${escapeHtml(maskedNumber)}</p>
+    <form method="POST" action="${action}">
+        ${stateInput(state)}
+        <div role="radiogroup" aria-label="How do you want to receive the code?">
+          <input type="radio" name="type" id="type-sms" value="text" checked><label for="type-sms">SMS</label>
+          <input type="radio" name="type" id="type-voice" value="voice"><label for="type-voice">Call</label>
+        </div>
+        ${PRIMARY_BUTTON}
+    </form>`,
+  )
+}
+
+/**
+ * The passkey offer after a successful sign-in, seen live 2026-11-27 at /u/custom-prompt/<id>.
+ * Both buttons are type="button" and work by script there. "Continue without passkeys" sits alone
+ * in the last wrapper; "Create Passkey" does not. data-submits-form names the form the script
+ * submits, which the adapter's test browser also follows.
+ */
+export function passkeyOfferPage(path: string, state: string): string {
+  const action = escapeHtml(`${path}?state=${encodeURIComponent(state)}`)
+  return document(
+    `${STORE_NAME}`,
+    `    <h2>Create a passkey for a quicker and safer login</h2>
+    <p>Log in using your fingerprint or face, no more passwords to remember.</p>
+    <form method="POST" id="passkey-create" action="${action}">${stateInput(state)}<input type="hidden" name="action" value="create"></form>
+    <form method="POST" id="passkey-skip" action="${action}">${stateInput(state)}<input type="hidden" name="action" value="skip"></form>
+    <div class="passkey-actions">
+      <div><button type="button" data-submits-form="passkey-create">Create Passkey</button><span></span></div>
+      <div><button type="button" data-submits-form="passkey-skip">Continue without passkeys</button></div>
+    </div>
+    <script>for (const b of document.querySelectorAll('[data-submits-form]')) b.addEventListener('click', () => document.getElementById(b.dataset.submitsForm).submit())</script>`,
+  )
+}
+
 /** The hostile variant's page: nothing but an iframe holding the real form, from another origin. */
 export function framedPage(title: string, frameSrc: string): string {
   return document(title, `    <iframe id="loginFrame" title="Log in" src="${escapeHtml(frameSrc)}"></iframe>`)

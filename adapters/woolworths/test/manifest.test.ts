@@ -55,7 +55,7 @@ function stepsIn(steps: readonly unknown[]): any[] {
 describe('the real manifest', () => {
   it('is the default export and points at the live site', () => {
     expect(realManifest.home).toBe('https://www.woolworths.com.au/')
-    expect(realManifest.version).toBe('0.5.2')
+    expect(realManifest.version).toBe('0.5.3')
     expect(manifestSchema.parse(realManifest)).toEqual(realManifest)
   })
 
@@ -239,7 +239,7 @@ describe('the auth steps', () => {
       { secret: 'login', field: 'password' },
     ])
     expect(messagesSourcesIn(steps)).toEqual([
-      { sender: MESSAGES_SENDER, pattern: String.raw`\b(\d{6})\b`, maxAgeSeconds: 300 },
+      { sender: MESSAGES_SENDER, pattern: String.raw`\b(\d{6}) is your Woolworths`, maxAgeSeconds: 300 },
     ])
     expect(MESSAGES_SENDER).toBe('Woolworths')
   })
@@ -253,9 +253,16 @@ describe('the auth steps', () => {
     expect(SELECTORS.username).toBe('input[name="username"]')
   })
 
-  it('click only Auth0’s primary button and the remember-device box, never passkey or Everyday', () => {
+  it('click only Auth0’s primary button, the remember-device box and "Continue without passkeys"', () => {
     const clicks = new Set(all.filter((step) => step.op === 'click').map((step) => step.selector))
-    expect(clicks).toEqual(new Set([SELECTORS.submit, SELECTORS.rememberDevice]))
+    expect(clicks).toEqual(new Set([SELECTORS.submit, SELECTORS.rememberDevice, SELECTORS.skipPasskey]))
+    // The passkey offer is clicked only on its own page, never to create one.
+    expect(all).toContainEqual(
+      expect.objectContaining({
+        op: 'when',
+        condition: { all: [{ urlContains: '/u/custom-prompt/' }, { visible: SELECTORS.skipPasskey }] },
+      }),
+    )
     // The form's own submit: live (2026-11-26), passkey and Everyday sit outside the form.
     expect(SELECTORS.submit).toBe('button[type="submit"]:not([data-testid])')
   })
