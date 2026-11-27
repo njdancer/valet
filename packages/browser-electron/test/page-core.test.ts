@@ -226,7 +226,9 @@ describe('PageCore.focus', () => {
     let asked = 0
     const real = surface.focusedFrameId.bind(surface)
     surface.focusedFrameId = () => (++asked % 2 === 0 ? 'main-body' : real())
-    const error = await timers.settle(rejection(core.focus('auth-step', '#user', new AbortController().signal)))
+    const error = await timers.settle(
+      rejection(core.focus('auth-step', '#user', new AbortController().signal)),
+    )
     expect(error).toMatchObject({ stage: 'auth-step', errorClass: 'element-unsuitable' })
   })
 
