@@ -325,6 +325,22 @@ final class EventKitStores {
 
 let eventKitStores = EventKitStores()
 
+/// Set when EventKit answers with no sources despite full access; the helper then exits.
+public var eventKitBroken = false
+
+/// The store, unless this process's link to the calendar store has broken: full access (checked by
+/// every caller first) but no sources at all, not even "Other". Seen after a burst of agent calls;
+/// new stores in the same process stayed empty for days. The helper answers unavailable and exits
+/// once it has answered, so it starts again whole (feedback issue #28).
+func liveStore() throws -> EKEventStore {
+  let store = eventKitStores.get()
+  if store.sources.isEmpty {
+    eventKitBroken = true
+    throw EventKitFailure.unavailable
+  }
+  return store
+}
+
 private let isoFormatter: ISO8601DateFormatter = {
   let f = ISO8601DateFormatter()
   f.formatOptions = [.withInternetDateTime]
@@ -563,12 +579,12 @@ public func answerEventKit(_ request: EventKitRequest) -> [String: Any] {
       return ["ok": true]
     case .calendars(let kind):
       guard hasFullAccess(kind) else { throw EventKitFailure.denied }
-      let store = eventKitStores.get()
+      let store = try liveStore()
       store.refreshSourcesIfNecessary()
       return ["calendars": store.calendars(for: kind.entity).prefix(maxEventKitResults).map { calendarJSON($0) }]
     case .events(let ids, let startMs, let endMs, let words, let limit):
       guard hasFullAccess(.events) else { throw EventKitFailure.denied }
-      let store = eventKitStores.get()
+      let store = try liveStore()
       let chosen = calendars(ids, .events, store)
       if chosen.isEmpty { return ["events": [], "more": false] }
       let predicate = store.predicateForEvents(
@@ -580,7 +596,7 @@ public func answerEventKit(_ request: EventKitRequest) -> [String: Any] {
       return ["events": found.prefix(limit).map { eventJSON($0) }, "more": found.count > limit]
     case .reminders(let ids, let completed, let dueStartMs, let dueEndMs, let words, let limit):
       guard hasFullAccess(.reminders) else { throw EventKitFailure.denied }
-      let store = eventKitStores.get()
+      let store = try liveStore()
       let chosen = calendars(ids, .reminders, store)
       if chosen.isEmpty { return ["reminders": [], "more": false] }
       let start = dueStartMs.map { Date(timeIntervalSince1970: TimeInterval($0) / 1000) }
@@ -615,7 +631,7 @@ public func answerEventKit(_ request: EventKitRequest) -> [String: Any] {
       return ["reminders": found.prefix(limit).map { reminderJSON($0) }, "more": found.count > limit]
     case .saveEvent(let calendarId, let id, let occurrenceMs, let fields):
       guard hasFullAccess(.events) else { throw EventKitFailure.denied }
-      let store = eventKitStores.get()
+      let store = try liveStore()
       guard let calendar = calendars([calendarId], .events, store).first else { throw EventKitFailure.notFound }
       guard calendar.allowsContentModifications else { throw EventKitFailure.readOnly }
       let event: EKEvent
@@ -637,7 +653,7 @@ public func answerEventKit(_ request: EventKitRequest) -> [String: Any] {
       return ["event": eventJSON(event)]
     case .saveReminder(let calendarId, let id, let fields):
       guard hasFullAccess(.reminders) else { throw EventKitFailure.denied }
-      let store = eventKitStores.get()
+      let store = try liveStore()
       guard let calendar = calendars([calendarId], .reminders, store).first else { throw EventKitFailure.notFound }
       guard calendar.allowsContentModifications else { throw EventKitFailure.readOnly }
       let reminder: EKReminder
@@ -673,7 +689,7 @@ public func answerEventKit(_ request: EventKitRequest) -> [String: Any] {
       return ["reminder": reminderJSON(reminder)]
     case .removeEvent(let calendarId, let id, let occurrenceMs):
       guard hasFullAccess(.events) else { throw EventKitFailure.denied }
-      let store = eventKitStores.get()
+      let store = try liveStore()
       guard let calendar = calendars([calendarId], .events, store).first else { throw EventKitFailure.notFound }
       guard calendar.allowsContentModifications else { throw EventKitFailure.readOnly }
       guard let found = findEvent(id, occurrenceMs: occurrenceMs, in: calendar, store) else {
@@ -688,7 +704,7 @@ public func answerEventKit(_ request: EventKitRequest) -> [String: Any] {
       return ["event": removed]
     case .removeReminder(let calendarId, let id):
       guard hasFullAccess(.reminders) else { throw EventKitFailure.denied }
-      let store = eventKitStores.get()
+      let store = try liveStore()
       guard let calendar = calendars([calendarId], .reminders, store).first else { throw EventKitFailure.notFound }
       guard calendar.allowsContentModifications else { throw EventKitFailure.readOnly }
       guard let found = store.calendarItem(withIdentifier: id) as? EKReminder,

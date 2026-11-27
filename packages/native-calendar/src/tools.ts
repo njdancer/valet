@@ -545,7 +545,9 @@ export async function callCalendarTool(
             calendars,
             note:
               calendars.length === 0
-                ? 'The person hasn’t picked any calendars for you yet; they do that in Valet.'
+                ? deps.allowed().size === 0
+                  ? 'The person hasn’t picked any calendars for you yet; they do that in Valet.'
+                  : 'None of the calendars the person picked is on this Mac right now.'
                 : CALENDAR_DATA_NOTE,
           },
         }
@@ -676,7 +678,9 @@ export async function callReminderTool(
             lists,
             note:
               lists.length === 0
-                ? 'The person hasn’t picked any reminder lists for you yet; they do that in Valet.'
+                ? deps.allowed().size === 0
+                  ? 'The person hasn’t picked any reminder lists for you yet; they do that in Valet.'
+                  : 'None of the reminder lists the person picked is on this Mac right now.'
                 : CALENDAR_DATA_NOTE,
           },
         }

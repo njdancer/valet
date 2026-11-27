@@ -39,6 +39,12 @@ export const DEFAULT_EVENTKIT_SETTINGS: EventKitSettings = { enabled: false, cal
 /** Changes agents may make in an hour, all agents together, for each of Calendar and Reminders. */
 export const CHANGES_PER_HOUR = 100
 
+/**
+ * The reader makes a new EventKit store on each refresh; a burst of calls doing that broke its
+ * link to the calendar store once (feedback issue #28). So at most one refresh this often.
+ */
+export const REFRESH_EVERY_MS = 10_000
+
 const calendarId = z.string().min(1).max(200)
 
 const settingsSchema = z
@@ -103,6 +109,7 @@ export class EventKitService implements NativeTools {
   private current: EventKitSettings = DEFAULT_EVENTKIT_SETTINGS
   /** When each change of the last hour happened, oldest first. */
   private changes: number[] = []
+  private refreshedAt = Number.NEGATIVE_INFINITY
 
   constructor(private readonly deps: EventKitServiceDeps) {
     const calendar = deps.app === 'calendar'
@@ -144,7 +151,7 @@ export class EventKitService implements NativeTools {
       result = { status: 'failed', stage: 'config', errorClass: 'not-found' }
     else {
       // A calendar or list added since the last call shows now; an older reader can't, which is fine.
-      await kit.refresh().catch(() => undefined)
+      await this.refresh(kit)
       const deps = {
         kit,
         allowed: () => new Set(this.current.enabled ? this.current.calendars : []),
@@ -156,9 +163,19 @@ export class EventKitService implements NativeTools {
         this.deps.app === 'calendar'
           ? await callCalendarTool(deps, call.tool, call.input)
           : await callReminderTool(deps, call.tool, call.input)
+      // The reader exits when its EventKit link breaks, or wasn't running: start it for next time.
+      if (result.status === 'failed' && result.errorClass === 'unavailable')
+        await this.deps.reader?.start().catch(() => 'failed')
     }
     await this.deps.audit(call, result, Math.max(0, this.deps.now() - started)).catch(() => undefined)
     return result
+  }
+
+  private async refresh(kit: EventKit): Promise<void> {
+    const now = this.deps.now()
+    if (now - this.refreshedAt < REFRESH_EVERY_MS) return
+    this.refreshedAt = now
+    await kit.refresh().catch(() => undefined)
   }
 
   private spend(): boolean {
@@ -195,7 +212,7 @@ export class EventKitService implements NativeTools {
     if (access === 'not-determined' || access === 'write-only') return off('needs-access')
     if (access !== 'full') return off('denied')
     try {
-      await this.deps.kit.refresh().catch(() => undefined)
+      await this.refresh(this.deps.kit)
       const all = await this.deps.kit.calendars(this.kind)
       const allowed = new Set(settings.calendars)
       return {

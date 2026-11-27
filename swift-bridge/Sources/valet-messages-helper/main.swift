@@ -191,6 +191,12 @@ func serve(
         answer = ["error": EventKitFailure.invalid.rawValue]
       }
       sendData(client, mailResponseLine(answer))
+      // EventKit's link broke and doesn't recover in this process: exit, and Valet (or launchd)
+      // starts the helper again on its next call.
+      if eventKitBroken {
+        close(client)
+        exit(75)
+      }
       continue
     }
     let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
