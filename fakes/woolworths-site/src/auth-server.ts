@@ -15,7 +15,9 @@ import {
   framedPage,
   identifierPage,
   mfaPage,
+  passkeyOfferPage,
   passwordPage,
+  phoneChallengePage,
 } from './auth-pages'
 import { STORE_NAME } from './brand'
 import {
@@ -97,6 +99,8 @@ interface Transaction {
   /** Set once the password was right while a second factor is still due. */
   mfaFor: AccountState | null
   mfaFailures: number
+  /** Set once the second factor passed and the passkey offer is showing. */
+  passkeyFor: string | null
   readonly expiresAt: number
 }
 
@@ -115,6 +119,8 @@ type Sent = 'sent'
 
 const HTML_TYPE = 'text/html; charset=utf-8'
 const CHALLENGE = /^\/u\/mfa-(sms|email|otp)-challenge$/
+/** The passkey offer's path; live it ends in an id per prompt. */
+const PASSKEY_PATH = '/u/custom-prompt/ap_passkeyoffer'
 
 export class FakeAuth0 {
   readonly requests: RecordedRequest[] = []
@@ -169,6 +175,10 @@ export class FakeAuth0 {
       if (method === 'GET') return this.withTransaction(exchange, (t) => this.showPassword(exchange, t))
       if (method === 'POST') return this.withTransaction(exchange, (t) => this.password(exchange, t))
     }
+    if (path === '/u/mfa-phone-challenge' && (method === 'GET' || method === 'POST'))
+      return this.withTransaction(exchange, (t) => this.phoneChoice(exchange, t))
+    if (path === PASSKEY_PATH && (method === 'GET' || method === 'POST'))
+      return this.withTransaction(exchange, (t) => this.passkeyOffer(exchange, t))
     const challenge = CHALLENGE.exec(path)
     if (challenge !== null && (method === 'GET' || method === 'POST')) {
       const channel = challenge[1] as MfaChannel
@@ -196,6 +206,7 @@ export class FakeAuth0 {
       username: null,
       mfaFor: null,
       mfaFailures: 0,
+      passkeyFor: null,
       expiresAt: this.options.now() + TRANSACTION_TTL_MS,
     }
     this.transactions.set(transaction.id, transaction)
@@ -273,8 +284,40 @@ export class FakeAuth0 {
     transaction.mfaFor = state
     transaction.mfaFailures = 0
     const channel = state.account.mfa ?? 'sms'
+    // Live (2026-11-27), an SMS code starts with a choice of SMS or a call; nothing is sent yet.
+    if (channel === 'sms')
+      return this.redirect(exchange, this.pagePath('/u/mfa-phone-challenge', transaction))
     this.send(channel, state)
     return this.redirect(exchange, this.pagePath(`/u/mfa-${channel}-challenge`, transaction))
+  }
+
+  /** SMS or a call. Continue with SMS chosen sends the code and moves to the code page. */
+  private phoneChoice(exchange: Exchange, transaction: Transaction): Sent {
+    const state = transaction.mfaFor
+    if (state === null || (state.account.mfa ?? 'sms') !== 'sms') {
+      return this.html(exchange, 400, errorPage('invalid-state', 'This login has expired. Start again.'))
+    }
+    if (exchange.method === 'GET')
+      return this.html(exchange, 200, phoneChallengePage(transaction.id, 'XXXXXXXX4470'))
+    if (exchange.form.get('action') !== 'default' || exchange.form.get('type') !== 'text') {
+      return this.html(exchange, 400, errorPage('unsupported', 'This sign-in method is not available here.'))
+    }
+    this.send('sms', state)
+    return this.redirect(exchange, this.pagePath('/u/mfa-sms-challenge', transaction))
+  }
+
+  /** After the second factor: the passkey offer. Valet declines; creating one isn't modelled. */
+  private passkeyOffer(exchange: Exchange, transaction: Transaction): Sent {
+    const username = transaction.passkeyFor
+    if (username === null) {
+      return this.html(exchange, 400, errorPage('invalid-state', 'This login has expired. Start again.'))
+    }
+    if (exchange.method === 'GET')
+      return this.html(exchange, 200, passkeyOfferPage(PASSKEY_PATH, transaction.id))
+    if (exchange.form.get('action') !== 'skip') {
+      return this.html(exchange, 400, errorPage('unsupported', 'Passkeys are not available here.'))
+    }
+    return this.complete(exchange, transaction, username)
   }
 
   private mfa(exchange: Exchange, transaction: Transaction, channel: MfaChannel): Sent {
@@ -310,7 +353,9 @@ export class FakeAuth0 {
           }),
         )
       }
-      return this.complete(exchange, transaction, state.account.username)
+      transaction.mfaFor = null
+      transaction.passkeyFor = state.account.username
+      return this.redirect(exchange, this.pagePath(PASSKEY_PATH, transaction))
     }
     transaction.mfaFailures += 1
     if (transaction.mfaFailures >= MAX_MFA_FAILURES) {
@@ -345,7 +390,8 @@ export class FakeAuth0 {
 
   private send(channel: MfaChannel, state: AccountState): void {
     if (channel === 'otp') return
-    const text = `Your Woolworths verification code is ${state.account.otpCode}. It expires in 5 minutes.`
+    // As received live, 2026-11-27.
+    const text = `${state.account.otpCode} is your Woolworths one-time verification code. The code is valid for 5 min. If you didn't expect this SMS please call 1800 000 610`
     this.outbox.push({ channel, username: state.account.username, text, at: this.options.now() })
   }
 
