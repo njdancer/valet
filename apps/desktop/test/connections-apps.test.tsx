@@ -350,6 +350,37 @@ describe('a cloud agent’s page', () => {
     expect(called(api, 'remote.setClientTool')).toEqual([])
   })
 
+  it('shows a tool it holds that is off for every cloud agent, and takes it away with a plain Save', async () => {
+    const user = userEvent.setup()
+    const fake = createFakeApi({ now: NOW })
+    await fake.remote.approveConsent('ABCDEFGH', ['woolworths.get_cart'])
+    const api = {
+      ...fake,
+      agentAccess: {
+        ...fake.agentAccess,
+        view: async (clientId: string) => {
+          const view = await fake.agentAccess.view(clientId)
+          return {
+            ...view,
+            tools: view.tools.map((t) => (t.ref === 'woolworths.get_cart' ? { ...t, on: false } : t)),
+          }
+        },
+      },
+    }
+    renderPage(api, <ClientPage clientId="rcdemodemodemodemodemo" />)
+    expect(
+      await screen.findByText(/It still holds this, but it’s off for every cloud agent now/),
+    ).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Take away' }))
+    expect(within(screen.getByTestId('access-tools')).getByText(/not saved/)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(called(fake, 'agentAccess.save')).toEqual([
+        ['remote:rcdemodemodemodemodemo', { tools: { 'woolworths.get_cart': false } }],
+      ]),
+    )
+  })
+
   it('turns Ask for changes on and off from its page', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })

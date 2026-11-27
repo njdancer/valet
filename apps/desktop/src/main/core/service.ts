@@ -70,6 +70,7 @@ import {
   identityLabel,
   type ListedTool,
   type LiveSessions,
+  mcpToolName,
   type NeedsYouHint,
   normaliseCode,
   normaliseRemoteHost,
@@ -166,7 +167,13 @@ import {
   NO_APP_ACCESS,
   withWidening,
 } from './agent-access'
-import { AgentBrowserService, BrowserRefusal, type SessionBrowser, sessionPacer } from './agent-browser'
+import {
+  AgentBrowserService,
+  BROWSER_ADAPTER_ID,
+  BrowserRefusal,
+  type SessionBrowser,
+  sessionPacer,
+} from './agent-browser'
 import { agentRequestItem, draftReviewRequest } from './agent-requests'
 import { AppStateStore } from './app-state'
 import {
@@ -1452,6 +1459,7 @@ export class AppService {
         title: t.toolTitle,
         sideEffect: t.sideEffect,
         on: this.remote.allows(t.adapterId, declaration, id),
+        held: this.remote.clients.get(id)?.grant?.tools.includes(t.ref) ?? false,
       })
     }
     // Valet's own first (the browser), as the person meets them, then each site in turn.
@@ -1518,7 +1526,8 @@ export class AppService {
       const shown = view.tools.find((t) => t.ref === ref)
       if (!on) {
         const dot = ref.indexOf('.')
-        if (shown?.on === true || view.gone.includes(ref))
+        // Off for anything its grant still holds, even a tool off for every cloud agent now.
+        if (shown?.on === true || shown?.held === true || view.gone.includes(ref))
           off.push(
             shown ?? {
               ref,
@@ -1528,6 +1537,7 @@ export class AppService {
               title: ref,
               sideEffect: 'read',
               on: true,
+              held: true,
             },
           )
         continue
@@ -5323,15 +5333,18 @@ export class AppService {
       },
       itemRequest: (viewer, app, item, level) => this.itemRequest(identityLabel(viewer), app, item, level),
       toolRequest: (viewer, adapterId, asked) => {
-        // The name as the agent's own list shows it (browser_login_steps) works as well as the
-        // adapter's own (login_steps).
-        const tool = asked.startsWith(`${adapterId}_`) ? asked.slice(adapterId.length + 1) : asked
         const agent = viewer.origin === 'remote' ? viewer.clientId : null
         if (agent === null) return { ok: false, reason: 'not-found' }
-        // Valet's own tools (the agents' browser, Messages): signed for the built-in "version", as
-        // a Save on the agent's page signs them. Mail's, Calendar's and Reminders' follow from
-        // the agent's access to each account or list instead.
-        const native = accessAppOf(adapterId) === null ? this.nativeDeclaration(adapterId, tool) : null
+        // The adapter's own name (login_steps) first, then the name as the agent's list shows it
+        // (browser_login_steps).
+        const prefix = mcpToolName(adapterId, '')
+        const known = (name: string) =>
+          this.nativeDeclaration(adapterId, name) !== null || this.remoteDeclared(adapterId, name) !== null
+        const tool = !known(asked) && asked.startsWith(prefix) ? asked.slice(prefix.length) : asked
+        // The agents' browser alone of Valet's own tools: signed for the built-in "version", as a
+        // Save on the agent's page signs it. Messages reads the person's texts, so only the person
+        // turns it on, on the agent's page; Mail's, Calendar's and Reminders' follow from items.
+        const native = adapterId === BROWSER_ADAPTER_ID ? this.nativeDeclaration(adapterId, tool) : null
         if (native !== null) {
           if (this.remote.allows(adapterId, native, agent))
             return { ok: false, reason: 'already', title: native.title }

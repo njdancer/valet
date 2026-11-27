@@ -3462,6 +3462,13 @@ describe('remote access', () => {
     await expect(s.api.agentAccess.save(label, { tools: { 'shop.nope': true } })).rejects.toMatchObject({
       errorClass: 'invalid',
     })
+    // Held, but off for every cloud agent now: shown as held, and Off takes it out of the grant.
+    await s.service.setRemoteTool('shop', 'add', false)
+    const latent = (await s.api.agentAccess.view(label)).tools.find((t) => t.ref === 'shop.add')
+    expect(latent).toMatchObject({ on: false, held: true })
+    expect(await s.api.agentAccess.save(label, { tools: { 'shop.add': false } })).toBe(true)
+    expect(s.presence.prompts.length).toBe(before + 1)
+    expect((await s.api.remote.clients()).find((c) => c.id === agent.id)?.grant?.tools).toEqual([])
   })
 
   it('applies a signed agent-access tool only at the version and side effect it names', async () => {
@@ -3496,6 +3503,8 @@ describe('remote access', () => {
     for (const wrong of [
       { adapterHash: 'f'.repeat(64) },
       { sideEffect: add?.sideEffect === 'read' ? ('write' as const) : ('read' as const) },
+      // Mail isn't set up here, so this is refused as unknown before the guard that keeps Mail's,
+      // Calendar's and Reminders' tools out of these lines.
       { adapterId: 'mail', tool: 'search' },
     ]) {
       const asked = await ask(wrong)
@@ -3504,6 +3513,11 @@ describe('remote access', () => {
       expect(await broker.approveOnMac(asked.requestId, {})).not.toEqual({ ok: true })
     }
     expect((await s.api.remote.clients()).find((c) => c.id === agent.id)?.grant?.tools).toEqual([])
+    // The line as signed for this version and side effect applies, for this agent.
+    const right = await ask({ sideEffect: add?.sideEffect ?? 'write' })
+    if (!right.ok) throw new Error(right.reason)
+    expect(await broker.approveOnMac(right.requestId, {})).toEqual({ ok: true })
+    expect((await s.api.remote.clients()).find((c) => c.id === agent.id)?.grant?.tools).toEqual(['shop.add'])
   })
 
   it('lets the person edit an approved agent’s tools in place: on with Touch ID, off at once', async () => {

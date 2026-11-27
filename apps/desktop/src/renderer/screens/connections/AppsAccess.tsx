@@ -63,8 +63,11 @@ export function accessChanges(
   let count = 0
   let widens = false
   for (const [ref, on] of Object.entries(draft.tools ?? {})) {
-    const saved = tools.find((t) => t.ref === ref)?.on ?? gone.includes(ref)
-    if (on === saved) continue
+    const tool = tools.find((t) => t.ref === ref)
+    const saved = tool?.on ?? gone.includes(ref)
+    // Held but off for every cloud agent now: Off takes it out of the grant.
+    const latent = tool !== undefined && tool.held && !tool.on
+    if (on === saved && !(latent && !on)) continue
     changes.tools = { ...(changes.tools ?? {}), [ref]: on }
     count += 1
     if (on) widens = true
@@ -203,7 +206,19 @@ export function AppsAccess({ clientId, name }: { readonly clientId: string; read
                             <span>{t.title}</span>
                             <Code>{t.tool}</Code>
                             <RiskBadge purpose={t.sideEffect} />
-                            {on !== t.on ? <span className="text-fg-muted text-sm">· not saved</span> : null}
+                            {on !== t.on || (t.held && !t.on && draft.tools?.[t.ref] === false) ? (
+                              <span className="text-fg-muted text-sm">· not saved</span>
+                            ) : null}
+                            {t.held && !t.on && draft.tools?.[t.ref] !== false ? (
+                              <span className="flex items-center gap-2">
+                                <Text size="sm" tone="muted">
+                                  It still holds this, but it’s off for every cloud agent now
+                                </Text>
+                                <Button size="sm" variant="ghost" onClick={() => chooseTool(t.ref, false)}>
+                                  Take away
+                                </Button>
+                              </span>
+                            ) : null}
                           </span>
                           <Segmented<'off' | 'on'>
                             size="sm"

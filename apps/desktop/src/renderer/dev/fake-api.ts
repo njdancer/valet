@@ -859,6 +859,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           title: t.title,
           sideEffect: t.sideEffect as 'read' | 'write' | 'irreversible',
           on: granted.includes(`${d.id}.${t.name}`),
+          held: granted.includes(`${d.id}.${t.name}`),
         })),
     )
     for (const t of remoteSetup.tools)
@@ -871,6 +872,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           title: t.toolTitle,
           sideEffect: t.sideEffect,
           on: granted.includes(t.ref),
+          held: granted.includes(t.ref),
         })
     return { tools, gone: granted.filter((ref) => !tools.some((t) => t.ref === ref)) }
   }

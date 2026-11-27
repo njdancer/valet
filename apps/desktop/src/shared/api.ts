@@ -1656,6 +1656,8 @@ export interface AgentAccessTool {
   readonly sideEffect: 'read' | 'write' | 'irreversible'
   /** It may call it now. */
   readonly on: boolean
+  /** Its grant names it: false for one it can call only once its grant does. */
+  readonly held: boolean
 }
 
 /** What one agent (`local:<id>` or `remote:<id>`) may use in the Mac's apps and, for a cloud agent, its tools. */

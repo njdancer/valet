@@ -21,7 +21,8 @@ Valet's own that remote access offers (the agents' browser's `browser_` tools, M
 Off or On, and every one is Off until the person turns it on. Its grant still holds them
 (`remote-clients.json`), so a tool is callable only while it is in the grant and on for cloud
 agents. A tool the grant names that Valet no longer offers (a site since removed) is shown, and
-can only be taken away. An app on this Mac has no tools here: it has every approved site's tools
+can only be taken away. So is one the grant holds that is off for every cloud agent now (an update raised its side
+effect): turning it on there turns it on for cloud agents again, for every agent whose grant holds it. An app on this Mac has no tools here: it has every approved site's tools
 unless it turned one off for itself.
 
 ## One Touch ID per Save
@@ -49,7 +50,10 @@ a subject that names any.
 An agent asks for more with `valet_request_access`: Read or Edit on one account, calendar or list,
 named by its id or by its exact name (any case), and always with its reason. The person gets an
 `agent-access` request for that agent alone, on the Mac's Needs you and the phone, with the
-agent's reason under "The agent says". Every item with that name is on the one request, so an
+agent's reason under "The agent says". A cloud agent can ask the same way for one tool of an
+approved site or of the agents' browser (`adapterId` `browser`, the tool by its own name or as its
+list shows it, `browser_login_steps`). Messages' tools aren't asked for: only the person turns them
+on, on the agent's page. Every item with that name is on the one request, so an
 agent never needs an id it can't see. Approved, the agent has it, and its tool list refreshes. An
 agent already at that level is told nothing changed, and an item that isn't on the Mac (or Edit on
 one that can't change) is refused without asking.
