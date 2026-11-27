@@ -96,6 +96,18 @@ describe('a message', () => {
 describe('the bytes Valet sends', () => {
   const date = Date.parse('2026-11-17T18:00:05Z')
 
+  it('encodes UTF-8 itself, byte for byte as TextEncoder does, since tool code has no TextEncoder', () => {
+    // One, two, three and four bytes, and a lone surrogate (U+FFFD, as TextEncoder writes it).
+    const text = 'a é € 😀 \ud800 z'
+    const m = checkMailMessage({ ...ok, subject: text, text })
+    if (m === null) throw new Error('refused')
+    const built = buildMailMessage('me@icloud.com', m, { messageId: '<id1@icloud.com>', date })
+    const body = built.split('\r\n\r\n')[1] ?? ''
+    expect(Buffer.from(body.replace(/\r\n/g, ''), 'base64')).toEqual(
+      Buffer.from(new TextEncoder().encode(text)),
+    )
+  })
+
   it('has only Valet’s headers, CRLF lines, 7-bit text and a base64 body', () => {
     const m = checkMailMessage({
       ...ok,

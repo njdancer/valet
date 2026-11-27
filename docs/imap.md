@@ -132,6 +132,11 @@ or an `error`. The runtime's own GuardedImap runs first, so a case shows a refus
 as a live call would. No credential is ever asked for. The worked example is
 `examples/icloud-mail-read`, the adapter for the [live check](live-checks/icloud-mail-read.md).
 
+`examples/icloud-mail-drafts` writes: it saves drafts to iCloud Drafts with `append`, building the
+message with core's checked mail builder (`checkMailMessage`, `buildMailMessage`, the ones
+`ctx.smtp` uses, which tool code may import), and replaces one by moving the old version to
+Deleted Messages. It exists because Mail's own scripting wraps a draft's text in a quote block.
+
 ## iCloud
 
 - IMAP is `imap.mail.me.com:993`, which `ICLOUD_IMAP_ENDPOINT` names.

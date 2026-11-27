@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "id": "icloud-mail-drafts",
+  "name": "iCloud Mail drafts",
+  "version": "0.1.0",
+  "description": "Saves email drafts to your iCloud Drafts folder over IMAP, for you to review and send from Mail on any of your devices, and replaces a draft with a new version. It never sends anything. Valet signs in with your app-specific password; the tool code never sees it, and can reach only the Drafts and Deleted Messages folders.",
+  "runtime": "protocol",
+  "protocols": {
+    "imap": {
+      "endpoint": "imap.mail.me.com:993",
+      "credential": "mail",
+      "folders": ["Drafts", "Deleted Messages"]
+    }
+  },
+  "credentials": {
+    "mail": {
+      "description": "Your iCloud email address and an app-specific password (account.apple.com, Sign-In and Security, App-Specific Passwords)",
+      "kind": "password",
+      "custody": "kept",
+      "use": { "protocol": "imap", "endpoint": "imap.mail.me.com:993" }
+    }
+  },
+  "tools": [
+    {
+      "name": "create_draft",
+      "title": "Save a draft",
+      "description": "Saves a new plain-text draft in iCloud Drafts. Nothing is sent: the person reviews and sends it from Mail. For a reply, pass the original's messageId as inReplyTo and its references, from mail_read, and a subject starting Re:.",
+      "sideEffect": "write"
+    },
+    {
+      "name": "replace_draft",
+      "title": "Replace a draft",
+      "description": "Saves a new version of a draft and moves the old one, found by its messageId, to Deleted Messages. Pass every field again: nothing carries over from the old version.",
+      "sideEffect": "write"
+    }
+  ],
+  "limits": {
+    "requestsPerRun": 6,
+    "minGapMs": 1000,
+    "requestsPerHour": 120,
+    "requestsPerMinute": 20,
+    "gapJitterPercent": 20,
+    "cooldownSeconds": 600,
+    "maxCooldownSeconds": 7200
+  }
+}
