@@ -77,6 +77,22 @@ const submissionSchema = z
   })
   .strict()
 
+/**
+ * One login trial (docs/authoring-tools.md#repairing-an-installed-adapter): the draft's own login
+ * steps, run from signed out in a login session behind the installed version's walls.
+ */
+const loginTrialSummarySchema = z
+  .object({
+    /** changes.ts loginKey: the steps and the walls they ran behind. */
+    loginKey: hash,
+    at: z.iso.datetime(),
+    /** The steps all ran and the site then said signed in. */
+    ok: z.boolean(),
+    /** How it ended otherwise, in Valet's words. */
+    problem: z.string().max(200).nullable(),
+  })
+  .strict()
+
 export const draftRecordSchema = z
   .object({
     v: z.literal(1),
@@ -100,6 +116,8 @@ export const draftRecordSchema = z
     recordedAt: z.record(z.string().max(200), z.iso.datetime()).default({}),
     /** The latest live trials, newest last (PR 2b). */
     trials: z.array(trialSummarySchema).max(20).default([]),
+    /** The latest login trials, newest last: the draft's login steps run in a login session. */
+    loginTrials: z.array(loginTrialSummarySchema).max(10).default([]),
     submission: submissionSchema.nullable(),
   })
   .strict()
@@ -108,6 +126,7 @@ export type DraftRecord = z.output<typeof draftRecordSchema>
 export type CheckSummary = z.output<typeof checkSummarySchema>
 export type Submission = z.output<typeof submissionSchema>
 export type TrialSummary = z.output<typeof trialSummarySchema>
+export type LoginTrialSummary = z.output<typeof loginTrialSummarySchema>
 
 /** Why a draft operation was refused, in words for the agent. Never file contents. */
 export class DraftError extends Error {
@@ -194,6 +213,7 @@ export class DraftStore {
       recorded: {},
       recordedAt: {},
       trials: [],
+      loginTrials: [],
       submission: null,
     })
     await ensurePrivateDir(this.root)

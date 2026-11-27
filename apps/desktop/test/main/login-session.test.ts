@@ -13,6 +13,7 @@ import {
   LOGIN_SESSION_MS,
   LoginSession,
   loginOrigins,
+  runLoginTrial,
 } from '../../src/main/core/login-session'
 import { FakeAuthPage, SHOP } from './fixtures'
 import { testCredentials } from './test-credentials'
@@ -221,5 +222,66 @@ describe('a batch’s time', () => {
   it('ends well inside the 60 s an MCP client usually gives a tool call', () => {
     // The agent has to hear how a batch ended, a wait for a one-time code included (issue #30).
     expect(LOGIN_BATCH_MS).toBeLessThanOrEqual(45_000)
+  })
+})
+
+describe('a draft’s login trial', () => {
+  type Outcome = {
+    status: 'ok' | 'needsUser' | 'failed' | 'blocked'
+    reason: string | null
+    stage: string | null
+    errorClass: string | null
+  }
+  const OK: Outcome = { status: 'ok', reason: null, stage: null, errorClass: null }
+  const SIGNED_OUT: Outcome = { status: 'failed', reason: null, stage: 'probe', errorClass: 'not-logged-in' }
+  function scripted(outcomes: Outcome[]) {
+    const batches: unknown[] = []
+    return {
+      batches,
+      session: {
+        runSteps: async (steps: readonly unknown[]) => {
+          batches.push(steps)
+          const outcome = outcomes.shift()
+          if (outcome === undefined) throw new Error('no more batches')
+          return outcome
+        },
+      } as unknown as Pick<LoginSession, 'runSteps'>,
+    }
+  }
+  const STEPS = [{ op: 'goto', url: `${LOGIN}/login` }, { op: 'assertLoggedIn' }] as const
+
+  it('checks for signed out, runs the steps, then checks for signed in', async () => {
+    const s = scripted([SIGNED_OUT, OK, OK])
+    expect(await runLoginTrial(s.session, STEPS, 180_000)).toEqual({ kind: 'signed-in' })
+    expect(s.batches).toEqual([[{ op: 'assertLoggedIn' }], STEPS, [{ op: 'assertLoggedIn' }]])
+  })
+
+  it('runs no step when the session is signed in already, and says where it stopped otherwise', async () => {
+    const signedIn = scripted([OK])
+    expect(await runLoginTrial(signedIn.session, STEPS, 180_000)).toEqual({ kind: 'signed-in-before' })
+    expect(signedIn.batches).toHaveLength(1)
+    const blocked: Outcome = {
+      status: 'blocked',
+      reason: null,
+      stage: 'login',
+      errorClass: 'blocked-by-site',
+    }
+    expect(await runLoginTrial(scripted([blocked]).session, STEPS, 180_000)).toMatchObject({
+      kind: 'stopped',
+      at: 'before',
+      status: 'blocked',
+    })
+    const user: Outcome = { status: 'needsUser', reason: 'captcha', stage: null, errorClass: null }
+    expect(await runLoginTrial(scripted([SIGNED_OUT, user]).session, STEPS)).toMatchObject({
+      kind: 'stopped',
+      at: 'steps',
+      status: 'needsUser',
+      reason: 'captcha',
+    })
+    expect(await runLoginTrial(scripted([SIGNED_OUT, OK, SIGNED_OUT]).session, STEPS)).toMatchObject({
+      kind: 'stopped',
+      at: 'after',
+      errorClass: 'not-logged-in',
+    })
   })
 })

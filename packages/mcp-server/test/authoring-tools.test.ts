@@ -135,6 +135,17 @@ function authoring(overrides: Partial<Authoring> = {}): Authoring & { writes: st
       blocked: [],
       ms: 5,
     }),
+    loginTrial: async () => ({
+      tool: 'auth.steps',
+      packageHash: 'a'.repeat(64),
+      ok: true,
+      output: null,
+      problem: null,
+      blocked: [],
+      blockedCount: 0,
+      ms: 5,
+      login: true,
+    }),
     ...overrides,
   }
 }
@@ -234,6 +245,37 @@ describe('authoring tools', () => {
     expect(tool('valet_live_trial').input.parse({ draftId: DRAFT, tool: 'get_quote' })).toMatchObject({
       input: {},
     })
+  })
+
+  it('tries a draft’s login steps with login and no tool, and refuses both or neither', async () => {
+    const asked: string[] = []
+    const a = authoring({
+      loginTrial: async (_v, draftId) => {
+        asked.push(draftId)
+        return {
+          tool: 'auth.steps',
+          packageHash: 'a'.repeat(64),
+          ok: true,
+          output: null,
+          problem: null,
+          blocked: [],
+          blockedCount: 0,
+          ms: 5,
+          login: true,
+        }
+      },
+    })
+    const run = (args: Record<string, unknown>) =>
+      runAuthoringTool(tool('valet_live_trial'), reader(), a, args, LOCAL)
+    const login = await run({ draftId: DRAFT, login: true })
+    expect(JSON.parse(text(login))).toMatchObject({ tool: 'auth.steps', ok: true, login: true })
+    expect(asked).toEqual([DRAFT])
+    for (const args of [{ draftId: DRAFT }, { draftId: DRAFT, tool: 'get_quote', login: true }]) {
+      const refused = await run(args)
+      expect(refused.isError).toBe(true)
+      expect(text(refused)).toContain('give either tool, or login: true')
+    }
+    expect(asked).toEqual([DRAFT])
   })
 
   it('adds an npm dependency to a raw draft only with Ask for changes', async () => {

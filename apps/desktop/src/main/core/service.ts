@@ -64,6 +64,7 @@ import type { OpenTunnels, RunContext } from '@valet/egress'
 import {
   type AdminReader,
   type Authoring,
+  AuthoringRefusal,
   type CallOutcome,
   displayCode,
   type EndpointClient,
@@ -260,6 +261,8 @@ import {
   type AskOutcome,
   DraftAuthoring,
   type GrantRequest,
+  type LoginTrialRequest,
+  type LoginTrialResult,
   type PrivateNetworkRequest,
   type RequestState,
   type SessionRequest,
@@ -284,7 +287,7 @@ import {
   signedByOldKeys,
 } from './keys-changed'
 import { createAuthRunner, Handoffs, isBlockedPage, SessionTracker } from './login'
-import { LoginSession } from './login-session'
+import { LoginSession, runLoginTrial } from './login-session'
 import {
   MailService,
   type MailServiceDeps,
@@ -4233,6 +4236,10 @@ export class AppService {
       },
       ...(this.deps.scratch === undefined ? {} : { research: this.scratchSessions(this.deps.scratch) }),
       ...(this.deps.fixtureBrowser === undefined ? {} : { caseBrowser: this.deps.fixtureBrowser }),
+      // Login trials need login sessions, which open only in a build with developer mode.
+      ...(this.deps.developerMode === true
+        ? { loginTrial: (request: LoginTrialRequest) => this.loginTrial(request) }
+        : {}),
       ...(this.deps.trialDriver === undefined
         ? {}
         : {
@@ -4846,6 +4853,29 @@ export class AppService {
    * adapter, and never beside a login window handed to the person (they share the partition).
    */
   private async openLoginSession(adapterId: string, clientName: string): Promise<LoginSession> {
+    const { adapter, driver, manifest } = this.loginSite(adapterId)
+    if (this.handoffs.has(adapterId))
+      throw new BrowserRefusal(
+        `${manifest.name}’s login window is open for the person. Try again once they have finished with it.`,
+      )
+    const open = this.loginSessions.get(adapterId)
+    if (open !== undefined && !open.isClosed())
+      throw new BrowserRefusal(`A login session for ${manifest.name} is already open. Close it first.`)
+    const session = await this.startLoginSession(adapter, driver)
+    this.loginSessions.set(adapterId, session)
+    session.onClosed(() => {
+      if (this.loginSessions.get(adapterId) === session) this.loginSessions.delete(adapterId)
+    })
+    this.notifier.draftActivity(`${clientName} opened a login session for ${manifest.name}.`)
+    return session
+  }
+
+  /** The installed site a login session is for, while developer mode is on, or a refusal. */
+  private loginSite(adapterId: string): {
+    adapter: BuiltinAdapter
+    driver: SessionDriver
+    manifest: AdapterManifest
+  } {
     const until = this.devMode?.status().until ?? null
     if (until === null || Date.parse(until) <= this.deps.now())
       throw new BrowserRefusal(
@@ -4858,15 +4888,25 @@ export class AppService {
     const manifest = adapter.definition.manifest
     if (manifest.session.probe.kind === 'none' || Object.keys(manifest.secrets).length === 0)
       throw new BrowserRefusal(`${manifest.name} has no login to work on.`)
-    if (this.handoffs.has(adapterId))
-      throw new BrowserRefusal(
-        `${manifest.name}’s login window is open for the person. Try again once they have finished with it.`,
-      )
-    const open = this.loginSessions.get(adapterId)
-    if (open !== undefined && !open.isClosed())
-      throw new BrowserRefusal(`A login session for ${manifest.name} is already open. Close it first.`)
+    return { adapter, driver, manifest }
+  }
+
+  /**
+   * A login session on `driver`'s auth page, for the installed `adapter`, under its walls. Each of
+   * its batches is one runtime login step, bounded by `stepMs` (the runtime's own bound if unset).
+   */
+  private async startLoginSession(
+    adapter: BuiltinAdapter,
+    driver: SessionDriver,
+    stepMs?: number,
+  ): Promise<LoginSession> {
+    const manifest = adapter.definition.manifest
+    const adapterId = manifest.id
     const loginStep = <T>(step: (ctx: LoginStepContext) => Promise<T>) =>
-      this.runtime().runLoginStep(adapterId, step, { waitMs: LOGIN_WAIT_MS })
+      this.runtime().runLoginStep(adapterId, step, {
+        waitMs: LOGIN_WAIT_MS,
+        ...(stepMs === undefined ? {} : { timeoutMs: stepMs }),
+      })
     let page: AuthPage
     try {
       page = await loginStep(() => driver.openAuthPage(this.blocked.authPage(adapterId, null)))
@@ -4877,7 +4917,7 @@ export class AppService {
       this.mail === null
         ? this.deps.credentials
         : { ...this.deps.credentials, mailReader: () => this.mail as MailReader }
-    const session = new LoginSession({
+    return new LoginSession({
       adapterId,
       manifest,
       adapterHash: adapter.hash,
@@ -4893,12 +4933,54 @@ export class AppService {
       loginStep,
       ...(this.deps.timers === undefined ? {} : { timers: this.deps.timers }),
     })
-    this.loginSessions.set(adapterId, session)
-    session.onClosed(() => {
-      if (this.loginSessions.get(adapterId) === session) this.loginSessions.delete(adapterId)
-    })
-    this.notifier.draftActivity(`${clientName} opened a login session for ${manifest.name}.`)
-    return session
+  }
+
+  /**
+   * A draft's login trial (drafts/authoring.ts loginTrial): a login session for the installed
+   * adapter, under its walls, on an auth page of a trial's own: partitions in memory, new for the
+   * trial, so it starts signed out and nothing of the person's login browser is touched or kept.
+   * assertLoggedIn alone first, the draft's steps, then assertLoggedIn again. Everything is closed
+   * after, whatever happened; it never hands a session to the tools.
+   */
+  private async loginTrial(request: LoginTrialRequest): Promise<LoginTrialResult> {
+    const refused = (error: unknown): never => {
+      if (error instanceof BrowserRefusal) throw new AuthoringRefusal(`Not tried: ${error.detail}`)
+      throw error
+    }
+    const trialDriver = this.deps.trialDriver
+    if (trialDriver === undefined)
+      throw new AuthoringRefusal('Not tried: this build of Valet has no trial browser.')
+    let site: ReturnType<AppService['loginSite']>
+    try {
+      site = this.loginSite(request.adapterId)
+    } catch (error) {
+      return refused(error)
+    }
+    const { adapter, manifest } = site
+    let driver: SessionDriver
+    try {
+      driver = await trialDriver(manifest, request.label, this.privateAllowance(request.draftId), null)
+    } catch {
+      throw new AuthoringRefusal('Not tried: Valet couldn’t open a browser for the trial.')
+    }
+    try {
+      let session: LoginSession
+      try {
+        // The steps are a whole login: a real login's time, and room for the lock and pacing.
+        session = await this.startLoginSession(adapter, driver, AUTH_FLOW_TIMEOUT_MS + 30_000)
+      } catch (error) {
+        return refused(error)
+      }
+      try {
+        return await runLoginTrial(session, request.steps, AUTH_FLOW_TIMEOUT_MS)
+      } catch (error) {
+        return refused(error)
+      } finally {
+        session.close()
+      }
+    } finally {
+      await driver.close().catch(() => undefined)
+    }
   }
 
   private adapter(adapterId: string): BuiltinAdapter | null {

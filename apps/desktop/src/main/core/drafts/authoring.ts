@@ -5,6 +5,7 @@
 
 import { isIP } from 'node:net'
 import type { LoadedPackage } from '@valet/adapter-store'
+import type { AuthStep } from '@valet/core'
 import {
   type AdapterManifest,
   type AuditEvent,
@@ -47,6 +48,7 @@ import { type AddResult, DependencyError } from '@valet/node-runtime'
 import type { ToolProcessFactory } from '@valet/runtime'
 import { isPublicAddress, NO_LOCAL_ACCESS } from '@valet/sandbox'
 import { type CaseBrowser, type CaseRun, readCases, runCase, runCases } from './cases'
+import { type DraftChanges, draftChanges } from './changes'
 import {
   caseFindings,
   checkNames,
@@ -69,7 +71,14 @@ import {
   scrubUrl,
 } from './research'
 import { siteInputType, siteMethod, siteMime, siteRole, siteTag } from './site-text'
-import { DRAFT_LIMITS, DraftError, type DraftRecord, type DraftStore, type TrialSummary } from './store'
+import {
+  DRAFT_LIMITS,
+  DraftError,
+  type DraftRecord,
+  type DraftStore,
+  type LoginTrialSummary,
+  type TrialSummary,
+} from './store'
 import { blankDraft, blankHttpDraft, blankProtocolDraft, blankRawDraft, type DraftProtocol } from './template'
 import { runTrial, type SignedInTrial, TRIAL_LIMITS, type TrialDeps, type TrialResult } from './trial'
 
@@ -214,7 +223,39 @@ export interface AuthoringDeps {
   readonly dependencies?: {
     add(lock: DependencyLock, name: string, range: string | undefined): Promise<AddResult>
   }
+  /**
+   * Login trials (docs/authoring-tools.md#repairing-an-installed-adapter): a login session for the
+   * installed adapter (login-session.ts), in a trial's own new in-memory partitions, runs
+   * assertLoggedIn alone, then the draft's steps, then assertLoggedIn again. Throws AuthoringRefusal when no session opens (developer mode is off, say).
+   * Absent in a build that can't open login sessions: a changed login is then a caution, not a
+   * requirement, since nothing could meet it.
+   */
+  readonly loginTrial?: (request: LoginTrialRequest) => Promise<LoginTrialResult>
 }
+
+export interface LoginTrialRequest {
+  readonly adapterId: string
+  readonly draftId: string
+  /** Names the trial's own in-memory partitions, as a live trial's label does. */
+  readonly label: string
+  readonly steps: readonly AuthStep[]
+  readonly clientName: string
+}
+
+/** How a login trial ended: in codes, as a login session's batches report. */
+export type LoginTrialResult =
+  | { readonly kind: 'signed-in' }
+  /** assertLoggedIn passed before any step ran: the steps would prove nothing. */
+  | { readonly kind: 'signed-in-before' }
+  /** A batch stopped: the steps, or the check before or after them. */
+  | {
+      readonly kind: 'stopped'
+      readonly at: 'before' | 'steps' | 'after'
+      readonly status: 'needsUser' | 'failed' | 'blocked'
+      readonly reason: string | null
+      readonly stage: string | null
+      readonly errorClass: string | null
+    }
 
 interface CheckOutcome {
   readonly report: CheckReport
@@ -713,6 +754,8 @@ export class DraftAuthoring implements Authoring {
       record.repairId,
       ticket?.state ?? null,
       record.trials.map((t) => [t.packageHash, t.at, t.reproduces]),
+      record.loginTrials.map((t) => [t.loginKey, t.at, t.ok]),
+      this.deps.loginTrial === undefined,
       this.deps.sites().map((s) => s.id),
     ])
   }
@@ -723,6 +766,8 @@ export class DraftAuthoring implements Authoring {
     const packageHash = bundleHash(files)
     const steps: { step: string; ok: boolean }[] = []
     const findings: Finding[] = []
+    let changed: DraftChanges | null = null
+    let login: CheckReport['login']
     const report = (
       loaded: LoadedPackage | null,
       run: CaseRun | null,
@@ -744,6 +789,8 @@ export class DraftAuthoring implements Authoring {
             reason: r.reason,
           })),
           changes,
+          unchangedTools: [...(changed?.unchangedTools ?? [])],
+          ...(login === undefined ? {} : { login }),
         },
         loaded,
         files,
@@ -806,9 +853,18 @@ export class DraftAuthoring implements Authoring {
       now: this.deps.now,
       timeoutMs: Math.min(5_000, Math.max(1, left)),
     })
-    const caseErrors = caseFindings(manifest, run, tool)
+    // A tool the draft leaves as installed needs no new case: it runs as the approved one does.
+    changed = draftChanges(files, installed, record.basedOn !== null)
+    const caseErrors = caseFindings(manifest, run, tool, changed.unchangedTools)
     findings.push(...caseErrors)
     steps.push({ step: 'cases', ok: !caseErrors.some((f) => f.level === 'error') })
+    // 6b: login steps the draft changed, signed in with in a login trial.
+    if (tool === undefined && changed.loginChanged) {
+      const finding = this.loginFinding(record, changed)
+      login = finding === null ? 'tried' : 'not-tried'
+      if (finding !== null) findings.push(finding)
+      steps.push({ step: 'login', ok: finding?.level !== 'error' })
+    } else if (tool === undefined && record.basedOn !== null && installed !== null) login = 'unchanged'
     // 7, a repair's only: the ticket's failure, reproduced on what Valet recorded.
     if (record.repairId !== null && tool === undefined) {
       const problem = await this.reproduce(record, files, run, installed, started + budget)
@@ -902,6 +958,35 @@ export class DraftAuthoring implements Authoring {
         )
     }
     return null
+  }
+
+  /**
+   * Check step 6b: changed login steps need a login trial that signed in with them, behind the
+   * walls installed now. Null when one did; a caution when no trial could; an error otherwise.
+   */
+  private loginFinding(record: DraftRecord, changed: DraftChanges): Finding | null {
+    if (this.deps.loginTrial === undefined)
+      return {
+        level: 'caution',
+        check: 'login',
+        text: 'The login steps changed, and this Valet can’t try login steps, so only the person’s review checks them.',
+      }
+    if (!changed.loginWallsSame)
+      return {
+        level: 'caution',
+        check: 'login',
+        text: 'The login steps changed along with what a login depends on (home, navigation, egress, secrets, session or auth.frameOrigins), so no login trial can try them: only the person’s review checks them.',
+      }
+    const trial = record.loginTrials.findLast((t) => t.loginKey === changed.loginKey)
+    if (trial?.ok === true) return null
+    return {
+      level: 'error',
+      check: 'login',
+      text:
+        trial === undefined
+          ? 'The login steps changed: sign in with them first with valet_live_trial and login: true (it needs developer mode on in Valet).'
+          : `The login steps changed, and their last login trial didn’t sign in: ${trial.problem ?? 'it failed'}`,
+    }
   }
 
   /** Records the check on the draft (bound to its package hash) and returns it. */
@@ -1400,6 +1485,107 @@ export class DraftAuthoring implements Authoring {
   }
 
   /**
+   * A login trial (docs/authoring-tools.md#repairing-an-installed-adapter): the draft's own login
+   * steps, from signed out, in a login session for the installed adapter on a trial's own new
+   * partitions. The session's walls
+   * are the installed version's, so the draft must keep what a login depends on as installed. Kept
+   * on the draft under its steps and walls, for check step 6b and the card.
+   */
+  async loginTrial(viewer: ClientIdentity, draftId: string): Promise<TrialReport> {
+    const record = await this.own(viewer, draftId)
+    const run = this.deps.loginTrial
+    if (run === undefined) throw new AuthoringRefusal('This build of Valet can’t try login steps.')
+    if (this.trialing.has(draftId))
+      throw new AuthoringRefusal('One trial at a time: this draft’s last one is still running.')
+    const installed = record.basedOn === null ? null : await this.deps.installed(record.adapterId)
+    if (installed === null)
+      throw new AuthoringRefusal(
+        'Not tried: a login trial is for an installed adapter’s login. Start the draft from "installed".',
+      )
+    const files = await this.wrap(() => this.deps.store.files(draftId))
+    let manifest: AdapterManifest
+    try {
+      manifest = (await this.deps.prepare(files)).manifest
+    } catch (error) {
+      throw new AuthoringRefusal(`Not tried: the draft doesn’t build. ${sentenceOf(error)}`)
+    }
+    if (manifest.id !== record.adapterId)
+      throw new AuthoringRefusal(`Not tried: the manifest’s id must be ${record.adapterId}, the draft’s.`)
+    const changed = draftChanges(files, installed, true)
+    if (!changed.loginWallsSame)
+      throw new AuthoringRefusal(
+        'Not tried: a login trial runs the draft’s steps behind the installed version’s walls, so the draft must keep home, navigation, egress, secrets, session and auth.frameOrigins as they are installed.',
+      )
+    if (manifest.auth.steps.length === 0)
+      throw new AuthoringRefusal('Not tried: the draft has no login steps (auth.steps).')
+    const trialWait = take(this.trialTimes, draftId, TRIAL_LIMITS.perDraftPerHour, this.deps.now())
+    if (trialWait > 0)
+      throw new AuthoringRefusal(
+        `Not tried: ${TRIAL_LIMITS.perDraftPerHour} trials an hour per draft is the most. Try again in ${seconds(trialWait)} seconds.`,
+      )
+    const started = this.deps.now()
+    this.trialing.add(draftId)
+    let result: LoginTrialResult
+    try {
+      result = await run({
+        adapterId: record.adapterId,
+        draftId,
+        label: `${draftId.toLowerCase()}-${++this.trialCount}`,
+        steps: manifest.auth.steps,
+        clientName: this.deps.clientName(viewer).slice(0, 100),
+      })
+    } finally {
+      this.trialing.delete(draftId)
+    }
+    if (result.kind === 'signed-in-before')
+      throw new AuthoringRefusal(
+        `Not tried: the trial’s new browser was signed in to ${manifest.name} before any step ran, so the steps would prove nothing.`,
+      )
+    const problem = loginTrialProblem(result)
+    const summary: LoginTrialSummary = {
+      loginKey: changed.loginKey,
+      at: new Date(this.deps.now()).toISOString(),
+      ok: problem === null,
+      problem: problem === null ? null : clip(problem, 200),
+    }
+    await this.deps.store
+      .update(draftId, (r) => ({ ...r, loginTrials: [...r.loginTrials, summary].slice(-10) }))
+      .catch(() => undefined)
+    const host = new URL(manifest.home).hostname
+    const packageHash = bundleHash(files)
+    await this.deps.audit({
+      type: 'draft-trial',
+      draftId,
+      adapterId: record.adapterId,
+      clientId: clientKey(viewer),
+      tool: LOGIN_TRIAL,
+      host,
+      packageHash,
+      outcome:
+        result.kind === 'signed-in'
+          ? 'output'
+          : result.status === 'needsUser'
+            ? 'needs-user'
+            : result.status === 'blocked'
+              ? 'site-resting'
+              : 'error',
+      login: true,
+    })
+    this.deps.notify(`${this.deps.clientName(viewer)} tried new login steps on ${siteDomain(host)}.`)
+    return {
+      tool: LOGIN_TRIAL,
+      packageHash,
+      ok: problem === null,
+      output: null,
+      problem,
+      blocked: [],
+      blockedCount: 0,
+      ms: Math.max(0, Math.round(this.deps.now() - started)),
+      login: true,
+    }
+  }
+
+  /**
    * A repair of a page behind the sign-in, where Valet can record no fixture: after the draft's
    * signed-in trial of the ticket's tool worked, the installed version runs on the same input and
    * session. Its failing as the ticket says is the reproduction (check step 7). The ticket's id,
@@ -1590,6 +1776,17 @@ export function checkLines(
   out.push(
     `Fixtures: ${provenance.recordedByValet} recorded by Valet, ${provenance.writtenByAgent} written by the agent`,
   )
+  const unchanged = report.unchangedTools ?? []
+  if (unchanged.length > 0)
+    out.push(
+      clip(
+        `Code and declaration as installed now, so no new cases needed: ${unchanged.length === 1 ? '1 tool' : `${unchanged.length} tools`} (${unchanged.join(', ')})`,
+        200,
+      ),
+    )
+  if (report.login === 'tried')
+    out.push('Login steps: changed, and a login trial signed in with them from signed out')
+  else if (report.login === 'not-tried') out.push('Login steps: changed, and not tried')
   out.push(...trialLines(trials, report.packageHash))
   if (repairId !== null) {
     const live = trials.some((t) => t.reproduces === repairId && t.packageHash === report.packageHash)
@@ -1615,6 +1812,28 @@ function trialLines(trials: readonly TrialSummary[], packageHash: string | null)
         ? `Live trial of ${t.tool}, ${t.signedIn ? 'signed in' : 'signed out'}: returned output that fits its schema`
         : `Live trial of ${t.tool}, ${t.signedIn ? 'signed in' : 'signed out'}: ${clip(t.problem ?? 'failed', 120)}`,
     )
+}
+
+/** What a login trial is called where a tool's name would be: in its report and the audit log. */
+export const LOGIN_TRIAL = 'auth.steps'
+
+/** How a login trial ended, in Valet's words; null when it signed in. */
+export function loginTrialProblem(result: LoginTrialResult): string | null {
+  if (result.kind === 'signed-in') return null
+  if (result.kind === 'signed-in-before') return 'Valet was signed in before the steps ran.'
+  if (result.at === 'after')
+    return result.status === 'failed' && result.errorClass === 'not-logged-in'
+      ? 'The steps all ran, but the site didn’t say signed in after them.'
+      : `The steps all ran, but checking for signed in after them stopped (${codes(result)}).`
+  const where = result.at === 'before' ? 'Checking for signed out before the steps' : 'The steps'
+  if (result.status === 'needsUser')
+    return `${where} stopped for the person (${result.reason ?? 'needs-user'}).`
+  if (result.status === 'blocked') return `${where} met the site refusing Valet (${codes(result)}).`
+  return `${where} stopped (${codes(result)}).`
+}
+
+function codes(r: { readonly stage: string | null; readonly errorClass: string | null }): string {
+  return `${r.stage ?? 'auth-step'}: ${r.errorClass ?? 'failed'}`
 }
 
 /** How a trial ended, for the agent and the card; null when it returned good output. */

@@ -123,7 +123,7 @@ export type DependencyReport = z.output<typeof dependencyReportSchema>
 
 const finding = z.object({
   level: z.enum(['error', 'caution']),
-  check: z.enum(['package', 'build', 'names', 'lint', 'cases', 'reproduction']),
+  check: z.enum(['package', 'build', 'names', 'lint', 'cases', 'reproduction', 'login']),
   text: z.string(),
 })
 
@@ -147,6 +147,16 @@ export const checkReportSchema = z.object({
   changes: z.array(z.object({ area: z.string(), risk: z.string(), text: z.string() })),
   /** True when nothing changed since the last check: its answer again, not counted against the hour's checks. */
   reused: z.boolean().optional(),
+  /**
+   * A draft from the installed adapter: tools whose code and declaration are as installed now. They
+   * run exactly as the approved version does, so they need no new case.
+   */
+  unchangedTools: z.array(z.string()).optional(),
+  /**
+   * A draft from the installed adapter: whether its login steps are as installed, or changed and
+   * tried in a login trial that signed in, or changed and not tried.
+   */
+  login: z.enum(['unchanged', 'tried', 'not-tried']).optional(),
 })
 
 export const diffReportSchema = z.object({
@@ -297,6 +307,8 @@ export const trialReportSchema = z.object({
    * says: this trial is the repair's reproduction, for this package only.
    */
   reproduces: z.string().optional(),
+  /** A login trial: the draft's login steps, from signed out, in a login session (tool is auth.steps). */
+  login: z.boolean().optional(),
 })
 
 export type TrialReport = z.output<typeof trialReportSchema>
@@ -406,6 +418,8 @@ export interface Authoring {
     input: unknown,
     signedIn?: boolean,
   ): Promise<TrialReport>
+  /** A login trial: the draft's own login steps, from signed out, in a login session. */
+  loginTrial(viewer: ClientIdentity, draftId: string): Promise<TrialReport>
   requestSession(viewer: ClientIdentity, draftId: string, minutes: number): Promise<AskReport>
   requestGrant(viewer: ClientIdentity, draftId: string, minutes: number, purpose: string): Promise<AskReport>
 }
@@ -693,7 +707,9 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
       'Runs Valet’s checks on your draft as it is now: the package rules and manifest, a build, names, a lint, ' +
       'the permission changes the person will see, and every case in test/*.json, each run in Valet’s sandbox. ' +
       'Every case must pass and every tool needs a passing case that checks a value of its output before you ' +
-      'can submit. Nothing is installed. Takes up to 45 seconds. You have 20 checks an hour; checking a ' +
+      'can submit, except, in a draft from the installed adapter, a tool whose code and declaration are as ' +
+      'installed (unchangedTools): it runs as the approved version does. Changed login steps (auth.steps) need ' +
+      'a login trial that signed in with them (valet_live_trial with login). Nothing is installed. Takes up to 45 seconds. You have 20 checks an hour; checking a ' +
       'package that hasn’t changed since the last check answers with that result again (reused: true) and ' +
       'doesn’t count, so change something before checking again.',
     input: z.object({
@@ -952,24 +968,42 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
       'session, and only the GET reads the installed version declares reach it. On a repair draft, a ' +
       'signed-in trial that works is followed by the installed version on the same input; `reproduces` ' +
       'then names the ticket it reproduced, for these files only. Every request Valet refuses is listed in ' +
-      '`blocked`; the trial opens the manifest’s home first, so home’s host must be in egress.',
+      '`blocked`; the trial opens the manifest’s home first, so home’s host must be in egress. With login ' +
+      'and no tool, it tries the draft’s login steps (auth.steps) instead, to fix an installed adapter’s ' +
+      'login: Valet opens a login session on the site’s login page (developer mode must be on), checks it ' +
+      'is signed out, runs the steps as a real login would, typing the person’s login without you seeing ' +
+      'it, and checks it is signed in after. The draft must keep what a login depends on (home, navigation, ' +
+      'egress, secrets, session, auth.frameOrigins) as installed. A trial that signed in lets these steps ' +
+      'pass valet_check_draft, and shows on the person’s card. It can take as long as a real login (three ' +
+      'minutes at most); if your call times out, it still finishes, and valet_check_draft shows how it ended.',
     input: z.object({
       draftId: draftIdInput,
-      tool: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
+      tool: z
+        .string()
+        .regex(/^[a-z][a-z0-9_]{0,63}$/)
+        .optional()
+        .describe('The read tool to try. Leave it out with login.'),
       input: z.record(z.string(), z.unknown()).default({}),
       signedIn: z.boolean().default(false),
+      login: z.boolean().default(false).describe('Try the draft’s login steps instead of a tool.'),
     }),
     output: trialReportSchema,
     needs: 'ask',
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-    run: (a, args, s) =>
-      a.liveTrial(
-        s.viewer,
-        args['draftId'] as string,
-        args['tool'] as string,
-        args['input'] ?? {},
-        args['signedIn'] === true,
-      ),
+    run: (a, args, s) => {
+      const tool = args['tool']
+      if ((args['login'] === true) === (typeof tool === 'string'))
+        throw new AuthoringRefusal('Not tried: give either tool, or login: true.')
+      return args['login'] === true
+        ? a.loginTrial(s.viewer, args['draftId'] as string)
+        : a.liveTrial(
+            s.viewer,
+            args['draftId'] as string,
+            args['tool'] as string,
+            args['input'] ?? {},
+            args['signedIn'] === true,
+          )
+    },
   },
   {
     name: 'valet_request_session',

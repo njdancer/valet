@@ -407,6 +407,11 @@ export type AuditEvent =
       readonly signedIn?: boolean
       /** Requests refused during the trial, each also a request-blocked record. Absent for none. */
       readonly blocked?: number
+      /**
+       * A login trial: the draft's login steps (tool `auth.steps`) run from signed out in a login
+       * session. `output` means they signed in.
+       */
+      readonly login?: true
     }
   | { readonly type: 'device-paired'; readonly deviceId: string; readonly platform: 'ios' | 'macos' }
   | { readonly type: 'device-revoked'; readonly deviceId: string; readonly by: string }

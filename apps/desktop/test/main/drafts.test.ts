@@ -26,6 +26,7 @@ import {
   type AuthoringDeps,
   CHECKS_PER_CLIENT_PER_HOUR,
   DraftAuthoring,
+  type LoginTrialResult,
   type RequestState,
   type SubmitRequest,
   submitSentence,
@@ -1969,4 +1970,212 @@ describe('npm dependencies (docs/node-runtime.md#dependencies)', () => {
     for (let i = 0; i < 30; i++) await h.authoring.addDependency(AGENT, h.draftId, { name: 'left' })
     await expect(h.authoring.addDependency(AGENT, h.draftId, { name: 'left' })).rejects.toThrow(/this hour/)
   })
+})
+
+describe('repairing an installed adapter', () => {
+  // An installed adapter with a login and no cases, as a built-in one comes: only its code.
+  function installedWithLogin(): PackageFiles {
+    const files = { ...blankDraft('shop', 'Shop') }
+    delete files['test/example.json']
+    for (const path of Object.keys(files)) if (path.startsWith('fixtures/')) delete files[path]
+    const manifest = JSON.parse(files['manifest.json'] ?? '{}')
+    const home = new URL(manifest.home).origin
+    files['manifest.json'] = JSON.stringify({
+      ...manifest,
+      version: '0.5.2',
+      navigation: [...new Set([...(manifest.navigation ?? []), home])],
+      secrets: {
+        login: { description: 'Shop account', fields: ['username', 'password'], origins: [home] },
+      },
+      session: { cookieDomains: [new URL(home).hostname], probe: { kind: 'cookie', name: 'sid' } },
+      auth: {
+        steps: [
+          { op: 'goto', url: `${home}/login` },
+          { op: 'fill', selector: '#user', value: { secret: 'login', field: 'username' } },
+          { op: 'assertLoggedIn' },
+        ],
+      },
+    })
+    return files
+  }
+  const INSTALLED_HASH = 'b'.repeat(64)
+
+  async function loginDraft(overrides: Partial<AuthoringDeps> = {}) {
+    const tried: { adapterId: string; draftId: string; steps: unknown }[] = []
+    let answer: LoginTrialResult = { kind: 'signed-in' }
+    const h = await harness({
+      loginTrial: async (request) => {
+        tried.push({ adapterId: request.adapterId, draftId: request.draftId, steps: request.steps })
+        return answer
+      },
+      ...overrides,
+    })
+    h.installed.set('shop', { files: installedWithLogin(), hash: INSTALLED_HASH })
+    const { draft } = await h.authoring.createDraft(AGENT, { adapterId: 'shop', from: 'installed' })
+    const draftId = draft.draftId
+    const manifest = JSON.parse(installedWithLogin()['manifest.json'] ?? '{}')
+    const write = (patch: Record<string, unknown>) =>
+      h.authoring.writeFile(AGENT, draftId, 'manifest.json', JSON.stringify({ ...manifest, ...patch }))
+    const newSteps = {
+      steps: [
+        { op: 'goto', url: `${new URL(manifest.home).origin}/signin` },
+        { op: 'fill', selector: '#email', value: { secret: 'login', field: 'username' } },
+        { op: 'assertLoggedIn' },
+      ],
+    }
+    return {
+      ...h,
+      draftId,
+      tried,
+      write,
+      newSteps,
+      manifest,
+      answer: (next: LoginTrialResult) => {
+        answer = next
+      },
+    }
+  }
+
+  it('asks no new cases of tools left as installed, and a login trial of the changed steps', async () => {
+    const d = await loginDraft()
+    await d.write({ version: '0.5.3', auth: d.newSteps })
+    const first = await d.authoring.check(AGENT, d.draftId)
+    expect(first.unchangedTools).toEqual(['get_item'])
+    expect(first.login).toBe('not-tried')
+    expect(first.findings.filter((f) => f.level === 'error')).toEqual([
+      {
+        level: 'error',
+        check: 'login',
+        text: 'The login steps changed: sign in with them first with valet_live_trial and login: true (it needs developer mode on in Valet).',
+      },
+    ])
+    expect(first.ok).toBe(false)
+    await expect(
+      d.authoring.submit(AGENT, d.draftId, { note: null, references: [], followOns: [] }),
+    ).rejects.toThrow(/Not submitted: The login steps changed/)
+
+    const trial = await d.authoring.loginTrial(AGENT, d.draftId)
+    expect(trial).toMatchObject({ tool: 'auth.steps', ok: true, problem: null, login: true })
+    expect(d.tried).toEqual([{ adapterId: 'shop', draftId: d.draftId, steps: d.newSteps.steps }])
+    expect(d.audit.at(-1)).toMatchObject({
+      type: 'draft-trial',
+      tool: 'auth.steps',
+      outcome: 'output',
+      login: true,
+    })
+    expect(d.notices.at(-1)).toBe('Claude Code tried new login steps on example.com.')
+
+    const second = await d.authoring.check(AGENT, d.draftId)
+    expect(second.reused).toBeUndefined()
+    expect(second.ok).toBe(true)
+    expect(second.login).toBe('tried')
+    await d.authoring.submit(AGENT, d.draftId, { note: null, references: [], followOns: [] })
+    expect(d.submits[0]?.checks).toEqual(
+      expect.arrayContaining([
+        'Code and declaration as installed now, so no new cases needed: 1 tool (get_item)',
+        'Login steps: changed, and a login trial signed in with them from signed out',
+      ]),
+    )
+    expect(d.submits[0]?.agentTests).toEqual({ passed: 0, failed: 0 })
+  }, 60_000)
+
+  it('asks for cases again once any code changes, and for a new trial once the steps change again', async () => {
+    const d = await loginDraft()
+    await d.write({ version: '0.5.3', auth: d.newSteps })
+    await d.authoring.loginTrial(AGENT, d.draftId)
+    expect((await d.authoring.check(AGENT, d.draftId)).ok).toBe(true)
+    // Different steps: the trial was of the old ones.
+    const other = {
+      steps: [...d.newSteps.steps.slice(0, 2), { op: 'pause', ms: 500 }, { op: 'assertLoggedIn' }],
+    }
+    await d.write({ version: '0.5.3', auth: other })
+    const again = await d.authoring.check(AGENT, d.draftId)
+    expect(again.findings.map((f) => f.check)).toContain('login')
+    expect(again.ok).toBe(false)
+    // Code changed: every tool needs a case again.
+    await d.write({ version: '0.5.3', auth: d.newSteps })
+    const files = await d.store.files(d.draftId)
+    await d.authoring.writeFile(AGENT, d.draftId, 'src/tools.ts', `${files['src/tools.ts']}\n// changed\n`)
+    const code = await d.authoring.check(AGENT, d.draftId)
+    expect(code.unchangedTools).toEqual([])
+    expect(code.findings.map((f) => f.text)).toContain('get_item has no passing case that checks its output.')
+    expect(code.findings.map((f) => f.check)).not.toContain('login')
+  }, 60_000)
+
+  it('counts a tool’s own declaration and the rest of the manifest as changes', async () => {
+    const d = await loginDraft()
+    await d.write({
+      version: '0.5.3',
+      tools: d.manifest.tools.map((t: Record<string, unknown>) => ({ ...t, description: 'Now different.' })),
+    })
+    const tool = await d.authoring.check(AGENT, d.draftId)
+    expect(tool.unchangedTools).toEqual([])
+    expect(tool.login).toBe('unchanged')
+    expect(tool.findings.map((f) => f.text)).toContain('get_item has no passing case that checks its output.')
+    await d.write({ version: '0.5.3', egress: [...d.manifest.egress, 'cdn.example.com'] })
+    expect((await d.authoring.check(AGENT, d.draftId)).unchangedTools).toEqual([])
+    // Only the version: nothing to prove.
+    await d.write({ version: '0.5.3' })
+    const same = await d.authoring.check(AGENT, d.draftId)
+    expect(same).toMatchObject({ ok: true, unchangedTools: ['get_item'], login: 'unchanged' })
+  }, 60_000)
+
+  it('keeps a failed trial’s words on the check, and refuses trials it can’t make honestly', async () => {
+    const d = await loginDraft()
+    await d.write({ version: '0.5.3', auth: d.newSteps })
+    d.answer({
+      kind: 'stopped',
+      at: 'steps',
+      status: 'failed',
+      reason: null,
+      stage: 'auth-step',
+      errorClass: 'element-missing',
+    })
+    const failed = await d.authoring.loginTrial(AGENT, d.draftId)
+    expect(failed).toMatchObject({ ok: false, problem: 'The steps stopped (auth-step: element-missing).' })
+    expect((await d.authoring.check(AGENT, d.draftId)).findings.map((f) => f.text)).toContain(
+      'The login steps changed, and their last login trial didn’t sign in: The steps stopped (auth-step: element-missing).',
+    )
+    d.answer({ kind: 'signed-in-before' })
+    await expect(d.authoring.loginTrial(AGENT, d.draftId)).rejects.toThrow(
+      /signed in to Shop before any step ran/,
+    )
+    // Walls changed: a trial behind the installed ones would prove nothing about these.
+    await d.write({
+      version: '0.5.3',
+      auth: d.newSteps,
+      navigation: [...d.manifest.navigation, 'https://accounts.example.com'],
+    })
+    await expect(d.authoring.loginTrial(AGENT, d.draftId)).rejects.toThrow(/must keep home, navigation/)
+    const walls = await d.authoring.check(AGENT, d.draftId)
+    expect(walls.findings.find((f) => f.check === 'login')).toMatchObject({ level: 'caution' })
+    expect(walls.findings.map((f) => f.text)).toContain(
+      'get_item has no passing case that checks its output.',
+    )
+    // Another agent's draft isn't theirs to try.
+    await expect(d.authoring.loginTrial(OTHER, d.draftId)).rejects.toThrow()
+    expect(d.tried).toHaveLength(2)
+  }, 60_000)
+
+  it('makes a changed login a caution where this Valet can’t try login steps', async () => {
+    const d = await loginDraft({ loginTrial: undefined })
+    await d.write({ version: '0.5.3', auth: d.newSteps })
+    const report = await d.authoring.check(AGENT, d.draftId)
+    expect(report).toMatchObject({ ok: true, login: 'not-tried', unchangedTools: ['get_item'] })
+    await expect(d.authoring.loginTrial(AGENT, d.draftId)).rejects.toThrow(/can’t try login steps/)
+    await d.authoring.submit(AGENT, d.draftId, { note: null, references: [], followOns: [] })
+    expect(d.submits[0]?.checks).toContain('Login steps: changed, and not tried')
+  }, 60_000)
+
+  it('asks cases of every tool of a new adapter, as before', async () => {
+    const h = await harness()
+    const { draft } = await h.authoring.createDraft(AGENT, { adapterId: 'shop', from: 'blank' })
+    await h.authoring.deleteFile(AGENT, draft.draftId, 'test/example.json')
+    const report = await h.authoring.check(AGENT, draft.draftId)
+    expect(report.unchangedTools).toEqual([])
+    expect(report.login).toBeUndefined()
+    expect(report.findings.map((f) => f.text)).toContain(
+      'get_item has no passing case that checks its output.',
+    )
+  }, 60_000)
 })

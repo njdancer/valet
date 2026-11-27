@@ -592,6 +592,41 @@ works". Nothing from the signed-in pages is saved.
 
 Not built yet: the runtime keeping the failing response as evidence, and the ticket's shape diff.
 
+## Repairing an installed adapter
+
+Agent feedback (2026-11-27): a draft from `installed` that changed only the login steps failed
+`valet_check_draft` with "… has no passing case that checks its output" for every tool, because a
+built-in adapter's package carries no `test/*.json` cases. Nick's goal: any agent using Valet can
+debug and fix a site's login with Valet's tools alone. So the checks ask for proof of what a draft
+changes, and only that (`drafts/changes.ts`):
+
+- **Unchanged tools need no new case.** A tool is unchanged when every file outside `test/` is
+  byte-for-byte the installed package's, the manifest is the installed one's apart from `version`,
+  `description` and `auth.steps` (compared parsed, defaults filled in), and the tool's own
+  declaration is the same. It then runs exactly as the version the person approved. The check
+  reports these as `unchangedTools` and the card says "Code and declaration as installed now, so no
+  new cases needed: …". Any other change, a shared source file included, asks every tool for a case
+  as before. Cases the draft does have must still all pass.
+- **Changed login steps need a login trial (check step 6b).** `valet_live_trial` with `login: true`
+  and no tool runs the draft's `auth.steps` in a login session (login-session.ts) for the installed
+  adapter, on a trial driver's own new in-memory partitions, so it starts signed out and never
+  touches or signs in the person's login browser: `assertLoggedIn` alone (it must say signed out),
+  the steps as one batch, then `assertLoggedIn` again. The session's walls are the installed
+  version's (navigation, secret origins, the password at most once, no value-probing selectors, a
+  block opens the site's breaker), so the trial is refused unless the draft keeps `home`,
+  `navigation`, `egress`, `secrets`, `session`, `auth.frameOrigins` and `runtime` as installed. A
+  trial is kept on the draft record (`loginTrials`, the last 10) under a hash of the steps and those
+  walls, so changing the version or a tool afterwards keeps it, and changing the steps doesn't. The
+  card says "Login steps: changed, and a login trial signed in with them from signed out", or "…
+  and not tried". It needs developer mode on, as every login session does.
+- **Where no trial can run,** a changed login is a caution, not a requirement: in a build without
+  developer mode (no login sessions at all), or when the draft also changed the walls above. The
+  card then says "not tried" and the auth-steps permission lines are the person's check, as before.
+
+The steps get a real login's three minutes, so the call may outlast the client's timeout; the trial still
+finishes and the next check reads it. Not built: walls changed
+with the steps (they need the person's approval before a trial could use them).
+
 ## Signed-in authoring sessions (PR 3)
 
 Off by default. `valet_request_session` asks for `authoring-session` (B's kind: adapter id, draft
