@@ -22,12 +22,12 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { buildRecord, type RawPackageRuntime } from '@valet/adapter-store'
 import {
   type AdapterDefinition,
+  type ApprovalSubject,
   CredentialError,
   checkPackage,
   defineAdapter,
   MAIL_SECRET,
   type MailReader,
-  type ApprovalSubject,
   type ManifestInput,
   NeedsUserError,
   type PackageFiles,

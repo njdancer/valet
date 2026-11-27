@@ -167,7 +167,13 @@ import {
   NO_APP_ACCESS,
   withWidening,
 } from './agent-access'
-import { AgentBrowserService, BROWSER_ADAPTER_ID, BrowserRefusal, type SessionBrowser, sessionPacer } from './agent-browser'
+import {
+  AgentBrowserService,
+  BROWSER_ADAPTER_ID,
+  BrowserRefusal,
+  type SessionBrowser,
+  sessionPacer,
+} from './agent-browser'
 import {
   type AgentNetwork,
   AgentNetworkStore,
