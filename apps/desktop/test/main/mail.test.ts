@@ -210,6 +210,19 @@ describe('MailService', () => {
       (await s.service.call(call('create_draft', { ...draft, from: 'someone@else.example' }), signal)).status,
     ).not.toBe('ok')
     expect(s.saved).toEqual([])
+    // From an account it may only read: says so, so it can ask for Edit.
+    s.accounts.items = { [ALLOWED]: 'edit', [OTHER]: 'read' }
+    expect(
+      JSON.stringify(
+        await s.service.call(call('create_draft', { ...draft, from: 'me@work.example' }), signal),
+      ),
+    ).toContain('read-access-only')
+    expect(
+      (await s.service.call(call('create_draft', { ...draft, from: 'me@example.com' }), signal)).status,
+    ).toBe('ok')
+    expect(s.saved).toHaveLength(1)
+    s.saved.length = 0
+    s.accounts.items = { [ALLOWED]: 'edit' }
     expect((await s.service.call(call('create_draft', draft), signal)).status).toBe('ok')
     expect(s.saved).toHaveLength(1)
   })

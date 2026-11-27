@@ -152,8 +152,13 @@ export class AgentAccessStore {
     this.document = new JsonDocument(path, documentSchema, () => EMPTY, true)
   }
 
+  /** Never throws: a file that can't be read is nobody having anything. */
   async load(): Promise<void> {
-    this.current = await this.document.read()
+    try {
+      this.current = await this.document.read()
+    } catch {
+      this.current = EMPTY
+    }
     // Only `seed` writes a file, and always seeded: one read back unseeded didn't validate. The
     // seed must not run again from the old per-app picks (it could give back what the person took
     // away), so it counts as seeded, with nobody having anything.
@@ -223,11 +228,17 @@ export class AgentAccessStore {
   /** The agent is gone: nothing is kept for it. */
   async forget(clientId: string): Promise<void> {
     if (this.current.clients[clientId] === undefined) return
-    await this.update((doc) => {
-      const clients = { ...doc.clients }
-      delete clients[clientId]
-      return { ...doc, clients }
-    })
+    // Never throws: it follows a revoke that has already happened, and a record a failed write
+    // leaves is never reached (a revoked agent holds nothing).
+    try {
+      await this.update((doc) => {
+        const clients = { ...doc.clients }
+        delete clients[clientId]
+        return { ...doc, clients }
+      })
+    } catch {
+      // As above.
+    }
   }
 
   /**

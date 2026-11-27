@@ -652,6 +652,12 @@ const CREDENTIAL_DECLINE_COOLDOWN_MS = 60 * 60_000
 const CREDENTIAL_ASKS_PER_AGENT = 3
 const CREDENTIAL_ASKS_TOTAL = 10
 
+/** Calendar's and Reminders' changing tools: what an agent had to hold for Edit (seedAgentAccess). */
+const EVENTKIT_CHANGES: Readonly<Record<EventKitApp, readonly string[]>> = {
+  calendar: ['create_event', 'update_event', 'delete_event'],
+  reminders: ['create', 'update', 'delete'],
+}
+
 export class AppService {
   readonly api: MainApi
   private readonly audit: ObservedAudit
@@ -1150,7 +1156,7 @@ export class AppService {
         () => undefined,
       )
     await this.clients.load()
-    await this.agentAccess.load().catch(() => undefined)
+    await this.agentAccess.load()
     const host = new ToolHost({
       approvals: this.installGate,
       audit: this.audit,
@@ -1324,7 +1330,11 @@ export class AppService {
       })
       .catch(() => undefined)
     // Once, the first run with per-agent access: each agent keeps what the old switches gave it.
-    await this.seedAgentAccess().catch(() => undefined)
+    try {
+      await this.seedAgentAccess()
+    } catch {
+      // Not seeded: it runs again at the next start, and until then nobody has anything.
+    }
     // A built-in tool this build no longer has (the first agents' browser's browser_open, say)
     // leaves every grant and switch: it would only show as a tool that can't be called.
     await this.remote.forgetTools((ref) => this.builtInGone(ref)).catch(() => undefined)
@@ -1350,7 +1360,12 @@ export class AppService {
     const level = (app: AccessApp, id: string): AccessChoice =>
       this.agentAccess.app(label, app).items[id] ?? 'off'
     const apps: AgentAccessApp[] = []
-    const mail = await this.mailStatus().catch(() => null)
+    let mail: MailStatus | null = null
+    try {
+      mail = await this.mailStatus()
+    } catch {
+      // Mail's store can't be read now: it shows as not set up.
+    }
     if (mail !== null)
       apps.push({
         app: 'mail',
@@ -1364,8 +1379,12 @@ export class AppService {
         })),
       })
     for (const [app, service] of this.eventKitApps) {
-      const status = await service.status().catch(() => null)
-      if (status === null) continue
+      let status: EventKitStatus
+      try {
+        status = await service.status()
+      } catch {
+        continue
+      }
       apps.push({
         app,
         ready: status.state === 'ready',
@@ -1428,9 +1447,12 @@ export class AppService {
 
   /** An agent's access changed: its tool list follows, and its open sessions get the new one. */
   private async accessChanged(label: string): Promise<void> {
-    await this.refreshTools().catch(() => undefined)
-    if (label.startsWith('remote:'))
-      await this.remote.reopenClient(label.slice('remote:'.length)).catch(() => undefined)
+    try {
+      await this.refreshTools()
+      if (label.startsWith('remote:')) await this.remote.reopenClient(label.slice('remote:'.length))
+    } catch {
+      // The record is saved and every call checks it; a list that didn't refresh catches up later.
+    }
     this.emit('clients-changed')
     this.emit('remote-changed')
   }
@@ -1511,12 +1533,7 @@ export class AppService {
       apps.push({
         app,
         items: settings.calendars,
-        edits: settings.writes
-          ? (app === 'calendar' ? calendarTools({ writes: true }) : reminderTools({ writes: true }))
-              .map((t) => t.declaration)
-              .filter((t) => t.sideEffect !== 'read')
-              .map((t) => t.name)
-          : null,
+        edits: settings.writes ? EVENTKIT_CHANGES[app] : null,
         tools: (app === 'calendar' ? calendarTools({ writes: true }) : reminderTools({ writes: true })).map(
           (t) => t.declaration,
         ),
@@ -2675,14 +2692,16 @@ export class AppService {
           if (subject.tools.length > 0 || subject.capabilities.length > 0 || subject.full.length > 0)
             return false
           if (!this.accessClientKnown(subject.clientId)) return false
-          const view = await this.accessView(subject.clientId).catch(() => null)
-          return (
-            view !== null &&
-            subject.items.every((s) => {
-              const item = view.apps.find((a) => a.app === s.app)?.items.find((i) => i.id === s.id)
-              return item !== undefined && (s.level === 'read' || item.editable)
-            })
-          )
+          let view: AgentAccessView
+          try {
+            view = await this.accessView(subject.clientId)
+          } catch {
+            return false
+          }
+          return subject.items.every((s) => {
+            const item = view.apps.find((a) => a.app === s.app)?.items.find((i) => i.id === s.id)
+            return item !== undefined && (s.level === 'read' || item.editable)
+          })
         },
         apply: async (subject) => {
           for (const app of ACCESS_APPS) {
@@ -5257,7 +5276,7 @@ export class AppService {
           await this.approvalBroker?.withdrawClient(`remote:${id}`).catch(() => 0)
           this.dropAgentAsks(`remote:${id}`)
           await this.dropRemoteCapabilities(id)
-          await this.agentAccess.forget(`remote:${id}`).catch(() => undefined)
+          await this.agentAccess.forget(`remote:${id}`)
           // Just after, so this call's own result still reaches the agent.
           const timer = setTimeout(() => void this.remote.revokeClient(id).catch(() => false), 1000)
           timer.unref?.()
@@ -5268,7 +5287,7 @@ export class AppService {
         await this.clients.revoke(clientId)
         this.cancelConfirmationsOf(`local:${clientId}`)
         await this.approvalBroker?.withdrawClient(`local:${clientId}`).catch(() => 0)
-        await this.agentAccess.forget(`local:${clientId}`).catch(() => undefined)
+        await this.agentAccess.forget(`local:${clientId}`)
         await rm(this.clients.configPath(clientId), { force: true }).catch(() => undefined)
         // The token is refused from the next request on; the session itself ends just after, so
         // this call's own result still reaches the agent.
@@ -5829,7 +5848,7 @@ export class AppService {
           this.cancelConfirmationsOf(label)
           await this.approvalBroker?.withdrawClient(label).catch(() => 0)
           // Its access goes with it: an app added again starts with none.
-          await this.agentAccess.forget(label).catch(() => undefined)
+          await this.agentAccess.forget(label)
           try {
             await this.endpoint?.removeClient(clientId)
             await rm(this.clients.configPath(clientId), { force: true })
@@ -6149,7 +6168,7 @@ export class AppService {
           this.cancelConfirmationsOf(`remote:${id}`)
           if (!(await this.remote.revokeClient(id))) throw new ValetError('config', 'not-found')
           await this.dropRemoteCapabilities(id)
-          await this.agentAccess.forget(`remote:${id}`).catch(() => undefined)
+          await this.agentAccess.forget(`remote:${id}`)
         },
         revokeAllClients: async () => {
           const ids = this.remote.remoteClients().map((c) => c.id)
@@ -6157,7 +6176,7 @@ export class AppService {
           const count = await this.remote.revokeAllClients()
           for (const id of ids) {
             await this.dropRemoteCapabilities(id)
-            await this.agentAccess.forget(`remote:${id}`).catch(() => undefined)
+            await this.agentAccess.forget(`remote:${id}`)
           }
           return count
         },
