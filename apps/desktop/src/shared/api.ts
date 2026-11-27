@@ -922,6 +922,21 @@ export interface ClientAccess {
   readonly toolsOff: readonly string[]
 }
 
+/** What an agent's browser sessions may reach, and the Mac's interfaces they could leave from. */
+export interface AgentNetworkView {
+  readonly homeNetwork: boolean
+  /** The interface every connection leaves from; null for the Mac's own routing. */
+  readonly interface: string | null
+  readonly interfaces: readonly {
+    readonly name: string
+    readonly addresses: readonly { readonly address: string; readonly family: 4 | 6 }[]
+  }[]
+}
+export type AgentNetworkPatch = {
+  readonly homeNetwork?: boolean
+  readonly interface?: string | null
+}
+
 export type ClientAccessPatch = Partial<Omit<ClientAccess, 'toolsOff'>>
 
 // ---------- Attention ----------
@@ -1811,6 +1826,13 @@ export interface ValetApi {
     setAccess(clientId: string, patch: ClientAccessPatch): Promise<void>
     /** Turns back on a site tool the app turned off for itself. */
     turnToolOn(clientId: string, qualified: string): Promise<void>
+    /**
+     * An agent's browser sessions' network (docs/agent-browser.md, "Network"), for an app on this
+     * Mac (`local:<id>`) or a cloud agent (`remote:<id>`), with the interfaces it could use.
+     */
+    network(agent: string): Promise<AgentNetworkView>
+    /** Turning the home network on or pinning an interface asks for Touch ID; narrowing doesn't. */
+    setNetwork(agent: string, patch: AgentNetworkPatch): Promise<void>
   }
   readonly attention: {
     /**

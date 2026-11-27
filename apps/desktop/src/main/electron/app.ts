@@ -93,7 +93,7 @@ import type { DemoSite } from './demo'
 import { launchRefused } from './guard'
 import { broadcast, registerIpc } from './ipc'
 import { systemNotifications } from './notifications'
-import { publicOnlyDial } from './public-dial'
+import { agentSessionDial, publicOnlyDial } from './public-dial'
 import { SandboxPool } from './sandbox'
 import { utilityToolProcess } from './tool-process'
 import { type AppTray, createTray } from './tray'
@@ -709,12 +709,16 @@ async function main(): Promise<void> {
         rules,
         dial: authoringDial(allowPrivate),
       }),
-    // An agent's browser session: its own in-memory partition, public addresses only.
-    sessionBrowser: (rules) =>
+    // An agent's browser session: its own in-memory partition, public addresses only unless the
+    // person let this agent reach the home network or pinned it to an interface.
+    sessionBrowser: (rules, network) =>
       openElectronScratchBrowser({
         partition: `scratch:agent-browser:${++scratchOpens}`,
         rules,
-        dial: authoringDial(() => false),
+        dial:
+          network.homeNetwork || network.interface !== null
+            ? agentSessionDial(network)
+            : authoringDial(() => false),
       }),
     // A live trial: the same driver a real call uses, in partitions of its own that live in memory,
     // through the dial that refuses private addresses (docs/authoring-tools.md#live-trials).

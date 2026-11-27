@@ -347,6 +347,8 @@ describe('every channel', () => {
     'attention.declineRequest': ['AAAAAAAAAAAAAAAAAAAAAA'],
     'clients.setAccess': ['c_0123456789abcdef', { askForChanges: false }],
     'clients.turnToolOn': ['c_0123456789abcdef', 'woolworths.remove_from_cart'],
+    'clients.network': ['remote:abc_123'],
+    'clients.setNetwork': ['local:c_0123456789abcdef', { homeNetwork: true, interface: 'en5' }],
     'drafts.list': [],
     'drafts.get': ['dr-abcdefgh23'],
     'drafts.openFolder': ['dr-abcdefgh23'],

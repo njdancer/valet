@@ -53,6 +53,11 @@ function writer(overrides: Partial<AdminWriter> = {}): AdminWriter & { calls: Ca
     requestSetting: log<WriteOutcome>('requestSetting', { kind: 'asked', request: WAITING, reused: false }),
     requestTool: log<WriteOutcome>('requestTool', { kind: 'asked', request: WAITING, reused: false }),
     turnOffTool: log<WriteOutcome>('turnOffTool', { kind: 'done', what: 'x' }),
+    setBrowserNetwork: log<WriteOutcome>('setBrowserNetwork', {
+      kind: 'asked',
+      request: WAITING,
+      reused: false,
+    }),
     requestRemoval: log('requestRemoval', { kind: 'removal-asked' as const, siteName: 'Library' }),
     requestCredential: log('requestCredential', { kind: 'credential-asked' as const, siteName: 'NAS' }),
     disconnect: log<WriteOutcome>('disconnect', { kind: 'done', what: 'x' }),
@@ -177,6 +182,24 @@ describe('write tools', () => {
       writer({ requestCredential: async () => ({ kind: 'refused', reason: 'not-found' }) }),
     )
     expect(refused.isError).toBe(true)
+  })
+
+  it('pass one browser network change at a time, and refuse none or both', async () => {
+    const w = writer()
+    const run = (args: Record<string, unknown>) =>
+      runWriteTool(tool('valet_set_browser_network'), reader(w), args, LOCAL, WORDING)
+    await run({ homeNetwork: true, note: 'To reach the router' })
+    await run({ interface: 'vlan20' })
+    await run({ interface: null })
+    expect(w.calls).toEqual([
+      { name: 'setBrowserNetwork', args: [LOCAL, { homeNetwork: true }, 'To reach the router'] },
+      { name: 'setBrowserNetwork', args: [LOCAL, { interface: 'vlan20' }, null] },
+      { name: 'setBrowserNetwork', args: [LOCAL, { interface: null }, null] },
+    ])
+    expect((await run({})).isError).toBe(true)
+    expect((await run({ homeNetwork: false, interface: null })).isError).toBe(true)
+    expect(w.calls).toHaveLength(3)
+    expect(tool('valet_set_browser_network').input.safeParse({ interface: '../en0' }).success).toBe(false)
   })
 
   it('pass a cloud agent’s request for a tool on, with Ask for changes, and word it as a wait', async () => {

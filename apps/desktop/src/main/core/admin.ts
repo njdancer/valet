@@ -443,6 +443,7 @@ const EVENT_FIELDS: Readonly<Record<AuditEvent['type'], readonly string[]>> = {
   'client-reset': ['clientId'],
   'client-access-changed': ['clientId', 'before', 'after'],
   'client-tool-on': ['clientId', 'tool'],
+  'agent-network-changed': ['clientId', 'homeNetwork', 'interface'],
   'app-paused': ['paused'],
   'call-refused': ['client', 'clientId', 'tool', 'reason'],
   'refusals-dropped': ['client', 'clientId', 'count'],
@@ -480,7 +481,8 @@ function aboutOtherAgent(event: AuditEvent, others: ReadonlySet<string>, mine: s
     event.type === 'client-reset' ||
     event.type === 'client-revoked' ||
     event.type === 'client-access-changed' ||
-    event.type === 'client-tool-on'
+    event.type === 'client-tool-on' ||
+    event.type === 'agent-network-changed'
   )
     return event.clientId !== mine
   const callId = 'callId' in event ? event.callId : null
