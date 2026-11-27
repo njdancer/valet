@@ -75,23 +75,27 @@ const SNAPSHOT = `(options) => {
 }`
 
 /**
- * Where to send trusted input for an element: scrolled into view, its centre in viewport
- * coordinates, and what kind of field it is (typing refuses passwords and one-time codes).
+ * Where to send trusted input for an element: its centre in viewport coordinates, whether that
+ * centre is in the viewport, and what kind of field it is (typing refuses passwords and one-time
+ * codes). `scroll` is how it is first scrolled into view: 'center' (the default), 'nearest', or
+ * 'none' to measure where it is now.
  */
-const POINT = `(target) => {
+const POINT = `(target, scroll) => {
   const el = (${ELEMENT})(target)
   if (el.error) return el
   if (globalThis.__valetHidden(el)) return { error: 'hidden' }
-  el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
+  const how = scroll || 'center'
+  if (how !== 'none') el.scrollIntoView({ block: how, inline: how, behavior: 'instant' })
   const rect = el.getBoundingClientRect()
   if (rect.width === 0 || rect.height === 0) return { error: 'hidden' }
   const x = rect.left + rect.width / 2
   const y = rect.top + rect.height / 2
+  const inView = x >= 0 && y >= 0 && x < innerWidth && y < innerHeight
   const top = document.elementFromPoint(x, y)
   const lower = (name) => (el.getAttribute(name) || '').toLowerCase()
   const tag = el.tagName.toLowerCase()
   return {
-    x, y,
+    x, y, inView,
     covered: top !== null && top !== el && !el.contains(top) && !top.contains(el),
     tag,
     inputType: tag === 'input' ? (lower('type') || 'text') : null,
@@ -211,7 +215,10 @@ export const ariaSnapshotScript = (options: {
   readonly depth: number | null
 }): string => `(${SNAPSHOT})(${jsonLiteral(options)})`
 
-export const ariaPointScript = (target: string): string => `(${POINT})(${jsonLiteral(target)})`
+export type AriaScroll = 'center' | 'nearest' | 'none'
+
+export const ariaPointScript = (target: string, scroll: AriaScroll = 'center'): string =>
+  `(${POINT})(${jsonLiteral(target)}, ${jsonLiteral(scroll)})`
 
 export const ariaFieldScript = (args: {
   readonly target: string
@@ -270,6 +277,8 @@ function unquote(value: string): string {
 export interface AriaPoint {
   readonly x: number
   readonly y: number
+  /** Whether the centre is inside the viewport (left out by older answers: taken as yes). */
+  readonly inView?: boolean
   readonly covered: boolean
   readonly tag: string
   readonly inputType: string | null

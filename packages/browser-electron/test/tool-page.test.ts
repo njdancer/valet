@@ -8,7 +8,7 @@ const EGRESS = ['www.example.com', '*.cdn.example.com']
 const PARTITION = 'persist:tool:example'
 
 function timing(timers: ManualTimers) {
-  return { timers, stepTimeoutMs: 1000, typingDelayMs: 50 }
+  return { timers, stepTimeoutMs: 1000, typingDelayMs: 50, focusHoldMs: 0 }
 }
 
 async function rejection(promise: Promise<unknown>): Promise<ValetError> {

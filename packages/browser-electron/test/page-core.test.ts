@@ -1,6 +1,6 @@
 import { ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
-import { characters, PageCore, typingDelay } from '../src/page-core'
+import { awaitPageFocus, characters, PageCore, typingDelay } from '../src/page-core'
 import { FakeFrame, FakeSurface, ManualTimers } from './fake-browser'
 import { FakeWindow } from './fake-dom'
 
@@ -9,6 +9,13 @@ function core(surface: FakeSurface) {
 }
 
 const ANYWHERE = { stage: 'auth-step', target: null, moved: 'aborted' } as const
+
+async function rejection(promise: Promise<unknown>): Promise<unknown> {
+  return promise.then(
+    () => new Error('expected a rejection'),
+    (error: unknown) => error,
+  )
+}
 
 /** Where commits stand on a page that has seen none. */
 const START = { nodes: null, counts: [], unplaced: 0, total: 0 } as const
@@ -181,6 +188,99 @@ describe('PageCore.click with malformed answers', () => {
       .click('auth-step', '#go', new AbortController().signal)
       .catch((e: unknown) => e)
     expect(error).toMatchObject({ errorClass: 'element-unsuitable' })
+  })
+})
+
+describe('PageCore.focus', () => {
+  /** A main frame with a #user field, and a page core whose timers the test fires. */
+  function page(focusHoldMs?: number) {
+    const { surface, frame } = focusedInput()
+    const timers = new ManualTimers()
+    const core = new PageCore(surface, { timers, stepTimeoutMs: 1000, typingDelayMs: 0, focusHoldMs })
+    return { surface, frame, timers, core }
+  }
+
+  it('returns once focus has stayed on the field for a moment', async () => {
+    const { surface, frame, timers, core } = page()
+    const target = await timers.settle(core.focus('auth-step', '#user', new AbortController().signal))
+    expect(target).toEqual({ frameId: frame.id, origin: frame.origin, selector: '#user' })
+    expect(surface.focusCalls).toBe(1)
+    expect(timers.now).toBeGreaterThanOrEqual(150)
+  })
+
+  // Seen on macOS: focus given to a hidden window lands some milliseconds late and puts keyboard
+  // focus back on the main frame, just after the field took it. Nothing has been typed yet.
+  it('focuses the field again when focus moves away before typing starts', async () => {
+    const { surface, frame, timers, core } = page()
+    let asked = 0
+    const real = surface.focusedFrameId.bind(surface)
+    surface.focusedFrameId = () => (++asked === 2 ? 'main-body' : real())
+    const target = await timers.settle(core.focus('auth-step', '#user', new AbortController().signal))
+    expect(target.frameId).toBe(frame.id)
+    // Giving the window focus again would only start the late effects over.
+    expect(surface.focusCalls).toBe(1)
+  })
+
+  it('gives up when focus keeps moving away', async () => {
+    const { surface, timers, core } = page()
+    let asked = 0
+    const real = surface.focusedFrameId.bind(surface)
+    surface.focusedFrameId = () => (++asked % 2 === 0 ? 'main-body' : real())
+    const error = await timers.settle(
+      rejection(core.focus('auth-step', '#user', new AbortController().signal)),
+    )
+    expect(error).toMatchObject({ stage: 'auth-step', errorClass: 'element-unsuitable' })
+  })
+
+  it('stops watching when the step is given up on', async () => {
+    const { timers, core } = page()
+    const controller = new AbortController()
+    const focusing = core.focus('auth-step', '#user', controller.signal)
+    await timers.advance(30)
+    controller.abort()
+    const error = await timers.settle(rejection(focusing))
+    expect(error).toMatchObject({ stage: 'auth-step', errorClass: 'aborted' })
+  })
+})
+
+describe('awaitPageFocus', () => {
+  // Focus given from the browser side reaches the page on its own channel, so the page's
+  // document.hasFocus() can be false for a moment after focus() on a busy machine.
+  it('waits for focus that arrives late', async () => {
+    const timers = new ManualTimers()
+    let asks = 0
+    const run = async () => ++asks >= 4
+    await expect(timers.settle(awaitPageFocus(run, timers))).resolves.toBe(true)
+    expect(asks).toBe(4)
+  })
+
+  it('asks again when the frame is going away mid-question', async () => {
+    const timers = new ManualTimers()
+    let asks = 0
+    const run = async () => {
+      if (++asks === 1) throw new Error('frame gone')
+      return true
+    }
+    await expect(timers.settle(awaitPageFocus(run, timers))).resolves.toBe(true)
+  })
+
+  it('gives up after about two seconds, so the caller’s own focus check decides', async () => {
+    const timers = new ManualTimers()
+    await expect(timers.settle(awaitPageFocus(async () => false, timers))).resolves.toBe(false)
+    expect(timers.now).toBe(2000)
+  })
+
+  it('stops at once when the step is given up on', async () => {
+    const timers = new ManualTimers()
+    const controller = new AbortController()
+    let asks = 0
+    const run = async () => {
+      asks++
+      controller.abort()
+      return 'not yet'
+    }
+    await expect(timers.settle(awaitPageFocus(run, timers, controller.signal))).resolves.toBe(false)
+    expect(asks).toBe(1)
   })
 })
 

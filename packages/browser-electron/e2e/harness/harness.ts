@@ -349,7 +349,11 @@ async function setup() {
       const typed = await settle(page.type(secret, { allowedOrigins: [site.url('login.test')] }))
       secret.dispose()
       const frame = subframeWithOrigin(login, site.url('login.test'))
-      const valueLength = await frame?.executeJavaScript(`document.querySelector('#password').value.length`)
+      // Typed (site isolation off), the last keystroke can still be on its way to the page.
+      const valueLength =
+        'ok' in typed
+          ? await lengthOnce(frame, '#password', CANARY.length)
+          : await frame?.executeJavaScript(`document.querySelector('#password').value.length`)
       const click = await settle(page.click('#password-submit'))
       const post = await until(() => site.posts.find((p) => p.host === 'login.test'), 1500)
       await page.close()
