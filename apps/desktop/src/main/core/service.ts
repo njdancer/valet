@@ -2568,7 +2568,13 @@ export class AppService {
       // On again with the key the last run kept, while its 8 hours last (and never while locked
       // down). Any other key the last run held went with it: its record is revoked, keeping what
       // it approved.
-      if (await devMode.resume(!this.lockedDown).catch(() => false)) await this.devApproveWaiting()
+      let resumed = false
+      try {
+        resumed = await devMode.resume(!this.lockedDown)
+      } catch {
+        // Off, as a restart left it before.
+      }
+      if (resumed) await this.devApproveWaiting()
       if ((await devMode.revokeLeftovers().catch(() => 0)) > 0)
         await this.audit
           .append({ type: 'developer-mode', on: false, until: null, reason: 'restart' })
@@ -3592,12 +3598,14 @@ export class AppService {
   private fileReviewsSoon(): void {
     if (this.reviewsQueued || this.stopping) return
     this.reviewsQueued = true
-    this.reviewFiling = this.reviewFiling
-      .then(async () => {
-        this.reviewsQueued = false
+    this.reviewFiling = this.reviewFiling.then(async () => {
+      this.reviewsQueued = false
+      try {
         if (!this.stopping) await this.fileWaitingReviews()
-      })
-      .catch(() => undefined)
+      } catch {
+        // The next change asks again; the Mac's Approve still asks meanwhile.
+      }
+    })
   }
 
   private async fileWaitingReviews(): Promise<void> {
@@ -3624,9 +3632,12 @@ export class AppService {
       const stillWanted = () =>
         this.adapter(id)?.hash === adapter.hash && !this.installSigned(id, adapter.hash)
       // Refused (locked down, the broker unavailable): the Mac's own Approve still asks then.
-      const asked = await broker
-        .request('adapter-install', subject, { kind: 'person' }, { stillWanted })
-        .catch(() => null)
+      let asked: Awaited<ReturnType<typeof broker.request>> | null = null
+      try {
+        asked = await broker.request('adapter-install', subject, { kind: 'person' }, { stillWanted })
+      } catch {
+        asked = null
+      }
       if (asked?.ok === true && asked.autoApproved !== true)
         this.watchFiledReview(asked.requestId, id, adapter.hash)
     }
@@ -3636,7 +3647,11 @@ export class AppService {
       const r = pending.request
       if (r.kind !== 'adapter-install' || !this.filedReviews.has(r.id)) continue
       if (!wanted.has(canonicalJson(r.subject)))
-        await broker.withdraw(r.id, { kind: 'person' }).catch(() => false)
+        try {
+          await broker.withdraw(r.id, { kind: 'person' })
+        } catch {
+          // Still waiting; its precheck refuses an answer once it's stale.
+        }
     }
   }
 
@@ -3648,19 +3663,20 @@ export class AppService {
     const broker = this.approvalBroker
     if (broker === null || this.filedReviews.has(requestId)) return
     this.filedReviews.add(requestId)
-    void broker
-      .wait(requestId)
-      .then(async (closed) => {
-        this.filedReviews.delete(requestId)
-        if (closed?.outcome !== 'declined' || this.stopping) return
-        const adapter = this.adapter(adapterId)
-        if (adapter?.hash !== hash || this.installSigned(adapterId, hash)) return
+    void broker.wait(requestId).then(async (closed) => {
+      this.filedReviews.delete(requestId)
+      if (closed?.outcome !== 'declined' || this.stopping) return
+      const adapter = this.adapter(adapterId)
+      if (adapter?.hash !== hash || this.installSigned(adapterId, hash)) return
+      try {
         await this.revokeInstall(adapterId, hash)
         await this.approvals.reject(adapterId, hash, adapter.definition.manifest.version)
         await this.refreshToolsOf(adapterId)
-        this.emit('adapters-changed')
-      })
-      .catch(() => undefined)
+      } catch {
+        // Still not approved: only tightens, and the review stays on the Mac.
+      }
+      this.emit('adapters-changed')
+    })
   }
 
   /**

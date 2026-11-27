@@ -171,12 +171,21 @@ export class DevMode {
       // Never longer than one Touch ID's 8 hours from now, whatever the kept time says.
       until <= now + DEV_MODE_MS
     if (!fits || signer === null || record === undefined) {
-      await keep.clear().catch(() => undefined)
+      await this.forget()
       return false
     }
     this.begin(record, signer, until)
     this.options.changed(true, 'resumed')
     return true
+  }
+
+  /** Clears what was kept; a failure leaves the record's revocation to stop a resume. */
+  private async forget(): Promise<void> {
+    try {
+      await this.options.keep?.clear()
+    } catch {
+      // The record is revoked below, or at the next start.
+    }
   }
 
   private begin(record: DeviceRecord, signer: SoftwareSigner, until: number): void {
@@ -218,7 +227,7 @@ export class DevMode {
     this.active = null
     if (active === null) return
     this.options.timers.clearTimeout(active.timer)
-    await this.options.keep?.clear().catch(() => undefined)
+    await this.forget()
     // A millisecond on: an approval it made this same millisecond was made while it was on, and
     // stored evidence counts only what a device signed before its revocation. The key is already
     // out of reach above, so nothing can be signed in that millisecond.

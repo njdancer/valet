@@ -4,6 +4,8 @@
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { CredentialError, SecretValue } from '@valet/core'
+import type { KeychainStore } from '@valet/credentials'
 import { describe, expect, it } from 'vitest'
 import {
   AnchoredFile,
@@ -17,7 +19,11 @@ import {
   TrustedLedger,
 } from '../../src/main/core/approvals'
 import type { DevModeKeep, KeptDevMode } from '../../src/main/core/approvals/dev-mode'
-import { fileDevModeKeep } from '../../src/main/core/approvals/dev-mode-keep'
+import {
+  DEV_MODE_SERVICE,
+  fileDevModeKeep,
+  keychainDevModeKeep,
+} from '../../src/main/core/approvals/dev-mode-keep'
 
 class MemoryFiles implements FileOps {
   readonly files = new Map<string, string>()
@@ -288,6 +294,41 @@ describe('developer mode', () => {
       } finally {
         await rm(dir, { recursive: true, force: true })
       }
+    })
+    it('keeps it in the dev build’s own Keychain item, and reads a missing or damaged one as nothing', async () => {
+      const items = new Map<string, string>()
+      const key = (service: string, account: string) => `${service}/${account}`
+      let broken = false
+      const keychain: KeychainStore = {
+        read: async (service, account) => {
+          if (broken) throw new CredentialError('unavailable')
+          const text = items.get(key(service, account))
+          if (text === undefined) throw new CredentialError('not-found')
+          return SecretValue.fromString(text)
+        },
+        info: async () => null,
+        write: async (service, account, secret) => {
+          items.set(key(service, account), secret.toString('utf8'))
+        },
+        delete: async (service, account) => {
+          if (broken) throw new CredentialError('unavailable')
+          if (!items.delete(key(service, account))) throw new CredentialError('not-found')
+        },
+        purge: async () => undefined,
+      }
+      const keep = keychainDevModeKeep(keychain)
+      expect(await keep.read()).toBeNull()
+      await keep.clear()
+      const s = await setup({ keep })
+      await s.dev.turnOn()
+      expect([...items.keys()]).toEqual([`${DEV_MODE_SERVICE}/key`])
+      const restarted = new DevMode(s.options)
+      expect(await restarted.resume(true)).toBe(true)
+      items.set(`${DEV_MODE_SERVICE}/key`, '{"keys":1}')
+      expect(await keep.read()).toBeNull()
+      broken = true
+      await expect(keep.read()).rejects.toThrow()
+      await expect(keep.clear()).rejects.toThrow()
     })
   })
 })
