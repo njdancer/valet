@@ -238,8 +238,8 @@ describe('approval requests', () => {
       'dev',
     ])
     expect(approvableOn('tool-enable', {} as never)).toEqual(['mac', 'phone', 'dev'])
-    expect(approvableOn('setting', { scope: 'adapter' } as never)).toEqual(['mac', 'phone', 'dev'])
-    // Never by developer mode: a Valet setting, a login, a credential, a connecting agent.
+    // Never by developer mode: a setting (picked on the card), a login, a credential, an agent.
+    expect(approvableOn('setting', { scope: 'adapter' } as never)).toEqual(['mac', 'phone'])
     expect(approvableOn('setting', { scope: 'valet' } as never)).toEqual(['mac', 'phone'])
     expect(approvableOn('secret-grant', {} as never)).toEqual(['mac', 'phone'])
     expect(approvableOn('credential-grant', {} as never)).toEqual(['mac', 'phone'])

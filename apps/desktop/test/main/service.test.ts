@@ -465,6 +465,18 @@ describe('developer mode (docs/approval-broker.md#developer-mode)', () => {
     )
   })
 
+  it('can be turned on again and again without filling the phones’ device list', async () => {
+    const s = await setup({ developerMode: true })
+    for (let i = 0; i < 40; i++) expect(await s.api.app.setDeveloperMode(true)).toBe(true)
+    const ledger = (
+      s.service as unknown as { ledger: { data: { devices: unknown[]; devDevices?: unknown[] } } }
+    ).ledger
+    expect(ledger.data.devices).toEqual([])
+    // Revoked ones that approved nothing go when it is turned on again: the one on now, and the
+    // one it replaced (revoked just after the new one is added).
+    expect(ledger.data.devDevices?.length).toBe(2)
+  })
+
   it('is never there in a packaged build', async () => {
     const s = await setup()
     expect((await s.api.app.status()).developerMode).toEqual({ available: false, until: null })

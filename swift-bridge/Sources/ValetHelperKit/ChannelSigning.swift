@@ -68,7 +68,7 @@ public func channelApprovalToSign(domain: String, payloads: [String], own: OwnKe
     }
     guard phones <= 1, devs <= 1, devs == 0 || payloads.count == 1 else { return nil }
     // Developer mode (an unpackaged build only, which the app checks): its own key, in the app's
-    // memory, approves adapter versions, tools and adapter settings until it is revoked.
+    // memory, approves adapter versions and tools until it is revoked.
     reason =
       devs == 1
       ? "turn on developer mode for 8 hours" : phones == 1 ? "pair a new iPhone" : "update this Mac's device record"

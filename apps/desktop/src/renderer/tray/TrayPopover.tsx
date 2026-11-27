@@ -71,7 +71,7 @@ export function TrayPopover() {
   const paused = status?.paused === true
   const lockedDown = status !== null && isLockedDown(status)
   const canLockDown = typeof (api.app as { setLockedDown?: unknown }).setLockedDown === 'function'
-  // Unpackaged builds only: adapter versions, tools and adapter settings approve themselves.
+  // Unpackaged builds only: adapter versions and tools turned on approve themselves.
   const devMode = status?.developerMode
   const devUntil = devMode?.until ?? null
   const sites = adapters.status === 'ready' ? adapters.data : []
@@ -352,7 +352,7 @@ export function TrayPopover() {
                   icon={<Wrench />}
                   hint={
                     devUntil === null
-                      ? 'Approves new adapter versions, tools and adapter settings for 8 hours'
+                      ? 'Approves new adapter versions and tools for 8 hours'
                       : `On until ${formatClock(devUntil)}. Logins still ask you.`
                   }
                   onClick={() => run(() => api.app.setDeveloperMode(devUntil === null))}

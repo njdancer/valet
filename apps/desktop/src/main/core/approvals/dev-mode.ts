@@ -5,7 +5,7 @@
 // - Turning it on is one Touch ID: the Mac's approval key signs a device record (role `dev`) for a
 //   key made now and held only in this process's memory. Nothing of the private key is written.
 // - That key signs approvals like any device, and approvableOn lets it approve only an adapter's
-//   version, a tool turned on and an adapter's own setting. Logins and credentials, pairing,
+//   version and a tool turned on. Settings (picked on the card), logins and credentials, pairing,
 //   lockdown, irreversible calls and connecting agents still ask the person.
 // - It ends after DEV_MODE_MS, on lockdown, when the person turns it off, and when the app stops
 //   (the key goes with the process, and the record is revoked at the next start). Revoking keeps

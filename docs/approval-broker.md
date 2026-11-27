@@ -315,17 +315,25 @@ the service's deps, `!app.isPackaged`, never in demo mode); a release build can'
   role `dev`, for a P-256 key made then and held only in the app's memory. The helper signs such a
   record only alone, with the reason "turn on developer mode for 8 hours".
 - **What it approves** (`devApproves` in core's approvals.ts, enforced by verifyDecision like any
-  device's role): an adapter's version (`adapter-install`, unsandboxed ones too), a tool turned on
-  (`tool-enable`), an adapter's own setting (`setting` with scope `adapter`). Each is signed by
+  device's role): an adapter's version (`adapter-install`, unsandboxed ones too, which before the
+  sandbox ships is every agent-written version: the risk Nick accepted) and a tool turned on
+  (`tool-enable`). Each is signed by
   the key and answered through the broker like a phone's approval, so the same prechecks, evidence
   and audit apply; `approval-answered` carries `by: 'developer-mode'`. A request made while it is
   on is approved at once, and turning it on approves what is already waiting.
 - **What still asks the person**: logins and credentials, pairing, lifting lock down,
-  irreversible calls, a connecting agent, Valet's own settings, browser and network grants.
+  irreversible calls, a connecting agent, settings (an adapter's is a value picked on the card),
+  browser and network grants.
+- **Its records**: `devDevices` in the ledger, apart from phones' 32, so turning it on often never
+  stops a phone pairing. A revoked one is dropped when it is turned on again, once no stored
+  evidence names it. A signature made as it ends is refused: the broker takes the key's answers
+  only while it is still the one on. Locking down while its Touch ID prompt is up leaves it off.
 - **Off**: after 8 hours, from the menu bar, on lock down, and when Valet stops (the key goes with
   the process; the record is revoked at the next start). Revoking keeps what it approved, as for a
   phone: stored evidence counts what a device signed before its revocation. Each change is
   audited as `developer-mode`, and the menu bar shows DEV while it is on.
+
+## Migration
 
 **Built** for installs and grants. The first launch of a signed build records, once, a `legacy`
 list in the anchored ledger: the adapters approved in `approvals.json` whose active hash is the

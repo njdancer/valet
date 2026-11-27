@@ -1300,8 +1300,8 @@ export interface AppStatus {
   readonly demo: boolean
   /**
    * Developer mode (docs/approval-broker.md#developer-mode): whether this build has it (unpackaged
-   * only), and while it is on, when it turns itself off. While on, adapter versions, tools and
-   * adapter settings are approved without asking.
+   * only), and while it is on, when it turns itself off. While on, adapter versions and tools
+   * are approved without asking.
    */
   readonly developerMode: { readonly available: boolean; readonly until: IsoTime | null }
 }

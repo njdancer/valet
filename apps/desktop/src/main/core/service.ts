@@ -1990,6 +1990,11 @@ export class AppService {
       return true
     }
     if (this.lockedDown || !(await devMode.turnOn())) return false
+    // Locked down while the Touch ID prompt was up: it doesn't stay on.
+    if (this.lockedDown) {
+      await devMode.turnOff('lockdown')
+      return false
+    }
     for (const pending of broker.list()) await broker.approveByDevMode(pending.request.id).catch(() => false)
     return true
   }

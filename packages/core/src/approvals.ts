@@ -312,14 +312,14 @@ export function approvableOn(kind: ApprovalKind, subject: ApprovalSubject): read
 }
 
 /**
- * What developer mode approves by itself (Nick, 2026-11-27): an adapter's new version, a tool
- * turned on, an adapter's own setting. Never a login or credential, a pairing, a lockdown lift,
- * an irreversible call, a connecting agent, a Valet setting or a browser or network grant.
+ * What developer mode approves by itself (Nick, 2026-11-27): an adapter's new version (unsandboxed
+ * ones too: before the sandbox ships every agent-written version is, and Nick accepted that risk)
+ * and a tool turned on. Never a login or credential, a pairing, a lockdown lift, an irreversible
+ * call, a connecting agent, a setting (an adapter's is picked on the card, so only the person can)
+ * or a browser or network grant.
  */
-export function devApproves(kind: ApprovalKind, subject: ApprovalSubject): boolean {
-  if (kind === 'adapter-install' || kind === 'tool-enable') return true
-  if (kind === 'setting') return (subject as ApprovalSubject<'setting'>).scope === 'adapter'
-  return false
+export function devApproves(kind: ApprovalKind, _subject: ApprovalSubject): boolean {
+  return kind === 'adapter-install' || kind === 'tool-enable'
 }
 
 function approvableByPeople(kind: ApprovalKind, subject: ApprovalSubject): readonly DeviceRole[] {

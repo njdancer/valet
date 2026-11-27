@@ -528,6 +528,10 @@ export class ApprovalBroker {
         }
         return refused
       }
+      // Developer mode's key counts only while it is still the one on: a signature made as it
+      // ended is refused here, before anything is applied.
+      if (from.via === 'dev' && this.options.devMode?.deviceId() !== from.deviceId)
+        return this.refuse(requestId, from, 'device-revoked')
       const expected = from.via === 'mac' ? this.macId : from.deviceId
       if (check.decision.deviceId !== expected) return this.refuse(requestId, from, 'wrong-device')
       const kind = request.request.kind
