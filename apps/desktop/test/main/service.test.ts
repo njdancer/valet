@@ -1033,6 +1033,45 @@ describe('an update', () => {
     expect(asks()).toEqual([])
   })
 
+  it('a Decline away from the Mac turns the version down, and a cancelled Touch ID leaves the card', async () => {
+    const { first, next, restarted } = await updated({ ...SHOP, version: '1.1.0' })
+    await filed(restarted)
+    const broker = (restarted as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+    const asks = () => broker.list().filter((p) => p.request.kind === 'adapter-install')
+    const [ask] = asks()
+    // Touch ID cancelled at the Mac: still waiting, the same card, for the phone to answer.
+    first.presence.answer = false
+    await restarted.api.approvals.approve('shop', next.hash)
+    expect(first.presence.prompts.at(-1)).toMatch(/^approve an adapter/)
+    await filed(restarted)
+    expect(asks().map((p) => p.request.id)).toEqual([ask?.request.id])
+    // Declined (as from the phone): turned down, as the Mac's Reject does, and not asked again.
+    expect(await broker.decline(ask?.request.id as string, { via: 'mac' })).toBe(true)
+    await vi.waitFor(async () => expect((await restarted.api.approvals.turnedDown()).length).toBe(1))
+    await filed(restarted)
+    expect(asks()).toEqual([])
+    expect((await restarted.api.approvals.pending()).map((r) => r.to.hash)).not.toContain(next.hash)
+  })
+
+  it('leaves alone a request the Mac’s own Approve made for a turned-down version', async () => {
+    const { next, restarted } = await updated({ ...SHOP, version: '1.1.0' })
+    await filed(restarted)
+    await restarted.api.approvals.reject('shop', next.hash)
+    await filed(restarted)
+    const broker = (restarted as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+    const internals = restarted as unknown as {
+      installSubjectFor(a: unknown, source: string): Promise<ApprovalSubject<'adapter-install'>>
+      adapter(id: string): unknown
+      fileWaitingReviews(): Promise<void>
+    }
+    // What approveHere asks, with its Touch ID prompt still up.
+    const subject = await internals.installSubjectFor(internals.adapter('shop'), 'builtin')
+    const asked = await broker.request('adapter-install', subject, { kind: 'person' })
+    expect(asked.ok).toBe(true)
+    await internals.fileWaitingReviews()
+    expect(broker.list().map((p) => p.request.id)).toContain(asked.ok ? asked.requestId : '')
+  })
+
   it('needs a fresh approval, is reviewed against the last approved bundle, and keeps a login it does not widen', async () => {
     const { first, next, restarted } = await updated({ ...SHOP, version: '1.1.0' })
     const [summary] = await restarted.api.adapters.list()

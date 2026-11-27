@@ -229,7 +229,9 @@ export class DevMode {
         new Date(this.options.now() + 1).toISOString(),
       )
     } catch {
-      // The key is gone with the process anyway, and the next start revokes the record.
+      // The kept key was cleared above, so the next start revokes the record instead of resuming.
+      // Only when both writes failed (the ledger and the keep store) could it resume, and then
+      // only until its own 8 hours end.
     }
     if (tell) this.options.changed(false, why)
   }

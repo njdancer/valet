@@ -893,6 +893,9 @@ export class AppService {
   /** fileReviewsSoon's run, and whether another is queued behind it. */
   private reviewFiling: Promise<unknown> = Promise.resolve()
   private reviewsQueued = false
+  /** The review requests fileWaitingReviews made or found, while they wait (watchFiledReview). */
+  private readonly filedReviews = new Set<string>()
+  private leftoverReviewsAdopted = false
   private stopping = false
   /** Adapters whose last call-started login the person closed without finishing, not yet told to a call. */
   private readonly gaveUp = new Set<string>()
@@ -3600,6 +3603,14 @@ export class AppService {
   private async fileWaitingReviews(): Promise<void> {
     const broker = this.approvalBroker
     if (broker === null || this.lockedDown) return
+    // The first run, at launch: a review request the last run made, still waiting in the ledger, is
+    // one of these (no Approve of this run can be holding it yet).
+    if (!this.leftoverReviewsAdopted) {
+      this.leftoverReviewsAdopted = true
+      for (const { request: r } of broker.list())
+        if (r.kind === 'adapter-install' && r.requester.kind === 'person' && r.subject.source !== 'rollback')
+          this.watchFiledReview(r.id, r.subject.adapterId, r.subject.adapterHash)
+    }
     const wanted = new Set<string>()
     for (const state of await this.states()) {
       if (state.approved || state.rejected) continue
@@ -3613,17 +3624,43 @@ export class AppService {
       const stillWanted = () =>
         this.adapter(id)?.hash === adapter.hash && !this.installSigned(id, adapter.hash)
       // Refused (locked down, the broker unavailable): the Mac's own Approve still asks then.
-      await broker
+      const asked = await broker
         .request('adapter-install', subject, { kind: 'person' }, { stillWanted })
-        .catch(() => undefined)
+        .catch(() => null)
+      if (asked?.ok === true && asked.autoApproved !== true)
+        this.watchFiledReview(asked.requestId, id, adapter.hash)
     }
+    // Only requests made here: one the Mac's Approve made itself (a turned-down version approved
+    // again, its Touch ID prompt still up) is that Approve's to keep or take back.
     for (const pending of broker.list()) {
       const r = pending.request
-      if (r.kind !== 'adapter-install' || r.requester.kind !== 'person' || r.subject.source === 'rollback')
-        continue
+      if (r.kind !== 'adapter-install' || !this.filedReviews.has(r.id)) continue
       if (!wanted.has(canonicalJson(r.subject)))
         await broker.withdraw(r.id, { kind: 'person' }).catch(() => false)
     }
+  }
+
+  /**
+   * A review request made (or found again) by fileWaitingReviews. Declined (on the phone) is the
+   * person turning the version down, as the Mac's Reject does, so it isn't asked for again.
+   */
+  private watchFiledReview(requestId: string, adapterId: string, hash: string): void {
+    const broker = this.approvalBroker
+    if (broker === null || this.filedReviews.has(requestId)) return
+    this.filedReviews.add(requestId)
+    void broker
+      .wait(requestId)
+      .then(async (closed) => {
+        this.filedReviews.delete(requestId)
+        if (closed?.outcome !== 'declined' || this.stopping) return
+        const adapter = this.adapter(adapterId)
+        if (adapter?.hash !== hash || this.installSigned(adapterId, hash)) return
+        await this.revokeInstall(adapterId, hash)
+        await this.approvals.reject(adapterId, hash, adapter.definition.manifest.version)
+        await this.refreshToolsOf(adapterId)
+        this.emit('adapters-changed')
+      })
+      .catch(() => undefined)
   }
 
   /**
@@ -3656,6 +3693,9 @@ export class AppService {
     // Busy: another prompt is up and this one may still be answered, unless it's a consent,
     // which is never reused and would only pile up.
     // An access Save the page reported as not saved mustn't stay signable from the phone either.
+    // A review request made when the version began waiting stays for the phone: cancelling Touch
+    // ID here isn't turning it down.
+    if (kind === 'adapter-install' && this.filedReviews.has(asked.requestId)) return false
     if (answered.reason !== 'busy' || kind === 'remote-client' || kind === 'agent-access')
       await broker
         .withdraw(asked.requestId, kind === 'remote-client' ? { kind: 'app' } : { kind: 'person' })
