@@ -126,6 +126,21 @@ describe('apply_store', () => {
     })
   })
 
+  it('takes a 200 with no body, as the live site answers a signed-in shopper, as the store chosen', async () => {
+    const ctx = new FakeToolContext().on('POST', FULFILMENT, { status: 200, contentType: null, body: '' })
+    expect(await apply(ctx, '9001201')).toEqual({})
+    expect(ctx.fetches).toHaveLength(1)
+  })
+
+  it('still refuses a 200 that says something it cannot read', async () => {
+    const ctx = new FakeToolContext().on('POST', FULFILMENT, {
+      status: 200,
+      contentType: 'text/plain',
+      body: 'try later',
+    })
+    await expect(apply(ctx, '9001201')).rejects.toEqual(new ValetError('tool-run', 'unavailable'))
+  })
+
   it('never logs in: it runs before searches too, and a search must not need a login', async () => {
     const ctx = new FakeToolContext().on('POST', FULFILMENT, json({ IsSuccessful: true }))
     await apply(ctx, '9001201')

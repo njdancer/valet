@@ -867,12 +867,9 @@ describe('after the login', () => {
       addressId: 9001310,
       fulfilmentMethod: 'Pickup',
     })
-    expect(JSON.parse(reply.text)).toEqual({
-      IsSuccessful: true,
-      FulfilmentMethod: 'Pickup',
-      AddressId: 9001310,
-      FulfilmentStoreId: 1310,
-    })
+    // As live: a bare 200, no body.
+    expect(reply.status).toBe(200)
+    expect(reply.text).toBe('')
     expect(site.pickupAddresses(PLAIN.username)).toEqual([9001310])
   })
 

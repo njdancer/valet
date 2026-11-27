@@ -51,7 +51,7 @@ import {
   searchQueryFromParams,
   searchResponse,
 } from './search'
-import { fulfilmentResponse, pickupStores, storeChosenBy, storesForPostcode } from './stores'
+import { pickupStores, storeChosenBy, storesForPostcode } from './stores'
 import {
   applyTrolleyUpdate,
   MINIMUM_SPEND,
@@ -267,6 +267,12 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     exchange.response.writeHead(status, headers).end(body)
     return 'sent'
   }
+  const empty = (exchange: Exchange, status: number): Sent => {
+    const headers: Record<string, string | string[]> = { 'cache-control': 'no-store' }
+    if (exchange.setCookies.length > 0) headers['set-cookie'] = exchange.setCookies
+    exchange.response.writeHead(status, headers).end()
+    return 'sent'
+  }
   const json = (exchange: Exchange, status: number, body: unknown): Sent =>
     send(exchange, status, JSON_TYPE, JSON.stringify(body))
   const html = (exchange: Exchange, status: number, body: string): Sent =>
@@ -429,12 +435,9 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
       // The live site answers 401 with an empty body to a guest choosing a store (probe, 2026-11-27).
       if (store.firstNameOf(exchange.visitor) === null) return send(exchange, 401, 'text/plain', '')
       exchange.visitor.fulfilment.addressId = chosen.AddressId
-      const response = fulfilmentResponse(chosen)
-      return json(
-        exchange,
-        200,
-        options.houseBrand === undefined ? response : rebrandJson(response, STORE_NAME),
-      )
+      // Signed in, the live site answers with a 200 and nothing else: no body, no content type
+      // (2026-11-27). The site's scripts read { IsSuccessful, ... } only when a body comes.
+      return empty(exchange, 200)
     }
     if (method === 'POST' && path === '/api/v3/ui/checkout/order') {
       // Exists only so tests can prove the runtime never lets a request reach it.

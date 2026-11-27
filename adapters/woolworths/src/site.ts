@@ -66,6 +66,21 @@ export async function postJson<Schema extends z.ZodType>(
   return (await call(ctx, path, { method: 'POST', json }, schema, false, options.badRequest)).data
 }
 
+/**
+ * Like postJson, for a write the site may answer with a 2xx and no body at all: null then. Signed in,
+ * Woolworths answers choosing a store with a 200 that has no body and no content type (live,
+ * 2026-11-27); its own scripts read { IsSuccessful, ... } only when one comes.
+ */
+export async function postJsonOrEmpty<Schema extends z.ZodType>(
+  ctx: ToolContext,
+  path: string,
+  json: unknown,
+  schema: Schema,
+): Promise<z.infer<Schema> | null> {
+  const answer = await call(ctx, path, { method: 'POST', json }, schema, false, undefined, true)
+  return answer === null ? null : answer.data
+}
+
 interface Answer<T> {
   readonly data: T
   readonly fromCache: boolean
@@ -84,6 +99,15 @@ async function call<Schema extends z.ZodType>(
   path: string,
   init: FetchInit,
   schema: Schema,
+  unreadableCacheIsNull: false,
+  badRequest: ValetError | undefined,
+  emptyIsNull: true,
+): Promise<Answer<z.infer<Schema>> | null>
+async function call<Schema extends z.ZodType>(
+  ctx: ToolContext,
+  path: string,
+  init: FetchInit,
+  schema: Schema,
   unreadableCacheIsNull: true,
 ): Promise<Answer<z.infer<Schema>> | null>
 async function call<Schema extends z.ZodType>(
@@ -93,6 +117,7 @@ async function call<Schema extends z.ZodType>(
   schema: Schema,
   unreadableCacheIsNull = false,
   badRequest?: ValetError,
+  emptyIsNull = false,
 ): Promise<Answer<z.infer<Schema>> | null> {
   // Checked before every call so that a cancelled add_to_cart never reaches its write.
   if (ctx.signal.aborted) throw new ValetError('tool-run', 'aborted')
@@ -106,6 +131,7 @@ async function call<Schema extends z.ZodType>(
   }
   if (response.status === 400 && badRequest !== undefined) throw badRequest
   throwForStatus(response.status)
+  if (emptyIsNull && isEmpty(response)) return null
   throwForContentType(response)
   const parsed = schema.safeParse(response.body)
   // JSON the adapter can't read means the site changed, not that the input was bad. Which field
@@ -132,6 +158,14 @@ function throwForContentType(response: FetchResult): void {
     throw new ValetError('tool-run', 'blocked-by-site')
   }
   throw new ValetError('tool-run', 'unavailable')
+}
+
+/** An answer with nothing in it: no body, or only whitespace, and no type saying otherwise. */
+function isEmpty(response: FetchResult): boolean {
+  const type = response.contentType?.toLowerCase() ?? ''
+  if (type.includes('json') || type.includes('html')) return false
+  const body = response.body
+  return body === null || body === undefined || (typeof body === 'string' && body.trim() === '')
 }
 
 function throwForStatus(status: number): void {
