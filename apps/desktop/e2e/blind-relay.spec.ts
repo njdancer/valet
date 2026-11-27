@@ -304,7 +304,7 @@ test('an agent signs in with the Mac’s own OAuth server and calls a tool at th
   await client.close()
 })
 
-test('the person edits the approved agent’s tools on its page: on with Touch ID, off at once', async () => {
+test('the person edits the approved agent’s tools on its page: one Touch ID per Save, off at once', async () => {
   const agents = await control.evaluate(async () => (await window.valet?.remote.clients()) ?? [])
   expect(agents).toHaveLength(1)
   const id = agents[0]?.id ?? ''
@@ -313,41 +313,52 @@ test('the person edits the approved agent’s tools on its page: on with Touch I
   }, id)
   const page = control
   // The words that told the person to revoke and approve again are gone.
-  await expect(page.getByText(/Turning a tool on needs Touch ID; turning one off is at once/)).toBeVisible()
+  await expect(page.getByText('What it may use')).toBeVisible()
   await expect(page.getByText(/revoke it and approve it again/)).toHaveCount(0)
-  const search = page.getByRole('switch', { name: /: Search products$/ })
-  const cart = page.getByRole('switch', { name: /: Get cart$/ })
-  await expect(search).toHaveAttribute('aria-checked', 'true')
-  await expect(cart).toHaveAttribute('aria-checked', 'false')
-
-  // On: the Mac's Touch ID step (answered yes in e2e builds), then the agent's own tool list has
-  // it, though it was never on for remote clients. The agent signs in again for nothing.
-  await cart.click()
-  await expect(cart).toHaveAttribute('aria-checked', 'true')
+  const option = (name: RegExp, value: 'Off' | 'On') =>
+    page.getByRole('radiogroup', { name }).getByRole('radio', { name: value })
+  const search = /: Search products$/
+  const cart = /: Get cart$/
+  await expect(option(search, 'On')).toHaveAttribute('aria-checked', 'true')
+  await expect(option(cart, 'On')).toHaveAttribute('aria-checked', 'false')
+  const save = async (label: 'Save' | 'Save with Touch ID') => {
+    await page.getByRole('button', { name: label, exact: true }).click()
+    await expect(page.getByText(/not saved/)).toHaveCount(0)
+  }
   const listed = async () => {
     const client = await claude.connect()
     const names = (await client.listTools()).tools.map((t) => t.name).sort()
     await client.close()
     return names
   }
+
+  // On is a draft until Save: the Mac's Touch ID step (answered yes in e2e builds), then the
+  // agent's own tool list has it, though it was never on for remote clients.
+  await option(cart, 'On').click()
+  await expect(page.getByText(/not saved/)).toHaveCount(1)
+  expect(await listed()).toEqual(['woolworths_search_products'])
+  await save('Save with Touch ID')
+  await expect(option(cart, 'On')).toHaveAttribute('aria-checked', 'true')
   expect(await listed()).toEqual(['woolworths_get_cart', 'woolworths_search_products'])
   const signed = await control.evaluate(async () =>
     ((await window.valet?.audit.page({}))?.records ?? []).map((r) => r.event),
   )
-  expect(signed).toContainEqual(expect.objectContaining({ type: 'approval-requested', kind: 'tool-enable' }))
+  expect(signed).toContainEqual(expect.objectContaining({ type: 'approval-requested', kind: 'agent-access' }))
 
-  // Off: at once, still approved, same registration; the other tool stays.
-  await search.click()
-  await expect(search).toHaveAttribute('aria-checked', 'false')
+  // Off: a plain Save, still approved, same registration; the other tool stays.
+  await option(search, 'Off').click()
+  await save('Save')
+  await expect(option(search, 'On')).toHaveAttribute('aria-checked', 'false')
   expect(await listed()).toEqual(['woolworths_get_cart'])
   const after = await control.evaluate(async () => (await window.valet?.remote.clients()) ?? [])
   expect(after.map((c) => [c.id, c.grant?.tools])).toEqual([[id, ['woolworths.get_cart']]])
 
-  // Back as it was for the tests after this one.
-  await search.click()
-  await expect(search).toHaveAttribute('aria-checked', 'true')
-  await cart.click()
-  await expect(cart).toHaveAttribute('aria-checked', 'false')
+  // Back as it was for the tests after this one, both in one Save.
+  await option(search, 'On').click()
+  await option(cart, 'Off').click()
+  await save('Save with Touch ID')
+  await expect(option(search, 'On')).toHaveAttribute('aria-checked', 'true')
+  await expect(option(cart, 'On')).toHaveAttribute('aria-checked', 'false')
   expect(await listed()).toEqual(['woolworths_search_products'])
 })
 
