@@ -51,12 +51,18 @@ test('focus stress', async () => {
       await app.evaluate((_e, s) => (globalThis as unknown as { flog: (s: string) => void }).flog(`--- start ${s}`), `${i} ${name}`)
       try {
         await scenario(app, name)
+        if (i === 0) {
+          const log = await app.evaluate(() => (globalThis as unknown as { focusLog: string[] }).focusLog.slice(-40))
+          console.log(`OK ${name}\n    ${log.join('\n    ')}`)
+        }
       } catch (error) {
         const log = await app.evaluate(() => {
           const g = globalThis as unknown as { focusLog: string[] }
           return g.focusLog.slice(-60)
         })
-        failures.push(`${i} ${name}: ${String(error).split('\n')[0]}\n    ${log.join('\n    ')}`)
+        const entry = `${i} ${name}: ${String(error).split('\n')[0]}\n    ${log.join('\n    ')}`
+        failures.push(entry)
+        console.log(`FAIL ${entry}`)
       }
     }
   }
