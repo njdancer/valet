@@ -21,6 +21,14 @@ import {
   type WriteOutcome,
   type WriteRefusal,
 } from '@valet/mcp-server'
+import {
+  type AgentNetwork,
+  NETWORK_SETTING_LABELS,
+  type NetworkSettingName,
+  networkChangeWidens,
+  networkSettingName,
+  networkSettingWords,
+} from './agent-network'
 import type { Closed, RequestExtras, RequestRefusal, RequestResult } from './approvals/broker'
 
 /** Notify-only changes one agent may make in an hour (R57). */
@@ -134,6 +142,12 @@ export interface WriterSource {
    * longer `from` or the change would now widen.
    */
   applySetting(name: AgentSetting, from: boolean | number, value: boolean | number): Promise<void>
+  /** An agent's browser sessions' network now (agent-network.ts), by `local:`/`remote:` key. */
+  agentNetwork(key: string): Promise<AgentNetwork>
+  /** The Mac's interfaces a session could be pinned to now, by name. */
+  interfaceNames(): readonly string[]
+  /** Makes a change to an agent's browser network that only narrows (audited by the app). */
+  narrowAgentNetwork(key: string, part: Partial<AgentNetwork>): Promise<void>
   /** Fetches the adapter's own choices and builds the request (adapterSettingSubject). */
   adapterSetting(adapterId: string, setting: string, query: string | null): Promise<AdapterSettingAsk>
   /**
@@ -337,6 +351,62 @@ export class AdminWriterImpl implements AdminWriter {
         reason,
         `Turn on a tool: ${built.title}`,
       )
+    })
+  }
+
+  setBrowserNetwork(
+    viewer: ClientIdentity,
+    change: { readonly homeNetwork: boolean } | { readonly interface: string | null },
+    note: string | null,
+  ): Promise<WriteOutcome> {
+    return this.exclusive(async () => {
+      const gate = this.gate(viewer)
+      if (gate.refused !== undefined) return gate.refused
+      const key = identityLabel(viewer)
+      const which: NetworkSettingName = 'homeNetwork' in change ? 'home' : 'nic'
+      const part: Partial<AgentNetwork> =
+        'homeNetwork' in change ? { homeNetwork: change.homeNetwork } : { interface: change.interface }
+      if (part.interface != null && !this.source.interfaceNames().includes(part.interface))
+        return refused('not-found')
+      let from: AgentNetwork
+      try {
+        from = await this.source.agentNetwork(key)
+      } catch {
+        return refused('unavailable')
+      }
+      const label = NETWORK_SETTING_LABELS[which]
+      const to = { ...from, ...part }
+      if (networkSettingWords(which, from) === networkSettingWords(which, to))
+        return { kind: 'unchanged', current: `${label}: already ${networkSettingWords(which, from)}` }
+      if (networkChangeWidens(which, from, part)) {
+        const setting = networkSettingName(key, which)
+        if (setting === null) return refused('not-found')
+        return this.ask(
+          viewer,
+          gate.name,
+          'setting',
+          {
+            scope: 'valet',
+            adapterId: null,
+            setting,
+            label,
+            from: networkSettingWords(which, from),
+            to: networkSettingWords(which, to),
+          },
+          note,
+          `Change a setting: ${label}`,
+        )
+      }
+      const limited = this.takeSlot(viewer)
+      if (limited !== null) return limited
+      try {
+        await this.source.narrowAgentNetwork(key, part)
+      } catch {
+        return refused('unavailable')
+      }
+      const what = `${label}: ${networkSettingWords(which, to)}`
+      this.notified(viewer, gate.name, what)
+      return { kind: 'done', what }
     })
   }
 

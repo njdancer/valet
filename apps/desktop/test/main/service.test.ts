@@ -3363,6 +3363,75 @@ describe('remote access', () => {
     expect(await names()).toEqual(['shop_echo'])
   })
 
+  it('keeps each agent’s browser network: widened with Touch ID or the agent’s approved ask, narrowed at once', async () => {
+    const s = await approved()
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    await s.service.setRemoteTool('shop', 'echo', true)
+    const port = Number(new URL(s.service.remote.status().url as string).port)
+    const agent = approvedClient(s, ['shop.echo'])
+    const key = `remote:${agent.id}`
+    expect(await s.api.clients.network(key)).toMatchObject({ homeNetwork: false, interface: null })
+
+    // The person turns it on on the agent's page: Touch ID first, and nothing without it.
+    s.presence.answer = false
+    await expect(s.api.clients.setNetwork(key, { homeNetwork: true })).rejects.toBeInstanceOf(ValetError)
+    expect(await s.api.clients.network(key)).toMatchObject({ homeNetwork: false })
+    s.presence.answer = true
+    await s.api.clients.setNetwork(key, { homeNetwork: true })
+    expect(await s.api.clients.network(key)).toMatchObject({ homeNetwork: true })
+    // Off is at once, with no prompt.
+    const prompts = s.presence.prompts.length
+    await s.api.clients.setNetwork(key, { homeNetwork: false })
+    expect(s.presence.prompts.length).toBe(prompts)
+    expect(await s.api.clients.network(key)).toMatchObject({ homeNetwork: false })
+
+    // The agent asks for it itself: a setting request naming it, applied once approved.
+    await s.api.remote.setAskForChanges(agent.id, true)
+    const client = await remoteClient(port, agent.token)
+    const asked = await client.callTool({
+      name: 'valet_set_browser_network',
+      arguments: { homeNetwork: true, note: 'to open the router page' },
+    })
+    expect(asked.isError).not.toBe(true)
+    const broker = (s.service as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+    const pending = broker.list().find((p) => p.request.kind === 'setting')
+    expect(pending?.request.subject).toMatchObject({
+      setting: `bnet_home_r_${agent.id}`,
+      from: 'Off',
+      to: 'On',
+    })
+    expect(await s.api.clients.network(key)).toMatchObject({ homeNetwork: false })
+    expect(await broker.approveOnMac(pending?.request.id ?? '')).toEqual({ ok: true })
+    expect(await s.api.clients.network(key)).toMatchObject({ homeNetwork: true })
+    // The agent narrows it itself at once, with no request; an interface the Mac lacks is refused.
+    const narrowed = await client.callTool({
+      name: 'valet_set_browser_network',
+      arguments: { homeNetwork: false },
+    })
+    expect(narrowed.isError).not.toBe(true)
+    expect(await s.api.clients.network(key)).toMatchObject({ homeNetwork: false })
+    const missing = await client.callTool({
+      name: 'valet_set_browser_network',
+      arguments: { interface: 'nosuch0' },
+    })
+    expect(JSON.stringify(missing.content)).toMatch(/not|refused|unknown/i)
+    expect(await s.api.clients.network(key)).toMatchObject({ interface: null })
+    expect(broker.list().filter((p) => p.request.kind === 'setting')).toEqual([])
+    await s.api.clients.setNetwork(key, { homeNetwork: true })
+    const events = (await s.api.audit.page({})).records.map((r) => r.event)
+    expect(events).toContainEqual({
+      type: 'agent-network-changed',
+      clientId: key,
+      homeNetwork: true,
+      interface: null,
+    })
+
+    // Revoked, it forgets.
+    await s.api.remote.revokeClient(agent.id)
+    await expect(s.api.clients.network(key)).rejects.toBeInstanceOf(ValetError)
+  })
+
   it('lets the person edit an approved agent’s tools in place: on with Touch ID, off at once', async () => {
     const s = await approved()
     await s.service.remote.setHosts([HOST])

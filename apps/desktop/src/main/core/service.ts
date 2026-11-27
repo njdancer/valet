@@ -166,6 +166,17 @@ import {
   withWidening,
 } from './agent-access'
 import { AgentBrowserService, BrowserRefusal, type SessionBrowser, sessionPacer } from './agent-browser'
+import {
+  type AgentNetwork,
+  AgentNetworkStore,
+  listInterfaces,
+  NETWORK_SETTING_LABELS,
+  networkChangeWidens,
+  networkSettingName,
+  networkSettingOf,
+  networkSettingValue,
+  networkSettingWords,
+} from './agent-network'
 import { agentRequestItem, draftReviewRequest } from './agent-requests'
 import { AppStateStore } from './app-state'
 import {
@@ -514,7 +525,7 @@ export interface ServiceDeps {
    * its own, through the public-only dial. None in tests that don't drive a browser, and then the
    * browser tools aren't listed.
    */
-  readonly sessionBrowser?: (rules: ScratchRules) => Promise<SessionBrowser>
+  readonly sessionBrowser?: (rules: ScratchRules, network: AgentNetwork) => Promise<SessionBrowser>
   /**
    * A session driver for a draft's live trial (docs/authoring-tools.md#live-trials): partitions in
    * memory named by `label`, through the same public-only dial. None in tests that don't drive a
@@ -798,6 +809,8 @@ export class AppService {
   readonly remote: RemoteAccess
   /** What agents' browser sessions downloaded, until it expires (browser-downloads.ts). */
   private readonly downloadShelf: DownloadShelf
+  /** Each agent's network settings for its browser sessions (agent-network.ts). */
+  private readonly agentNetwork: AgentNetworkStore
   private paused = false
   /** A reset or uninstall is under way: a second one is refused. */
   private erasing = false
@@ -1085,6 +1098,7 @@ export class AppService {
       },
     })
     this.downloadShelf = new DownloadShelf(deps.now)
+    this.agentNetwork = new AgentNetworkStore(join(deps.paths.dir, 'agent-network.json'))
     this.remote = new RemoteAccess({
       downloads: (id) => this.downloadShelf.get(id),
       appTool: (clientId, adapter, declaration) =>
@@ -1296,6 +1310,7 @@ export class AppService {
     if (sessionBrowser !== undefined)
       this.agentBrowser = new AgentBrowserService({
         open: sessionBrowser,
+        network: (client) => this.agentNetwork.get(client),
         pace: sessionPacer(() => this.runtime().registeredSites()),
         newId: () => `s${randomBytes(6).toString('hex')}`,
         downloads: { shelf: this.downloadShelf, origin: () => this.publicOrigin() },
@@ -2655,10 +2670,17 @@ export class AppService {
       // Valet's own settings, or an adapter's setting picked on the card (E's admin tools ask;
       // the person's own paths ask too, through changeValetSetting).
       setting: {
-        precheck: (subject) => {
+        precheck: async (subject) => {
           // One cloud agent's Ask for changes: still an approved agent, and only ever turned on.
           const asker = subject.scope === 'valet' ? remoteAskClient(subject.setting) : null
           if (asker !== null) return subject.to === 'On' && this.remote.clients.get(asker)?.grant != null
+          // One agent's browser network: still an agent, still the change it was asked as.
+          const net = subject.scope === 'valet' ? networkSettingOf(subject.setting) : null
+          if (net !== null) {
+            if (!this.agentExists(net.key) || networkSettingValue(net.which, subject.to) === null)
+              return false
+            return networkSettingWords(net.which, await this.agentNetwork.get(net.key)) === subject.from
+          }
           if (subject.scope === 'adapter') {
             const adapter = subject.adapterId === null ? null : this.adapter(subject.adapterId)
             return adapter !== null && Object.hasOwn(adapter.definition.manifest.settings, subject.setting)
@@ -2675,6 +2697,13 @@ export class AppService {
           if (asker !== null) {
             await this.remote.reopenClient(asker).catch(() => undefined)
             this.emit('remote-changed')
+            return
+          }
+          const net = subject.scope === 'valet' ? networkSettingOf(subject.setting) : null
+          if (net !== null) {
+            const value = networkSettingValue(net.which, subject.to)
+            if (value === null) throw new ValetError('config', 'invalid')
+            await this.storeAgentNetwork(net.key, value)
             return
           }
           if (subject.scope === 'adapter') {
@@ -3545,6 +3574,69 @@ export class AppService {
     extras: ConsentExtras = {},
   ): Promise<void> {
     if (!(await this.approveHere(kind, subject, extras))) throw new ValetError('config', 'not-granted')
+  }
+
+  /** An agent Valet knows now: an app on this Mac, or an approved cloud agent. */
+  private agentExists(key: string): boolean {
+    const [origin, id = ''] = key.split(':')
+    if (origin === 'local') return this.clients.get(id) !== null
+    return origin === 'remote' && this.remote.clients.get(id)?.grant != null
+  }
+
+  /** One agent's browser network settings, and the interfaces it could be pinned to. */
+  private async agentNetworkView(key: string): Promise<import('../../shared/api').AgentNetworkView> {
+    if (!this.agentExists(key)) throw new ValetError('config', 'not-found')
+    return { ...(await this.agentNetwork.get(key)), interfaces: listInterfaces() }
+  }
+
+  /**
+   * The person changes an agent's browser network (its page in Valet). Turning the home network
+   * on, or pinning a different interface, asks for Touch ID like turning a tool on; anything that
+   * only narrows is done at once. New sessions take the change; open ones keep what they had.
+   */
+  private async setAgentNetwork(key: string, patch: Partial<AgentNetwork>): Promise<void> {
+    if (!this.agentExists(key)) throw new ValetError('config', 'not-found')
+    for (const which of ['home', 'nic'] as const) {
+      const part: Partial<AgentNetwork> =
+        which === 'home'
+          ? patch.homeNetwork === undefined
+            ? {}
+            : { homeNetwork: patch.homeNetwork }
+          : patch.interface === undefined
+            ? {}
+            : { interface: patch.interface }
+      if (Object.keys(part).length === 0) continue
+      const from = await this.agentNetwork.get(key)
+      const to = { ...from, ...part }
+      if (networkSettingWords(which, from) === networkSettingWords(which, to)) continue
+      if (!networkChangeWidens(which, from, part)) {
+        await this.storeAgentNetwork(key, part)
+        continue
+      }
+      const setting = networkSettingName(key, which)
+      if (setting === null) throw new ValetError('config', 'invalid')
+      await this.approveOrRefuse('setting', {
+        scope: 'valet',
+        adapterId: null,
+        setting,
+        label: NETWORK_SETTING_LABELS[which],
+        from: networkSettingWords(which, from),
+        to: networkSettingWords(which, to),
+      })
+    }
+  }
+
+  private async storeAgentNetwork(key: string, part: Partial<AgentNetwork>): Promise<void> {
+    const to = await this.agentNetwork.set(key, part)
+    await this.audit
+      .append({
+        type: 'agent-network-changed',
+        clientId: key,
+        homeNetwork: to.homeNetwork,
+        interface: to.interface,
+      })
+      .catch(() => undefined)
+    this.emit(key.startsWith('remote:') ? 'remote-changed' : 'clients-changed')
   }
 
   /** Valet's own widening settings: where each is read and written. */
@@ -5200,6 +5292,15 @@ export class AppService {
    */
   private writerSource(): WriterSource {
     return {
+      agentNetwork: (key) => this.agentNetwork.get(key),
+      interfaceNames: () => listInterfaces().map((i) => i.name),
+      narrowAgentNetwork: async (key, part) => {
+        const from = await this.agentNetwork.get(key)
+        const which = part.homeNetwork !== undefined ? 'home' : 'nic'
+        // Checked again here: only this writer files an agent's asks, and this path never widens.
+        if (networkChangeWidens(which, from, part)) throw new ValetError('config', 'invalid')
+        await this.storeAgentNetwork(key, part)
+      },
       now: () => this.deps.now(),
       lockedDown: () => this.lockedDown,
       client: (viewer) => {
@@ -5404,6 +5505,7 @@ export class AppService {
           this.dropAgentAsks(`remote:${id}`)
           await this.dropRemoteCapabilities(id)
           await this.agentAccess.forget(`remote:${id}`)
+          await this.agentNetwork.forget(`remote:${id}`)
           // Just after, so this call's own result still reaches the agent.
           const timer = setTimeout(() => void this.remote.revokeClient(id).catch(() => false), 1000)
           timer.unref?.()
@@ -5981,6 +6083,7 @@ export class AppService {
             await rm(this.clients.configPath(clientId), { force: true })
           } finally {
             await this.audit.append({ type: 'client-revoked', clientId: label }).catch(() => undefined)
+            await this.agentNetwork.forget(label)
           }
           this.emit('clients-changed')
           this.emit('endpoint-changed')
@@ -6044,6 +6147,8 @@ export class AppService {
           this.refreshEndpoint()
           this.emit('clients-changed')
         },
+        network: (agent) => this.agentNetworkView(agent),
+        setNetwork: (agent, patch) => this.setAgentNetwork(agent, patch),
       },
       attention: {
         list: async (): Promise<AttentionItem[]> => {
@@ -6296,6 +6401,7 @@ export class AppService {
           if (!(await this.remote.revokeClient(id))) throw new ValetError('config', 'not-found')
           await this.dropRemoteCapabilities(id)
           await this.agentAccess.forget(`remote:${id}`)
+          await this.agentNetwork.forget(`remote:${id}`)
         },
         revokeAllClients: async () => {
           const ids = this.remote.remoteClients().map((c) => c.id)
@@ -6304,6 +6410,7 @@ export class AppService {
           for (const id of ids) {
             await this.dropRemoteCapabilities(id)
             await this.agentAccess.forget(`remote:${id}`)
+            await this.agentNetwork.forget(`remote:${id}`)
           }
           return count
         },

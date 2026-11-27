@@ -121,6 +121,7 @@ function setup(overrides: Partial<WriterSource> = {}) {
   const told: [string, string, number][] = []
   const off = new Map<string, Set<string>>()
   const disconnected: string[] = []
+  const networks = new Map<string, { homeNetwork: boolean; interface: string | null }>()
   const clients = new Map([
     ['c_me', 'Claude Code'],
     ['c_other', 'Other agent'],
@@ -235,6 +236,11 @@ function setup(overrides: Partial<WriterSource> = {}) {
       audited.push(event)
     },
     told: (clientId, name, count) => told.push([clientId, name, count]),
+    agentNetwork: async (key) => networks.get(key) ?? { homeNetwork: false, interface: null },
+    interfaceNames: () => ['en0', 'vlan20'],
+    narrowAgentNetwork: async (key, part) => {
+      networks.set(key, { ...(networks.get(key) ?? { homeNetwork: false, interface: null }), ...part })
+    },
     ...overrides,
   }
   return {
@@ -246,6 +252,7 @@ function setup(overrides: Partial<WriterSource> = {}) {
     told,
     off,
     disconnected,
+    networks,
     advance: (ms: number) => {
       now += ms
     },
@@ -567,6 +574,29 @@ describe('AdminWriterImpl', () => {
       ['Other agent', false, 'approve', 'waiting'],
       ['Claude Code', true, 'notify', null],
     ])
+  })
+
+  it('asks to widen an agent’s browser network, and narrows it at once', async () => {
+    const { writer, networks } = setup()
+    const agent = { origin: 'remote' as const, clientId: 'rcagent' }
+    const asked = await writer.setBrowserNetwork(agent, { homeNetwork: true }, 'For the router')
+    expect(asked).toMatchObject({ kind: 'asked' })
+    expect(networks.get('remote:rcagent')).toBeUndefined()
+    const pinned = await writer.setBrowserNetwork(agent, { interface: 'vlan20' }, null)
+    expect(pinned).toMatchObject({ kind: 'asked' })
+    expect(await writer.setBrowserNetwork(agent, { interface: 'en9' }, null)).toEqual({
+      kind: 'refused',
+      reason: 'not-found',
+    })
+    networks.set('remote:rcagent', { homeNetwork: true, interface: 'vlan20' })
+    expect(await writer.setBrowserNetwork(agent, { homeNetwork: false }, null)).toMatchObject({
+      kind: 'done',
+    })
+    expect(await writer.setBrowserNetwork(agent, { interface: null }, null)).toMatchObject({ kind: 'done' })
+    expect(networks.get('remote:rcagent')).toEqual({ homeNetwork: false, interface: null })
+    expect(await writer.setBrowserNetwork(agent, { homeNetwork: false }, null)).toMatchObject({
+      kind: 'unchanged',
+    })
   })
 
   it('holds the hourly limit against calls made in parallel', async () => {

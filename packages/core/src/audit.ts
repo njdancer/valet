@@ -491,6 +491,17 @@ export type AuditEvent =
       readonly tool: string
     }
   | {
+      /**
+       * An agent's browser sessions' network changed (docs/agent-browser.md, "Network"): whether
+       * they reach the home network, and the interface they leave from (null: the Mac's routing).
+       */
+      readonly type: 'agent-network-changed'
+      /** `local:<id>` or `remote:<id>`. */
+      readonly clientId: string
+      readonly homeNetwork: boolean
+      readonly interface: string | null
+    }
+  | {
       /** The person paused Valet from the menu (every call refused until resumed), or resumed it. */
       readonly type: 'app-paused'
       readonly paused: boolean
