@@ -3,7 +3,7 @@
 // runtime returned, already redacted; its "[redacted]" markers become redaction parts.
 
 import { REDACTED } from '@valet/runtime'
-import type { PreviewPart } from '../../shared/api'
+import type { LoginStall, PreviewPart } from '../../shared/api'
 import { RUN_MEMORY } from './constants'
 import { type CallSubject, detailOf, subjectOf } from './run-detail'
 
@@ -20,6 +20,8 @@ export interface RememberedRun {
   /** What the call was about, for the Activity list: a search, or the products it touched. */
   readonly detail: string | null
   readonly subject: CallSubject
+  /** Where the login this call started stopped short, if it did. */
+  readonly loginStall?: LoginStall
 }
 
 /** JSON text split into text and redaction markers. Unserialisable values preview as a fixed note. */
@@ -75,6 +77,12 @@ export class RunMemory {
       redactions: preview.redactions,
       detail: detailOf(run.subject, output),
     })
+  }
+
+  /** Keeps where a call's login stopped short. Ignored for a call no longer remembered. */
+  loginStalled(callId: string, stall: LoginStall): void {
+    const run = this.runs.get(callId)
+    if (run !== undefined) this.runs.set(callId, { ...run, loginStall: stall })
   }
 
   get(callId: string): RememberedRun | undefined {

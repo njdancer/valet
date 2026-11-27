@@ -7,6 +7,7 @@
 
 import {
   type AuthPage,
+  type AuthPageView,
   type BlockedRequest,
   type ElementInfo,
   type FetchResult,
@@ -19,6 +20,7 @@ import {
   urlOriginAllowed,
   ValetError,
 } from '@valet/core'
+import { ariaBootedScript, ariaBootScript, ariaSnapshotScript } from './aria'
 import { cookiesForDomains } from './cookies'
 import { authBlock, authNavigationAllowed } from './guards'
 import { needsUserTitle } from './needs-user'
@@ -297,6 +299,29 @@ export class SurfaceAuthPage implements AuthPage {
       this.assertOpen('probe')
       return [...new Set(cookies.map((cookie) => cookie.name))]
     })
+  }
+
+  /**
+   * The main frame's URL, title and accessibility snapshot, read by the agents' browser's own
+   * script (aria.ts) in the runtime's isolated world: it reads, and changes nothing the page can
+   * see. Subframes are left out. Null once the page has escaped or closed, or if it can't be read.
+   */
+  async describe(): Promise<AuthPageView | null> {
+    if (this.escaped || this.surface.isDestroyed()) return null
+    const frame = this.surface.frames()[0]
+    if (frame === undefined) return null
+    try {
+      if ((await frame.run(ariaBootedScript())) !== true) await frame.run(ariaBootScript())
+      const raw = await frame.run(ariaSnapshotScript({ target: null, depth: null }))
+      if (!isRecord(raw) || typeof raw['yaml'] !== 'string') return null
+      return {
+        url: this.surface.url(),
+        title: typeof raw['title'] === 'string' ? raw['title'] : '',
+        snapshot: raw['yaml'],
+      }
+    } catch {
+      return null
+    }
   }
 
   /**

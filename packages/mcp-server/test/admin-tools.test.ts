@@ -84,6 +84,7 @@ function reader(overrides: Partial<AdminReader> = {}): AdminReader & { scopes: A
           steps: [
             { type: 'failed', atMs: 10, durationMs: null, stage: 'tool-run', errorClass: 'site-changed' },
           ],
+          loginStall: null,
         },
         matches: [],
         otherAgent: false,
@@ -330,6 +331,29 @@ describe('runAdminTool', () => {
     const result = await run(tool('valet_get_call'), two, { call: '7F2A' })
     expect(result.isError).toBeUndefined()
     expect(result.structuredContent).toEqual({ call: null, matches, otherAgent: false })
+  })
+
+  it('shows where a call’s login stopped, and withholds the trace if a secret is in it', async () => {
+    const loginStall = {
+      at: CALL.startedAt,
+      outcome: 'needsUser' as const,
+      reason: 'site-changed',
+      page: {
+        url: 'https://auth.shop.test/u/x',
+        title: 'Verify it’s you',
+        snapshot: '- text: hi',
+        cut: false,
+      },
+    }
+    const trace = async (): Promise<AdminCallTrace> => {
+      const base = await reader().call('7F2A', { viewer: LOCAL, all: false })
+      if (base.call === null) throw new Error('fixture')
+      return { ...base, call: { ...base.call, loginStall } }
+    }
+    const shown = await run(tool('valet_get_call'), reader({ call: trace }), { call: '7F2A' })
+    expect((shown.structuredContent as AdminCallTrace).call?.loginStall).toEqual(loginStall)
+    const leaky = reader({ call: trace, sensitive: (texts) => texts.some((t) => t.includes('Verify')) })
+    expect(text(await run(tool('valet_get_call'), leaky, { call: '7F2A' }))).toBe(ADMIN_WITHHELD_RESULT)
   })
 
   it('keeps trace steps and audit events flat', async () => {

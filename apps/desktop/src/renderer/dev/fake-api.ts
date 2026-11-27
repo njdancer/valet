@@ -2735,6 +2735,7 @@ function traceOf(summary: RunSummary, adapters: ReadonlyMap<string, AdapterDetai
         text('\n}'),
       ],
       outputBytes: 412,
+      loginStall: null,
     }
   }
 
@@ -2786,5 +2787,6 @@ function traceOf(summary: RunSummary, adapters: ReadonlyMap<string, AdapterDetai
     input: [text('{ "query": "bananas" }')],
     output: summary.outcome === 'ok' ? [text('{ "results": 24 }')] : null,
     outputBytes: summary.outcome === 'ok' ? 1830 : null,
+    loginStall: null,
   }
 }

@@ -1,6 +1,7 @@
 import { inspect } from 'node:util'
 import { type BlockedRequest, SecretValue, ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
+import { ariaBootedScript, ariaBootScript } from '../src/aria'
 import { SurfaceAuthPage } from '../src/auth-page'
 import { needsUserTitle } from '../src/needs-user'
 import type { PageTiming } from '../src/page-core'
@@ -1699,5 +1700,74 @@ describe('AuthPage block reports', () => {
     expect(surface.attemptNavigation('https://widget.test/', false)).toBe(false)
     expect(surface.attemptNavigation('https://evil.test/', true)).toBe(false)
     expect(await rejection(page.textPresent('x'))).toMatchObject({ errorClass: 'navigation-escaped' })
+  })
+})
+
+describe('AuthPage.describe', () => {
+  /** A main frame whose scripts are answered here: the aria script needs a real layout engine. */
+  function ariaFrame(snapshot: unknown) {
+    const frame = new FakeFrame('https://www.example.com', 'https://www.example.com/u/login', null)
+    let booted = false
+    const scripts: string[] = []
+    frame.run = async (code: string) => {
+      scripts.push(code)
+      if (code === ariaBootedScript()) return booted
+      if (code === ariaBootScript()) {
+        booted = true
+        return null
+      }
+      if (code.includes('ariaSnapshot(root')) return snapshot
+      return null
+    }
+    return { frame, scripts }
+  }
+
+  it('reads the main frame’s title and snapshot, booting the script once', async () => {
+    const { frame, scripts } = ariaFrame({ url: 'x', title: 'Verify', yaml: '- heading "Verify" [level=1]' })
+    const surface = new FakeSurface(PARTITION, [frame])
+    const page = new SurfaceAuthPage(surface, NAVIGATION, timing(new ManualTimers()))
+    await page.goto('https://www.example.com/u/mfa?state=abc')
+    expect(await page.describe()).toEqual({
+      url: 'https://www.example.com/u/mfa?state=abc',
+      title: 'Verify',
+      snapshot: '- heading "Verify" [level=1]',
+    })
+    await page.describe()
+    expect(scripts.filter((s) => s === ariaBootScript())).toHaveLength(1)
+  })
+
+  it('gives null for a page it can’t read, and never throws', async () => {
+    for (const answer of [null, 'text', { yaml: 3 }]) {
+      const { frame } = ariaFrame(answer)
+      const page = new SurfaceAuthPage(
+        new FakeSurface(PARTITION, [frame]),
+        NAVIGATION,
+        timing(new ManualTimers()),
+      )
+      expect(await page.describe()).toBeNull()
+    }
+    const { frame } = ariaFrame({ yaml: '' })
+    frame.run = async () => {
+      throw new Error('detached')
+    }
+    const failing = new SurfaceAuthPage(
+      new FakeSurface(PARTITION, [frame]),
+      NAVIGATION,
+      timing(new ManualTimers()),
+    )
+    expect(await failing.describe()).toBeNull()
+  })
+
+  it('reads nothing once the page escaped its origins or closed', async () => {
+    const { frame, scripts } = ariaFrame({ title: 't', yaml: '- x' })
+    const surface = new FakeSurface(PARTITION, [frame])
+    const page = new SurfaceAuthPage(surface, NAVIGATION, timing(new ManualTimers()))
+    surface.commit('https://evil.test/')
+    expect(await page.describe()).toBeNull()
+    expect(scripts).toEqual([])
+    const closed = new FakeSurface(PARTITION, [ariaFrame({ title: 't', yaml: '- x' }).frame])
+    const other = new SurfaceAuthPage(closed, NAVIGATION, timing(new ManualTimers()))
+    closed.destroyed = true
+    expect(await other.describe()).toBeNull()
   })
 })

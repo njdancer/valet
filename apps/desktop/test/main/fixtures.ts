@@ -5,6 +5,7 @@ import {
   type AdapterDefinition,
   type AuthPage,
   type AuthPageOptions,
+  type AuthPageView,
   defineAdapter,
   type ElementInfo,
   type FetchResult,
@@ -159,8 +160,16 @@ export class FakeAuthPage implements AuthPage {
   /** What inspect() reports for every selector; null means not found. */
   element: ElementInfo | null = null
   typed: { text: string; secret: boolean }[] = []
+  /** What describe() answers; null plays a page that can't be read. */
+  view: AuthPageView | null = null
+  described = 0
   private url = 'about:blank'
   private releaseHand: (() => void) | null = null
+
+  async describe(): Promise<AuthPageView | null> {
+    this.described++
+    return this.view
+  }
 
   async goto(url: string): Promise<void> {
     this.gone.push(url)
