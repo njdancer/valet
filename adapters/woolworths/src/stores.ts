@@ -6,11 +6,15 @@
 // for a store in the app, apply_store before a tool call whenever the store isn't known to be in
 // force. Neither is listed to, or callable by, an MCP client.
 //
-// Nothing here has been seen live. The paths, the request body and the response fields are what
-// the site is believed to use; README.md ("Store") lists what a live session has to confirm.
+// Seen live (2026-11-27, anonymous probe and the site's own scripts): stores for a postcode come from
+// GET /api/v3/ui/fulfilment/stores; a store is chosen with POST /apis/ui/Fulfilment and a body of
+// { fulfilmentMethod, addressId }, replying { IsSuccessful, IsNonServiced, Message }. A guest gets
+// 401, so apply_store logs in first. Some stores list "DriveUp" (direct to boot) rather than
+// "Pickup"; when the site refuses Pickup, the store is chosen once more as DriveUp.
 
 import { MAX_SETTING_CHOICES, settingChoicesSchema, settingQuerySchema, tool, ValetError } from '@valet/core'
 import { z } from 'zod'
+import { withLogin } from './login'
 import { getJson, PATHS, postJson } from './site'
 import { htmlToText } from './text'
 import { fulfilmentWire, pickupStoresWire, pickupStoreWire } from './wire'
@@ -61,12 +65,12 @@ export const applyStore = tool({
   output: z.object({}).strict(),
   async run(ctx, { value }) {
     const addressId = Number(value)
-    const reply = await postJson(
-      ctx,
-      PATHS.fulfilment,
-      { addressId, fulfilmentMethod: 'Pickup' },
-      fulfilmentWire,
-    )
+    const choose = (fulfilmentMethod: 'Pickup' | 'DriveUp') =>
+      postJson(ctx, PATHS.fulfilment, { fulfilmentMethod, addressId }, fulfilmentWire)
+    const reply = await withLogin(ctx, async () => {
+      const pickup = await choose('Pickup')
+      return pickup.IsSuccessful === false ? choose('DriveUp') : pickup
+    })
     // The site answered, but not with the store asked for: the tools must not go on to quote another.
     if (reply.IsSuccessful === false) throw new ValetError('tool-run', 'unavailable')
     if (typeof reply.AddressId === 'number' && reply.AddressId !== addressId) {

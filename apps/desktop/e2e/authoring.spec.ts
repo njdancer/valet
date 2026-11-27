@@ -139,10 +139,10 @@ export const tools = {
     output: z.object({ loggedIn: z.boolean() }),
     async run(ctx) {
       const response = await ctx.page.fetch('/api/ui/v2/bootstrap')
-      const body = response.body as { ShopperDetails?: { IsLoggedIn?: unknown } } | null
-      if (response.status !== 200 || typeof body?.ShopperDetails?.IsLoggedIn !== 'boolean')
+      const body = response.body as { ShopperRequest?: { IsGuest?: unknown } } | null
+      if (response.status !== 200 || typeof body?.ShopperRequest?.IsGuest !== 'boolean')
         throw new ValetError('tool-run', 'unexpected-shape')
-      return { loggedIn: body.ShopperDetails.IsLoggedIn }
+      return { loggedIn: !body.ShopperRequest.IsGuest }
     },
   }),
 }

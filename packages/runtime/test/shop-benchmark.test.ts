@@ -39,7 +39,7 @@ function shop(random: () => number = () => 0.5) {
   driver.page.url = `${home}/`
   const requests: string[] = []
   const answers: Record<string, FetchResult> = {
-    'GET /api/ui/v2/bootstrap': json({ ShopperDetails: { IsLoggedIn: true } }),
+    'GET /api/ui/v2/bootstrap': json({ ShopperRequest: { IsGuest: false } }),
     'POST /apis/ui/Search/products': json(fixture('search-milk.json')),
     'GET /apis/ui/Trolley': json(fixture('trolley-two-items.json')),
     'POST /api/v3/ui/trolley/update': json(fixture('trolley-two-items.json')),

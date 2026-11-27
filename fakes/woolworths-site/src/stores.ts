@@ -5,7 +5,7 @@
 
 export interface PickupStore {
   readonly FulfilmentStoreId: number
-  /** What `POST /api/v3/ui/fulfilment` takes to choose this store. */
+  /** What `POST /apis/ui/Fulfilment` takes to choose this store. */
   readonly AddressId: number
   readonly Description: string
   readonly Street1: string
@@ -68,7 +68,7 @@ export function storesForPostcode(postcode: string | null): readonly PickupStore
   return pickupStores.filter((store) => store.Postcode === postcode)
 }
 
-/** The store a `POST /api/v3/ui/fulfilment` body chooses, or null when the body isn't a valid choice. */
+/** The store a `POST /apis/ui/Fulfilment` body chooses, or null when the body isn't a valid choice. */
 export function storeChosenBy(body: unknown): PickupStore | null {
   if (typeof body !== 'object' || body === null) return null
   const { addressId, fulfilmentMethod } = body as { addressId?: unknown; fulfilmentMethod?: unknown }

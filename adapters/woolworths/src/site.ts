@@ -18,7 +18,7 @@ export const PATHS = {
   trolleyUpdate: '/api/v3/ui/trolley/update',
   /** Assumed, never seen live: see stores.ts. */
   pickupStores: '/api/v3/ui/fulfilment/stores',
-  fulfilment: '/api/v3/ui/fulfilment',
+  fulfilment: '/apis/ui/Fulfilment',
 } as const
 
 /**

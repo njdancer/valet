@@ -1,13 +1,13 @@
 // The store setting's two tools (D69). The site's shapes here are assumptions (stores.ts), so the
 // tests pin what the adapter does with them: what reaches the person, and when it refuses to go on.
 
-import { settingChoicesSchema, ValetError } from '@valet/core'
+import { NeedsUserError, settingChoicesSchema, ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { applyStore, findStores } from '../src/stores'
 import { FakeToolContext, json } from './fake-context'
 
 const STORES = '/api/v3/ui/fulfilment/stores'
-const FULFILMENT = '/api/v3/ui/fulfilment'
+const FULFILMENT = '/apis/ui/Fulfilment'
 
 const TOWN_HALL = {
   FulfilmentStoreId: 1201,
@@ -122,8 +122,32 @@ describe('apply_store', () => {
     expect(ctx.fetches[0]).toMatchObject({
       method: 'POST',
       path: FULFILMENT,
-      json: { addressId: 9001201, fulfilmentMethod: 'Pickup' },
+      json: { fulfilmentMethod: 'Pickup', addressId: 9001201 },
     })
+  })
+
+  it('logs in before choosing the store: the site refuses a guest with 401', async () => {
+    const ctx = new FakeToolContext().on('POST', FULFILMENT, json({ IsSuccessful: true }))
+    await apply(ctx, '9001201')
+    expect(ctx.events).toEqual(['ensure', `POST ${FULFILMENT}`])
+  })
+
+  it('makes no call when the login fails', async () => {
+    const ctx = new FakeToolContext()
+    ctx.ensureResult = { status: 'needsUser', reason: 'otp-required' }
+    await expect(apply(ctx, '9001201')).rejects.toBeInstanceOf(NeedsUserError)
+    expect(ctx.fetches).toEqual([])
+  })
+
+  it('chooses the store for direct to boot when the site refuses pick-up there', async () => {
+    const ctx = new FakeToolContext().on('POST', FULFILMENT, (request) =>
+      json({ IsSuccessful: (request.json as { fulfilmentMethod?: string }).fulfilmentMethod === 'DriveUp' }),
+    )
+    expect(await apply(ctx, '9001201')).toEqual({})
+    expect(ctx.fetches.map((f) => f.json)).toEqual([
+      { fulfilmentMethod: 'Pickup', addressId: 9001201 },
+      { fulfilmentMethod: 'DriveUp', addressId: 9001201 },
+    ])
   })
 
   it.each(['', '0', '-1', '1.5', '9001201 ', 'abc', '1e3', '1234567890123'])(
@@ -136,6 +160,8 @@ describe('apply_store', () => {
   it('fails when the site says the choice was not taken', async () => {
     const ctx = new FakeToolContext().on('POST', FULFILMENT, json({ IsSuccessful: false }))
     await expect(apply(ctx, '9001201')).rejects.toEqual(new ValetError('tool-run', 'unavailable'))
+    // Pick-up, then direct to boot once; never more.
+    expect(ctx.fetches).toHaveLength(2)
   })
 
   it('fails when the site answers with another store', async () => {

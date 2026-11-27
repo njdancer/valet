@@ -200,7 +200,7 @@ export function createManifest({
     schemaVersion: 1,
     id: 'woolworths',
     name: 'Woolworths',
-    version: '0.5.1',
+    version: '0.5.2',
     description: 'Search Woolworths (Australia) products and manage the online shopping cart.',
     home: `${origin}/`,
     // Opened in the person's own browser to check out: Valet never places orders.
@@ -230,8 +230,11 @@ export function createManifest({
         path: '/api/ui/v2/bootstrap',
         expectStatus: 200,
         loggedOutStatuses: [401],
-        jsonPath: 'ShopperDetails.IsLoggedIn',
-        equals: true,
+        // Seen live 2026-11-27: bootstrap no longer has ShopperDetails; the shopper is under
+        // ShopperRequest, whose IsGuest is true for an anonymous visitor. A missing field reads
+        // as logged out, never as logged in.
+        jsonPath: 'ShopperRequest.IsGuest',
+        equals: false,
         // A third of a shop's requests were this probe, one before every cart call. A write may
         // now rest on a "logged in" answer for a minute; get_cart, a read, always probes. An
         // assumption, not a decision of Nick's (docs/findings/2026-11-10-shop-benchmark.md).
@@ -240,7 +243,7 @@ export function createManifest({
     },
     auth: { steps: authSteps(origin, totp), frameOrigins: [...captchaFrameOrigins] },
     // Exactly the calls the tools make, so a later version can't read anything new (bootstrap's
-    // ShopperDetails, say) without a new permission. The login probe isn't listed, so tool code
+    // ShopperRequest, say) without a new permission. The login probe isn't listed, so tool code
     // can't make it; see session.probe for what that costs under core v2.
     // D28's session read cache: search and product answers are kept a while; the trolley only
     // briefly, since the person can change it from their own browser, and a cart write's own reply
@@ -262,7 +265,7 @@ export function createManifest({
       { method: 'POST', path: '/api/v3/ui/trolley/update', purpose: 'write', refreshes: '/apis/ui/Trolley' },
       // The store setting's two calls (stores.ts). Assumed paths, never seen live.
       { method: 'GET', path: '/api/v3/ui/fulfilment/stores', purpose: 'read' },
-      { method: 'POST', path: '/api/v3/ui/fulfilment', purpose: 'write' },
+      { method: 'POST', path: '/apis/ui/Fulfilment', purpose: 'write' },
     ],
     tools: [
       {

@@ -95,7 +95,8 @@ async function signIn(
 }
 
 async function shopper(client: Client): Promise<{ IsLoggedIn: boolean; FirstName: string | null }> {
-  return JSON.parse((await client.get('/api/ui/v2/bootstrap')).text).ShopperDetails
+  const { IsGuest, FirstName } = JSON.parse((await client.get('/api/ui/v2/bootstrap')).text).ShopperRequest
+  return { IsLoggedIn: IsGuest === false, FirstName }
 }
 
 describe('two origins', () => {
@@ -827,15 +828,28 @@ describe('after the login', () => {
     expect(site.trolleyFor(PLAIN.username)).toEqual([])
   })
 
-  it('starts a login without the store the anonymous session chose', async () => {
+  it('lets only a logged-in session choose a store, and remembers it for that session', async () => {
     const site = await start()
     const b = await browser(site)
-    await b.www.postJson('/api/v3/ui/fulfilment', { addressId: 9001201, fulfilmentMethod: 'Pickup' })
-    expect(site.pickupAddresses(null)).toEqual([9001201])
+    const guest = await b.www.postJson('/apis/ui/Fulfilment', {
+      addressId: 9001201,
+      fulfilmentMethod: 'Pickup',
+    })
+    expect(guest.status).toBe(401)
+    expect(site.pickupAddresses(null)).toEqual([null])
     await b.www.get(location(await signIn(site, b, PLAIN)))
     expect(site.pickupAddresses(PLAIN.username)).toEqual([null])
-    await b.www.postJson('/api/v3/ui/fulfilment', { addressId: 9001245, fulfilmentMethod: 'Pickup' })
-    expect(site.pickupAddresses(PLAIN.username)).toEqual([9001245])
+    const reply = await b.www.postJson('/apis/ui/Fulfilment', {
+      addressId: 9001310,
+      fulfilmentMethod: 'Pickup',
+    })
+    expect(JSON.parse(reply.text)).toEqual({
+      IsSuccessful: true,
+      FulfilmentMethod: 'Pickup',
+      AddressId: 9001310,
+      FulfilmentStoreId: 1310,
+    })
+    expect(site.pickupAddresses(PLAIN.username)).toEqual([9001310])
   })
 
   it('logs out to a fresh anonymous session; the old token is dead', async () => {

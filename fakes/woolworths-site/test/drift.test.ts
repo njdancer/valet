@@ -38,7 +38,7 @@ describe('setShapeDrift', () => {
       site.setShapeDrift('changed-type')
       expect((await get('/apis/ui/product/detail/88436')).Product.Stockcode).toBe('88436')
       expect(await get('/api/ui/v2/bootstrap')).toEqual({
-        ShopperDetails: { IsLoggedIn: false, FirstName: null },
+        ShopperRequest: { IsGuest: true, FirstName: null },
       })
       site.setShapeDrift(null)
       expect((await get('/apis/ui/product/detail/88436')).Product.Stockcode).toBe(88436)

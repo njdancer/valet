@@ -55,7 +55,7 @@ function stepsIn(steps: readonly unknown[]): any[] {
 describe('the real manifest', () => {
   it('is the default export and points at the live site', () => {
     expect(realManifest.home).toBe('https://www.woolworths.com.au/')
-    expect(realManifest.version).toBe('0.5.1')
+    expect(realManifest.version).toBe('0.5.2')
     expect(manifestSchema.parse(realManifest)).toEqual(realManifest)
   })
 
@@ -85,8 +85,8 @@ describe('the real manifest', () => {
       path: '/api/ui/v2/bootstrap',
       expectStatus: 200,
       loggedOutStatuses: [401],
-      jsonPath: 'ShopperDetails.IsLoggedIn',
-      equals: true,
+      jsonPath: 'ShopperRequest.IsGuest',
+      equals: false,
       trustSeconds: 60,
     })
   })
@@ -339,7 +339,7 @@ describe('the request surface', () => {
   it('only lets the trolley update and the choice of store write', () => {
     expect(requests.filter((request) => request.purpose === 'write')).toEqual([
       { method: 'POST', path: '/api/v3/ui/trolley/update', purpose: 'write', refreshes: '/apis/ui/Trolley' },
-      { method: 'POST', path: '/api/v3/ui/fulfilment', purpose: 'write' },
+      { method: 'POST', path: '/apis/ui/Fulfilment', purpose: 'write' },
     ])
   })
 
