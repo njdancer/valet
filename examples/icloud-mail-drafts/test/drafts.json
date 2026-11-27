@@ -1,0 +1,102 @@
+{
+  "cases": [
+    {
+      "name": "saves a new draft to Drafts, flagged as a draft",
+      "tool": "create_draft",
+      "input": {
+        "from": "me@icloud.example",
+        "fromName": "Sam Example",
+        "to": ["ann@example.com"],
+        "bcc": ["records@example.com"],
+        "subject": "Lunch tomorrow?",
+        "body": "Hi Ann,\n\nAre you free for lunch tomorrow?\n\nSam"
+      },
+      "imap": [
+        {
+          "op": "append",
+          "args": ["Drafts"],
+          "answer": { "folder": "Drafts", "bytes": 640 }
+        }
+      ],
+      "expect": {
+        "output": {
+          "saved": true,
+          "from": "me@icloud.example",
+          "to": ["ann@example.com"],
+          "cc": [],
+          "bcc": ["records@example.com"],
+          "subject": "Lunch tomorrow?"
+        }
+      }
+    },
+    {
+      "name": "replaces a draft: the new version first, then the old one to Deleted Messages",
+      "tool": "replace_draft",
+      "input": {
+        "draftMessageId": "1234-abcd@icloud.example",
+        "from": "me@icloud.example",
+        "to": ["ann@example.com"],
+        "subject": "Re: Lunch",
+        "body": "Thursday works.",
+        "inReplyTo": "<b@example.com>"
+      },
+      "imap": [
+        {
+          "op": "search",
+          "args": ["Drafts", { "header": { "name": "Message-ID", "value": "<1234-abcd@icloud.example>" } }],
+          "answer": { "folder": "Drafts", "uidValidity": 1, "total": 1, "uids": [52] }
+        },
+        { "op": "append", "args": ["Drafts"], "answer": { "folder": "Drafts", "bytes": 512 } },
+        {
+          "op": "move",
+          "args": ["Drafts", [52], "Deleted Messages"],
+          "answer": { "folder": "Drafts", "to": "Deleted Messages", "uids": 1 }
+        }
+      ],
+      "expect": { "output": { "saved": true, "subject": "Re: Lunch", "replaced": 1 } }
+    },
+    {
+      "name": "a draft that isn't in Drafts is not found, and nothing is saved",
+      "tool": "replace_draft",
+      "input": {
+        "draftMessageId": "gone@icloud.example",
+        "from": "me@icloud.example",
+        "to": ["ann@example.com"],
+        "subject": "Hello",
+        "body": "Hi"
+      },
+      "imap": [
+        {
+          "op": "search",
+          "args": ["Drafts"],
+          "answer": { "folder": "Drafts", "uidValidity": 1, "total": 0, "uids": [] }
+        }
+      ],
+      "expect": { "error": { "stage": "tool-input", "errorClass": "not-found" } }
+    },
+    {
+      "name": "an address with a second recipient hidden in it is refused before anything is written",
+      "tool": "create_draft",
+      "input": {
+        "from": "me@icloud.example",
+        "to": ["ann@example.com, eve@evil.example"],
+        "subject": "Hello",
+        "body": "Hi"
+      },
+      "imap": [],
+      "expect": { "error": { "stage": "tool-input", "errorClass": "invalid" } }
+    },
+    {
+      "name": "a subject with a line break can't start a header",
+      "tool": "create_draft",
+      "input": {
+        "from": "me@icloud.example",
+        "to": ["ann@example.com"],
+        "subject": "Hello\r\nBcc: eve@evil.example",
+        "body": "Hi"
+      },
+      "imap": [],
+      "expect": { "error": { "stage": "tool-input", "errorClass": "invalid" } }
+    }
+  ]
+}

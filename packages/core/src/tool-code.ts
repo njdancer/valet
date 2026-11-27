@@ -8,5 +8,7 @@ export * from './errors'
 export * from './feeds'
 export * from './input-issue'
 export * from './settings'
+// The checked mail builder ctx.smtp uses, for an adapter that writes a message itself (a draft).
+export { buildMailMessage, checkMailMessage, isMailAddress, isMessageId, MAIL_LIMITS } from './smtp-policy'
 export * from './tool-urls'
 export { BLOCK_REASONS } from './vocab'

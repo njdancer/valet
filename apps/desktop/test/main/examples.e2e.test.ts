@@ -390,6 +390,7 @@ describe('the examples', () => {
       'home-hub',
       'icloud-calendar',
       'icloud-contacts',
+      'icloud-mail-drafts',
       'icloud-mail-read',
     ])
     for (const example of EXAMPLES.values()) {
@@ -800,6 +801,106 @@ const mail = (from: string, subject: string, day: number) => ({
     '',
   ].join('\r\n'),
   internalDate: new Date(Date.UTC(2026, 10, day, 8)),
+})
+
+describe('iCloud Mail drafts (protocol, IMAP, a kept password)', () => {
+  it('passes its check and every case, ctx.imap answered by the cases’ scripts', async () => {
+    await expectPasses(await fromExample('icloud-mail-drafts'))
+  })
+
+  it('as installed: saves a clean plain-text draft, replaces it, and never touches another folder', async () => {
+    const server = await startFakeImap({
+      mailboxes: {
+        INBOX: [mail('Ann <ann@example.com>', 'Lunch tomorrow?', 16)],
+        Drafts: [],
+        'Deleted Messages': [],
+      },
+    })
+    const home = mkdtempSync(join(tmpdir(), 'ex-drafts-home-'))
+    const hostDir = mkdtempSync(join(tmpdir(), 'ex-drafts-host-'))
+    dirs.push(home, hostDir)
+    try {
+      const host = {
+        nodeBinary: process.execPath,
+        hostScript: await writeProtocolHost(join(hostDir, 'protocol-host.cjs')),
+        home,
+        withoutSeatbelt: !mac,
+        testCa: server.cert ?? undefined,
+        operationTimeoutMs: 10_000,
+      } as ProtocolHostOptions
+      const broker = {
+        lookup: (_n: string, cb: (e: Error | null, a: { address: string; family: number }[]) => void) =>
+          cb(null, [{ address: '127.0.0.1', family: 4 }]),
+        testing: {
+          allowAddresses: ['127.0.0.1'],
+          route: () => ({ address: '127.0.0.1', port: server.port }),
+        },
+      }
+      const { call, audit } = await installed(
+        'icloud-mail-drafts',
+        {
+          mail: {
+            kind: 'password',
+            fields: { username: DEFAULT_USER.username, password: DEFAULT_USER.password },
+          },
+        },
+        (f) => f,
+        [],
+        imapBackend({
+          protocol: {
+            endpoint: 'imap.mail.me.com:993',
+            credential: 'mail',
+            folders: ['Drafts', 'Deleted Messages'],
+          },
+          host,
+          broker,
+        }),
+      )
+      const body = 'Hi Ann,\n\nThursday works.\n\nSam'
+      const created = await call('create_draft', {
+        from: 'me@icloud.example',
+        fromName: 'Sam Example',
+        to: ['ann@example.com'],
+        bcc: ['records@example.com'],
+        subject: 'Lunch',
+        body,
+      })
+      expect(created).toMatchObject({ status: 'ok', output: { saved: true, subject: 'Lunch' } })
+      const drafts = () => server.mailboxes.get('Drafts')?.messages ?? []
+      expect(drafts().length).toBe(1)
+      const first = drafts()[0]
+      const raw = first?.raw.toString('utf8') ?? ''
+      expect([...(first?.flags ?? [])].sort()).toEqual(['\\Draft', '\\Seen'])
+      expect(raw).toContain('From: "Sam Example" <me@icloud.example>\r\n')
+      expect(raw).toContain('Bcc: records@example.com\r\n')
+      expect(raw).toContain('X-Uniform-Type-Identifier: com.apple.mail-draft\r\n')
+      // The text as written: plain, never quoted, never HTML.
+      const encoded = raw.split('\r\n\r\n')[1]?.replace(/\r\n/g, '') ?? ''
+      expect(Buffer.from(encoded, 'base64').toString('utf8')).toBe(body.replace(/\n/g, '\r\n'))
+      expect(raw).not.toMatch(/blockquote|text\/html/i)
+
+      const id = (created as { output: { messageId: string } }).output.messageId
+      const replaced = await call('replace_draft', {
+        draftMessageId: id,
+        from: 'me@icloud.example',
+        to: ['ann@example.com'],
+        subject: 'Lunch (Thursday)',
+        body: 'Thursday at noon?',
+      })
+      expect(replaced).toMatchObject({ status: 'ok', output: { replaced: 1, subject: 'Lunch (Thursday)' } })
+      expect(drafts().length).toBe(1)
+      expect(drafts()[0]?.raw.toString('utf8')).toContain('Subject: Lunch (Thursday)')
+      expect(server.mailboxes.get('Deleted Messages')?.messages.length).toBe(1)
+      // INBOX is never opened, and nothing is expunged or deleted.
+      expect(server.commands.some((c) => /INBOX/i.test(c.line))).toBe(false)
+      const verbs = server.commands.map((c) => c.verb)
+      for (const v of ['EXPUNGE', 'UID EXPUNGE', 'DELETE', 'UID STORE', 'STORE'])
+        expect(verbs).not.toContain(v)
+      expect(JSON.stringify([created, replaced, audit.events])).not.toContain(DEFAULT_USER.password)
+    } finally {
+      await server.close()
+    }
+  })
 })
 
 describe('iCloud Mail, read only (protocol, IMAP, a kept password)', () => {
