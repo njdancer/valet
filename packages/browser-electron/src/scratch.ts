@@ -942,13 +942,13 @@ export class ScratchBrowser {
     return new ScratchError('The page could not be read.')
   }
 
-  /** Runs a script that needs Playwright's injected script, booting it in this document first. */
   /** Gives the page keyboard focus, and waits until the page has it (see awaitPageFocus). */
   private async focusPage(): Promise<void> {
     this.surface.focus()
     await awaitPageFocus((script) => this.run(script), this.options.timers ?? realTimers)
   }
 
+  /** Runs a script that needs Playwright's injected script, booting it in this document first. */
   private async runAria(script: string): Promise<unknown> {
     if ((await this.run(ariaBootedScript())) !== true) await this.run(ariaBootScript())
     return this.run(script)
