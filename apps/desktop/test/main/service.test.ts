@@ -133,7 +133,10 @@ const clientsToClose: Client[] = []
 afterEach(async () => {
   for (const c of clientsToClose.splice(0)) await c.close().catch(() => undefined)
   for (const s of services.splice(0)) await s.stop()
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
+  // A write the stopped service had already started can land while the folder is removed (an
+  // ENOTEMPTY seen on CI), so removing retries briefly.
+  for (const d of dirs.splice(0))
+    rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
 })
 
 async function setup(
