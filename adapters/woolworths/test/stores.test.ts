@@ -1,7 +1,7 @@
 // The store setting's two tools (D69). The site's shapes here are assumptions (stores.ts), so the
 // tests pin what the adapter does with them: what reaches the person, and when it refuses to go on.
 
-import { NeedsUserError, settingChoicesSchema, ValetError } from '@valet/core'
+import { settingChoicesSchema, ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { applyStore, findStores } from '../src/stores'
 import { FakeToolContext, json } from './fake-context'
@@ -126,17 +126,20 @@ describe('apply_store', () => {
     })
   })
 
-  it('logs in before choosing the store: the site refuses a guest with 401', async () => {
+  it('never logs in: it runs before searches too, and a search must not need a login', async () => {
     const ctx = new FakeToolContext().on('POST', FULFILMENT, json({ IsSuccessful: true }))
     await apply(ctx, '9001201')
-    expect(ctx.events).toEqual(['ensure', `POST ${FULFILMENT}`])
+    expect(ctx.events).toEqual([`POST ${FULFILMENT}`])
   })
 
-  it('makes no call when the login fails', async () => {
-    const ctx = new FakeToolContext()
-    ctx.ensureResult = { status: 'needsUser', reason: 'otp-required' }
-    await expect(apply(ctx, '9001201')).rejects.toBeInstanceOf(NeedsUserError)
-    expect(ctx.fetches).toEqual([])
+  it('applies nothing for a guest, whom the site refuses with 401, and writes once', async () => {
+    const ctx = new FakeToolContext().on('POST', FULFILMENT, {
+      status: 401,
+      contentType: 'text/plain',
+      body: '',
+    })
+    expect(await apply(ctx, '9001201')).toEqual({})
+    expect(ctx.fetches).toHaveLength(1)
   })
 
   it('chooses the store for direct to boot when the site refuses pick-up there', async () => {
