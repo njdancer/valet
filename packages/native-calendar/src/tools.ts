@@ -55,8 +55,10 @@ export interface EventKitToolDeps {
   readonly kit: EventKit
   /** The calendars (or lists) the person lets agents see, read on every call. */
   readonly allowed: () => ReadonlySet<string>
-  /** Whether the person lets agents add and change things now. */
+  /** Whether this agent may change anything here now (it has Edit on at least one). */
   readonly writes: () => boolean
+  /** The calendars (or lists) this agent may change: Edit, a subset of `allowed`. */
+  readonly editable: () => ReadonlySet<string>
   /** Takes one change from the hour's allowance; false when it is spent. */
   readonly spend: () => boolean
   readonly now: () => number
@@ -502,7 +504,7 @@ async function visibleCalendars(deps: EventKitToolDeps, kind: 'events' | 'remind
       id: c.id,
       title: c.title,
       account: c.account,
-      writable: deps.writes() && c.writable && !c.subscribed,
+      writable: deps.editable().has(c.id) && c.writable && !c.subscribed,
     }))
 }
 
@@ -514,9 +516,10 @@ function chosen(deps: EventKitToolDeps, ids: readonly string[] | undefined): str
 }
 
 /** A change may go ahead: changes are on, the calendar is one the person picked, and the hour allows it. */
-function mayChange(deps: EventKitToolDeps, calendarId: string): EventKitToolResult | null {
-  if (!deps.writes()) return fail('tool-input', 'not-found')
+function mayChange(deps: EventKitToolDeps, calendarId: string, idKey: string): EventKitToolResult | null {
   if (!deps.allowed().has(calendarId)) return fail('tool-input', 'not-found')
+  // One it may read: say so, and how to ask for more, rather than that it doesn't exist.
+  if (!deps.editable().has(calendarId)) return refuse(idKey, 'read-access-only')
   if (!deps.spend()) return fail('tool-run', 'rate-limited')
   return null
 }
@@ -593,7 +596,7 @@ export async function callCalendarTool(
         if ('day' in start !== 'day' in end) return refuse('end', 'bad-format')
         if ('day' in start ? msOf(end, true) <= msOf(start) : msOf(end) <= msOf(start))
           return refuse('end', 'before-start')
-        const refused = mayChange(deps, q.calendarId)
+        const refused = mayChange(deps, q.calendarId, 'calendarId')
         if (refused !== null) return refused
         const request: SaveEvent = defined({
           calendar: q.calendarId,
@@ -618,7 +621,7 @@ export async function callCalendarTool(
           return refuse('end', 'bad-format')
         if (start !== undefined && end !== undefined && msOf(end, 'day' in end) <= msOf(start))
           return refuse('end', 'before-start')
-        const refused = mayChange(deps, q.calendarId)
+        const refused = mayChange(deps, q.calendarId, 'calendarId')
         if (refused !== null) return refused
         const ref = parseRef(q.id)
         const saved = await deps.kit.saveEvent(
@@ -641,7 +644,7 @@ export async function callCalendarTool(
       }
       case 'delete_event': {
         const q = calendarInputs.delete_event.parse(input)
-        const refused = mayChange(deps, q.calendarId)
+        const refused = mayChange(deps, q.calendarId, 'calendarId')
         if (refused !== null) return refused
         const ref = parseRef(q.id)
         const deleted = await deps.kit.removeEvent(
@@ -719,7 +722,7 @@ export async function callReminderTool(
       }
       case 'create': {
         const q = reminderInputs.create.parse(input)
-        const refused = mayChange(deps, q.listId)
+        const refused = mayChange(deps, q.listId, 'listId')
         if (refused !== null) return refused
         const request: SaveReminder = defined({
           calendar: q.listId,
@@ -734,7 +737,7 @@ export async function callReminderTool(
       }
       case 'update': {
         const q = reminderInputs.update.parse(input)
-        const refused = mayChange(deps, q.listId)
+        const refused = mayChange(deps, q.listId, 'listId')
         if (refused !== null) return refused
         const saved = await deps.kit.saveReminder(
           defined({
@@ -752,7 +755,7 @@ export async function callReminderTool(
       }
       case 'delete': {
         const q = reminderInputs.delete.parse(input)
-        const refused = mayChange(deps, q.listId)
+        const refused = mayChange(deps, q.listId, 'listId')
         if (refused !== null) return refused
         const deleted = await deps.kit.removeReminder({ calendar: q.listId, id: q.id })
         return { status: 'ok', output: { deleted: shownReminder(deleted), note: 'Deleted from the list.' } }

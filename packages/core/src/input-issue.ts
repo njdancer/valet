@@ -35,6 +35,11 @@ export const INPUT_REASONS = [
   'before-start',
   /** Names something agents may read but not change (a read-only calendar). Set by the tool. */
   'read-only',
+  /**
+   * Names something this agent may read but not change: the person gave it Read there, not Edit.
+   * It can ask for more with valet_request_access. Set by the tool.
+   */
+  'read-access-only',
   /** A check of the tool's own, which says nothing more. */
   'refused',
 ] as const
@@ -242,6 +247,8 @@ export function inputIssueSentence(issue: InputIssue): string {
       return `${at} must be after the start`
     case 'read-only':
       return `${at} names one that can be read but not changed. Pick one the list shows as writable`
+    case 'read-access-only':
+      return `${at} names one you may read but not change. To ask the person for Edit on it, call valet_request_access`
     case 'refused':
       return `${at} was refused by the tool's own checks`
   }

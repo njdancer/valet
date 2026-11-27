@@ -16,6 +16,7 @@ const ACTIONS: Readonly<Record<ApprovalKind, string>> = {
   'secret-grant': 'let an adapter use your login',
   'credential-grant': 'let an adapter use a credential',
   'tool-enable': 'turn on a tool',
+  'agent-access': 'change what an agent can use',
   'remote-client': 'let a remote agent connect',
   setting: 'change a setting',
   'authoring-session': 'let an agent use a signed-in session',
@@ -54,6 +55,13 @@ function detail(serialized: SerializedRequest): string {
       return /^remote_ask_[a-z0-9_]+$/.test(request.subject.setting)
         ? ' so a cloud agent may ask for changes, such as new adapters'
         : ''
+    case 'agent-access': {
+      // A count only: item names come from the Mac's apps and the person's own calendars, but the
+      // OS prompt shows nothing an agent could have named.
+      const s = request.subject
+      const n = s.items.length + s.full.length + s.tools.length + s.capabilities.length
+      return ` (${n} ${n === 1 ? 'addition' : 'additions'})`
+    }
     case 'remote-client':
       return request.subject.capabilities?.includes('ask-for-changes') === true
         ? ' and ask for changes, such as new adapters'

@@ -266,14 +266,15 @@ tightens again.
 `verifyEvidence` against the current devices and `matches` its subject to the record in hand. The
 service's gates use it:
 
-| Gate                             | `matches`                                                                                                          |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| An adapter hash may run          | `adapter-install` with this `adapterId` and `adapterHash`, and no later install evidence for the same adapter      |
-| A grant may be used              | `secret-grant` with the grant's adapter, hash, secret, provider, `itemFingerprint` of its `itemRef`, and origins ⊇ |
-| A kept grant may be used         | a `carried` ledger record of exactly it, and the `adapter-install` that kept it (`inheritsSession`) still honoured |
-| A tool is on for a remote client | `tool-enable` with the adapter hash, tool, `scope: 'remote'`, and `clientId` null or this client                   |
-| A remote client may connect      | `remote-client` with its client id                                                                                 |
-| A loosened setting stands        | `setting` with the scope, adapter, setting and `to` value                                                          |
+| Gate                             | `matches`                                                                                                                |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| An adapter hash may run          | `adapter-install` with this `adapterId` and `adapterHash`, and no later install evidence for the same adapter            |
+| A grant may be used              | `secret-grant` with the grant's adapter, hash, secret, provider, `itemFingerprint` of its `itemRef`, and origins ⊇       |
+| A kept grant may be used         | a `carried` ledger record of exactly it, and the `adapter-install` that kept it (`inheritsSession`) still honoured       |
+| A tool is on for a remote client | `tool-enable` with the adapter hash, tool, `scope: 'remote'`, and `clientId` null or this client                         |
+| A remote client may connect      | `remote-client` with its client id                                                                                       |
+| An agent's access widens         | `agent-access` with its client id and each item added; the record itself is `agent-access.json` ([access.md](access.md)) |
+| A loosened setting stands        | `setting` with the scope, adapter, setting and `to` value                                                                |
 
 Revoking one of these removes its evidence from the ledger (a tightening, no signature).
 

@@ -159,6 +159,31 @@ function requests(macId: string): ApprovalRequest[] {
         host: 'claude.ai',
         sourceAddress: '203.0.113.7',
         tools: ['yahoo-finance.get_quote'],
+        capabilities: ['see-valet', 'ask-for-changes'],
+        items: [{ app: 'calendar', id: 'A1B2-C3', label: 'Home', level: 'read' }],
+      },
+    },
+    {
+      ...base('4A0C', day),
+      kind: 'agent-access',
+      tier: 'approve',
+      subject: {
+        clientId: 'remote:new-client',
+        items: [
+          { app: 'reminders', id: 'x-apple-reminder-list-7', label: 'Groceries', level: 'edit' },
+          { app: 'mail', id: 'local', label: 'On My Mac', level: 'read' },
+        ],
+        full: ['calendar'],
+        tools: [
+          {
+            adapterId: 'woolworths',
+            adapterHash: 'a'.repeat(64),
+            tool: 'add_to_cart',
+            label: 'Add to cart',
+            sideEffect: 'write',
+          },
+        ],
+        capabilities: ['ask-for-changes'],
       },
     },
     {
@@ -308,6 +333,8 @@ function writeVectors(path: string): void {
   if (valid === undefined) throw new Error('no requests')
   const raw = serialized.find((r) => r.text.includes('"raw":'))
   if (raw === undefined) throw new Error('no raw confirmation')
+  const access = serialized.find((r) => r.request.kind === 'agent-access')
+  if (access === undefined) throw new Error('no access change')
   const record = canonicalJson({
     v: 1,
     deviceId: phoneId,
@@ -380,6 +407,14 @@ function writeVectors(path: string): void {
       {
         why: 'expires before created',
         text: valid.text.replace('2026-11-13T08:40:00.000Z', '2026-11-12T08:39:00.000Z'),
+      },
+      {
+        why: 'access grants nothing',
+        text: access.text
+          .replace('"capabilities":["ask-for-changes"]', '"capabilities":[]')
+          .replace('"full":["calendar"]', '"full":[]')
+          .replace(/"items":\[\{.*?\}\]/, '"items":[]')
+          .replace(/"tools":\[\{.*?\}\]/, '"tools":[]'),
       },
       { why: 'raw: no endpoint', text: raw.text.replace(/"endpoints":\[[^\]]*\]/, '"endpoints":[]') },
       {

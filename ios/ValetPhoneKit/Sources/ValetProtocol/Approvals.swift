@@ -9,6 +9,7 @@ public enum ApprovalKind: String, CaseIterable, Sendable {
   case secretGrant = "secret-grant"
   case credentialGrant = "credential-grant"
   case toolEnable = "tool-enable"
+  case agentAccess = "agent-access"
   case remoteClient = "remote-client"
   case setting
   case authoringSession = "authoring-session"
@@ -24,7 +25,7 @@ public enum ApprovalKind: String, CaseIterable, Sendable {
   /// APPROVAL_TTL_MS in core, in seconds.
   public var ttl: TimeInterval {
     switch self {
-    case .adapterInstall, .secretGrant, .credentialGrant, .toolEnable, .setting: return 24 * 3600
+    case .adapterInstall, .secretGrant, .credentialGrant, .toolEnable, .agentAccess, .setting: return 24 * 3600
     case .remoteClient, .resume: return 10 * 60
     case .authoringSession, .browserGrant, .privateNetwork: return 30 * 60
     case .irreversibleCall: return 2 * 60
@@ -93,6 +94,34 @@ public enum ApprovalSubject: Equatable, Sendable {
     public let clientId, host: String
     public let sourceAddress: String?
     public let tools: [String]
+    public let capabilities: [String]
+    /// Accounts, calendars and lists ticked on the Mac's connect screen.
+    public let items: [AccessItem]
+  }
+  /// One account, calendar or list of a Mac app, at the level an agent may use it.
+  public struct AccessItem: Equatable, Sendable {
+    public let app, id, label, level: String
+
+    static func parse(_ value: JSONValue, _ path: String) throws -> AccessItem {
+      let f = try Fields(value, path: path, required: ["app", "id", "label", "level"])
+      return AccessItem(
+        app: try f.oneOf("app", ["mail", "calendar", "reminders"]),
+        id: try f.string("id", min: 1, max: 200),
+        label: try f.display("label", max: 80),
+        level: try f.oneOf("level", ["read", "edit"])
+      )
+    }
+  }
+  public struct AccessTool: Equatable, Sendable {
+    public let adapterId, adapterHash, tool, label, sideEffect: String
+  }
+  /// What one agent gains in one go: a Save on the Mac, or the agent's own request.
+  public struct AgentAccess: Equatable, Sendable {
+    public let clientId: String
+    public let items: [AccessItem]
+    public let full: [String]
+    public let tools: [AccessTool]
+    public let capabilities: [String]
   }
   public struct Choice: Equatable, Sendable, Identifiable {
     public let value: String
@@ -163,6 +192,7 @@ public enum ApprovalSubject: Equatable, Sendable {
   case secretGrant(SecretGrant)
   case credentialGrant(CredentialGrant)
   case toolEnable(ToolEnable)
+  case agentAccess(AgentAccess)
   case remoteClient(RemoteClient)
   case setting(Setting)
   case authoringSession(AuthoringSession)
@@ -264,13 +294,44 @@ public enum ApprovalSubject: Equatable, Sendable {
         clientId: try f.nullableString("clientId", pattern: Patterns.clientId),
         sideEffect: try f.oneOf("sideEffect", ["read", "write", "irreversible"])
       ))
+    case .agentAccess:
+      let f = try Fields(value, path: path, required: ["clientId", "items", "full", "tools", "capabilities"])
+      let subject = AgentAccess(
+        clientId: try f.string("clientId", pattern: Patterns.clientId),
+        items: try f.array("items", max: 100, AccessItem.parse),
+        full: try uniqueStrings(f.array("full", max: 2) { item, at in
+          guard let text = item.string, ["calendar", "reminders"].contains(text) else {
+            throw SchemaError(at, "not calendar or reminders")
+          }
+          return text
+        }, path),
+        tools: try f.array("tools", max: 100) { item, at in
+          let t = try Fields(item, path: at, required: ["adapterId", "adapterHash", "tool", "label", "sideEffect"])
+          return AccessTool(
+            adapterId: try t.string("adapterId", pattern: Patterns.adapterId),
+            adapterHash: try t.string("adapterHash", pattern: Patterns.hash),
+            tool: try t.string("tool", pattern: Patterns.name),
+            label: try t.display("label", max: 80),
+            sideEffect: try t.oneOf("sideEffect", ["read", "write", "irreversible"])
+          )
+        },
+        capabilities: try capabilities(f)
+      )
+      if subject.items.isEmpty, subject.full.isEmpty, subject.tools.isEmpty, subject.capabilities.isEmpty {
+        throw SchemaError(path, "grants nothing")
+      }
+      return .agentAccess(subject)
     case .remoteClient:
-      let f = try Fields(value, path: path, required: ["clientId", "host", "sourceAddress", "tools"])
+      let f = try Fields(
+        value, path: path, required: ["clientId", "host", "sourceAddress", "tools"], optional: ["capabilities", "items"]
+      )
       return .remoteClient(RemoteClient(
         clientId: try f.string("clientId", pattern: Patterns.clientId),
         host: try f.string("host", pattern: "[a-z0-9.-]{1,253}"),
         sourceAddress: try f.nullableString("sourceAddress", pattern: Patterns.address),
-        tools: try f.strings("tools", max: 200, pattern: Patterns.qualifiedTool)
+        tools: try f.strings("tools", max: 200, pattern: Patterns.qualifiedTool),
+        capabilities: try (f.has("capabilities") ? capabilities(f) : []),
+        items: try (f.has("items") ? f.array("items", max: 100, AccessItem.parse) : [])
       ))
     case .setting:
       let f = try Fields(value, path: path, required: ["scope", "adapterId", "setting", "label", "from", "to"], optional: ["choices"])
@@ -359,6 +420,21 @@ public enum ApprovalSubject: Equatable, Sendable {
         confirmation: try f.string("confirmation", pattern: "[0-9]{6}")
       ))
     }
+  }
+
+  /// The capabilities a remote client or an access change grants: each at most once.
+  static func capabilities(_ f: Fields) throws -> [String] {
+    try uniqueStrings(f.array("capabilities", max: 2) { item, at in
+      guard let text = item.string, ["see-valet", "ask-for-changes"].contains(text) else {
+        throw SchemaError(at, "not a capability")
+      }
+      return text
+    }, f.path)
+  }
+
+  static func uniqueStrings(_ items: [String], _ path: String) throws -> [String] {
+    if Set(items).count != items.count { throw SchemaError(path, "each at most once") }
+    return items
   }
 }
 

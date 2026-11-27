@@ -414,6 +414,8 @@ describe('every channel', () => {
     'mail.update': [{ enabled: true, accounts: ['A1B2'] }],
     'mail.action': ['full-disk-access'],
     'mail.undoMove': [12],
+    'agentAccess.view': ['local:c_1'],
+    'agentAccess.save': ['remote:r_1', { mail: { acc1: 'edit' }, calendar: { cal1: 'off' } }],
     'eventKit.status': ['calendar'],
     'eventKit.update': ['reminders', { enabled: true, calendars: ['L1'] }],
     'eventKit.action': ['calendar', 'request-access'],

@@ -120,11 +120,14 @@ async function setup(app: EventKitApp = 'reminders') {
     reveal: async () => {},
   }
   let now = 1_000_000
+  // The calling agent's own lists (agent-access.ts): L1 to change, L2 not at all, by default.
+  const lists: { items: Record<string, 'read' | 'edit'> } = { items: { L1: 'edit' } }
   const service = new EventKitService({
     app,
     settings: new EventKitSettingsStore(join(root, `${app}.json`)),
     reader,
     kit,
+    access: () => ({ items: lists.items, full: false }),
     audit: async (call, result) => void audited.push({ call, result }),
     now: () => now,
     changed: () => {
@@ -136,6 +139,7 @@ async function setup(app: EventKitApp = 'reminders') {
   return {
     service,
     access,
+    lists,
     kit,
     saved,
     asked,
@@ -155,26 +159,47 @@ const call = (tool: string, input: unknown): ToolCall =>
   ({ callId: 'c1', adapterId: 'reminders', tool, input, client: 'test' }) as unknown as ToolCall
 
 describe('EventKitService', () => {
-  it('lists nothing until on with something picked, and writes only with their switch', async () => {
+  it('lists nothing until on, then every tool: which an agent holds follows its own access', async () => {
     const s = await setup()
     expect(s.service.listTools()).toEqual([])
     await s.service.update({ enabled: true })
     expect(s.started()).toBe(1)
-    expect(s.service.listTools()).toEqual([])
-    await s.service.update({ calendars: ['L1'] })
     expect(s.service.listTools().map((t) => `${t.adapterId}.${t.declaration.name}`)).toEqual([
       'reminders.lists',
       'reminders.search',
+      'reminders.create',
+      'reminders.update',
+      'reminders.delete',
     ])
-    await s.service.update({ writes: true })
-    expect(s.service.listTools().map((t) => t.declaration.name)).toEqual([
-      'lists',
-      'search',
-      'create',
-      'update',
-      'delete',
-    ])
-    expect(s.changed()).toBe(3)
+    expect(s.changed()).toBe(1)
+  })
+
+  it('shows and changes only the calling agent’s own lists, at its own level', async () => {
+    const s = await setup()
+    await s.service.update({ enabled: true })
+    const signal = new AbortController().signal
+    s.lists.items = { L1: 'read' }
+    const shown = await s.service.call(call('lists', {}), signal)
+    expect(shown).toMatchObject({ status: 'ok' })
+    expect(JSON.stringify(shown)).not.toContain('L2')
+    // Nothing it may change: the changing tools aren't there for it.
+    expect(await s.service.call(call('create', { listId: 'L1', title: 'T' }), signal)).toMatchObject({
+      errorClass: 'not-found',
+    })
+    // Read here, Edit there: says so, rather than that the list doesn't exist.
+    s.lists.items = { L1: 'read', L2: 'edit' }
+    expect(
+      JSON.stringify(await s.service.call(call('create', { listId: 'L1', title: 'T' }), signal)),
+    ).toContain('read-access-only')
+    s.lists.items = { L1: 'edit' }
+    expect(await s.service.call(call('create', { listId: 'L2', title: 'T' }), signal)).toMatchObject({
+      errorClass: 'not-found',
+    })
+    s.lists.items = {}
+    expect(await s.service.call(call('search', { listIds: ['L1'] }), signal)).toMatchObject({
+      errorClass: 'not-found',
+    })
+    expect(s.saved).toHaveLength(0)
   })
 
   it('follows setup: reader, macOS access, then the lists', async () => {
@@ -202,7 +227,7 @@ describe('EventKitService', () => {
 
   it('reads only picked lists, audits every call, and caps changes per hour', async () => {
     const s = await setup()
-    await s.service.update({ enabled: true, calendars: ['L1'], writes: true })
+    await s.service.update({ enabled: true })
     const signal = new AbortController().signal
     const before = s.refreshed.count
     const found = await s.service.call(call('search', {}), signal)

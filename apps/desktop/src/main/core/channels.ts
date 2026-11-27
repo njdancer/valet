@@ -80,6 +80,8 @@ export const INVOKE_METHODS = [
   'mail.update',
   'mail.action',
   'mail.undoMove',
+  'agentAccess.view',
+  'agentAccess.save',
   'eventKit.status',
   'eventKit.update',
   'eventKit.action',

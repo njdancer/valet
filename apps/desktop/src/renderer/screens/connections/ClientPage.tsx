@@ -37,6 +37,7 @@ import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
 import { formatAgo, formatDay, plural } from '../../lib/format'
 import { href, navigate } from '../../lib/router'
 import { clientLabel, TRANSPORT_WORDING } from '../../lib/wording'
+import { AppsAccess } from './AppsAccess'
 import { SetupSnippets } from './SetupSnippets'
 import { AppTile, Failed, loginName, reportedAs, type SiteReach, toolSummary, useReach } from './shared'
 
@@ -244,6 +245,7 @@ function AppPage({ client }: { readonly client: ClientInfo }) {
             />
           </CardContent>
         </Card>
+        {revoked ? null : <AppsAccess clientId={`local:${client.id}`} name={client.name} />}
         {revoked ? null : <AppAccess client={client} />}
         {revoked ? null : (
           <Card>
@@ -520,13 +522,19 @@ function AgentPage({ agent }: { readonly agent: RemoteClientItem }) {
             </CardContent>
           </Card>
         ) : null}
+        {agent.grant !== null ? <AppsAccess clientId={`remote:${agent.id}`} name={agent.host} /> : null}
         {agent.grant !== null ? (
           <AgentTools
             agent={agent}
             granted={granted}
             tools={offered}
             unmatched={
-              offered === null ? [] : [...granted].filter((ref) => !offered.some((t) => t.ref === ref))
+              offered === null
+                ? []
+                : [...granted].filter(
+                    (ref) =>
+                      !offered.some((t) => t.ref === ref) && !MAC_APPS.has(ref.slice(0, ref.indexOf('.'))),
+                  )
             }
           />
         ) : null}
@@ -548,6 +556,8 @@ function AgentPage({ agent }: { readonly agent: RemoteClientItem }) {
  * Every tool an agent could be given: each approved site's tools, then Valet's own built-in ones
  * that remote access lists (Mail's, say), with whether each is on for remote clients now.
  */
+const MAC_APPS: ReadonlySet<string> = new Set(['mail', 'calendar', 'reminders'])
+
 function agentToolChoices(
   reach: readonly SiteReach[] | null,
   setup: { readonly status: string; readonly data?: { readonly tools: readonly RemoteSetupTool[] } },
@@ -570,7 +580,8 @@ function agentToolChoices(
       listed.delete(ref)
     }
   const sites = new Set(reach.map((s) => s.id))
-  for (const t of listed.values()) if (!sites.has(t.adapterId)) out.push(t)
+  // Mail's, Calendar's and Reminders' own tools follow from the agent's access to them (AppsAccess).
+  for (const t of listed.values()) if (!sites.has(t.adapterId) && !MAC_APPS.has(t.adapterId)) out.push(t)
   return out
 }
 

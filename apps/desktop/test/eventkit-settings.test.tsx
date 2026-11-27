@@ -1,5 +1,5 @@
 // Settings › Calendar and Settings › Reminders: turning one on asks macOS, then the picks.
-import { screen, waitFor } from '@testing-library/react'
+import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { createFakeApi } from '../src/renderer/dev/fake-api'
@@ -14,25 +14,23 @@ describe('settings › Calendar and Reminders', () => {
     ).toBeTruthy()
   })
 
-  it('walks from off to the calendars picked, then writes', async () => {
+  it('walks from off to the calendars on this Mac, chosen per agent on its own page', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
     renderPage(api, <SettingsPage section="calendar" />)
     await user.click(await screen.findByRole('switch', { name: 'Let agents see your calendars on this Mac' }))
     expect(called(api, 'eventKit.update')).toEqual([['calendar', { enabled: true }]])
 
-    // macOS asks once; then the calendars appear, none picked.
+    // macOS asks once; then the calendars appear.
     await user.click(await screen.findByRole('button', { name: 'Ask macOS' }))
     expect(called(api, 'eventKit.action')).toEqual([['calendar', 'request-access']])
-    const home = await screen.findByRole('checkbox', { name: 'Home' })
+    const items = await screen.findByTestId('calendar-items')
+    expect(within(items).getByText('Home')).toBeTruthy()
     expect(screen.getByText('Subscribed · read only')).toBeTruthy()
     expect(screen.queryByText(/CAL-HOME/)).toBeNull()
-    await user.click(home)
-    await waitFor(() =>
-      expect(called(api, 'eventKit.update').at(-1)).toEqual(['calendar', { calendars: ['CAL-HOME'] }]),
-    )
-    await user.click(screen.getByRole('switch', { name: 'Let agents add, change and delete events' }))
-    await waitFor(() => expect(called(api, 'eventKit.update').at(-1)).toEqual(['calendar', { writes: true }]))
+    expect(screen.queryAllByRole('checkbox')).toEqual([])
+    expect(screen.getAllByRole('switch')).toHaveLength(1)
+    expect(screen.getByRole('link', { name: 'Connections' }).getAttribute('href')).toBe('#/connections')
     expect(screen.queryByText(/delete/i, { selector: 'button' })).toBeNull()
   })
 

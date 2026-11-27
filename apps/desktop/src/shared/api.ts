@@ -1597,6 +1597,37 @@ export interface EventKitStatus {
 
 export type EventKitAction = 'start-reader' | 'request-access' | 'privacy-settings'
 
+/** The Mac apps whose accounts, calendars and lists each agent gets its own access to (docs/access.md). */
+export type AccessApp = 'mail' | 'calendar' | 'reminders'
+export type AccessChoice = 'off' | 'read' | 'edit'
+
+/** One Mail account, calendar or reminder list, at this agent's level. */
+export interface AgentAccessItem {
+  readonly id: string
+  readonly label: string
+  /** The account's address, or the calendar's account. */
+  readonly detail: string | null
+  readonly level: AccessChoice
+  /** False for a calendar macOS won't let anything change (a subscribed one): Read at most. */
+  readonly editable: boolean
+}
+
+export interface AgentAccessApp {
+  readonly app: AccessApp
+  /** Whether the app is set up and its items could be read; its items are empty otherwise. */
+  readonly ready: boolean
+  readonly items: readonly AgentAccessItem[]
+}
+
+/** What one agent (`local:<id>` or `remote:<id>`) may use in the Mac's apps. */
+export interface AgentAccessView {
+  readonly clientId: string
+  readonly apps: readonly AgentAccessApp[]
+}
+
+/** A Save on the access page: each changed item's new level, by app. */
+export type AgentAccessChanges = Readonly<Partial<Record<AccessApp, Readonly<Record<string, AccessChoice>>>>>
+
 /** Messages on this Mac (docs/messages.md). */
 export interface MessagesSettings {
   readonly enabled: boolean
@@ -1851,6 +1882,15 @@ export interface ValetApi {
      * where the move put it.
      */
     undoMove(seq: number): Promise<MailUndo>
+  }
+  /** Each agent's own access to Mail accounts, calendars and reminder lists (docs/access.md). */
+  readonly agentAccess: {
+    view(clientId: string): Promise<AgentAccessView>
+    /**
+     * Applies a Save: anything taken away at once; anything added after one Touch ID for all of it.
+     * False if the person cancelled the prompt, and then nothing changed.
+     */
+    save(clientId: string, changes: AgentAccessChanges): Promise<boolean>
   }
   /** Calendar and Reminders on this Mac. Null answers: this build has none. */
   readonly eventKit: {

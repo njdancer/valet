@@ -60,6 +60,18 @@ const SETTING = SECRET
 /** Call, confirmation and client ids: the runtime's call-id alphabet. */
 const EVENTKIT_APP = z.enum(EVENTKIT_KINDS)
 const OPAQUE_ID = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)
+const ACCESS_CLIENT = z.string().regex(/^(?:local|remote):[A-Za-z0-9_-]{1,64}$/)
+const accessLevels = z
+  .record(z.string().min(1).max(200), z.enum(['off', 'read', 'edit']))
+  .refine((r) => Object.keys(r).length <= 500, 'too many items')
+const accessChanges = z
+  .object({
+    mail: accessLevels.optional(),
+    calendar: accessLevels.optional(),
+    reminders: accessLevels.optional(),
+  })
+  .strict()
+  .transform((c) => stripUndefined(c))
 const PROVIDER = z.enum([
   'keychain-copy',
   'onepassword-desktop',
@@ -295,6 +307,12 @@ const HANDLERS: Readonly<
     z.tuple([z.enum(['start-reader', 'full-disk-access', 'login-items', 'reveal-reader'])]),
     (api, [action]) => api.mail.action(action),
   ),
+  'agentAccess.view': entry(z.tuple([ACCESS_CLIENT]), (api, [clientId]) => api.agentAccess.view(clientId)),
+  // A Save widens what an agent may use, after Touch ID: the control panel only.
+  'agentAccess.save': entry(z.tuple([ACCESS_CLIENT, accessChanges]), (api, [clientId, changes], sender) => {
+    if (sender.role !== 'control') throw new IpcRefused()
+    return api.agentAccess.save(clientId, changes)
+  }),
   'eventKit.status': entry(z.tuple([EVENTKIT_APP]), (api, [app]) => api.eventKit.status(app)),
   'eventKit.update': entry(z.tuple([EVENTKIT_APP, eventKitSettingsPatchSchema]), (api, [app, patch]) =>
     api.eventKit.update(app, stripUndefined(patch)),

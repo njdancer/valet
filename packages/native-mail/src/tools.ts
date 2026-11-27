@@ -7,6 +7,7 @@
 
 import {
   type ErrorClass,
+  type InputIssue,
   MAX_TOOL_CONTENT_BYTES,
   type NeedsUserReason,
   PICTURE_TYPES,
@@ -42,7 +43,13 @@ export const MAIL_DATA_NOTE =
 
 export type MailToolResult =
   | { readonly status: 'ok'; readonly output: unknown; readonly content?: readonly ToolContent[] }
-  | { readonly status: 'failed'; readonly stage: Stage; readonly errorClass: ErrorClass }
+  | {
+      readonly status: 'failed'
+      readonly stage: Stage
+      readonly errorClass: ErrorClass
+      /** Why the input was refused, as codes (core's input-issue.ts). */
+      readonly issue?: InputIssue
+    }
   | { readonly status: 'needsUser'; readonly reason: NeedsUserReason }
   | { readonly status: 'declined'; readonly timedOut?: true }
 
@@ -383,6 +390,11 @@ export interface MailToolDeps {
   readonly drafts: Pick<MailDrafts, 'save'>
   /** Whether the person turned drafts on. */
   readonly draftsEnabled: () => boolean
+  /**
+   * The accounts this agent may change (drafts, moves, marks): Edit, a subset of the ones it may
+   * read. Absent: every account it may read.
+   */
+  readonly editableAccounts?: () => ReadonlySet<string>
   /** When the person asked to approve each draft: ask them. Null: drafts need no approval. */
   readonly approveDraft:
     | (() => ((draft: DraftApproval) => Promise<'approved' | 'declined' | 'timed-out'>) | null)
@@ -415,10 +427,11 @@ export interface MoveRecord {
   readonly date: string | null
 }
 
-const fail = (stage: Stage, errorClass: ErrorClass): MailToolResult => ({
+const fail = (stage: Stage, errorClass: ErrorClass, issue?: InputIssue): MailToolResult => ({
   status: 'failed',
   stage,
   errorClass,
+  ...(issue === undefined ? {} : { issue }),
 })
 
 function storeFailure(error: unknown): MailToolResult {
@@ -630,6 +643,15 @@ function stripUndefined<T extends object>(value: T): { [K in keyof T]: Exclude<T
   }
 }
 
+/** Whether the agent may change things in this account (it has Edit there). */
+function mayEdit(deps: MailToolDeps, accountId: string): boolean {
+  return deps.editableAccounts === undefined || deps.editableAccounts().has(accountId)
+}
+
+/** A refusal for an account the agent may read but not change: it can ask for Edit. */
+const readOnlyAccount = (key: string): MailToolResult =>
+  fail('tool-input', 'invalid', { path: [key], reason: 'read-access-only' })
+
 async function createDraft(
   deps: MailToolDeps,
   input: z.infer<(typeof mailInputs)['create_draft']>,
@@ -637,19 +659,26 @@ async function createDraft(
   if (!deps.draftsEnabled()) return fail('tool-input', 'not-found')
   const to = input.to ?? []
   if (input.replyToId === undefined && to.length === 0) return fail('tool-input', 'invalid')
-  const accounts = await deps.store.accounts()
+  const readable = await deps.store.accounts()
+  // Only accounts it may change: a draft lands in one.
+  const accounts = readable.filter((a) => mayEdit(deps, a.id))
   if (input.from !== undefined) {
+    const address = input.from.toLowerCase()
     const own = new Set(
-      accounts.map((a) => a.address?.toLowerCase()).filter((a): a is string => a !== undefined),
+      readable.map((a) => a.address?.toLowerCase()).filter((a): a is string => a !== undefined),
     )
-    // Only an address of an account the person allowed, when Valet knows them.
-    if (own.size > 0 && !own.has(input.from.toLowerCase())) return fail('tool-input', 'invalid')
-  }
+    // Only an address of an account this agent may use: one Valet can't place is refused, since
+    // Mail would put the draft in whichever account has it.
+    if (!own.has(address)) return fail('tool-input', 'invalid')
+    const account = readable.find((a) => a.address?.toLowerCase() === address)
+    if (account === undefined || !mayEdit(deps, account.id)) return readOnlyAccount('from')
+  } else if (accounts.length === 0 && input.replyToId === undefined) return readOnlyAccount('from')
   let replyTo: DraftRequest['replyTo'] = null
   let subject = input.subject ?? ''
   if (input.replyToId !== undefined) {
     const original = await deps.store.read(input.replyToId, 100)
     if (original.messageId === null) return fail('tool-input', 'not-found')
+    if (!mayEdit(deps, original.accountId)) return readOnlyAccount('replyToId')
     replyTo = {
       messageId: original.messageId,
       accountId: original.accountId,
@@ -664,7 +693,11 @@ async function createDraft(
   // address when there is just one. A reply stays with Mail, which answers from the address the
   // message was sent to.
   const addresses = [...new Set(accounts.map((a) => a.address).filter((a): a is string => a != null))]
-  const from = input.from ?? (replyTo === null && addresses.length === 1 ? (addresses[0] ?? null) : null)
+  // A new draft with no From would land in Mail's default account, which may not be one this
+  // agent may change: it says which, unless there is just one it may.
+  if (input.from === undefined && replyTo === null && addresses.length !== 1)
+    return fail('tool-input', 'invalid')
+  const from = input.from ?? (replyTo === null ? (addresses[0] ?? null) : null)
   const draft: DraftRequest = {
     from,
     to,
@@ -823,6 +856,7 @@ async function moveMessages(
   const unchanged: number[] = []
   for (const [i, detail] of found.entries()) {
     if (detail === null) continue
+    if (!mayEdit(deps, detail.accountId)) return readOnlyAccount('ids')
     const to = destination(detail.accountId)
     // A mailbox id in another account, or an account with no Trash or Archive: nothing is moved.
     if (to === null) return fail('tool-input', fixed === null ? 'unsupported' : 'invalid')
@@ -899,6 +933,7 @@ async function markMessages(
   for (const [i, d] of found.entries()) {
     const id = ids[i] as number
     if (d === null) notFound.push(id)
+    else if (!mayEdit(deps, d.accountId)) return readOnlyAccount('ids')
     else targets.push({ id, item: organizeItem(d) })
   }
   const outcome = await applyInChunks(

@@ -67,6 +67,7 @@ import {
   displayCode,
   type EndpointClient,
   identityLabel,
+  type ListedTool,
   type LiveSessions,
   type NeedsYouHint,
   normaliseCode,
@@ -76,7 +77,7 @@ import {
   type ToolCall,
   type ToolCaller,
 } from '@valet/mcp-server'
-import type { EventKit } from '@valet/native-calendar'
+import { calendarTools, type EventKit, reminderTools } from '@valet/native-calendar'
 import {
   MAIL_ADAPTER_ID,
   type MailDrafts,
@@ -112,7 +113,11 @@ import {
 import { z } from 'zod'
 import { href } from '../../renderer/lib/routes'
 import type {
+  AccessChoice,
   AdapterVersions,
+  AgentAccessApp,
+  AgentAccessChanges,
+  AgentAccessView,
   AgentRequestItem,
   AppEvent,
   AttentionItem,
@@ -143,6 +148,21 @@ import type {
 import { AdapterSettingsStore } from './adapter-settings'
 import { adminReader } from './admin'
 import { AdminWriterImpl, type AgentSettingValues, type WriterSource } from './admin-writer'
+import {
+  ACCESS_APPS,
+  type AccessApp,
+  AgentAccessStore,
+  type AppAccess,
+  accessAppOf,
+  accessLabel,
+  accessReach,
+  accessWidening,
+  applyAccessChange,
+  type ClientAccess,
+  MAX_ACCESS_ITEMS,
+  NO_APP_ACCESS,
+  withWidening,
+} from './agent-access'
 import { AgentBrowserService, type SessionBrowser, sessionPacer } from './agent-browser'
 import { agentRequestItem, draftReviewRequest } from './agent-requests'
 import { AppStateStore } from './app-state'
@@ -632,6 +652,12 @@ const CREDENTIAL_DECLINE_COOLDOWN_MS = 60 * 60_000
 const CREDENTIAL_ASKS_PER_AGENT = 3
 const CREDENTIAL_ASKS_TOTAL = 10
 
+/** Calendar's and Reminders' changing tools: what an agent had to hold for Edit (seedAgentAccess). */
+const EVENTKIT_CHANGES: Readonly<Record<EventKitApp, readonly string[]>> = {
+  calendar: ['create_event', 'update_event', 'delete_event'],
+  reminders: ['create', 'update', 'delete'],
+}
+
 export class AppService {
   readonly api: MainApi
   private readonly audit: ObservedAudit
@@ -734,6 +760,8 @@ export class AppService {
   /** When each installed hash was approved, for the confirmation panel (which reads synchronously). */
   private readonly approvedAt = new Map<string, string>()
   private caller: RuntimeToolCaller | null = null
+  /** What each agent may use in Mail, Calendar and Reminders (agent-access.ts, docs/access.md). */
+  private readonly agentAccess: AgentAccessStore
   /** Valet's built-in Mail tools, when this build has them. */
   private mailApp: MailService | null = null
   /** Valet's built-in Calendar and Reminders tools, when this build has them. */
@@ -935,6 +963,7 @@ export class AppService {
             keep: (id) => this.keepHashes(id),
           })
     this.clients = new ClientRegistry(paths.clients, paths.clientConfigs, date)
+    this.agentAccess = new AgentAccessStore(paths.agentAccess)
     this.titles = new JsonDocument(paths.grantItems, titlesSchema, () => ({}), true)
     this.reader = new AuditReader(paths.audit)
     this.blocked = new BlockedAudit({
@@ -1035,6 +1064,8 @@ export class AppService {
     this.downloadShelf = new DownloadShelf(deps.now)
     this.remote = new RemoteAccess({
       downloads: (id) => this.downloadShelf.get(id),
+      appTool: (clientId, adapter, declaration) =>
+        this.appToolHeld(`remote:${clientId}`, adapter, declaration.sideEffect),
       path: paths.remote,
       clientsPath: paths.remoteClients,
       info: { name: 'valet', version: deps.version },
@@ -1125,6 +1156,7 @@ export class AppService {
         () => undefined,
       )
     await this.clients.load()
+    await this.agentAccess.load()
     const host = new ToolHost({
       approvals: this.installGate,
       audit: this.audit,
@@ -1178,6 +1210,7 @@ export class AppService {
         reader: mail.reader,
         files: mail.files,
         drafts: mail.drafts,
+        access: (call) => this.callAccess(call, 'mail'),
         ...(mail.organizer === undefined ? {} : { organizer: mail.organizer }),
         ...(mail.pdfText === undefined ? {} : { pdfText: mail.pdfText }),
         ...(mail.render === undefined ? {} : { render: mail.render }),
@@ -1202,6 +1235,7 @@ export class AppService {
           settings: new EventKitSettingsStore(paths[app]),
           reader: mail?.reader ?? null,
           kit,
+          access: (call) => this.callAccess(call, app),
           audit: (call, result, durationMs) => this.auditNativeCall(call, result, durationMs),
           now: this.deps.now,
           changed: () => {
@@ -1253,9 +1287,10 @@ export class AppService {
         paused: () => this.paused,
         lockedDown: () => this.lockedDown,
         sitePaused: (adapterId) => this.appState.sitePaused(adapterId),
-        // What a local app turned off for itself with valet_turn_off_tool.
+        // What a local app turned off for itself with valet_turn_off_tool, and the apps' own tools
+        // its access doesn't reach. A cloud agent's are the remote policy's (appTool above).
         toolsOff: (identity) =>
-          identity.origin === 'local' ? this.clients.toolsOff(identity.clientId) : new Set(),
+          identity.origin === 'local' ? this.localToolsOff(identity.clientId) : new Set(),
         explain: (call, outcome) => this.explain(call, outcome),
         started: (call) => {
           this.memory.started(call.callId, call.tool, call.client, call.input)
@@ -1294,6 +1329,12 @@ export class AppService {
         },
       })
       .catch(() => undefined)
+    // Once, the first run with per-agent access: each agent keeps what the old switches gave it.
+    try {
+      await this.seedAgentAccess()
+    } catch {
+      // Not seeded: it runs again at the next start, and until then nobody has anything.
+    }
     // A built-in tool this build no longer has (the first agents' browser's browser_open, say)
     // leaves every grant and switch: it would only show as a tool that can't be called.
     await this.remote.forgetTools((ref) => this.builtInGone(ref)).catch(() => undefined)
@@ -1304,6 +1345,235 @@ export class AppService {
     void this.feedback()
       ?.flush()
       .catch(() => undefined)
+  }
+
+  /** Whether `local:<id>` or `remote:<id>` is an agent that can be given access now. */
+  private accessClientKnown(label: string): boolean {
+    const [origin, id = ''] = label.split(':')
+    if (origin === 'local') return this.clients.isActive(id)
+    return origin === 'remote' && this.remote.clients.get(id)?.grant != null
+  }
+
+  /** Every account, calendar and list on the Mac now, with this agent's level for each. */
+  private async accessView(label: string): Promise<AgentAccessView> {
+    if (!this.accessClientKnown(label)) throw new ValetError('config', 'not-found')
+    const level = (app: AccessApp, id: string): AccessChoice =>
+      this.agentAccess.app(label, app).items[id] ?? 'off'
+    const apps: AgentAccessApp[] = []
+    let mail: MailStatus | null = null
+    try {
+      mail = await this.mailStatus()
+    } catch {
+      // Mail's store can't be read now: it shows as not set up.
+    }
+    if (mail !== null)
+      apps.push({
+        app: 'mail',
+        ready: mail.state === 'ready',
+        items: mail.accounts.map((a) => ({
+          id: a.id,
+          label: a.name,
+          detail: a.address,
+          level: level('mail', a.id),
+          editable: true,
+        })),
+      })
+    for (const [app, service] of this.eventKitApps) {
+      let status: EventKitStatus
+      try {
+        status = await service.status()
+      } catch {
+        continue
+      }
+      apps.push({
+        app,
+        ready: status.state === 'ready',
+        items: status.calendars.map((c) => ({
+          id: c.id,
+          label: c.title,
+          detail: c.account,
+          level: level(app, c.id),
+          editable: c.writable,
+        })),
+      })
+    }
+    return { clientId: label, apps }
+  }
+
+  /**
+   * A Save on an agent's access page: anything it adds is signed for at once (one Touch ID for all
+   * of it), then the whole change is written. Cancelled: nothing changes. Only taking things away:
+   * no prompt. An item that isn't on the Mac now, or Edit on one that can't change, refuses all.
+   */
+  private async saveAccess(label: string, changes: AgentAccessChanges): Promise<boolean> {
+    const view = await this.accessView(label)
+    const next: { app: AccessApp; after: AppAccess }[] = []
+    const items: ApprovalSubject<'agent-access'>['items'][number][] = []
+    for (const app of ACCESS_APPS) {
+      const levels = changes[app]
+      if (levels === undefined || Object.keys(levels).length === 0) continue
+      const shown = view.apps.find((a) => a.app === app)
+      for (const [id, to] of Object.entries(levels)) {
+        const item = shown?.items.find((i) => i.id === id)
+        // Off is always fine, even for one gone from the Mac: it only takes away.
+        if (to === 'off') continue
+        if (item === undefined || (to === 'edit' && !item.editable)) throw new ValetError('config', 'invalid')
+      }
+      const before = this.agentAccess.app(label, app)
+      const after = applyAccessChange(before, { items: levels })
+      if (Object.keys(after.items).length > MAX_ACCESS_ITEMS) throw new ValetError('config', 'invalid')
+      next.push({ app, after })
+      for (const { id, level } of accessWidening(before, after).items) {
+        const item = shown?.items.find((i) => i.id === id)
+        items.push({ app, id, label: accessLabel(item?.label ?? id), level })
+      }
+    }
+    if (items.length > 0) {
+      const subject: ApprovalSubject<'agent-access'> = {
+        clientId: label,
+        items,
+        full: [],
+        tools: [],
+        capabilities: [],
+      }
+      if (!(await this.approveHere('agent-access', subject))) return false
+    }
+    // Revoked while the prompt was up: nothing is kept for it.
+    if (!this.accessClientKnown(label)) throw new ValetError('config', 'not-found')
+    for (const { app, after } of next) await this.agentAccess.set(label, app, after)
+    await this.accessChanged(label)
+    return true
+  }
+
+  /** An agent's access changed: its tool list follows, and its open sessions get the new one. */
+  private async accessChanged(label: string): Promise<void> {
+    try {
+      await this.refreshTools()
+      if (label.startsWith('remote:')) await this.remote.reopenClient(label.slice('remote:'.length))
+    } catch {
+      // The record is saved and every call checks it; a list that didn't refresh catches up later.
+    }
+    this.emit('clients-changed')
+    this.emit('remote-changed')
+  }
+
+  /** The calling agent's access to one app; none for a call with no identity. */
+  private callAccess(call: ToolCall, app: AccessApp): AppAccess {
+    return call.identity === undefined
+      ? NO_APP_ACCESS
+      : this.agentAccess.app(identityLabel(call.identity), app)
+  }
+
+  /**
+   * Whether an agent (`local:<id>`, `remote:<id>`) holds one of Mail's, Calendar's or Reminders'
+   * own tools: the reading ones while it may read anything there, the changing ones while it may
+   * edit something. Null for any other tool.
+   */
+  private appToolHeld(
+    clientLabel: string,
+    adapterId: string,
+    sideEffect: ToolDeclaration['sideEffect'],
+  ): boolean | null {
+    const app = accessAppOf(adapterId)
+    if (app === null) return null
+    const reach = accessReach(this.agentAccess.app(clientLabel, app))
+    return sideEffect === 'read' ? reach.read : reach.edit
+  }
+
+  /** The apps' own tools as listed now: Mail's, Calendar's and Reminders'. */
+  private appListedTools(): readonly ListedTool[] {
+    const sources: NativeTools[] = [
+      ...(this.mailApp === null ? [] : [this.mailApp]),
+      ...this.eventKitApps.values(),
+    ]
+    return sources.flatMap((source) => {
+      try {
+        return source.listTools()
+      } catch {
+        return []
+      }
+    })
+  }
+
+  /** A local agent's tools that are off: its own turned-off ones, and app tools it can't reach. */
+  private localToolsOff(clientId: string): ReadonlySet<string> {
+    const off = new Set(this.clients.toolsOff(clientId))
+    for (const tool of this.appListedTools()) {
+      if (this.appToolHeld(`local:${clientId}`, tool.adapterId, tool.declaration.sideEffect) === false)
+        off.add(`${tool.adapterId}.${tool.declaration.name}`)
+    }
+    return off
+  }
+
+  /**
+   * The first run after per-app picks became per-agent records (agent-access.ts): every agent
+   * keeps exactly what it could reach, the old picks at Read, or at Edit where the app let agents
+   * change things and the agent held a changing tool. Nothing widens, so nothing is signed.
+   */
+  private async seedAgentAccess(): Promise<void> {
+    if (this.agentAccess.seeded) return
+    // `edits`: the changing tools an agent had to hold for Edit. Mail's Edit is drafts and moves
+    // together, so it needs both, or it would widen whichever was off; otherwise Read.
+    const apps: {
+      app: AccessApp
+      items: readonly string[]
+      edits: readonly string[] | null
+      tools: readonly ToolDeclaration[]
+    }[] = []
+    const mail = this.mailApp?.settings
+    if (mail !== undefined)
+      apps.push({
+        app: 'mail',
+        items: mail.accounts,
+        edits: mail.drafts && mail.organize ? ['create_draft', 'move', 'mark'] : null,
+        tools: mailTools({ drafts: true, organize: true }).map((t) => t.declaration),
+      })
+    for (const [app, service] of this.eventKitApps) {
+      const settings = service.settings
+      apps.push({
+        app,
+        items: settings.calendars,
+        edits: settings.writes ? EVENTKIT_CHANGES[app] : null,
+        tools: (app === 'calendar' ? calendarTools({ writes: true }) : reminderTools({ writes: true })).map(
+          (t) => t.declaration,
+        ),
+      })
+    }
+    const agents: { label: string; held: (adapter: string, tool: ToolDeclaration) => boolean }[] = [
+      ...this.clients.active().map((client) => ({
+        label: `local:${client.id}`,
+        held: (adapter: string, tool: ToolDeclaration) =>
+          !this.clients.toolsOff(client.id).has(`${adapter}.${tool.name}`),
+      })),
+      ...this.remote.clients
+        .list()
+        .filter((client) => client.grant != null)
+        .map((client) => ({
+          label: `remote:${client.id}`,
+          held: (adapter: string, tool: ToolDeclaration) =>
+            this.remote.heldBySwitches(adapter, tool, client.id),
+        })),
+    ]
+    const records: Record<string, ClientAccess> = {}
+    for (const agent of agents) {
+      const access: Partial<Record<AccessApp, AppAccess>> = {}
+      for (const { app, items, edits, tools } of apps) {
+        if (items.length === 0) continue
+        const reads = tools.some((t) => t.sideEffect === 'read' && agent.held(app, t))
+        if (!reads) continue
+        // Edit only for an agent that held every changing tool Edit gives: never wider than before.
+        const changes =
+          edits !== null &&
+          edits.every((name) => {
+            const tool = tools.find((t) => t.name === name)
+            return tool !== undefined && agent.held(app, tool)
+          })
+        const level = changes ? 'edit' : 'read'
+        access[app] = { items: Object.fromEntries(items.map((id) => [id, level])), full: false }
+      }
+      records[agent.label] = access
+    }
+    await this.agentAccess.seed(records)
   }
 
   /**
@@ -1388,6 +1658,9 @@ export class AppService {
     const tools: RemoteSetupTool[] = []
     // Built-in tools first (Mail on this Mac), while the person has them on.
     for (const listed of this.natives().flatMap((n) => n.listTools())) {
+      // Mail's, Calendar's and Reminders' own tools follow from each agent's access to them
+      // (docs/access.md), not from a switch for every cloud agent.
+      if (accessAppOf(listed.adapterId) !== null) continue
       const ref = `${listed.adapterId}.${listed.declaration.name}`
       tools.push({
         ref,
@@ -2411,6 +2684,38 @@ export class AppService {
           next.scope === older.scope &&
           next.clientId === older.clientId,
       },
+      // What one agent may use in the Mac's apps, widened by a Save (saveAccess). The handler
+      // applies only what was signed; the Save then writes the rest, which only narrows.
+      'agent-access': {
+        precheck: async (subject) => {
+          // Tools and capabilities ride on this kind later; nothing asks for them yet.
+          if (subject.tools.length > 0 || subject.capabilities.length > 0 || subject.full.length > 0)
+            return false
+          if (!this.accessClientKnown(subject.clientId)) return false
+          let view: AgentAccessView
+          try {
+            view = await this.accessView(subject.clientId)
+          } catch {
+            return false
+          }
+          return subject.items.every((s) => {
+            const item = view.apps.find((a) => a.app === s.app)?.items.find((i) => i.id === s.id)
+            return item !== undefined && (s.level === 'read' || item.editable)
+          })
+        },
+        apply: async (subject) => {
+          for (const app of ACCESS_APPS) {
+            const raised = subject.items.filter((i) => i.app === app).map(({ id, level }) => ({ id, level }))
+            if (raised.length === 0) continue
+            const before = this.agentAccess.app(subject.clientId, app)
+            await this.agentAccess.set(
+              subject.clientId,
+              app,
+              withWidening(before, { items: raised, full: false }),
+            )
+          }
+        },
+      },
       // A remote client's consent, approved with the code the person typed from their browser.
       'remote-client': {
         precheck: (subject) =>
@@ -3026,7 +3331,8 @@ export class AppService {
     if (answered.ok) return true
     // Busy: another prompt is up and this one may still be answered, unless it's a consent,
     // which is never reused and would only pile up.
-    if (answered.reason !== 'busy' || kind === 'remote-client')
+    // An access Save the page reported as not saved mustn't stay signable from the phone either.
+    if (answered.reason !== 'busy' || kind === 'remote-client' || kind === 'agent-access')
       await broker
         .withdraw(asked.requestId, kind === 'remote-client' ? { kind: 'app' } : { kind: 'person' })
         .catch(() => false)
@@ -4970,6 +5276,7 @@ export class AppService {
           await this.approvalBroker?.withdrawClient(`remote:${id}`).catch(() => 0)
           this.dropAgentAsks(`remote:${id}`)
           await this.dropRemoteCapabilities(id)
+          await this.agentAccess.forget(`remote:${id}`)
           // Just after, so this call's own result still reaches the agent.
           const timer = setTimeout(() => void this.remote.revokeClient(id).catch(() => false), 1000)
           timer.unref?.()
@@ -4980,6 +5287,7 @@ export class AppService {
         await this.clients.revoke(clientId)
         this.cancelConfirmationsOf(`local:${clientId}`)
         await this.approvalBroker?.withdrawClient(`local:${clientId}`).catch(() => 0)
+        await this.agentAccess.forget(`local:${clientId}`)
         await rm(this.clients.configPath(clientId), { force: true }).catch(() => undefined)
         // The token is refused from the next request on; the session itself ends just after, so
         // this call's own result still reaches the agent.
@@ -5539,6 +5847,8 @@ export class AppService {
           this.endpoint?.refuseClient(clientId)
           this.cancelConfirmationsOf(label)
           await this.approvalBroker?.withdrawClient(label).catch(() => 0)
+          // Its access goes with it: an app added again starts with none.
+          await this.agentAccess.forget(label)
           try {
             await this.endpoint?.removeClient(clientId)
             await rm(this.clients.configPath(clientId), { force: true })
@@ -5763,6 +6073,10 @@ export class AppService {
           await this.messagesApp?.action(action)
         },
       },
+      agentAccess: {
+        view: (clientId) => this.accessView(clientId),
+        save: (clientId, changes) => this.saveAccess(clientId, changes),
+      },
       eventKit: {
         status: async (app: EventKitApp): Promise<EventKitStatus | null> =>
           (await this.eventKitApps.get(app)?.status()) ?? null,
@@ -5854,12 +6168,16 @@ export class AppService {
           this.cancelConfirmationsOf(`remote:${id}`)
           if (!(await this.remote.revokeClient(id))) throw new ValetError('config', 'not-found')
           await this.dropRemoteCapabilities(id)
+          await this.agentAccess.forget(`remote:${id}`)
         },
         revokeAllClients: async () => {
           const ids = this.remote.remoteClients().map((c) => c.id)
           for (const id of ids) this.cancelConfirmationsOf(`remote:${id}`)
           const count = await this.remote.revokeAllClients()
-          for (const id of ids) await this.dropRemoteCapabilities(id)
+          for (const id of ids) {
+            await this.dropRemoteCapabilities(id)
+            await this.agentAccess.forget(`remote:${id}`)
+          }
           return count
         },
         setAskForChanges: (id, on) => this.setRemoteAsk(id, on),

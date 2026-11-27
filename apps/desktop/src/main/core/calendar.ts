@@ -28,6 +28,7 @@ import type {
   EventKitSettingsPatch,
   EventKitStatus,
 } from '../../shared/api'
+import { type AppAccess, editableIds, NO_APP_ACCESS, readableIds } from './agent-access'
 import type { NativeTools } from './caller'
 import { JsonDocument } from './files'
 import { openWith, type ReaderControl } from './mail'
@@ -94,6 +95,11 @@ export interface EventKitServiceDeps {
   /** Null: this build has no reader helper. */
   readonly reader: ReaderControl | null
   readonly kit: EventKit | null
+  /**
+   * The calling agent's calendars (or lists), each at Read or Edit (agent-access.ts). Absent, or
+   * a call without an identity: nothing.
+   */
+  readonly access?: (call: ToolCall) => AppAccess
   readonly audit: (call: ToolCall, result: ToolCallResult, durationMs: number) => Promise<void>
   readonly now: () => number
   /** Tells the app the tool list changed. */
@@ -129,10 +135,13 @@ export class EventKitService implements NativeTools {
     return this.deps.app === 'calendar' ? calendarTools({ writes: true }) : reminderTools({ writes: true })
   }
 
+  /**
+   * Every tool, changing ones too, while the app is on: which of them an agent holds follows from
+   * its own access (agent-access.ts), and every call is checked against it.
+   */
   listTools(): readonly ListedTool[] {
-    if (!this.current.enabled || this.current.calendars.length === 0 || this.deps.kit === null) return []
-    const writes = this.current.writes
-    const tools = this.deps.app === 'calendar' ? calendarTools({ writes }) : reminderTools({ writes })
+    if (!this.current.enabled || this.deps.kit === null) return []
+    const tools = this.allTools()
     return tools.map((tool) => ({
       adapterId: this.adapterId,
       adapterName: this.adapterName,
@@ -152,10 +161,14 @@ export class EventKitService implements NativeTools {
     else {
       // A calendar or list added since the last call shows now; an older reader can't, which is fine.
       await this.refresh(kit)
+      const access = this.deps.access?.(call) ?? NO_APP_ACCESS
+      const readable = readableIds(access)
+      const editable = editableIds(access)
       const deps = {
         kit,
-        allowed: () => new Set(this.current.enabled ? this.current.calendars : []),
-        writes: () => this.current.enabled && this.current.writes,
+        allowed: () => (this.current.enabled ? readable : new Set<string>()),
+        editable: () => (this.current.enabled ? editable : new Set<string>()),
+        writes: () => this.current.enabled && editable.size > 0,
         spend: () => this.spend(),
         now: this.deps.now,
       }
@@ -184,6 +197,11 @@ export class EventKitService implements NativeTools {
     if (this.changes.length >= CHANGES_PER_HOUR) return false
     this.changes.push(now)
     return true
+  }
+
+  /** The person's settings as they stand. */
+  get settings(): EventKitSettings {
+    return this.current
   }
 
   async status(): Promise<EventKitStatus> {

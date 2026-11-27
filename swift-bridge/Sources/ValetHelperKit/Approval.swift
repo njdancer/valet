@@ -19,9 +19,11 @@ let approvalActions: [String: String] = [
   "secret-grant": "let an adapter use your login",
   "credential-grant": "let an adapter use a credential",
   "tool-enable": "turn on a tool",
+  "agent-access": "change what an agent can use",
   "remote-client": "let a remote agent connect",
   "setting": "change a setting",
   "authoring-session": "let an agent use a signed-in session",
+  "browser-grant": "let an agent browse a site signed in",
   "private-network": "let an agent's scratch browser reach your home network",
   "irreversible-call": "confirm something that can't be undone",
   "resume": "resume Valet",
@@ -82,6 +84,20 @@ func detail(kind: String, subject: [String: Any]) -> String {
     let tool = subject["tool"] as? String ?? ""
     let scope = subject["scope"] as? String == "remote" ? "for remote use" : "on this Mac"
     return " (\(tool), \(scope))"
+  case "setting":
+    let setting = subject["setting"] as? String ?? ""
+    return setting.range(of: "^remote_ask_[a-z0-9_]+$", options: .regularExpression) != nil
+      ? " so a cloud agent may ask for changes, such as new adapters" : ""
+  case "remote-client":
+    return (subject["capabilities"] as? [String] ?? []).contains("ask-for-changes")
+      ? " and ask for changes, such as new adapters" : ""
+  case "agent-access":
+    let count = ["items", "full", "tools", "capabilities"].reduce(0) { $0 + ((subject[$1] as? [Any])?.count ?? 0) }
+    return " (\(count) \(count == 1 ? "addition" : "additions"))"
+  case "browser-grant":
+    let hosts = (subject["origins"] as? [String] ?? []).compactMap(hostOf)
+    let minutes = subject["minutes"] as? Int ?? 0
+    return " (\(hosts.joined(separator: ", ")), read only, \(minutes) minutes)"
   case "private-network":
     let address = subject["address"] as? String ?? ""
     if let port = subject["port"] as? Int { return " (\(address) port \(port))" }

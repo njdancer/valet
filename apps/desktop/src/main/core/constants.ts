@@ -98,6 +98,8 @@ export interface DataPaths {
   readonly reminders: string
   /** Messages on this Mac: on or off, hidden conversations, codes (docs/messages.md). */
   readonly messages: string
+  /** What each agent may use in Mail, Calendar and Reminders (agent-access.ts). */
+  readonly agentAccess: string
   /** What the person chose for each adapter's settings (D69). */
   readonly adapterSettings: string
   readonly clients: string
@@ -155,6 +157,7 @@ export function dataPaths(dir: string): DataPaths {
     calendar: join(dir, 'calendar.json'),
     reminders: join(dir, 'reminders.json'),
     messages: join(dir, 'messages.json'),
+    agentAccess: join(dir, 'agent-access.json'),
     adapterSettings: join(dir, 'adapter-settings.json'),
     clients: join(dir, 'clients.json'),
     clientConfigs: join(dir, 'client-configs'),

@@ -125,13 +125,15 @@ class FakeKit implements EventKit {
   }
 }
 
-function setup(options: { writes?: boolean; allowance?: number } = {}) {
+function setup(options: { writes?: boolean; allowance?: number; readOnly?: string[] } = {}) {
   const kit = new FakeKit()
   let left = options.allowance ?? 100
   const deps = (allowed: string[]): EventKitToolDeps => ({
     kit,
     allowed: () => new Set(allowed),
     writes: () => options.writes ?? false,
+    editable: () =>
+      new Set(options.writes === true ? allowed.filter((id) => !(options.readOnly ?? []).includes(id)) : []),
     spend: () => left-- > 0,
     now: () => NOW,
   })
@@ -236,6 +238,21 @@ describe('calendar', () => {
     ).toMatchObject({
       errorClass: 'not-found',
     })
+    expect(kit.savedEvents).toEqual([])
+  })
+
+  it('refuses a change to a calendar it may only read, and says how to ask for more', async () => {
+    const { kit, calendar } = setup({ writes: true, readOnly: ['work'] })
+    const add = { calendarId: 'work', title: 'X', start: '2026-11-26T10:00', end: '2026-11-26T11:00' }
+    expect(await callCalendarTool(calendar, 'create_event', add)).toMatchObject({
+      errorClass: 'invalid',
+      issue: { path: ['calendarId'], reason: 'read-access-only' },
+    })
+    const listed = (await callCalendarTool(calendar, 'calendars', {})) as {
+      output: { calendars: { id: string; writable: boolean }[] }
+    }
+    expect(listed.output.calendars.find((c) => c.id === 'work')?.writable).toBe(false)
+    expect(listed.output.calendars.find((c) => c.id === 'home')?.writable).toBe(true)
     expect(kit.savedEvents).toEqual([])
   })
 
