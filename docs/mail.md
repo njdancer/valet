@@ -184,7 +184,6 @@ It is off by default, separate from reading and drafts, and a cloud agent also n
 
 The audit log stays on the Mac. Backing it up elsewhere could be a later relay feature.
 
-
 A move or mark run that Mail hasn't finished after 40 s is stopped (was 120 s; a source fetch,
 which Mail may download first, keeps 120 s), so a Mail that isn't answering fails the call before
 its client gives up (feedback #34). A failed run logs `mail scripting: <kind> failed:` with its exit
