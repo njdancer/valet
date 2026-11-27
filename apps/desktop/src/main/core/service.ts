@@ -5322,15 +5322,41 @@ export class AppService {
         return client === null ? null : { name: client.name }
       },
       itemRequest: (viewer, app, item, level) => this.itemRequest(identityLabel(viewer), app, item, level),
-      toolRequest: (viewer, adapterId, tool) => {
+      toolRequest: (viewer, adapterId, asked) => {
+        // The name as the agent's own list shows it (browser_login_steps) works as well as the
+        // adapter's own (login_steps).
+        const tool = asked.startsWith(`${adapterId}_`) ? asked.slice(adapterId.length + 1) : asked
+        const agent = viewer.origin === 'remote' ? viewer.clientId : null
+        if (agent === null) return { ok: false, reason: 'not-found' }
+        // Valet's own tools (the agents' browser, Messages): signed for the built-in "version", as
+        // a Save on the agent's page signs them. Mail's, Calendar's and Reminders' follow from
+        // the agent's access to each account or list instead.
+        const native = accessAppOf(adapterId) === null ? this.nativeDeclaration(adapterId, tool) : null
+        if (native !== null) {
+          if (this.remote.allows(adapterId, native, agent))
+            return { ok: false, reason: 'already', title: native.title }
+          if (!this.remote.canRequestForClient(adapterId, native, agent))
+            return { ok: false, reason: 'not-found' }
+          return {
+            ok: true,
+            title: native.title,
+            subject: {
+              adapterId,
+              adapterHash: BUILTIN_TOOLS_HASH,
+              tool,
+              scope: 'remote',
+              clientId: `remote:${agent}`,
+              sideEffect: native.sideEffect,
+            },
+          }
+        }
         const adapter = this.adapter(adapterId)
         const declaration = this.remoteDeclared(adapterId, tool)
-        const agent = viewer.origin === 'remote' ? viewer.clientId : null
         // Only a tool of an approved adapter, as the caller lists them (the precheck asks again).
         const listed = this.caller
           ?.listTools()
           .some((t) => t.adapterId === adapterId && t.declaration.name === tool)
-        if (adapter === null || declaration === null || agent === null || listed !== true)
+        if (adapter === null || declaration === null || listed !== true)
           return { ok: false, reason: 'not-found' }
         if (this.remote.allows(adapterId, declaration, agent))
           return { ok: false, reason: 'already', title: declaration.title }

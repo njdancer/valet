@@ -3018,6 +3018,49 @@ describe('remote access', () => {
     ).toBe('off')
   })
 
+  it('lets a cloud agent ask for one of the browser’s tools by the name it would list', async () => {
+    const s = await setup({
+      sessionBrowser: async () => {
+        throw new Error('no session is opened here')
+      },
+    })
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    const port = Number(new URL(s.service.remote.status().url as string).port)
+    const agent = approvedClient(s, [])
+    await s.api.remote.setAskForChanges(agent.id, true)
+    const client = await remoteClient(port, agent.token)
+    const ask = (tool: string) =>
+      client.callTool({
+        name: 'valet_request_access',
+        arguments: { adapterId: 'browser', tool, reason: 'To sign in to the shop the person named' },
+      })
+    const asked = await ask('browser_login_steps')
+    expect(JSON.stringify(asked.content)).toContain('Waiting for the person')
+    const broker = (s.service as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+    const pending = broker.list().filter((p) => p.request.kind === 'tool-enable')
+    expect(pending.map((p) => p.request.subject)).toEqual([
+      expect.objectContaining({
+        adapterId: 'browser',
+        tool: 'login_steps',
+        scope: 'remote',
+        clientId: `remote:${agent.id}`,
+      }),
+    ])
+    // Its own name works too, and asks nothing new; a tool the browser hasn't is refused.
+    expect((await ask('login_steps')).isError).not.toBe(true)
+    expect(broker.list().filter((p) => p.request.kind === 'tool-enable')).toHaveLength(1)
+    expect((await ask('nope')).isError).toBe(true)
+    expect(await s.api.attention.approveRequest(pending[0]?.request.id ?? '', null)).toBe(true)
+    const listed = (await (await remoteClient(port, agent.token)).listTools()).tools.map((t) => t.name)
+    expect(listed).toContain('browser_login_steps')
+    const again = await (await remoteClient(port, agent.token)).callTool({
+      name: 'valet_request_access',
+      arguments: { adapterId: 'browser', tool: 'login_steps', reason: 'again' },
+    })
+    expect(JSON.stringify(again.content)).toContain('Nothing changed')
+  })
+
   it('offers the agents’ browser to cloud agents, audits each call, and closes it on pause', async () => {
     const opened: { closed: boolean }[] = []
     let gave = 0
