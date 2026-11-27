@@ -75,6 +75,15 @@ on every admin call, so a change applies at once, and a revoked or unknown app h
   records (approvals, settings, lock down, breakers) stay.
 - With All agents' activity, an app sees every call, inputs included.
 
+**Requests in a trace.** A call's steps include each fetch its tool code sent through `ctx.page`,
+while Valet still remembers the call (until it restarts): the method, the manifest's declared path
+(never the request's own path, query or body), the host when the manifest names it literally, the
+status, whether the answer was JSON or HTML, whether a redirect was followed, and for no answer the
+error class. A setting's run before the call (the store, say) is the runtime's own call and no
+agent's, so its requests are shown in the call it ran for too, marked with `setting`. Answers from
+the read cache sent nothing and aren't listed. Requests the page itself made appear only when
+refused.
+
 There is no screen for these yet: the Connections toggles come with E's write tier or J.
 
 **Auditing reads.** Admin reads are not written to the audit log. The log records what touched a

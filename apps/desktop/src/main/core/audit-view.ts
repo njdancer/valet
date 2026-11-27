@@ -371,6 +371,27 @@ export function runTrace(
     }
   }
   const remembered = memory.get(callId)
+  for (const sent of remembered?.requests ?? []) {
+    steps.push({
+      atMs: Math.max(0, sent.at - start),
+      durationMs: sent.durationMs,
+      stage: 'tool-run',
+      type: 'request',
+      method: sent.method,
+      target: sent.host === null ? sent.path : `https://${sent.host}${sent.path}`,
+      initiator: 'tool',
+      decision: 'allowed',
+      purpose: sent.purpose,
+      status: sent.status,
+      blockedReason: null,
+      answer: sent.contentType,
+      redirected: sent.redirected,
+      failed: sent.failed,
+      setting: sent.setting,
+    })
+  }
+  // In time order; a stable sort keeps same-moment steps as they were added.
+  steps.sort((a, b) => a.atMs - b.atMs)
   const outputBytes = summary.outcome === 'ok' ? (remembered?.outputBytes ?? null) : null
   if (summary.outcome === 'ok' && finished !== null) {
     steps.push({
@@ -383,14 +404,19 @@ export function runTrace(
     })
   }
   const version = hashOf(summary.adapterId)
-  const blocked = steps.filter((s) => s.type === 'request').length
+  const blocked = steps.filter((s) => s.type === 'request' && s.decision === 'blocked').length
   return {
     summary,
     adapterVersion: version.version,
     adapterHash: call.called.event.adapterHash,
     secretsUsed,
-    // The runtime audits the requests it refused, never the ones it let through or the probes.
-    requests: { sent: null, probes: null, blocked },
+    // Refusals come from the audit log; requests sent only from memory, for calls since the app
+    // started. Probes aren't counted.
+    requests: {
+      sent: remembered === undefined ? null : (remembered.requestsSent ?? 0),
+      probes: null,
+      blocked,
+    },
     steps,
     input: remembered?.input ?? [{ kind: 'text', text: '(not kept: the app restarted since this call)' }],
     output: summary.outcome === 'ok' ? (remembered?.output ?? null) : null,

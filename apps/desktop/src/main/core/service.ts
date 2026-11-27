@@ -1239,6 +1239,7 @@ export class AppService {
       ...(this.deps.pacingSleep === undefined ? {} : { pacingSleep: this.deps.pacingSleep }),
       confirmationTimeoutMs: CONFIRMATION_TIMEOUT_MS,
       diagnostics: (d) => this.deps.diagnostics?.(d),
+      requests: (callId, request) => this.memory.requested(callId, request),
     })
     this.host = host
     if (this.packages !== null && this.deps.packages !== undefined) {

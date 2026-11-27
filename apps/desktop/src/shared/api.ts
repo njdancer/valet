@@ -755,6 +755,13 @@ export type TraceStep = {
       readonly purpose: Purpose | null
       readonly status: number | null
       readonly blockedReason: BlockedRequest['reason'] | null
+      /** Allowed requests only, while the app remembers the call: what the answer was. */
+      readonly answer?: 'json' | 'html' | 'other' | 'none' | null
+      readonly redirected?: boolean
+      /** Why no answer came back, as the error's class. */
+      readonly failed?: ErrorClass | null
+      /** The apply tool that sent it, run before this call for a setting (a store, say). */
+      readonly setting?: string | null
     }
   | { readonly type: 'confirmation'; readonly answer: 'approved' | 'declined' | 'timed-out' | 'cancelled' }
   | { readonly type: 'needs-user'; readonly reason: NeedsUserReason }
@@ -780,9 +787,9 @@ export interface RunTrace {
   readonly adapterHash: string
   readonly secretsUsed: readonly { readonly secret: string; readonly field: SecretField }[]
   /**
-   * Requests the run made and the driver refused. `sent` and `probes` are null when the main process
-   * can't count them (the runtime audits refusals only, so today they are always null); the
-   * renderer then shows the refused count alone.
+   * Requests the run made and the driver refused. `sent` counts what tool code fetched (with any
+   * setting's run before the call), and is null once the app no longer remembers the call (after a
+   * restart); `probes` is always null. The renderer then shows the refused count alone.
    */
   readonly requests: {
     readonly sent: number | null

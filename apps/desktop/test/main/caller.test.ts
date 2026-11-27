@@ -27,7 +27,7 @@ import {
   RuntimeToolCaller,
 } from '../../src/main/core/caller'
 import { INVOKE_METHODS, invokeChannel } from '../../src/main/core/channels'
-import { previewParts, RunMemory } from '../../src/main/core/run-memory'
+import { MAX_TRACED_REQUESTS, previewParts, RunMemory } from '../../src/main/core/run-memory'
 import { buildApi, eventFrom, type IpcLike } from '../../src/preload/api'
 
 describe('RuntimeToolCaller', () => {
@@ -515,6 +515,58 @@ describe('audit views', () => {
     expect(auditPage(records, { since: '2026-11-07T09:10:00.000+11:00' }).total).toBe(2)
   })
 
+  it('puts the requests a call sent, and its setting run sent, in its trace in time order', async () => {
+    const { reader } = await log(events)
+    const records = await reader.records()
+    const memory = new RunMemory()
+    memory.started('c1', 'add', 'Claude Code', { item: 'milk' })
+    const start = Date.parse('2026-11-07T09:00:00.000')
+    const sent = {
+      method: 'POST',
+      path: '/apis/store',
+      host: 'www.shop.test',
+      purpose: 'write' as const,
+      status: null,
+      contentType: null,
+      redirected: false,
+      failed: 'unavailable' as const,
+      at: start + 30_000,
+      durationMs: 400,
+      setting: 'apply_store',
+    }
+    memory.requested('c1', sent)
+    memory.requested('forgotten', sent)
+    const trace = runTrace(records, 'c1', lookup, memory, () => ({ version: '1.0.0', hash: '' }))
+    expect(trace?.requests).toEqual({ sent: 1, probes: null, blocked: 1 })
+    expect(trace?.steps.map((s) => s.type).slice(0, 3)).toEqual(['called', 'request', 'login-started'])
+    expect(trace?.steps[1]).toEqual({
+      atMs: 30_000,
+      durationMs: 400,
+      stage: 'tool-run',
+      type: 'request',
+      method: 'POST',
+      target: 'https://www.shop.test/apis/store',
+      initiator: 'tool',
+      decision: 'allowed',
+      purpose: 'write',
+      status: null,
+      blockedReason: null,
+      answer: null,
+      redirected: false,
+      failed: 'unavailable',
+      setting: 'apply_store',
+    })
+    expect(memory.get('forgotten')).toBeUndefined()
+    // Past the cap the rest are counted, not kept.
+    for (let i = 0; i < MAX_TRACED_REQUESTS + 5; i++) memory.requested('c1', { ...sent, host: null })
+    const many = runTrace(records, 'c1', lookup, memory, () => ({ version: '1.0.0', hash: '' }))
+    expect(many?.requests.sent).toBe(MAX_TRACED_REQUESTS + 6)
+    expect(many?.steps.filter((s) => s.type === 'request' && s.decision === 'allowed')).toHaveLength(
+      MAX_TRACED_REQUESTS,
+    )
+    expect(many?.steps.some((s) => s.type === 'request' && s.target === '/apis/store')).toBe(true)
+  })
+
   it('summarises runs and traces one from its own events', async () => {
     const { reader } = await log(events)
     const records = await reader.records()
@@ -529,8 +581,8 @@ describe('audit views', () => {
     memory.started('c1', 'add', 'Claude Code', { item: 'milk' })
     memory.finished('c1', { added: true, note: REDACTED })
     const trace = runTrace(records, 'c1', lookup, memory, () => ({ version: '1.0.0', hash: 'a'.repeat(64) }))
-    // Only refusals are audited, so what was sent can't be counted: null, never a made-up zero.
-    expect(trace?.requests).toEqual({ sent: null, probes: null, blocked: 1 })
+    // Sent requests are counted from memory: none for this call. Probes aren't counted.
+    expect(trace?.requests).toEqual({ sent: 0, probes: null, blocked: 1 })
     expect(trace?.steps.map((s) => s.type)).toEqual([
       'called',
       'login-started',
@@ -571,6 +623,10 @@ describe('audit views', () => {
       runTrace(records, 'c2', lookup, memory, () => ({ version: '', hash: '' }))?.steps.at(-1),
     ).toMatchObject({ type: 'needs-user' })
     expect(runTrace(records, 'nope', lookup, memory, () => ({ version: '', hash: '' }))).toBeNull()
+    // A call the app no longer remembers (it restarted) can't count what it sent.
+    expect(
+      runTrace(records, 'c3', lookup, memory, () => ({ version: '', hash: '' }))?.requests.sent,
+    ).toBeNull()
   })
 
   it('counts today by hour, and the last seven days', async () => {

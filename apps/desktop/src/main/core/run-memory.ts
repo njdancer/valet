@@ -2,13 +2,16 @@
 // and for a bounded number of calls: nothing here is ever written to disk. Output is what the
 // runtime returned, already redacted; its "[redacted]" markers become redaction parts.
 
-import { REDACTED } from '@valet/runtime'
+import { REDACTED, type TracedRequest } from '@valet/runtime'
 import type { LoginStall, PreviewPart } from '../../shared/api'
 import { RUN_MEMORY } from './constants'
 import { type CallSubject, detailOf, subjectOf } from './run-detail'
 
 /** Longest preview kept, in characters. A preview is for reading, not for a copy of the data. */
 export const MAX_PREVIEW = 20_000
+
+/** Requests kept per call: the first ones, which are where a failure starts, and a count of the rest. */
+export const MAX_TRACED_REQUESTS = 50
 
 export interface RememberedRun {
   readonly tool: string
@@ -22,6 +25,9 @@ export interface RememberedRun {
   readonly subject: CallSubject
   /** Where the login this call started stopped short, if it did. */
   readonly loginStall?: LoginStall
+  /** The requests its runs sent (the first MAX_TRACED_REQUESTS), and how many there were. */
+  readonly requests?: readonly TracedRequest[]
+  readonly requestsSent?: number
 }
 
 /** JSON text split into text and redaction markers. Unserialisable values preview as a fixed note. */
@@ -83,6 +89,18 @@ export class RunMemory {
   loginStalled(callId: string, stall: LoginStall): void {
     const run = this.runs.get(callId)
     if (run !== undefined) this.runs.set(callId, { ...run, loginStall: stall })
+  }
+
+  /** Keeps a request a call's run sent. Ignored for a call no longer remembered. */
+  requested(callId: string, request: TracedRequest): void {
+    const run = this.runs.get(callId)
+    if (run === undefined) return
+    const kept = run.requests ?? []
+    this.runs.set(callId, {
+      ...run,
+      requests: kept.length < MAX_TRACED_REQUESTS ? [...kept, request] : kept,
+      requestsSent: (run.requestsSent ?? 0) + 1,
+    })
   }
 
   get(callId: string): RememberedRun | undefined {
