@@ -93,18 +93,23 @@ export class DevMode {
       agreementKey: keys.agreementKey,
       pairedAt: new Date(now).toISOString(),
     })
-    const signature = await channel
-      .signApproval(SIGNING_DOMAINS.deviceRecord, payload, 'turn on developer mode for 8 hours')
-      .catch(() => null)
+    let signature: string | null
+    try {
+      signature = await channel.signApproval(
+        SIGNING_DOMAINS.deviceRecord,
+        payload,
+        'turn on developer mode for 8 hours',
+      )
+    } catch {
+      return false
+    }
     if (signature === null) return false
     const signed: SignedText = { payload, signature }
     const record = await this.options.devices.add(signed, 'dev')
     // The one before, if any, ends now: only the new key approves.
     await this.end('turned-off', false)
     const until = now + DEV_MODE_MS
-    const timer = this.options.timers.setTimeout(() => {
-      void this.turnOff('expired').catch(() => undefined)
-    }, DEV_MODE_MS)
+    const timer = this.options.timers.setTimeout(() => void this.expire(), DEV_MODE_MS)
     this.active = { record, signer, until, timer }
     this.options.changed(true, 'on')
     return true
@@ -112,6 +117,14 @@ export class DevMode {
 
   async turnOff(why: DevModeEnd): Promise<void> {
     await this.end(why, true)
+  }
+
+  private async expire(): Promise<void> {
+    try {
+      await this.turnOff('expired')
+    } catch {
+      // Already off in memory; the next start revokes the record.
+    }
   }
 
   /** At start: any key a previous run left unrevoked is gone with that process; revoke it. */
@@ -139,9 +152,15 @@ export class DevMode {
     // A millisecond on: an approval it made this same millisecond was made while it was on, and
     // stored evidence counts only what a device signed before its revocation. The key is already
     // out of reach above, so nothing can be signed in that millisecond.
-    await this.options.devices
-      .revoke(active.record.deviceId, 'mac-ui', new Date(this.options.now() + 1).toISOString())
-      .catch(() => false)
+    try {
+      await this.options.devices.revoke(
+        active.record.deviceId,
+        'mac-ui',
+        new Date(this.options.now() + 1).toISOString(),
+      )
+    } catch {
+      // The key is gone with the process anyway, and the next start revokes the record.
+    }
     if (tell) this.options.changed(false, why)
   }
 }

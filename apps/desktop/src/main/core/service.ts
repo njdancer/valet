@@ -1958,7 +1958,11 @@ export class AppService {
     }
     // In memory at once: no call gets through while the rest happens, even if a write fails.
     const saved = this.appState.setLockedDown(true)
-    await this.devMode?.turnOff('lockdown').catch(() => undefined)
+    try {
+      await this.devMode?.turnOff('lockdown')
+    } catch {
+      // Off in memory already: its key signs nothing more.
+    }
     this.authoring?.closeBrowsers()
     this.agentBrowser?.closeAll()
     // Lockdown ends every lent session and private address (B).
@@ -1995,7 +1999,13 @@ export class AppService {
       await devMode.turnOff('lockdown')
       return false
     }
-    for (const pending of broker.list()) await broker.approveByDevMode(pending.request.id).catch(() => false)
+    for (const pending of broker.list()) {
+      try {
+        await broker.approveByDevMode(pending.request.id)
+      } catch {
+        // That one stays waiting for the person.
+      }
+    }
     return true
   }
 

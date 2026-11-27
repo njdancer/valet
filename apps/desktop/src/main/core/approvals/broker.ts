@@ -463,7 +463,12 @@ export class ApprovalBroker {
       deviceId,
       decidedAt: new Date(this.now()).toISOString(),
     })
-    const signature = await dev.sign(payload).catch(() => null)
+    let signature: string | null
+    try {
+      signature = await dev.sign(payload)
+    } catch {
+      return false
+    }
     if (signature === null) return false
     return (await this.answer({ payload, signature }, { via: 'dev', deviceId })).ok
   }
