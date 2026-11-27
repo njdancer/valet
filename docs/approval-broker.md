@@ -260,6 +260,19 @@ revoked. Then:
 Sequence numbers are G's: a replayed decision fails as `not-pending`, a replayed command only
 tightens again.
 
+**A version waiting for review is asked for at once** (feedback #33, 2026-11-27). A built-in
+update, a folder's version or a first install gets its `adapter-install` request, made by the app
+as the person's own (`fileReviewsSoon` in service.ts), as soon as it waits: at launch and whenever
+the adapters or approvals change. Before, the request was made only when Approve was pressed on
+the Mac, so the phone's Needs you had nothing to show and developer mode nothing to answer. The
+Mac's Approve answers that same request (the broker reuses one with the same subject and asker).
+An agent's draft already has its own request. A request whose version is no longer the one
+waiting (approved, turned down, replaced), or whose card no longer says what approving it does, is
+withdrawn; `stillWanted`, asked inside the broker's lock, keeps an answer that lands while one is
+being made from leaving a second card. Approved anywhere but the Mac's button, the handler retires
+the adapter's other versions as `signInstall` does. Mac-only installs (unsandboxed, critical) are
+still sent to no phone.
+
 ## Asking "is this approved?"
 
 `broker.honoured(kind, matches)` returns true only if some evidence of that kind passes
@@ -329,10 +342,20 @@ the service's deps, `!app.isPackaged`, never in demo mode); a release build can'
   stops a phone pairing. A revoked one is dropped when it is turned on again, once no stored
   evidence names it. A signature made as it ends is refused: the broker takes the key's answers
   only while it is still the one on. Locking down while its Touch ID prompt is up leaves it off.
-- **Off**: after 8 hours, from the menu bar, on lock down, and when Valet stops (the key goes with
-  the process; the record is revoked at the next start). Revoking keeps what it approved, as for a
-  phone: stored evidence counts what a device signed before its revocation. Each change is
+- **Off**: after 8 hours, from the menu bar, and on lock down. Revoking keeps what it approved, as
+  for a phone: stored evidence counts what a device signed before its revocation. Each change is
   audited as `developer-mode`, and the menu bar shows DEV while it is on.
+- **Across a restart** (feedback #33, Nick 2026-11-27: "I want you to keep going without me"):
+  Valet restarts for every new dev build, so a restart no longer ends it. Turning it on also keeps
+  the key and its end time (`dev-mode-keep.ts`): in the Keychain (`valet.dev.developer-mode`) when
+  the dev build has its Keychain helper, otherwise in `dev-mode-key.json` (mode 0600) in the data
+  folder, as the dev build's own software approval keys already are. At the next start it is on
+  again (audited `developer-mode`, reason `resumed`) only while its 8 hours last, its record is
+  still active with that same key, the kept end is no more than 8 hours away, and Valet isn't
+  locked down; otherwise what was kept is cleared and the record revoked as before. Turning it off,
+  lock down and its end clear what was kept. It approves at once what was waiting when it
+  resumes. Without a store (tests, a release build, which never has developer mode) a restart
+  ends it.
 
 ## Migration
 

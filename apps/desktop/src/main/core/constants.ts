@@ -132,6 +132,8 @@ export interface DataPaths {
   readonly devApprovalKeys: string
   /** A dev build's anchor for the ledger, when it has no Keychain helper. */
   readonly devAnchor: string
+  /** A dev build's developer mode key, kept across a restart when it has no Keychain helper. */
+  readonly devModeKey: string
   /** Installed adapter versions, by id and hash (@valet/adapter-store, docs/adapter-packages.md). */
   readonly adapters: string
   /** Adapters agents are writing, one folder per draft (docs/authoring-tools.md#storage). */
@@ -175,6 +177,7 @@ export function dataPaths(dir: string): DataPaths {
     trusted: join(dir, 'trusted.json'),
     devApprovalKeys: join(dir, 'dev-approval-keys.json'),
     devAnchor: join(dir, 'dev-anchor.json'),
+    devModeKey: join(dir, 'dev-mode-key.json'),
     adapters: join(dir, 'adapters'),
     drafts: join(dir, 'drafts'),
     feedback: join(dir, 'feedback.json'),

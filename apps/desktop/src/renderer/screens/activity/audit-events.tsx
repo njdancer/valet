@@ -146,6 +146,7 @@ const DEV_MODE_ENDS: Readonly<Record<string, string>> = {
   'turned-off': 'turned off',
   lockdown: 'turned off by lock down',
   restart: 'turned off when Valet restarted',
+  resumed: 'still on after Valet restarted',
 }
 
 export function approvalAnswerWords(answer: string, reason: string | undefined): string {
@@ -496,7 +497,15 @@ export function details(event: AuditEvent, now: number): ReactNode {
     case 'device-keys-renewed':
       return <Quiet>works while locked</Quiet>
     case 'developer-mode':
-      return <Quiet>{event.on ? 'turned on for 8 hours' : DEV_MODE_ENDS[event.reason]}</Quiet>
+      return (
+        <Quiet>
+          {event.on
+            ? event.reason === 'resumed'
+              ? 'still on after Valet restarted'
+              : 'turned on for 8 hours'
+            : DEV_MODE_ENDS[event.reason]}
+        </Quiet>
+      )
     case 'draft-created':
     case 'draft-submitted':
     case 'draft-deleted':

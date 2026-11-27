@@ -66,7 +66,7 @@ export class FileAnchor implements StoreAnchor {
   }
 }
 
-const softwareKeysSchema = z
+export const softwareKeysSchema = z
   .object({
     approval: z.string().regex(/^[A-Za-z0-9_-]{1,400}$/),
     transport: z.string().regex(/^[A-Za-z0-9_-]{1,400}$/),
@@ -169,7 +169,7 @@ export async function macApprovalKeys(options: MacApprovalKeysOptions): Promise<
   return { signer: new SoftwareSigner(options.devPresent, keys), anchor, kind: 'software', forget }
 }
 
-async function writeAtomic(path: string, text: string): Promise<void> {
+export async function writeAtomic(path: string, text: string): Promise<void> {
   const temp = `${path}.${randomBytes(6).toString('hex')}.tmp`
   try {
     const handle = await open(temp, 'wx', 0o600)

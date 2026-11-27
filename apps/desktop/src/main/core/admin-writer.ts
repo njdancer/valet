@@ -830,6 +830,9 @@ function refusal(reason: RequestRefusal): WriteRefusal {
   switch (reason) {
     case 'too-many-consents':
       return 'too-many-total'
+    // Only the app's own review requests say what they still want; never an agent's.
+    case 'not-wanted':
+      return 'unavailable'
     default:
       return reason
   }

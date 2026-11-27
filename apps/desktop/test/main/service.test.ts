@@ -23,6 +23,7 @@ import { buildRecord, type RawPackageRuntime } from '@valet/adapter-store'
 import {
   type AdapterDefinition,
   type ApprovalSubject,
+  approvableOn,
   CredentialError,
   checkPackage,
   defineAdapter,
@@ -88,6 +89,7 @@ import {
   softwareKeysAt,
   toolEnableSubject,
 } from '../../src/main/core/approvals'
+import type { DevModeKeep, KeptDevMode } from '../../src/main/core/approvals/dev-mode'
 import type { ClientRegistry } from '../../src/main/core/clients'
 import { dataPaths } from '../../src/main/core/constants'
 import { type Credentials, disabledOtpReader } from '../../src/main/core/credentials'
@@ -196,6 +198,7 @@ async function setup(
     sessionBrowser?: ServiceDeps['sessionBrowser']
     /** An unpackaged build's developer mode (approvals/dev-mode.ts). */
     developerMode?: boolean
+    developerModeKeep?: ServiceDeps['developerModeKeep']
   } = {},
 ) {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'sa-service-'))
@@ -286,6 +289,7 @@ async function setup(
     ...(options.scratch === undefined ? {} : { scratch: options.scratch }),
     ...(options.sessionBrowser === undefined ? {} : { sessionBrowser: options.sessionBrowser }),
     ...(options.developerMode === undefined ? {} : { developerMode: options.developerMode }),
+    ...(options.developerModeKeep === undefined ? {} : { developerModeKeep: options.developerModeKeep }),
     createDriver: async (_manifest, reporters) => {
       driver.reporters = reporters
       return driver
@@ -409,6 +413,16 @@ async function setup(
   }
 }
 
+/** Waits for the review requests the service makes for versions waiting (fileReviewsSoon). */
+async function filed(service: AppService): Promise<void> {
+  const of = () => (service as unknown as { reviewFiling: Promise<unknown> }).reviewFiling
+  let last: Promise<unknown> | null = null
+  while (of() !== last) {
+    last = of()
+    await last
+  }
+}
+
 async function approved() {
   const s = await setup()
   await s.api.approvals.approve('shop', s.adapter.hash)
@@ -432,9 +446,10 @@ describe('developer mode (docs/approval-broker.md#developer-mode)', () => {
     expect(await s.api.app.setDeveloperMode(true)).toBe(true)
     expect(s.presence.prompts).toEqual(['turn on developer mode for 8 hours'])
     expect((await s.api.app.status()).developerMode.until).toBe('2026-11-07T08:00:00.000Z')
-    // The person's finger is gone from here on: what developer mode may approve goes through.
+    // The person's finger is gone from here on: what developer mode may approve goes through. The
+    // version waiting since launch had its request made then, so turning on approved it at once.
     s.presence.answer = false
-    await s.api.approvals.approve('shop', s.adapter.hash)
+    await filed(s.service)
     expect((await s.api.adapters.list())[0]?.approval).toBe('approved')
     expect(s.presence.prompts).toHaveLength(1)
     // A login still asks the person, and without them it isn't given.
@@ -453,13 +468,16 @@ describe('developer mode (docs/approval-broker.md#developer-mode)', () => {
 
   it('ends after 8 hours, when turned off, and on lock down; what it approved stays approved', async () => {
     const s = await setup({ developerMode: true })
+    // Turned down first, so nothing is waiting for it to approve when it turns on.
+    await filed(s.service)
+    await s.api.approvals.reject('shop', s.adapter.hash)
     await s.api.app.setDeveloperMode(true)
     s.advance(8 * 3600_000)
     s.presence.answer = false
     await s.api.approvals.approve('shop', s.adapter.hash)
     // Its window is over: the person is asked, and without them nothing is approved.
     expect(s.presence.prompts).toHaveLength(2)
-    expect((await s.api.adapters.list())[0]?.approval).toBe('unapproved')
+    expect((await s.api.adapters.list())[0]?.approval).not.toBe('approved')
 
     s.presence.answer = true
     await s.api.app.setDeveloperMode(true)
@@ -499,9 +517,85 @@ describe('developer mode (docs/approval-broker.md#developer-mode)', () => {
       s.service as unknown as { ledger: { data: { devices: unknown[]; devDevices?: unknown[] } } }
     ).ledger
     expect(ledger.data.devices).toEqual([])
-    // Revoked ones that approved nothing go when it is turned on again: the one on now, and the
-    // one it replaced (revoked just after the new one is added).
-    expect(ledger.data.devDevices?.length).toBe(2)
+    // Revoked ones that approved nothing go when it is turned on again: the one on now, the one
+    // it replaced (revoked just after the new one is added), and the first, which approved the
+    // version waiting since launch, so its record stays for that evidence.
+    expect(ledger.data.devDevices?.length).toBe(3)
+  })
+
+  it('stays on across a restart until its 8 hours end, with the key it kept', async () => {
+    const kept: { value: KeptDevMode | null } = { value: null }
+    const keep: DevModeKeep = {
+      read: async () => kept.value,
+      write: async (k) => {
+        kept.value = k
+      },
+      clear: async () => {
+        kept.value = null
+      },
+    }
+    const s = await setup({ developerMode: true, developerModeKeep: keep })
+    await filed(s.service)
+    await s.api.approvals.reject('shop', s.adapter.hash)
+    await s.api.app.setDeveloperMode(true)
+    const until = (await s.api.app.status()).developerMode.until
+    expect(until).toBe('2026-11-07T08:00:00.000Z')
+    s.advance(2 * 3600_000)
+    await s.service.stop()
+    const deps = (s.service as unknown as { deps: ConstructorParameters<typeof AppService>[0] }).deps
+    const restarted = new AppService({ ...deps })
+    services.push(restarted)
+    await restarted.start()
+    // Still on, to the same end, and it approves without the person.
+    expect((await restarted.api.app.status()).developerMode.until).toBe(until)
+    s.presence.answer = false
+    await restarted.api.approvals.approve('shop', s.adapter.hash)
+    expect((await restarted.api.adapters.list())[0]?.approval).toBe('approved')
+    expect(s.presence.prompts).toEqual(['turn on developer mode for 8 hours'])
+    const events = (await restarted.api.audit.page({ category: 'approvals-grants', limit: 50 })).records.map(
+      (r) => r.event,
+    )
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'developer-mode', on: true, until, reason: 'resumed' }),
+    )
+    // Past its end, a restart leaves it off and its record revoked.
+    await restarted.stop()
+    s.advance(6 * 3600_000)
+    const late = new AppService({ ...deps })
+    services.push(late)
+    await late.start()
+    expect((await late.api.app.status()).developerMode.until).toBeNull()
+    expect(kept.value).toBeNull()
+    const devices = (late as unknown as { deviceStore: { activeDev(): unknown[] } }).deviceStore
+    expect(devices.activeDev()).toEqual([])
+  })
+
+  it('does not stay on across a restart when Valet is locked down', async () => {
+    const kept: { value: KeptDevMode | null } = { value: null }
+    const keep: DevModeKeep = {
+      read: async () => kept.value,
+      write: async (k) => {
+        kept.value = k
+      },
+      clear: async () => {
+        kept.value = null
+      },
+    }
+    const s = await setup({ developerMode: true, developerModeKeep: keep })
+    await s.api.app.setDeveloperMode(true)
+    const value = kept.value
+    // Locked down while it was kept (a phone's lockdown reaching a stopped Mac, say): the kept key
+    // is still there, and the lockdown wins.
+    await s.api.app.setLockedDown(true)
+    kept.value = value
+    await s.service.stop()
+    const restarted = new AppService({
+      ...(s.service as unknown as { deps: ConstructorParameters<typeof AppService>[0] }).deps,
+    })
+    services.push(restarted)
+    await restarted.start()
+    expect((await restarted.api.app.status()).developerMode.until).toBeNull()
+    expect(kept.value).toBeNull()
   })
 
   it('is never there in a packaged build', async () => {
@@ -884,6 +978,60 @@ describe('an update', () => {
     (await s.api.audit.page({ category: 'approvals-grants', limit: 20 })).records
       .map((r) => r.event)
       .filter((e) => e.type === 'grant-made')
+
+  it('asks for the update as soon as it waits, so the phone can answer it (feedback #33)', async () => {
+    const { first, next, restarted } = await updated({ ...SHOP, version: '1.1.0' })
+    await filed(restarted)
+    const broker = (restarted as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+    const asks = () =>
+      broker
+        .list()
+        .map((p) => p.request)
+        .filter((r) => r.kind === 'adapter-install')
+    // Made by the app for the person, before anyone pressed Approve, and one the phone may answer.
+    expect(asks()).toHaveLength(1)
+    const [ask] = asks()
+    expect(ask?.requester).toEqual({ kind: 'person' })
+    expect(ask?.subject).toMatchObject({
+      adapterId: 'shop',
+      adapterHash: next.hash,
+      previousHash: first.adapter.hash,
+    })
+    expect(approvableOn('adapter-install', ask?.subject as never)).toContain('phone')
+    // Asked again (another change, a restart's first pass): still the one request.
+    await (restarted as unknown as { fileWaitingReviews(): Promise<void> }).fileWaitingReviews()
+    expect(asks().map((r) => r.id)).toEqual([ask?.id])
+    // Answered away from the Approve button (as a phone's answer is): applied, the login carried
+    // as the card said, and the version before retired.
+    expect((await broker.approveOnMac(ask?.id as string)).ok).toBe(true)
+    await filed(restarted)
+    expect((await restarted.api.adapters.list())[0]?.approval).toBe('approved')
+    expect((await restarted.api.adapters.list())[0]?.secrets).toEqual([{ name: 'login', granted: true }])
+    expect(broker.honoured('adapter-install', (x) => x.adapterHash === first.adapter.hash)).toBeNull()
+    expect(asks()).toEqual([])
+  })
+
+  it('takes the request back once the version is turned down, and the Mac’s Approve answers the same one', async () => {
+    const { next, restarted } = await updated({ ...SHOP, version: '1.1.0' })
+    await filed(restarted)
+    const broker = (restarted as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+    const asks = () => broker.list().filter((p) => p.request.kind === 'adapter-install')
+    expect(asks()).toHaveLength(1)
+    await restarted.api.approvals.reject('shop', next.hash)
+    await filed(restarted)
+    expect(asks()).toEqual([])
+    const requested = async () =>
+      (await restarted.api.audit.page({ limit: 200 })).records
+        .map((r) => r.event)
+        .filter((e) => e.type === 'approval-requested')
+    const before = (await requested()).length
+    // Approved later from the turned-down list: one request, made by that Approve, and no other.
+    await restarted.api.approvals.approve('shop', next.hash)
+    await filed(restarted)
+    expect((await restarted.api.adapters.list())[0]?.approval).toBe('approved')
+    expect((await requested()).length).toBe(before + 1)
+    expect(asks()).toEqual([])
+  })
 
   it('needs a fresh approval, is reviewed against the last approved bundle, and keeps a login it does not widen', async () => {
     const { first, next, restarted } = await updated({ ...SHOP, version: '1.1.0' })
