@@ -594,6 +594,8 @@ async function main(): Promise<void> {
     messages: mailReader === null ? null : new HelperMessagesFiles({ socketPath: mailReader.socketPath }),
     version: app.getVersion(),
     demo: mode.demo,
+    // Unpackaged builds only (Nick's dev build): never a release, never demo mode.
+    developerMode: !app.isPackaged && !mode.demo,
     now: () => Date.now(),
     timers: {
       setTimeout: (run, ms) => setTimeout(run, ms),

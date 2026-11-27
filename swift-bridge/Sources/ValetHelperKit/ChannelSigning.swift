@@ -60,12 +60,18 @@ public func channelApprovalToSign(domain: String, payloads: [String], own: OwnKe
     reason = "pair a new iPhone"
   case deviceRecordDomain:
     var phones = 0
+    var devs = 0
     for payload in payloads {
       guard let role = deviceRecordRole(payload, own: own) else { return nil }
       if role == "phone" { phones += 1 }
+      if role == "dev" { devs += 1 }
     }
-    guard phones <= 1 else { return nil }
-    reason = phones == 1 ? "pair a new iPhone" : "update this Mac's device record"
+    guard phones <= 1, devs <= 1, devs == 0 || payloads.count == 1 else { return nil }
+    // Developer mode (an unpackaged build only, which the app checks): its own key, in the app's
+    // memory, approves adapter versions and tools until it is revoked.
+    reason =
+      devs == 1
+      ? "turn on developer mode for 8 hours" : phones == 1 ? "pair a new iPhone" : "update this Mac's device record"
   case rosterChangeDomain:
     guard let kinds = rosterChangeKinds(payloads, own: own) else { return nil }
     reason =
@@ -98,8 +104,8 @@ func isPairingChallenge(_ payload: String) -> Bool {
   return true
 }
 
-/// The record's role if it is a device record for this Mac: its own (with its own keys), or a
-/// phone's (any other id). Nil for anything else.
+/// The record's role if it is a device record for this Mac: its own (with its own keys), a
+/// phone's or developer mode's (any other id). Nil for anything else.
 func deviceRecordRole(_ payload: String, own: OwnKeys) -> String? {
   let fields: Set<String> = [
     "v", "deviceId", "macId", "role", "platform", "name", "approvalKey", "transportKey", "agreementKey", "pairedAt",
@@ -119,7 +125,7 @@ func deviceRecordRole(_ payload: String, own: OwnKeys) -> String? {
       object["agreementKey"] as? String == own.agreementKey
     else { return nil }
     return role
-  case ("phone", "ios"):
+  case ("phone", "ios"), ("dev", "macos"):
     guard deviceId != own.macId, object["approvalKey"] as? String != own.approvalKey else { return nil }
     return role
   default:

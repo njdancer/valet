@@ -1298,6 +1298,12 @@ export interface AppStatus {
   readonly version: string
   /** Demo mode: a local fake site and a test credential, never a real account. Shown as a badge. */
   readonly demo: boolean
+  /**
+   * Developer mode (docs/approval-broker.md#developer-mode): whether this build has it (unpackaged
+   * only), and while it is on, when it turns itself off. While on, adapter versions and tools
+   * are approved without asking.
+   */
+  readonly developerMode: { readonly available: boolean; readonly until: IsoTime | null }
 }
 
 // ---------- Remote access ----------
@@ -1927,6 +1933,11 @@ export interface ValetApi {
      * and kept across restarts.
      */
     setLockedDown(locked: boolean): Promise<void>
+    /**
+     * Turns developer mode on (one Touch ID, for 8 hours) or off. True if it is now as asked; false
+     * if the build has none or the person cancelled the prompt. Audited.
+     */
+    setDeveloperMode(on: boolean): Promise<boolean>
     /**
      * Opens or focuses the control panel at a renderer route (a hash such as "#/activity"). The main
      * process accepts only a hash that parseRoute reads as a page (not-found is refused), sets it as

@@ -15,7 +15,12 @@ import { keyId, p256PublicKeySchema, SIGNING_DOMAINS, type SignedText, verifyP25
 export const KEY_ID = /^[0-9a-f]{32}$/
 export const keyIdSchema = z.string().regex(KEY_ID)
 
-export const DEVICE_ROLES = ['mac', 'phone'] as const
+/**
+ * `dev`: developer mode on an unpackaged build (docs/approval-broker.md#developer-mode). A key
+ * held only in the app's memory, its record signed by the Mac after the person's Touch ID, revoked
+ * when developer mode ends. It approves only what approvableOn lets it.
+ */
+export const DEVICE_ROLES = ['mac', 'phone', 'dev'] as const
 export type DeviceRole = (typeof DEVICE_ROLES)[number]
 
 export const deviceRecordSchema = z

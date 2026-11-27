@@ -26,8 +26,9 @@ export function createTray(windows: AppWindows, api: MainApi, demo: boolean, rem
   icon.setTemplateImage(true)
   const tray = new Tray(icon)
   let needsYou = 0
+  let developerMode = false
   const show = (): void => {
-    const state = remoteTrayState(remote.status(), demo, needsYou)
+    const state = remoteTrayState(remote.status(), demo, needsYou, developerMode)
     tray.setToolTip(state.tooltip)
     tray.setTitle(state.title)
   }
@@ -37,6 +38,13 @@ export function createTray(windows: AppWindows, api: MainApi, demo: boolean, rem
       .list()
       .then((items) => {
         needsYou = waitingCount(items)
+        show()
+      })
+      .catch(() => undefined)
+    void api.app
+      .status()
+      .then((status) => {
+        developerMode = status.developerMode.until !== null
         show()
       })
       .catch(() => undefined)

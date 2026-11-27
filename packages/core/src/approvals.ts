@@ -307,6 +307,22 @@ export type ApprovalSubject<K extends ApprovalKind = ApprovalKind> = z.infer<(ty
  * running unsandboxed code, which defeats every other guarantee; those need the person at the Mac.
  */
 export function approvableOn(kind: ApprovalKind, subject: ApprovalSubject): readonly DeviceRole[] {
+  const roles = approvableByPeople(kind, subject)
+  return devApproves(kind, subject) ? [...roles, 'dev'] : roles
+}
+
+/**
+ * What developer mode approves by itself (Nick, 2026-11-27): an adapter's new version (unsandboxed
+ * ones too: before the sandbox ships every agent-written version is, and Nick accepted that risk)
+ * and a tool turned on. Never a login or credential, a pairing, a lockdown lift, an irreversible
+ * call, a connecting agent, a setting (an adapter's is picked on the card, so only the person can)
+ * or a browser or network grant.
+ */
+export function devApproves(kind: ApprovalKind, _subject: ApprovalSubject): boolean {
+  return kind === 'adapter-install' || kind === 'tool-enable'
+}
+
+function approvableByPeople(kind: ApprovalKind, subject: ApprovalSubject): readonly DeviceRole[] {
   // Pairing, and lifting a pause or lockdown: a stolen phone must not undo the person's own stop.
   if (kind === 'device-pair' || kind === 'resume') return ['mac']
   if (kind === 'adapter-install') {

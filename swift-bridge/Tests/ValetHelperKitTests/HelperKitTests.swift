@@ -171,6 +171,26 @@ final class ChannelSigningTests: XCTestCase {
     return String(decoding: try! JSONSerialization.data(withJSONObject: base, options: [.sortedKeys]), as: UTF8.self)
   }
 
+  func testDeveloperModeRecordSignsAloneWithItsOwnReason() {
+    let dev = record(["role": "dev", "platform": "macos", "name": "Developer mode"])
+    XCTAssertEqual(
+      channelApprovalToSign(domain: deviceRecordDomain, payloads: [dev], own: own)?.reason,
+      "turn on developer mode for 8 hours")
+    // Never beside a phone or the Mac's own record, never on iOS, never with the Mac's id or key.
+    XCTAssertNil(channelApprovalToSign(domain: deviceRecordDomain, payloads: [dev, record([:])], own: own))
+    XCTAssertNil(
+      channelApprovalToSign(
+        domain: deviceRecordDomain, payloads: [record(["role": "dev", "platform": "ios"])], own: own))
+    XCTAssertNil(
+      channelApprovalToSign(
+        domain: deviceRecordDomain,
+        payloads: [record(["role": "dev", "platform": "macos", "approvalKey": "MAC-APPROVAL"])], own: own))
+    XCTAssertNil(
+      channelApprovalToSign(
+        domain: deviceRecordDomain,
+        payloads: [record(["role": "dev", "platform": "macos", "deviceId": own.macId])], own: own))
+  }
+
   func testRelayBindingIsOnlyTheMacsOwnTransportKey() {
     XCTAssertEqual(
       channelApprovalToSign(domain: relayBindingDomain, payloads: ["MAC-TRANSPORT"], own: own)?.reason,

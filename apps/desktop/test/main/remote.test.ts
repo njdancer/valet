@@ -215,6 +215,16 @@ describe('the tray', () => {
     expect(remoteTrayState(status(), false, 0).title).toBe('')
   })
 
+  it('shows DEV beside the icon while developer mode is on', () => {
+    expect(remoteTrayState(status(), false, 0, true)).toMatchObject({
+      title: 'DEV',
+      tooltip: 'Valet in developer mode',
+    })
+    expect(remoteTrayState(status({ enabled: true }), true, 1, true)).toMatchObject({
+      title: '1 · DEMO · DEV · REMOTE',
+    })
+  })
+
   it('offers resuming once paused with a name set up', () => {
     expect(remoteTrayState(status({ hosts: ['mac.ts.net'] }), true)).toEqual({
       title: 'DEMO',

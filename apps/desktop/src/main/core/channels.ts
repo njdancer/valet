@@ -109,6 +109,7 @@ export const INVOKE_METHODS = [
   'app.status',
   'app.setPaused',
   'app.setLockedDown',
+  'app.setDeveloperMode',
   'app.openControlPanel',
   'app.copyText',
   'app.quit',

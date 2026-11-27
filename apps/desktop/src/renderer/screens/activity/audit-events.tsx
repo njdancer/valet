@@ -61,6 +61,7 @@ export const EVENT_WORDS = {
   'agent-change': { label: 'Agent change', tone: 'neutral' },
   'device-paired': { label: 'Phone paired', tone: 'brass' },
   'device-revoked': { label: 'Phone removed', tone: 'neutral' },
+  'developer-mode': { label: 'Developer mode', tone: 'warning' },
   'device-keys-renewed': { label: 'Mac keys renewed', tone: 'neutral' },
   'store-refused': { label: 'Saved approvals refused', tone: 'danger' },
   'draft-created': { label: 'Draft started', tone: 'neutral' },
@@ -137,6 +138,14 @@ const WITHDRAW_WORDS: Readonly<Record<string, string>> = {
 }
 
 /** How an approval request ended, in words. */
+const DEV_MODE_ENDS: Readonly<Record<string, string>> = {
+  on: 'turned on',
+  expired: 'turned off: its 8 hours ended',
+  'turned-off': 'turned off',
+  lockdown: 'turned off by lock down',
+  restart: 'turned off when Valet restarted',
+}
+
 export function approvalAnswerWords(answer: string, reason: string | undefined): string {
   if (answer === 'withdrawn' && reason !== undefined && Object.hasOwn(WITHDRAW_WORDS, reason))
     return WITHDRAW_WORDS[reason] as string
@@ -450,7 +459,12 @@ export function details(event: AuditEvent, now: number): ReactNode {
     case 'approval-requested':
       return <Code>{event.kind}</Code>
     case 'approval-answered':
-      return <Quiet>{approvalAnswerWords(event.answer, event.reason)}</Quiet>
+      return (
+        <Quiet>
+          {approvalAnswerWords(event.answer, event.reason)}
+          {event.by === 'developer-mode' ? ' by developer mode' : ''}
+        </Quiet>
+      )
     case 'agent-change':
       return (
         <>
@@ -469,6 +483,8 @@ export function details(event: AuditEvent, now: number): ReactNode {
       return <Code>{event.deviceId.slice(0, 8)}</Code>
     case 'device-keys-renewed':
       return <Quiet>works while locked</Quiet>
+    case 'developer-mode':
+      return <Quiet>{event.on ? 'turned on for 8 hours' : DEV_MODE_ENDS[event.reason]}</Quiet>
     case 'draft-created':
     case 'draft-submitted':
     case 'draft-deleted':
@@ -640,10 +656,11 @@ export const EVENT_FIELDS = {
   'lock-down': ['type', 'locked', 'revokedClients'],
   'site-paused': ['type', 'adapterId', 'paused'],
   'approval-requested': ['type', 'requestId', 'kind', 'digest', 'clientId'],
-  'approval-answered': ['type', 'requestId', 'answer', 'deviceId', 'reason'],
+  'approval-answered': ['type', 'requestId', 'answer', 'deviceId', 'reason', 'by'],
   'agent-change': ['type', 'clientId', 'action', 'target', 'value'],
   'device-paired': ['type', 'deviceId', 'platform'],
   'device-revoked': ['type', 'deviceId', 'by'],
+  'developer-mode': ['type', 'on', 'until', 'reason'],
   'device-keys-renewed': ['type'],
   'store-refused': ['type', 'store', 'reason', 'records'],
   'draft-created': ['type', 'draftId', 'adapterId', 'clientId'],

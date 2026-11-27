@@ -327,6 +327,19 @@ export type AuditEvent =
       readonly answer: 'approved' | 'declined' | 'expired' | 'withdrawn' | 'refused'
       readonly deviceId: string | null
       readonly reason?: string
+      /** Approved by developer mode's key, not by a person's gesture at the time. */
+      readonly by?: 'developer-mode'
+    }
+  | {
+      /**
+       * Developer mode turned on (with the person's Touch ID) or off, and why it ended. While on,
+       * its approvals are audited as approval-answered with `by: 'developer-mode'`.
+       */
+      readonly type: 'developer-mode'
+      readonly on: boolean
+      /** When it turns itself off, if on. */
+      readonly until: string | null
+      readonly reason: 'on' | 'expired' | 'turned-off' | 'lockdown' | 'restart'
     }
   | {
       /**

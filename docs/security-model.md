@@ -772,6 +772,10 @@ The design is in [agent-run-security.md](agent-run-security.md); its contracts a
 - Guarantees 1 and 2 above stay. Four more join them: nothing widens without a user-presence
   gesture on a paired device; the person approves exactly the request their device rendered; the
   relay is a pipe that can't approve or read the phone channel; a lost phone is recoverable.
+  The one exception, in unpackaged builds only, is [developer mode](approval-broker.md#developer-mode):
+  one Touch ID lets a key in the app's memory approve adapter versions and tools
+  for 8 hours. It never approves a login, a credential, pairing or an irreversible call (Nick,
+  2026-11-27).
 - Every action an agent can take has a tier in one table (`ADMIN_ACTION_TIERS`): reads and
   tightening run, widening waits. No MCP tool can pair a device, answer an approval or read a
   secret.

@@ -31,6 +31,11 @@ export const ledgerSchema = z
     v: z.literal(1),
     /** Phones' records, each signed by the Mac's approval key. The Mac's own isn't stored. */
     devices: z.array(signedTextSchema).max(32),
+    /**
+     * Developer mode's records (dev-mode.ts), one per time it was turned on, apart from phones' so
+     * they never fill the phones' cap. A revoked one goes once no evidence names it.
+     */
+    devDevices: z.array(signedTextSchema).max(1000).optional(),
     revocations: z.array(deviceRevocationSchema).max(256),
     /** Requests as the Mac serialised them, still waiting for an answer. */
     pending: z.array(z.object({ requestText: z.string().max(64 * 1024) }).strict()).max(MAX_PENDING),

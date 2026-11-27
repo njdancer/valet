@@ -26,12 +26,21 @@ export interface RemoteTrayState {
  * needsYou is how many Needs you items wait (missed ones left out): the icon carries the count, so
  * a confirmation or a login waiting is seen without opening anything (IA section 3).
  */
-export function remoteTrayState(status: RemoteStatus, demo: boolean, needsYou = 0): RemoteTrayState {
+export function remoteTrayState(
+  status: RemoteStatus,
+  demo: boolean,
+  needsYou = 0,
+  developerMode = false,
+): RemoteTrayState {
   const on = status.enabled
-  const words = [needsYou > 0 ? String(needsYou) : null, demo ? 'DEMO' : null, on ? 'REMOTE' : null].filter(
-    (w) => w !== null,
-  )
-  const base = demo ? 'Valet (demo)' : 'Valet'
+  // Developer mode approves things by itself, so it shows next to the icon while on.
+  const words = [
+    needsYou > 0 ? String(needsYou) : null,
+    demo ? 'DEMO' : null,
+    developerMode ? 'DEV' : null,
+    on ? 'REMOTE' : null,
+  ].filter((w) => w !== null)
+  const base = `${demo ? 'Valet (demo)' : 'Valet'}${developerMode ? ' in developer mode' : ''}`
   const waiting = needsYou === 0 ? '' : `, ${needsYou} waiting for you`
   const tooltip = !on
     ? `${base}${waiting}`

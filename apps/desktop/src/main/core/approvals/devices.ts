@@ -24,7 +24,11 @@ const MAC_PAIRED_AT = '2026-01-01T00:00:00.000Z'
 
 export class DeviceStore implements DeviceLookup {
   readonly mac: DeviceRecord
-  private cache: { readonly source: LedgerDataRef; readonly phones: Map<string, DeviceRecord> } | null = null
+  private cache: {
+    readonly source: LedgerDataRef
+    readonly dev: LedgerDataRef | undefined
+    readonly records: Map<string, DeviceRecord>
+  } | null = null
 
   constructor(
     private readonly ledger: TrustedLedger,
@@ -51,7 +55,7 @@ export class DeviceStore implements DeviceLookup {
 
   device(deviceId: string): DeviceRecord | null {
     if (deviceId === this.mac.deviceId) return this.mac
-    return this.phones().get(deviceId) ?? null
+    return this.records().get(deviceId) ?? null
   }
 
   revokedAt(deviceId: string): string | null {
@@ -66,7 +70,12 @@ export class DeviceStore implements DeviceLookup {
 
   /** Every phone record that verifies, revoked or not. */
   allPhones(): DeviceRecord[] {
-    return [...this.phones().values()]
+    return [...this.records().values()].filter((d) => d.role === 'phone')
+  }
+
+  /** Developer mode's keys that aren't revoked yet (at most one while it is on). */
+  activeDev(): DeviceRecord[] {
+    return [...this.records().values()].filter((d) => d.role === 'dev' && this.revokedAt(d.deviceId) === null)
   }
 
   /** True if this id is a paired phone that isn't revoked. */
@@ -79,12 +88,25 @@ export class DeviceStore implements DeviceLookup {
    * Adds a phone the Mac has signed the record of (after a `device-pair` approval). Refuses a
    * record that doesn't verify, names another Mac, is for the Mac itself, or was revoked before.
    */
-  async add(signed: SignedText): Promise<DeviceRecord> {
+  async add(signed: SignedText, role: 'phone' | 'dev' = 'phone'): Promise<DeviceRecord> {
     const check = verifyDeviceRecord(signed, this.mac.approvalKey)
-    if (!check.ok || check.record.role !== 'phone') throw new Error('device record refused')
+    if (!check.ok || check.record.role !== role) throw new Error('device record refused')
     const id = check.record.deviceId
     if (this.ledger.data.revocations.some((r) => r.deviceId === id)) throw new Error('device was revoked')
     await this.ledger.commit((draft) => {
+      if (role === 'dev') {
+        // Revoked ones nothing stored names any more go: what they approved was superseded.
+        const named = new Set(draft.evidence.map((e) => decisionDeviceId(e.decision)))
+        const revoked = new Set(draft.revocations.map((r) => r.deviceId))
+        draft.devDevices = [
+          ...(draft.devDevices ?? []).filter((d) => {
+            const old = recordId(d)
+            return old !== id && (old === null || !revoked.has(old) || named.has(old))
+          }),
+          signed,
+        ]
+        return
+      }
       draft.devices = draft.devices.filter((d) => recordId(d) !== id)
       draft.devices.push(signed)
     })
@@ -92,7 +114,7 @@ export class DeviceStore implements DeviceLookup {
     return check.record
   }
 
-  /** Revokes a phone. Never the Mac. Takes effect even if the write fails (it only tightens). */
+  /** Revokes a phone, or developer mode's key. Never the Mac. Takes effect even if the write fails (it only tightens). */
   async revoke(deviceId: string, by: DeviceRevocation['by'], at: string): Promise<boolean> {
     if (!canRevokeDevice(deviceId, this.mac.deviceId)) return false
     if (this.revokedAt(deviceId) !== null) return true
@@ -105,22 +127,32 @@ export class DeviceStore implements DeviceLookup {
     return true
   }
 
-  private phones(): Map<string, DeviceRecord> {
+  /** Phones' and developer mode's records that verify against the Mac's key now. */
+  private records(): Map<string, DeviceRecord> {
     const source = this.ledger.data.devices
-    if (this.cache !== null && this.cache.source === source) return this.cache.phones
-    const phones = new Map<string, DeviceRecord>()
-    for (const signed of source) {
+    const dev = this.ledger.data.devDevices
+    if (this.cache !== null && this.cache.source === source && this.cache.dev === dev)
+      return this.cache.records
+    const records = new Map<string, DeviceRecord>()
+    const take = (signed: SignedText, role: 'phone' | 'dev') => {
       const check = verifyDeviceRecord(signed, this.mac.approvalKey)
-      if (check.ok && check.record.role === 'phone' && check.record.macId === this.mac.deviceId) {
-        phones.set(check.record.deviceId, check.record)
+      if (check.ok && check.record.role === role && check.record.macId === this.mac.deviceId) {
+        records.set(check.record.deviceId, check.record)
       }
     }
-    this.cache = { source, phones }
-    return phones
+    for (const signed of source) take(signed, 'phone')
+    for (const signed of dev ?? []) take(signed, 'dev')
+    this.cache = { source, dev, records }
+    return records
   }
 }
 
 type LedgerDataRef = readonly SignedText[]
+
+/** The device id a stored decision names, or null. */
+function decisionDeviceId(decision: SignedText): string | null {
+  return recordId(decision)
+}
 
 function recordId(signed: SignedText): string | null {
   try {
