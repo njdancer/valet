@@ -64,6 +64,10 @@ sign-in with tools alone (src/main/core/login-session.ts). It takes four tools:
   login starts from the auth partition as it was left, as any login does.
 - **The person's call.** Today a login session opens only while developer mode is on, one per
   adapter, never beside a login window handed to the person, for 30 minutes at most.
+- **The proof of a fix.** Steps that sign in go into a draft's `auth.steps`; `valet_live_trial`
+  with `login: true` then runs them once more from signed out, in a login session of a trial's own
+  new browser, and check step 6b needs that before the draft can be submitted
+  ([authoring-tools.md](authoring-tools.md#repairing-an-installed-adapter)).
 
 ## Tools
 

@@ -31,6 +31,7 @@ import type { LoginStepContext } from '@valet/runtime'
 import { BrowserRefusal, type LoginStepsOutcome, type SessionBrowser } from './agent-browser'
 import type { LoginSecretsRun } from './blocked'
 import type { Credentials } from './credentials'
+import type { LoginTrialResult } from './drafts/authoring'
 import { authProbe, isBlockedPage } from './login'
 import { cleanStallSnapshot, stallUrl } from './login-stall'
 
@@ -119,13 +120,18 @@ export class LoginSession implements SessionBrowser {
   }
 
   async loginSteps(steps: readonly AuthStep[]): Promise<{ page: AriaPage; outcome: LoginStepsOutcome }> {
+    const outcome = await this.runSteps(steps)
+    return { page: await this.ariaSnapshot(), outcome }
+  }
+
+  /**
+   * One batch of steps, as loginSteps runs it, without reading the page after. A login trial gives
+   * its steps a real login's time (`timeoutMs`); an agent's batches get LOGIN_BATCH_MS.
+   */
+  async runSteps(steps: readonly AuthStep[], timeoutMs: number = LOGIN_BATCH_MS): Promise<LoginStepsOutcome> {
     this.open()
-    if (!selectorsAllowed(steps))
-      throw new BrowserRefusal(
-        'A login session’s selectors can’t test a field’s value or what an element contains (value, :has). Pick the element by its name, type, id or test id.',
-      )
-    const outcome = await this.batch(steps)
-    return { page: await this.ariaSnapshot(), outcome: outcomeView(outcome) }
+    if (!selectorsAllowed(steps)) throw new BrowserRefusal(PROBING_REFUSAL)
+    return outcomeView(await this.batch(steps, timeoutMs))
   }
 
   async go(url: string): Promise<AriaPage> {
@@ -266,12 +272,15 @@ export class LoginSession implements SessionBrowser {
     }
   }
 
-  private async batch(steps: readonly AuthStep[]): Promise<WorkbenchOutcome> {
+  private async batch(
+    steps: readonly AuthStep[],
+    timeoutMs: number = LOGIN_BATCH_MS,
+  ): Promise<WorkbenchOutcome> {
     try {
       return await this.deps.loginStep(async (ctx) => {
         const outcome = await this.workbench.run({
           steps,
-          timeoutMs: LOGIN_BATCH_MS,
+          timeoutMs,
           signal: ctx.signal,
           paceNavigation: () => ctx.pace(),
         })
@@ -282,11 +291,56 @@ export class LoginSession implements SessionBrowser {
       if (error instanceof ValetError) {
         if (error.errorClass === 'rate-limited' || error.errorClass === 'blocked-by-site')
           throw new BrowserRefusal('The site refused Valet recently, so it is cooling down. Try again later.')
+        if (error.errorClass === 'timed-out')
+          throw new BrowserRefusal('The steps ran out of time, or waited too long to start.')
         throw new BrowserRefusal(`The steps didn’t start (${error.stage}: ${error.errorClass}).`)
       }
       throw new BrowserRefusal('The steps didn’t start.')
     }
   }
+}
+
+/**
+ * A draft's login trial on a login session that has run nothing yet (docs/authoring-tools.md,
+ * "Repairing an installed adapter"): assertLoggedIn alone, which must find the session signed out,
+ * then the draft's steps, then assertLoggedIn again. A refusal (BrowserRefusal) passes through.
+ */
+export async function runLoginTrial(
+  session: Pick<LoginSession, 'runSteps'>,
+  steps: readonly AuthStep[],
+  /** The steps' own batch: a real login's time, since they are the whole login. */
+  timeoutMs: number,
+): Promise<LoginTrialResult> {
+  const batch = (these: readonly AuthStep[], ms = LOGIN_BATCH_MS) => session.runSteps(these, ms)
+  // Once the steps have started, a refusal (the runtime's time-out, the breaker) is how the trial
+  // ended, to be kept on the draft: the steps may have typed the person's login by then.
+  const stopped = (at: 'before' | 'steps' | 'after', o: LoginStepsOutcome): LoginTrialResult => ({
+    kind: 'stopped',
+    at,
+    status: o.status === 'ok' ? 'failed' : o.status,
+    reason: o.reason,
+    stage: o.stage,
+    errorClass: o.errorClass,
+  })
+  // Refused before anything runs, so it is a refusal and not how a trial ended.
+  if (!selectorsAllowed(steps)) throw new BrowserRefusal(PROBING_REFUSAL)
+  const before = await batch([{ op: 'assertLoggedIn' }])
+  if (before.status === 'ok') return { kind: 'signed-in-before' }
+  if (!(before.status === 'failed' && before.errorClass === 'not-logged-in')) return stopped('before', before)
+  const settle = async (at: 'steps' | 'after', run: () => Promise<LoginStepsOutcome>) => {
+    try {
+      return await run()
+    } catch (error) {
+      if (error instanceof BrowserRefusal) return { kind: 'refused' as const, at, words: error.detail }
+      throw error
+    }
+  }
+  const ran = await settle('steps', () => batch(steps, timeoutMs))
+  if ('kind' in ran) return ran
+  if (ran.status !== 'ok') return stopped('steps', ran)
+  const after = await settle('after', () => batch([{ op: 'assertLoggedIn' }]))
+  if ('kind' in after) return after
+  return after.status === 'ok' ? { kind: 'signed-in' } : stopped('after', after)
 }
 
 /**
@@ -296,6 +350,8 @@ export class LoginSession implements SessionBrowser {
  * may use them; an agent's unreviewed steps may not.
  */
 const PROBING_SELECTOR = /value|:has\(/i
+const PROBING_REFUSAL =
+  'A login session’s selectors can’t test a field’s value or what an element contains (value, :has). Pick the element by its name, type, id or test id.'
 
 function selectorsAllowed(steps: readonly AuthStep[]): boolean {
   const condition = (c: Condition): boolean => {

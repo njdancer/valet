@@ -426,6 +426,22 @@ login credential it declares, its session cookies) and one read tool that shows 
 such as the account's name. Submit it; once the person approves it and its login, Valet signs in
 itself, so you can start a draft from "installed" and ask for the signed-in browser.
 
+## Fixing an installed adapter
+
+Start a draft from "installed" and change only what's broken. valet_check_draft asks for proof of
+what you changed and nothing else: a tool whose code and declaration are as installed (every file
+outside test/ the same, and the manifest the same apart from version, description and auth.steps)
+runs as the version the person approved, so it needs no new case; \`unchangedTools\` lists those.
+Change any shared file and every tool needs its cases again.
+
+A broken login: work out the steps in a login session (browser_session_create with \`login\`, then
+browser_login_steps), write them into manifest.json's auth.steps, raise the version, then
+valet_live_trial with \`login: true\` and no tool. Valet opens a new login session, checks the site
+is signed out, runs the draft's steps as a real login would, and checks it's signed in after. A
+trial that signed in lets the changed steps pass the check and shows on the person's card; keep
+home, navigation, egress, secrets, session and auth.frameOrigins as installed. Login sessions need
+developer mode on: if a trial says so, ask the person to turn it on.
+
 ## When something's wrong
 
 You are one of Valet's testers. If Valet gives you valet_send_feedback (not every build lists it),

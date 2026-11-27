@@ -510,6 +510,86 @@ describe('developer mode (docs/approval-broker.md#developer-mode)', () => {
     expect(await s.api.app.setDeveloperMode(true)).toBe(false)
     expect(s.presence.prompts).toEqual([])
   })
+  it('tries a draft’s login steps in a trial’s own new browser, only while it is on', async () => {
+    // The trial's auth page: signed out until the steps go to the login page.
+    class SigningIn extends FakeAuthPage {
+      override async goto(url: string): Promise<void> {
+        await super.goto(url)
+        this.cookies = ['sid']
+      }
+    }
+    const pages: SigningIn[] = []
+    const labels: string[] = []
+    let driversClosed = 0
+    const trialDriver: NonNullable<ServiceDeps['trialDriver']> = async (manifest, label) => {
+      labels.push(`${manifest.id}:${label}`)
+      return {
+        openAuthPage: async () => {
+          const page = new SigningIn()
+          pages.push(page)
+          return page
+        },
+        close: async () => {
+          driversClosed++
+        },
+      } as unknown as SessionDriver
+    }
+    const s = await setup({
+      developerMode: true,
+      trialDriver,
+      // The agents' browser, so browser_login_steps is a tool an agent can hold.
+      sessionBrowser: async () => {
+        throw new Error('no session is opened here')
+      },
+    })
+    let viewer: { origin: 'local' | 'remote'; clientId: string } = { origin: 'remote', clientId: 'nobody' }
+    const trial = (steps: readonly unknown[]) =>
+      (
+        s.service as unknown as {
+          loginTrial(request: {
+            viewer: { origin: 'local' | 'remote'; clientId: string }
+            adapterId: string
+            draftId: string
+            label: string
+            steps: readonly unknown[]
+            clientName: string
+          }): Promise<unknown>
+        }
+      ).loginTrial({
+        viewer,
+        adapterId: 'shop',
+        draftId: 'dr-aaaaaaaaaa',
+        label: 'dr-aaaaaaaaaa-1',
+        steps,
+        clientName: 'Claude Code',
+      })
+    const steps = [{ op: 'goto', url: 'https://login.shop.test/login' }, { op: 'assertLoggedIn' }]
+    await expect(trial(steps)).rejects.toThrow(
+      /Not tried: Login sessions open only while developer mode is on/,
+    )
+    expect(labels).toEqual([])
+    await s.api.app.setDeveloperMode(true)
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    // A cloud agent without browser_login_steps may not have it done for them by a trial.
+    await expect(trial(steps)).rejects.toThrow(/needs the browser tool browser_login_steps/)
+    expect(labels).toEqual([])
+    viewer = { origin: 'local', clientId: (await s.api.clients.add('Claude Code')).id }
+    expect(await trial(steps)).toEqual({ kind: 'signed-in' })
+    expect(labels).toEqual(['shop:dr-aaaaaaaaaa-1'])
+    expect(pages[0]?.gone).toEqual(['https://login.shop.test/login'])
+    expect(pages[0]?.closed).toBe(true)
+    expect(driversClosed).toBe(1)
+    // Steps that never sign in: stopped after them, and everything closed again.
+    expect(await trial([{ op: 'pause', ms: 10 }])).toMatchObject({
+      kind: 'stopped',
+      at: 'after',
+      errorClass: 'not-logged-in',
+    })
+    expect(driversClosed).toBe(2)
+    // A selector that could read back what was typed is refused, as in any login session.
+    await expect(trial([{ op: 'click', selector: 'input[value^="a"]' }])).rejects.toThrow(/Not tried:/)
+    expect(driversClosed).toBe(3)
+  })
 })
 
 describe('signed installs (docs/approval-broker.md)', () => {
