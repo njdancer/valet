@@ -795,6 +795,30 @@ export interface RunTrace {
   /** What the client received, after redaction; null unless the outcome is ok. */
   readonly output: readonly PreviewPart[] | null
   readonly outputBytes: number | null
+  /** Where the login this call started stopped short, while Valet still remembers the call. */
+  readonly loginStall: LoginStall | null
+}
+
+export type LoginStallOutcome = 'needsUser' | 'failed' | 'blocked'
+
+/**
+ * The page a login ended on when it didn't log in (main/core/login-stall.ts). The site's text,
+ * with field values dropped and lines holding a login secret replaced.
+ */
+export interface LoginStall {
+  readonly at: string
+  readonly outcome: LoginStallOutcome
+  /** The needsUser reason, or stage/errorClass. */
+  readonly reason: string
+  /** Null when the page couldn't be read (it had closed, or escaped the login's origins). */
+  readonly page: {
+    /** Origin and path only. */
+    readonly url: string
+    readonly title: string
+    /** Playwright's accessibility snapshot YAML, as the agents' browser shows pages. */
+    readonly snapshot: string
+    readonly cut: boolean
+  } | null
 }
 
 export interface RunStats {
@@ -1174,6 +1198,8 @@ export interface AgentRequestItem {
     | 'private-network'
     | 'tool-enable'
     | 'secret-grant'
+    /** An agent asks for Read or Edit on a Mail account, calendar or list of its own (docs/access.md). */
+    | 'agent-access'
     /** An agent asks to remove a site. Not signed: it only narrows, so Approve needs no Touch ID. */
     | 'uninstall'
     /**

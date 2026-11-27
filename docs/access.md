@@ -31,6 +31,20 @@ was signed. The Save writes the rest of the change, which only narrows.
 and removing whole calendars, site tools, See Valet and Ask for changes). Nothing asks for them
 yet, and the handler refuses a subject that names any.
 
+## Agents ask, with a reason
+
+An agent asks for more with `valet_request_access`: Read or Edit on one account, calendar or list,
+named by its id or by its exact name (any case), and always with its reason. The person gets an
+`agent-access` request for that agent alone, on the Mac's Needs you and the phone, with the
+agent's reason under "The agent says". Every item with that name is on the one request, so an
+agent never needs an id it can't see. Approved, the agent has it, and its tool list refreshes. An
+agent already at that level is told nothing changed, and an item that isn't on the Mac (or Edit on
+one that can't change) is refused without asking.
+
+Valet never asks on an agent's behalf. A refused call names the request to make instead: a change
+to a list the agent may only read says to ask for Edit, and the listing tools say to ask for an
+account, calendar or list the person names that isn't there.
+
 ## Which tools an agent holds
 
 Mail, Calendar and Reminders list every tool while the app is on. Which of them an agent holds

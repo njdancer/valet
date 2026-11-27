@@ -23,6 +23,7 @@ import {
   SessionTracker,
   steppedProbe,
 } from '../../src/main/core/login'
+import type { LoginStall } from '../../src/shared/api'
 import { FakeAuthPage, FakeDriver, ManualTimers, SHOP } from './fixtures'
 import { testCredentials } from './test-credentials'
 
@@ -216,7 +217,9 @@ describe('createAuthRunner', () => {
       adapter: () => ({ manifest, sessionValues: async () => [] }),
       now: () => NOW,
     })
+    const stalls: { callId: string; stall: LoginStall }[] = []
     const run = createAuthRunner({
+      onStall: (callId, stall) => stalls.push({ callId, stall }),
       grants: { find: async () => null, list: async () => [], put: async () => {}, revoke: async () => {} },
       credentials: testCredentials(disabledOtpReader),
       audit: log.sink,
@@ -258,6 +261,8 @@ describe('createAuthRunner', () => {
       blocked,
       paced,
       refused,
+      stalls,
+      secrets,
     }
   }
 
@@ -360,6 +365,79 @@ describe('createAuthRunner', () => {
     // One wait before the goto (the page was still blank), none for a cookie probe, which asks the
     // browser rather than the site.
     expect(r.paced).toEqual(['about:blank'])
+  })
+
+  it('keeps the page a needsUser login stopped on for the call, cleaned', async () => {
+    const page = new FakeAuthPage()
+    page.view = {
+      url: 'https://login.shop.test/u/mfa-sms-enrollment?state=s3cr3t#x',
+      title: '  Add a phone  ',
+      snapshot: [
+        '- heading "Secure your account" [level=1]',
+        '- textbox "Phone number" [ref=e4]: 0400 000 000',
+        '- button "Continue" [ref=e5]',
+      ].join('\n'),
+    }
+    const r = runner([{ op: 'needsUser', reason: 'site-changed', note: 'app only' }], page)
+    await r.run()
+    expect(r.stalls).toEqual([
+      {
+        callId: 'call1',
+        stall: {
+          at: new Date(NOW).toISOString(),
+          outcome: 'needsUser',
+          reason: 'site-changed',
+          page: {
+            url: 'https://login.shop.test/u/mfa-sms-enrollment',
+            title: 'Add a phone',
+            snapshot: [
+              '- heading "Secure your account" [level=1]',
+              '- textbox "Phone number" [ref=e4]',
+              '- button "Continue" [ref=e5]',
+            ].join('\n'),
+            cut: false,
+          },
+        },
+      },
+    ])
+    expect(JSON.stringify(r.stalls)).not.toContain('app only')
+  })
+
+  it('keeps a failed or blocked login’s page with its codes, but not one the call gave up on', async () => {
+    const failed = runner([{ op: 'fail', errorClass: 'auth-failed' }])
+    await failed.run()
+    expect(failed.stalls[0]?.stall).toMatchObject({
+      outcome: 'failed',
+      reason: 'auth-step/auth-failed',
+      page: null,
+    })
+    const blocked = runner([{ op: 'fail', errorClass: 'blocked-by-site' }])
+    await blocked.run()
+    expect(blocked.stalls[0]?.stall).toMatchObject({
+      outcome: 'blocked',
+      reason: 'auth-step/blocked-by-site',
+    })
+    const ok = runner([{ op: 'assertLoggedIn' }])
+    ok.page.cookies = ['sid']
+    await ok.run()
+    expect(ok.stalls).toEqual([])
+    expect(ok.page.described).toBe(0)
+    const gaveUp = runner([{ op: 'pause', ms: 1_000 }])
+    const controller = new AbortController()
+    controller.abort()
+    await gaveUp.run(controller.signal)
+    expect(gaveUp.stalls).toEqual([])
+    expect(gaveUp.page.described).toBe(0)
+  })
+
+  it('still reports the login’s outcome when reading its page fails', async () => {
+    const page = new FakeAuthPage()
+    page.describe = async () => {
+      throw new Error('gone')
+    }
+    const r = runner([{ op: 'needsUser', reason: 'captcha' }], page)
+    expect(await r.run()).toEqual({ status: 'needsUser', reason: 'captcha' })
+    expect(r.stalls).toEqual([])
   })
 
   it('stops the login when the call gives up, and says no attempt was started', async () => {

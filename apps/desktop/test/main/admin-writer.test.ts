@@ -155,10 +155,25 @@ function setup(overrides: Partial<WriterSource> = {}) {
         },
       }
     },
+    itemRequest: async (viewer, app, item, level) => {
+      if (app !== 'calendar' || item !== 'Work') return { ok: false, reason: 'not-found' }
+      if (level === 'read') return { ok: false, reason: 'already', title: 'read a calendar “Work”' }
+      return {
+        ok: true,
+        title: 'Edit a calendar: Work',
+        subject: {
+          clientId: `${viewer.origin}:${viewer.clientId}`,
+          items: [{ app, id: 'cal-work', label: 'Work', level }],
+          full: [],
+          tools: [],
+          capabilities: [],
+        },
+      }
+    },
     broker: () => broker,
     requestRemoval: async () => 'not-found',
     requestCredential: async () => 'not-found',
-    wiredKinds: () => new Set<ApprovalKind>(['setting', 'tool-enable']),
+    wiredKinds: () => new Set<ApprovalKind>(['setting', 'tool-enable', 'agent-access']),
     phonePaired: () => false,
     settings: () => values as unknown as AgentSettingValues,
     // As approvals/subjects.ts classifies them (R6): turning on Messages or remote access, turning
@@ -389,7 +404,11 @@ describe('AdminWriterImpl', () => {
 
   it('asks for a tool for an approved cloud agent, as a tool-enable request for that agent', async () => {
     const { writer, broker } = setup()
-    const asked = await writer.requestTool(AGENT, 'yahoo-finance', 'search_symbols', 'I built it')
+    const asked = await writer.requestAccess(
+      AGENT,
+      { kind: 'tool', adapterId: 'yahoo-finance', tool: 'search_symbols' },
+      'I built it',
+    )
     expect(asked.kind).toBe('asked')
     expect(broker.requests).toEqual([
       expect.objectContaining({
@@ -403,19 +422,71 @@ describe('AdminWriterImpl', () => {
       }),
     ])
     if (asked.kind === 'asked') expect(asked.request.title).toBe('Turn on a tool: Search symbols')
-    expect(await writer.requestTool(AGENT, 'yahoo-finance', 'get_quote', null)).toEqual({
+    expect(
+      await writer.requestAccess(AGENT, { kind: 'tool', adapterId: 'yahoo-finance', tool: 'get_quote' }, 'x'),
+    ).toEqual({
       kind: 'unchanged',
       current: 'you can already use "Get a quote"',
     })
-    expect(await writer.requestTool(AGENT, 'woolworths', 'checkout', null)).toEqual({
+    expect(
+      await writer.requestAccess(AGENT, { kind: 'tool', adapterId: 'woolworths', tool: 'checkout' }, 'x'),
+    ).toEqual({
       kind: 'refused',
       reason: 'not-found',
     })
   })
 
+  it('asks for an app item for any agent, as an agent-access request with its reason', async () => {
+    const { writer, broker } = setup()
+    for (const viewer of [ME, AGENT]) {
+      const asked = await writer.requestAccess(
+        viewer,
+        { kind: 'item', app: 'calendar', item: 'Work', level: 'edit' },
+        'To add the dentist',
+      )
+      expect(asked.kind).toBe('asked')
+      if (asked.kind === 'asked') expect(asked.request.title).toBe('Edit a calendar: Work')
+    }
+    expect(broker.requests).toEqual([
+      expect.objectContaining({
+        kind: 'agent-access',
+        subject: expect.objectContaining({ clientId: 'local:c_me' }),
+        requester: { kind: 'agent', clientId: 'local:c_me', clientName: 'Claude Code' },
+      }),
+      expect.objectContaining({
+        kind: 'agent-access',
+        subject: expect.objectContaining({ clientId: 'remote:rcagent' }),
+      }),
+    ])
+    expect(
+      await writer.requestAccess(ME, { kind: 'item', app: 'calendar', item: 'Work', level: 'read' }, 'x'),
+    ).toEqual({ kind: 'unchanged', current: 'you can already read a calendar “Work”' })
+    expect(
+      await writer.requestAccess(ME, { kind: 'item', app: 'mail', item: 'Work', level: 'read' }, 'x'),
+    ).toEqual({ kind: 'refused', reason: 'not-found' })
+    const failing = setup({
+      itemRequest: async () => {
+        throw new Error('store')
+      },
+    })
+    expect(
+      await failing.writer.requestAccess(
+        ME,
+        { kind: 'item', app: 'calendar', item: 'Work', level: 'edit' },
+        'x',
+      ),
+    ).toEqual({ kind: 'refused', reason: 'unavailable' })
+  })
+
   it('never asks for a tool for an app on this Mac, nor turns a cloud agent’s granted tool off', async () => {
     const { writer, broker } = setup()
-    expect(await writer.requestTool(ME, 'yahoo-finance', 'search_symbols', null)).toEqual({
+    expect(
+      await writer.requestAccess(
+        ME,
+        { kind: 'tool', adapterId: 'yahoo-finance', tool: 'search_symbols' },
+        'x',
+      ),
+    ).toEqual({
       kind: 'refused',
       reason: 'not-needed',
     })

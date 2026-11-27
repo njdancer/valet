@@ -114,6 +114,17 @@ export interface ChangeView {
   readonly mine: boolean
 }
 
+/** What an agent asks for with valet_request_access. */
+export type AccessAsk =
+  | {
+      readonly kind: 'item'
+      readonly app: 'mail' | 'calendar' | 'reminders'
+      /** The item's id, or its exact name (any case). */
+      readonly item: string
+      readonly level: 'read' | 'edit'
+    }
+  | { readonly kind: 'tool'; readonly adapterId: string; readonly tool: string }
+
 /**
  * What the write tools need from the app. Every method takes the session's client, which the
  * credential named; the app checks it may act for that client, counts it against the limits, and
@@ -139,16 +150,13 @@ export interface AdminWriter {
     note: string | null,
   ): Promise<WriteOutcome>
   /**
-   * Asks the person to let this cloud agent use one of an approved adapter's tools, such as one it
-   * just built (a `tool-enable` request for this client). Always a request; never for an app on
-   * this Mac, whose tools are on unless the person turned one off.
+   * Asks the person for more access, always with the agent's reason (docs/access.md): Read or
+   * Edit on one Mail account, calendar or reminder list, named by its id or its exact name; or,
+   * for a cloud agent, one tool of an approved adapter, such as one it just built (a `tool-enable`
+   * request for this client). Always a request, never a change. An app on this Mac is told a site
+   * tool isn't needed, as its site tools are on unless the person turned one off.
    */
-  requestTool(
-    viewer: ClientIdentity,
-    adapterId: string,
-    tool: string,
-    note: string | null,
-  ): Promise<WriteOutcome>
+  requestAccess(viewer: ClientIdentity, ask: AccessAsk, reason: string): Promise<WriteOutcome>
   /**
    * This agent's own browser sessions' network (docs/agent-browser.md, "Network"): the home network
    * on or off, or the interface they leave from (null: the Mac's routing). Narrowing is done at
@@ -402,16 +410,48 @@ export const writeInputs = {
       ),
     note: noteInput,
   }),
-  requestTool: z.object({
+  requestAccess: z.object({
+    reason: z
+      .string()
+      .trim()
+      .min(1)
+      .max(280)
+      .describe(
+        'Why you need it, in at most 280 characters, e.g. what the person asked you to do. The person ' +
+          'sees it quoted under "The agent says".',
+      ),
+    app: z
+      .enum(['mail', 'calendar', 'reminders'])
+      .optional()
+      .describe('For a Mail account, calendar or reminder list: which app. Give item and level with it.'),
+    item: z
+      .string()
+      .trim()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe(
+        'The account, calendar or list: its id from a result you already have, or its exact name as ' +
+          'the person calls it (e.g. "Work"). One you can’t see yet may still be on the Mac.',
+      ),
+    level: z
+      .enum(['read', 'edit'])
+      .optional()
+      .describe(
+        'read: search and read it. edit: read, plus changing it (Mail: drafts, moves and marks, never ' +
+          'sending; Calendar: adding, changing and deleting events; Reminders: adding, changing and ' +
+          'completing).',
+      ),
     adapterId: z
       .string()
       .regex(ADAPTER_ID)
-      .describe('The site’s adapter id, as valet_list_adapters gives it.'),
+      .optional()
+      .describe('For a site tool (cloud agents only): the site’s adapter id. Give tool with it.'),
     tool: z
       .string()
       .regex(TOOL_NAME)
+      .optional()
       .describe('The tool’s name within the adapter, as valet_get_adapter lists it.'),
-    note: noteInput,
   }),
   turnOffTool: z.object({
     adapterId: z.string().regex(ADAPTER_ID).describe('The site’s adapter id.'),
@@ -475,6 +515,10 @@ export interface WriteArgs {
   readonly approval?: unknown
   readonly credential?: unknown
   readonly limit?: unknown
+  readonly reason?: unknown
+  readonly app?: unknown
+  readonly item?: unknown
+  readonly level?: unknown
 }
 
 /** What a write tool returns before the shared gate words it. */
@@ -598,20 +642,41 @@ export const WRITE_TOOLS: readonly WriteTool[] = [
     }),
   },
   {
-    name: 'valet_request_tool',
-    title: 'Ask to use a site tool',
+    name: 'valet_request_access',
+    title: 'Ask for more access',
     description:
-      'For a cloud agent: asks the person to let you call one tool of an approved site, such as ' +
-      'one you built and they approved. The person answers on their phone or Mac; nothing changes ' +
-      'until they approve it. Apps on this Mac don’t need this: their tools are on unless the ' +
-      'person turned one off.',
-    input: writeInputs.requestTool,
+      'Asks the person for access you don’t have, with your reason: Read or Edit on one Mail ' +
+      'account, calendar or reminder list (app, item, level), or, for a cloud agent, one tool of an ' +
+      'approved site (adapterId, tool), such as one you built. Use it when the person asks for ' +
+      'something you can’t reach, or a call says you may only read. The person answers on their ' +
+      'phone or Mac; nothing changes until they approve it, and Valet never asks for you.',
+    input: writeInputs.requestAccess,
     needs: 'ask',
     annotations: CHANGE,
-    run: async (writer, args, viewer) => ({
-      kind: 'outcome',
-      outcome: await writer.requestTool(viewer, str(args.adapterId), str(args.tool), note(args)),
-    }),
+    run: async (writer, args, viewer) => {
+      const reason = str(args.reason).trim()
+      const item = typeof args.item === 'string' ? args.item.trim() : ''
+      const forItem = args.app !== undefined || item.length > 0 || args.level !== undefined
+      const forTool = args.adapterId !== undefined || args.tool !== undefined
+      // Exactly one thing, whole: an app item with its level, or a site's tool.
+      let ask: AccessAsk | null = null
+      if (forItem && !forTool) {
+        const app = args.app
+        const level = args.level
+        if ((app === 'mail' || app === 'calendar' || app === 'reminders') && item.length > 0)
+          if (level === 'read' || level === 'edit') ask = { kind: 'item', app, item, level }
+      } else if (forTool && !forItem && typeof args.adapterId === 'string' && typeof args.tool === 'string')
+        ask = { kind: 'tool', adapterId: args.adapterId, tool: args.tool }
+      if (ask === null || reason.length === 0)
+        return {
+          kind: 'text',
+          text:
+            'Not asked: give a reason and either app, item and level (a Mail account, calendar or ' +
+            'reminder list) or adapterId and tool (a site tool), not both.',
+          isError: true,
+        }
+      return { kind: 'outcome', outcome: await writer.requestAccess(viewer, ask, reason) }
+    },
   },
   {
     name: 'valet_turn_off_tool',

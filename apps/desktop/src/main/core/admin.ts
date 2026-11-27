@@ -251,6 +251,7 @@ export function adminReader(source: AdminSource): AdminReader {
           // Visible only as the app's own call, or with All agents' activity.
           input: previewText(trace.input),
           steps: trace.steps.map(stepEntry),
+          loginStall: trace.loginStall,
         },
         matches: [],
         otherAgent: false,

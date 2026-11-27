@@ -51,7 +51,7 @@ function writer(overrides: Partial<AdminWriter> = {}): AdminWriter & { calls: Ca
     calls,
     setSetting: log<WriteOutcome>('setSetting', { kind: 'done', what: 'Notifications set to on' }),
     requestSetting: log<WriteOutcome>('requestSetting', { kind: 'asked', request: WAITING, reused: false }),
-    requestTool: log<WriteOutcome>('requestTool', { kind: 'asked', request: WAITING, reused: false }),
+    requestAccess: log<WriteOutcome>('requestAccess', { kind: 'asked', request: WAITING, reused: false }),
     turnOffTool: log<WriteOutcome>('turnOffTool', { kind: 'done', what: 'x' }),
     setBrowserNetwork: log<WriteOutcome>('setBrowserNetwork', {
       kind: 'asked',
@@ -206,26 +206,61 @@ describe('write tools', () => {
     const w = writer()
     const agent: ClientIdentity = { origin: 'remote', clientId: 'rcagent' }
     const result = await runWriteTool(
-      tool('valet_request_tool'),
+      tool('valet_request_access'),
       reader(w),
-      { adapterId: 'yahoo-finance', tool: 'get_quote', note: 'I built it' },
+      { adapterId: 'yahoo-finance', tool: 'get_quote', reason: ' I built it ' },
       agent,
       WORDING,
     )
     expect(w.calls).toEqual([
-      { name: 'requestTool', args: [agent, 'yahoo-finance', 'get_quote', 'I built it'] },
+      {
+        name: 'requestAccess',
+        args: [agent, { kind: 'tool', adapterId: 'yahoo-finance', tool: 'get_quote' }, 'I built it'],
+      },
     ])
     expect(text(result)).toContain('Waiting for the person in Valet')
     const without = await runWriteTool(
-      tool('valet_request_tool'),
+      tool('valet_request_access'),
       reader(writer(), {
         access: () => ({ seeValet: true, allActivity: false, askForChanges: false, name: 'claude.ai' }),
       }),
-      { adapterId: 'yahoo-finance', tool: 'get_quote' },
+      { adapterId: 'yahoo-finance', tool: 'get_quote', reason: 'I built it' },
       agent,
       WORDING,
     )
     expect(text(without)).toBe(askNotAllowedResult('claude.ai'))
+  })
+
+  it('pass a request for an app item, and ask for one whole thing with a reason', async () => {
+    const w = writer()
+    const result = await runWriteTool(
+      tool('valet_request_access'),
+      reader(w),
+      { app: 'calendar', item: ' Work ', level: 'edit', reason: 'To add the dentist' },
+      LOCAL,
+      WORDING,
+    )
+    expect(w.calls).toEqual([
+      {
+        name: 'requestAccess',
+        args: [LOCAL, { kind: 'item', app: 'calendar', item: 'Work', level: 'edit' }, 'To add the dentist'],
+      },
+    ])
+    expect(text(result)).toContain('Waiting for the person in Valet')
+    for (const args of [
+      { app: 'calendar', item: 'Work', reason: 'no level' },
+      { app: 'calendar', level: 'read', reason: 'no item' },
+      { item: 'Work', level: 'read', reason: 'no app' },
+      { app: 'calendar', item: 'Work', level: 'read', adapterId: 'yahoo-finance', tool: 'x', reason: 'both' },
+      { adapterId: 'yahoo-finance', reason: 'no tool' },
+      { reason: 'nothing' },
+      { app: 'calendar', item: 'Work', level: 'read', reason: '   ' },
+    ]) {
+      const none = writer()
+      const refused = await runWriteTool(tool('valet_request_access'), reader(none), args, LOCAL, WORDING)
+      expect(refused.isError, JSON.stringify(args)).toBe(true)
+      expect(none.calls).toEqual([])
+    }
   })
 
   it('need See Valet for the changes list', async () => {

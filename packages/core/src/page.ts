@@ -60,9 +60,23 @@ export interface AuthPage {
   fetch(url: string): Promise<FetchResult>
   /** Names (not values) of the auth partition's cookies on `cookieDomains`, for cookie probes. */
   cookieNames(cookieDomains: readonly string[]): Promise<readonly string[]>
+  /**
+   * What the main frame shows now, for the call trace when a login stops short: its URL, title and
+   * accessibility snapshot. Read only, by Valet's own script; null when the page can't be read.
+   * The caller strips field values and redacts secrets before anyone sees it.
+   */
+  describe?(): Promise<AuthPageView | null>
   /** Shows the window to the person and resolves when they close it. */
   handToUser(reason: NeedsUserReason): Promise<void>
   close(): Promise<void>
+}
+
+/** An auth page as AuthPage.describe() saw it. Everything here is the site's text. */
+export interface AuthPageView {
+  readonly url: string
+  readonly title: string
+  /** Playwright's accessibility snapshot YAML. */
+  readonly snapshot: string
 }
 
 export interface FetchInit {

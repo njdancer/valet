@@ -230,7 +230,8 @@ const CALENDAR_DECLARATIONS: Readonly<Record<CalendarToolName, Omit<ToolDeclarat
   calendars: {
     title: 'Calendars',
     description:
-      'The calendars on this Mac the person lets you see, with their ids and whether you may add to them.',
+      'The calendars on this Mac the person lets you see, with their ids and whether you may add to them. ' +
+      'If the person names one that isn’t here, ask for it with valet_request_access.',
     sideEffect: 'read',
   },
   events: {
@@ -346,7 +347,8 @@ const REMINDER_DECLARATIONS: Readonly<Record<ReminderToolName, Omit<ToolDeclarat
   lists: {
     title: 'Reminder lists',
     description:
-      'The reminder lists on this Mac the person lets you see, with their ids and whether you may add to them.',
+      'The reminder lists on this Mac the person lets you see, with their ids and whether you may add to them. ' +
+      'If the person names one that isn’t here, ask for it with valet_request_access.',
     sideEffect: 'read',
   },
   search: {

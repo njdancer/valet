@@ -2875,6 +2875,85 @@ describe('remote access', () => {
     ).toEqual({})
   })
 
+  it('lets a cloud agent ask for a Mail account by name, with its reason, and gives it only once approved', async () => {
+    const lib = buildLibrary(mkdtempSync(join(tmpdir(), 'sa-mail-')))
+    const s = await setup({
+      mail: {
+        reader: await runningReader(),
+        files: new DirectMailFiles(lib),
+        drafts: { save: async () => ({ kind: 'saved' }) },
+      },
+    })
+    await s.api.mail.update({ enabled: true })
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    const port = Number(new URL(s.service.remote.status().url as string).port)
+    const agent = approvedClient(s, [])
+    await s.api.remote.setAskForChanges(agent.id, true)
+    const label = `remote:${agent.id}`
+    const account = (await s.api.agentAccess.view(label)).apps
+      .find((a) => a.app === 'mail')
+      ?.items.find((i) => i.id === MAIL_ALLOWED)
+    if (account === undefined) throw new Error('no account')
+    const names = async () =>
+      (await (await remoteClient(port, agent.token)).listTools()).tools.map((t) => t.name)
+    expect(await names()).not.toContain('mail_search')
+    const client = await remoteClient(port, agent.token)
+    const ask = (item: string, level: 'read' | 'edit') =>
+      client.callTool({
+        name: 'valet_request_access',
+        arguments: { app: 'mail', item, level, reason: 'To find the invoice you mentioned' },
+      })
+
+    // By the person's name for it, in any case: one agent-access request, nothing given yet.
+    const asked = await ask(`  ${account.label.toUpperCase()} `, 'read')
+    expect(asked.isError).not.toBe(true)
+    const broker = (s.service as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+    const pending = broker.list().filter((p) => p.request.kind === 'agent-access')
+    expect(pending.map((p) => p.request.subject)).toEqual([
+      {
+        clientId: label,
+        items: [expect.objectContaining({ app: 'mail', id: MAIL_ALLOWED, level: 'read' })],
+        full: [],
+        tools: [],
+        capabilities: [],
+      },
+    ])
+    const item = (await s.api.attention.list()).find((i) => i.id === pending[0]?.request.id)
+    expect(item).toMatchObject({
+      kind: 'agent-request',
+      requestKind: 'agent-access',
+      title: 'Give claude.example more access',
+      details: [`Mail, “${account.label}”: Read, to search and read it.`],
+      agentNote: 'To find the invoice you mentioned',
+    })
+    expect(await names()).not.toContain('mail_search')
+
+    // Approved: it reads that account, and its tools follow.
+    expect(await s.api.attention.approveRequest(pending[0]?.request.id ?? '', null)).toBe(true)
+    expect(await names()).toContain('mail_search')
+    expect(await names()).not.toContain('mail_create_draft')
+    const again = await remoteClient(port, agent.token)
+    const repeat = await again.callTool({
+      name: 'valet_request_access',
+      arguments: { app: 'mail', item: MAIL_ALLOWED, level: 'read', reason: 'again' },
+    })
+    expect(JSON.stringify(repeat.content)).toContain('Nothing changed')
+
+    // Edit by id is a new request; a name that isn't on the Mac is refused, and asks nothing.
+    const edit = await again.callTool({
+      name: 'valet_request_access',
+      arguments: { app: 'mail', item: MAIL_ALLOWED, level: 'edit', reason: 'To draft the reply' },
+    })
+    expect(edit.isError).not.toBe(true)
+    const missing = await again.callTool({
+      name: 'valet_request_access',
+      arguments: { app: 'mail', item: 'No such account', level: 'read', reason: 'x' },
+    })
+    expect(missing.isError).toBe(true)
+    expect(broker.list().filter((p) => p.request.kind === 'agent-access')).toHaveLength(1)
+  })
+
   it('keeps what each agent could reach in Mail the first time access is per agent', async () => {
     const lib = buildLibrary(mkdtempSync(join(tmpdir(), 'sa-mail-')))
     const s = await setup({
@@ -3257,15 +3336,15 @@ describe('remote access', () => {
     expect((await s.api.remote.clients())[0]).toMatchObject({ seeValet: true, askForChanges: true })
     const given = await names()
     expect(given).toContain('valet_list_adapters')
-    expect(given).toContain('valet_request_tool')
+    expect(given).toContain('valet_request_access')
     expect(given).toContain('shop_echo')
 
     // Asking for changes as a cloud agent: the request names it, and it lands with the broker.
     const client = await remoteClient(port, agent.token)
     await s.service.setRemoteTool('shop', 'add', true)
     const asked = await client.callTool({
-      name: 'valet_request_tool',
-      arguments: { adapterId: 'shop', tool: 'add', note: 'to test my adapter' },
+      name: 'valet_request_access',
+      arguments: { adapterId: 'shop', tool: 'add', reason: 'to test my adapter' },
     })
     expect(asked.isError).not.toBe(true)
     const broker = (s.service as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
@@ -3686,7 +3765,7 @@ describe('remote access', () => {
     const listed = (await client.listTools()).tools.map((t) => t.name)
     expect(listed).toContain('shop_echo')
     expect(listed).toContain('valet_status')
-    expect(listed).toContain('valet_request_tool')
+    expect(listed).toContain('valet_request_access')
     expect(audited(s.paths)).toContainEqual({
       type: 'remote-consent',
       clientId: `remote:${clientId}`,

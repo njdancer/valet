@@ -10,6 +10,7 @@
 
 import type { ApprovalKind, ApprovalSubject, Requester } from '@valet/core'
 import {
+  type AccessAsk,
   type AdminWriter,
   AGENT_SETTING_LABELS,
   type AgentSetting,
@@ -93,6 +94,21 @@ export type ToolAsk =
     }
   | { readonly ok: false; readonly reason: 'not-found' | 'already'; readonly title?: string }
 
+/** An agent's request for Read or Edit on one Mac app item, as the app built it, or why not. */
+export type ItemAsk =
+  | {
+      readonly ok: true
+      readonly subject: ApprovalSubject<'agent-access'>
+      /** The card's title, e.g. `Edit a calendar: Work`. Several items share a name: all of them. */
+      readonly title: string
+    }
+  | {
+      readonly ok: false
+      /** `already`: it has that level or more on every item with that id or name. */
+      readonly reason: 'not-found' | 'already'
+      readonly title?: string
+    }
+
 export interface WriterSource {
   now(): number
   lockedDown(): boolean
@@ -103,6 +119,13 @@ export interface WriterSource {
   client(viewer: ClientIdentity): { readonly name: string } | null
   /** The `tool-enable` request that lets this cloud agent call one approved tool. */
   toolRequest(viewer: ClientIdentity, adapterId: string, tool: string): ToolAsk
+  /** The `agent-access` request for Read or Edit on one Mail account, calendar or list. */
+  itemRequest(
+    viewer: ClientIdentity,
+    app: 'mail' | 'calendar' | 'reminders',
+    item: string,
+    level: 'read' | 'edit',
+  ): Promise<ItemAsk>
   /** Null while the broker isn't running. */
   broker(): AgentBroker | null
   /** Kinds the app has wired to act on an approval (service.wiredKinds()). */
@@ -289,29 +312,45 @@ export class AdminWriterImpl implements AdminWriter {
     })
   }
 
-  requestTool(
-    viewer: ClientIdentity,
-    adapterId: string,
-    tool: string,
-    note: string | null,
-  ): Promise<WriteOutcome> {
+  requestAccess(viewer: ClientIdentity, ask: AccessAsk, reason: string): Promise<WriteOutcome> {
     return this.exclusive(async () => {
       const gate = this.gate(viewer)
       if (gate.refused !== undefined) return gate.refused
-      // An app on this Mac has every approved tool unless the person turned it off for it.
+      if (ask.kind === 'item') {
+        let built: ItemAsk
+        try {
+          built = await this.source.itemRequest(viewer, ask.app, ask.item, ask.level)
+        } catch {
+          return refused('unavailable')
+        }
+        if (!built.ok) {
+          if (built.reason === 'already')
+            return { kind: 'unchanged', current: `you can already ${built.title ?? 'use it'}` }
+          return refused('not-found')
+        }
+        return this.ask(viewer, gate.name, 'agent-access', built.subject, reason, built.title)
+      }
+      // An app on this Mac has every approved site tool unless the person turned it off for it.
       if (viewer.origin !== 'remote') return refused('not-needed')
       let built: ToolAsk
       try {
-        built = this.source.toolRequest(viewer, adapterId, tool)
+        built = this.source.toolRequest(viewer, ask.adapterId, ask.tool)
       } catch {
         return refused('unavailable')
       }
       if (!built.ok) {
         if (built.reason === 'already')
-          return { kind: 'unchanged', current: `you can already use "${built.title ?? tool}"` }
+          return { kind: 'unchanged', current: `you can already use "${built.title ?? ask.tool}"` }
         return refused('not-found')
       }
-      return this.ask(viewer, gate.name, 'tool-enable', built.subject, note, `Turn on a tool: ${built.title}`)
+      return this.ask(
+        viewer,
+        gate.name,
+        'tool-enable',
+        built.subject,
+        reason,
+        `Turn on a tool: ${built.title}`,
+      )
     })
   }
 
@@ -567,7 +606,7 @@ export class AdminWriterImpl implements AdminWriter {
     return { kind: 'agent', clientId: identityLabel(viewer), clientName: name }
   }
 
-  private async ask<K extends 'setting' | 'tool-enable'>(
+  private async ask<K extends 'setting' | 'tool-enable' | 'agent-access'>(
     viewer: ClientIdentity,
     name: string,
     kind: K,

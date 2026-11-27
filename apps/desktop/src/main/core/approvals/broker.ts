@@ -49,6 +49,7 @@ export const AGENT_KINDS: readonly ApprovalKind[] = [
   'adapter-install',
   'secret-grant',
   'tool-enable',
+  'agent-access',
   'setting',
   'authoring-session',
   'browser-grant',
@@ -891,6 +892,13 @@ export class ApprovalBroker {
         return refuse('not-allowed')
       }
     }
+    // An agent may ask for more access only for itself (docs/access.md).
+    if (
+      requester.kind === 'agent' &&
+      kind === 'agent-access' &&
+      (subject as ApprovalSubject<'agent-access'>).clientId !== requester.clientId
+    )
+      return refuse('not-allowed')
     if (this.isLockedDown() && kind !== 'resume') return refuse('locked-down')
     if (requester.kind !== 'agent') return null
 

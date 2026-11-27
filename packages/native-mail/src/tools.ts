@@ -300,7 +300,8 @@ const DECLARATIONS: Readonly<Record<MailToolName, Omit<ToolDeclaration, 'name'>>
   accounts: {
     title: 'Mail accounts',
     description:
-      'The Mail accounts on this Mac the person lets you read, with their mailboxes, ids and unread counts.',
+      'The Mail accounts on this Mac the person lets you read, with their mailboxes, ids and unread counts. ' +
+      'If the person names one that isn’t here, ask for it with valet_request_access.',
     sideEffect: 'read',
   },
   search: {

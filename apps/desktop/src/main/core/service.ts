@@ -147,7 +147,7 @@ import type {
 } from '../../shared/api'
 import { AdapterSettingsStore } from './adapter-settings'
 import { adminReader } from './admin'
-import { AdminWriterImpl, type AgentSettingValues, type WriterSource } from './admin-writer'
+import { AdminWriterImpl, type AgentSettingValues, type ItemAsk, type WriterSource } from './admin-writer'
 import {
   ACCESS_APPS,
   type AccessApp,
@@ -667,6 +667,24 @@ const CREDENTIAL_ASKS_TOTAL = 10
 const EVENTKIT_CHANGES: Readonly<Record<EventKitApp, readonly string[]>> = {
   calendar: ['create_event', 'update_event', 'delete_event'],
   reminders: ['create', 'update', 'delete'],
+}
+
+/** An item of each Mac app, as a request's title names it. */
+const ACCESS_NOUN: Readonly<Record<AccessApp, string>> = {
+  mail: 'a Mail account',
+  calendar: 'a calendar',
+  reminders: 'a reminder list',
+}
+const ACCESS_RANK: Readonly<Record<AccessChoice, number>> = { off: 0, read: 1, edit: 2 }
+
+/** The person's name for an item and an agent's spelling of it: the same but for case and spaces. */
+function sameName(a: string, b: string): boolean {
+  const plain = (v: string) => v.normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase()
+  return plain(a) === plain(b)
+}
+
+function capitalised(s: string): string {
+  return s.length === 0 ? s : `${s[0]?.toUpperCase()}${s.slice(1)}`
 }
 
 export class AppService {
@@ -1195,6 +1213,7 @@ export class AppService {
           return { tool: run?.tool ?? null, client: run?.client ?? null }
         },
         filledFor: (adapterId, callId, since) => this.filledFor(adapterId, callId, since),
+        onStall: (callId, stall) => this.memory.loginStalled(callId, stall),
       }),
       markers: this.markers,
       breakerStore: new JsonFileStore(paths.breakers),
@@ -1458,6 +1477,44 @@ export class AppService {
     for (const { app, after } of next) await this.agentAccess.set(label, app, after)
     await this.accessChanged(label)
     return true
+  }
+
+  /**
+   * An agent's own ask (valet_request_access) for Read or Edit on one account, calendar or list,
+   * by its id or its exact name. Every item with that name is in the one request, so the person
+   * sees which they give. Edit only on one that can change; one already at that level or more
+   * isn't asked for again.
+   */
+  private async itemRequest(
+    label: string,
+    app: AccessApp,
+    item: string,
+    level: 'read' | 'edit',
+  ): Promise<ItemAsk> {
+    if (!this.accessClientKnown(label)) return { ok: false, reason: 'not-found' }
+    const view = await this.accessView(label)
+    const items = view.apps.find((a) => a.app === app && a.ready)?.items ?? []
+    const wanted = item.trim()
+    const byId = items.filter((i) => i.id === wanted)
+    const named = byId.length > 0 ? byId : items.filter((i) => sameName(i.label, wanted))
+    const fits = named.filter((i) => level === 'read' || i.editable)
+    if (fits.length === 0) return { ok: false, reason: 'not-found' }
+    const what = `${level === 'edit' ? 'edit' : 'read'} ${ACCESS_NOUN[app]}`
+    const raised = fits.filter((i) => ACCESS_RANK[i.level] < ACCESS_RANK[level])
+    const first = fits[0]?.label ?? wanted
+    if (raised.length === 0) return { ok: false, reason: 'already', title: `${what} “${first}”` }
+    const subject: ApprovalSubject<'agent-access'> = {
+      clientId: label,
+      items: raised.map((i) => ({ app, id: i.id, label: accessLabel(i.label), level })),
+      full: [],
+      tools: [],
+      capabilities: [],
+    }
+    const title =
+      raised.length === 1
+        ? `${capitalised(what)}: ${accessLabel(raised[0]?.label ?? first)}`
+        : `${capitalised(what)}: ${raised.length} named ${accessLabel(first)}`
+    return { ok: true, subject, title }
   }
 
   /** An agent's access changed: its tool list follows, and its open sessions get the new one. */
@@ -2743,6 +2800,8 @@ export class AppService {
               withWidening(before, { items: raised, full: false }),
             )
           }
+          // An agent's own ask, approved here or on the phone, has no Save to refresh after it.
+          await this.accessChanged(subject.clientId)
         },
       },
       // A remote client's consent, approved with the code the person typed from their browser.
@@ -5186,6 +5245,7 @@ export class AppService {
         const client = this.clients.get(viewer.clientId)
         return client === null ? null : { name: client.name }
       },
+      itemRequest: (viewer, app, item, level) => this.itemRequest(identityLabel(viewer), app, item, level),
       toolRequest: (viewer, adapterId, tool) => {
         const adapter = this.adapter(adapterId)
         const declaration = this.remoteDeclared(adapterId, tool)
