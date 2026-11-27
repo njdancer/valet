@@ -116,6 +116,10 @@ const FOCUSED = `(selector) => {
   return { focused: el !== null && document.activeElement === el && document.hasFocus() }
 }`
 
+// Whether the page has keyboard focus. In the main frame this is the page's own focus: any focused
+// frame is inside it.
+const PAGE_FOCUSED = `() => document.hasFocus()`
+
 const TEXT_PRESENT = `(text) => document.body !== null && document.body.innerText.includes(text)`
 
 const EXTRACT = `(selector, attribute, all) => {
@@ -186,6 +190,7 @@ export const frameOffsetScript = (childIndex: number): string => invoke(FRAME_OF
 export const nextFrameScript = (capMs: number): string => invoke(NEXT_FRAME, capMs)
 export const focusScript = (selector: string): string => invoke(FOCUS, selector)
 export const focusedScript = (selector: string): string => invoke(FOCUSED, selector)
+export const pageFocusedScript = (): string => invoke(PAGE_FOCUSED)
 export const textPresentScript = (text: string): string => invoke(TEXT_PRESENT, text)
 export const readStorageScript = (keys: readonly string[]): string => invoke(READ_STORAGE, keys)
 export const writeStorageScript = (entries: readonly (readonly [string, string])[]): string =>

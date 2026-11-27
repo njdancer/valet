@@ -81,7 +81,11 @@ export async function scenario(app: ElectronApplication, name: string): Promise<
           out.push(`NOW wc${wc.id} focused=${wc.isFocused()} focusedFrame=${wc.focusedFrame?.url}`)
           for (const f of wc.mainFrame.framesInSubtree) {
             const state = await Promise.race([
-              f.executeJavaScript('JSON.stringify({hasFocus: document.hasFocus(), active: document.activeElement && (document.activeElement.id || document.activeElement.tagName)})').catch((e) => `err ${e}`),
+              f
+                .executeJavaScript(
+                  'JSON.stringify({hasFocus: document.hasFocus(), active: document.activeElement && (document.activeElement.id || document.activeElement.tagName)})',
+                )
+                .catch((e) => `err ${e}`),
               new Promise((r) => setTimeout(() => r('timeout'), 1000)),
             ])
             out.push(`    frame ${f.url} pid=${f.processId} ${state}`)

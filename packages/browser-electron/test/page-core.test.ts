@@ -1,6 +1,6 @@
 import { ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
-import { characters, PageCore, typingDelay } from '../src/page-core'
+import { awaitPageFocus, characters, PageCore, typingDelay } from '../src/page-core'
 import { FakeFrame, FakeSurface, ManualTimers } from './fake-browser'
 import { FakeWindow } from './fake-dom'
 
@@ -181,6 +181,47 @@ describe('PageCore.click with malformed answers', () => {
       .click('auth-step', '#go', new AbortController().signal)
       .catch((e: unknown) => e)
     expect(error).toMatchObject({ errorClass: 'element-unsuitable' })
+  })
+})
+
+describe('awaitPageFocus', () => {
+  // Focus given from the browser side reaches the page on its own channel, so the page's
+  // document.hasFocus() can be false for a moment after focus() on a busy machine.
+  it('waits for focus that arrives late', async () => {
+    const timers = new ManualTimers()
+    let asks = 0
+    const run = async () => ++asks >= 4
+    await expect(timers.settle(awaitPageFocus(run, timers))).resolves.toBe(true)
+    expect(asks).toBe(4)
+  })
+
+  it('asks again when the frame is going away mid-question', async () => {
+    const timers = new ManualTimers()
+    let asks = 0
+    const run = async () => {
+      if (++asks === 1) throw new Error('frame gone')
+      return true
+    }
+    await expect(timers.settle(awaitPageFocus(run, timers))).resolves.toBe(true)
+  })
+
+  it('gives up after about two seconds, so the caller’s own focus check decides', async () => {
+    const timers = new ManualTimers()
+    await expect(timers.settle(awaitPageFocus(async () => false, timers))).resolves.toBe(false)
+    expect(timers.now).toBe(2000)
+  })
+
+  it('stops at once when the step is given up on', async () => {
+    const timers = new ManualTimers()
+    const controller = new AbortController()
+    let asks = 0
+    const run = async () => {
+      asks++
+      controller.abort()
+      return 'not yet'
+    }
+    await expect(timers.settle(awaitPageFocus(run, timers, controller.signal))).resolves.toBe(false)
+    expect(asks).toBe(1)
   })
 })
 

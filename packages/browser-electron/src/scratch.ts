@@ -8,6 +8,7 @@ import { randomBytes } from 'node:crypto'
 import type { Socket } from 'node:net'
 import {
   type AriaPoint,
+  type AriaScroll,
   absoluteUrls,
   ariaBootedScript,
   ariaBootScript,
@@ -24,6 +25,7 @@ import {
 } from './aria'
 import { cookieSetDetails, cookiesForDomains } from './cookies'
 import { type Modifier, parseKey } from './keys'
+import { awaitPageFocus } from './page-core'
 import { partitionName } from './partitions'
 import type {
   BrowserPlatform,
@@ -570,7 +572,7 @@ export class ScratchBrowser {
       )
     // The window is never shown, and Valet is a menu-bar app, so the page has no keyboard focus of
     // its own: give it focus first, as the tool page does, or no field can take the keyboard.
-    this.surface.focus()
+    await this.focusPage()
     const focused = (await this.run(focusScript(selector))) as { focused?: boolean } | null
     if (focused === null) throw new ScratchError('Nothing on the page matches that.')
     if (focused.focused !== true)
@@ -748,22 +750,29 @@ export class ScratchBrowser {
 
   /** Drags one element onto another with the mouse held down. */
   async drag(from: string, to: string): Promise<AriaPage> {
-    const start = await this.pointAt(from)
+    // Both ends are found before any mouse event goes. Input reaches the page on its own channel,
+    // after scripts sent later may already have run, so a script that scrolled between the press
+    // and the release could move the page under a press still on its way: it would land on
+    // whatever is at that spot now, not on what was dragged.
+    let start = await this.pointAt(from)
+    let end = await this.pointAt(to, 'none')
+    if (end.inView === false) {
+      end = await this.pointAt(to, 'nearest')
+      start = await this.pointAt(from, 'none')
+      if (start.inView === false)
+        throw new ScratchError(
+          'Those two elements are too far apart to drag between: both must fit on screen.',
+        )
+    }
     const frames = this.mainFrames
     this.surface.mouse({ type: 'move', x: start.x, y: start.y })
     this.surface.mouse({ type: 'down', x: start.x, y: start.y })
-    try {
-      const end = await this.pointAt(to)
-      for (let step = 1; step <= SCRATCH_LIMITS.dragSteps; step++) {
-        const x = start.x + ((end.x - start.x) * step) / SCRATCH_LIMITS.dragSteps
-        const y = start.y + ((end.y - start.y) * step) / SCRATCH_LIMITS.dragSteps
-        this.surface.mouse({ type: 'move', x, y })
-      }
-      this.surface.mouse({ type: 'up', x: end.x, y: end.y })
-    } catch (error) {
-      this.surface.mouse({ type: 'up', x: start.x, y: start.y })
-      throw error
+    for (let step = 1; step <= SCRATCH_LIMITS.dragSteps; step++) {
+      const x = start.x + ((end.x - start.x) * step) / SCRATCH_LIMITS.dragSteps
+      const y = start.y + ((end.y - start.y) * step) / SCRATCH_LIMITS.dragSteps
+      this.surface.mouse({ type: 'move', x, y })
     }
+    this.surface.mouse({ type: 'up', x: end.x, y: end.y })
     await this.settle(frames)
     return this.ariaSnapshot()
   }
@@ -789,7 +798,7 @@ export class ScratchBrowser {
     if (!(await this.options.rules.mayType(text))) throw new ScratchError('Valet doesn’t type that here.')
     // The window is never shown, and Valet is a menu-bar app, so the page has no keyboard focus of
     // its own: give it focus first, or no field can take the keyboard.
-    this.surface.focus()
+    await this.focusPage()
     const raw = (await this.runAria(
       ariaFieldScript({ target: this.ariaTarget(target), value: text, keep: slowly }),
     )) as { error?: string; done?: boolean; focused?: boolean; message?: string } | null
@@ -839,7 +848,7 @@ export class ScratchBrowser {
     )
       throw new ScratchError('Valet doesn’t type that here.')
     const frames = this.mainFrames
-    this.surface.focus()
+    await this.focusPage()
     this.surface.pressKey(parsed)
     await this.settle(frames)
     return this.ariaSnapshot()
@@ -902,9 +911,9 @@ export class ScratchBrowser {
   }
 
   /** Where to send trusted input for an element, refusing one no one could click. */
-  private async pointAt(target: string): Promise<AriaPoint> {
+  private async pointAt(target: string, scroll: AriaScroll = 'center'): Promise<AriaPoint> {
     this.open()
-    const raw = (await this.runAria(ariaPointScript(this.ariaTarget(target)))) as
+    const raw = (await this.runAria(ariaPointScript(this.ariaTarget(target), scroll))) as
       | (Partial<AriaPoint> & { error?: string })
       | null
     if (raw === null || typeof raw !== 'object') throw new ScratchError('The page could not be read.')
@@ -934,6 +943,12 @@ export class ScratchBrowser {
   }
 
   /** Runs a script that needs Playwright's injected script, booting it in this document first. */
+  /** Gives the page keyboard focus, and waits until the page has it (see awaitPageFocus). */
+  private async focusPage(): Promise<void> {
+    this.surface.focus()
+    await awaitPageFocus((script) => this.run(script), this.options.timers ?? realTimers)
+  }
+
   private async runAria(script: string): Promise<unknown> {
     if ((await this.run(ariaBootedScript())) !== true) await this.run(ariaBootScript())
     return this.run(script)

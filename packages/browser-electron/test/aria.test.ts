@@ -57,7 +57,7 @@ describe('findInSnapshot', () => {
 describe('page scripts', () => {
   it('carry their input only as a JSON literal', () => {
     const script = ariaPointScript("e1'); alert(1); ('")
-    expect(script.endsWith(`(${JSON.stringify("e1'); alert(1); ('")})`)).toBe(true)
+    expect(script.endsWith(`(${JSON.stringify("e1'); alert(1); ('")}, "center")`)).toBe(true)
     expect(ariaSnapshotScript({ target: null, depth: 3 })).toContain('{"target":null,"depth":3}')
   })
 

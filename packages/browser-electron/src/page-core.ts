@@ -5,11 +5,49 @@
 import { type ErrorClass, originAllowed, type Stage, ValetError } from '@valet/core'
 import type { BrowserSurface, FrameHandle, KeyEvents, Timers } from './platform'
 import { sleep } from './platform'
-import { focusedScript, focusScript, frameOffsetScript, nextFrameScript, pointScript } from './scripts'
+import {
+  focusedScript,
+  focusScript,
+  frameOffsetScript,
+  nextFrameScript,
+  pageFocusedScript,
+  pointScript,
+} from './scripts'
 import { withTimeout } from './timeout'
 
 /** Longest a click waits for the page to render a frame before it is sent anyway. */
 const FRAME_WAIT_CAP_MS = 1_000
+
+/** How often, and how many times, awaitPageFocus() asks the page whether focus has reached it. */
+const PAGE_FOCUS_POLL_MS = 20
+const PAGE_FOCUS_POLLS = 100
+
+/**
+ * Waits until the page says it has keyboard focus, after the surface was given it. The browser
+ * hands focus to the page asynchronously, on a different channel from the one scripts run on, so
+ * a script run straight after focus() can still find the page unfocused: on a busy Mac,
+ * document.hasFocus() said false and a field that was fine was refused. `run` asks the main frame
+ * (pageFocusedScript). Gives up after about two seconds, or once `signal` is aborted, and says
+ * whether focus arrived; the caller's own checks still decide.
+ */
+export async function awaitPageFocus(
+  run: (script: string) => Promise<unknown>,
+  timers: Timers,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  for (let polls = 0; ; polls++) {
+    if (signal?.aborted === true) return false
+    let focused: unknown = null
+    try {
+      focused = await run(pageFocusedScript())
+    } catch {
+      // A frame that is going away answers nothing; ask again.
+    }
+    if (focused === true) return true
+    if (polls >= PAGE_FOCUS_POLLS) return false
+    await sleep(timers, PAGE_FOCUS_POLL_MS)
+  }
+}
 
 export interface PageTiming {
   readonly timers: Timers
@@ -176,12 +214,16 @@ export class PageCore {
   }
 
   /**
-   * Focuses the element and checks, from the browser side, that keyboard focus really moved to its
-   * frame. Returns the target so that typing can be bound to it.
+   * Gives the page keyboard focus and waits for it to arrive (awaitPageFocus), then focuses the
+   * element and checks, from the browser side, that keyboard focus really moved to its frame.
+   * Returns the target so that typing can be bound to it.
    */
   async focus(stage: Stage, selector: string, signal: AbortSignal): Promise<FocusTarget> {
     assertLive(stage, signal)
     this.surface.focus()
+    const main = this.surface.frames()[0]
+    if (main !== undefined) await awaitPageFocus((script) => main.run(script), this.timing.timers, signal)
+    assertLive(stage, signal)
     const match = await this.locate(stage, signal, focusScript(selector), parseFocus)
     assertLive(stage, signal)
     if (match === null) throw new ValetError(stage, 'element-missing')

@@ -80,7 +80,8 @@ function stubFrame(answer: Answer): FrameHandle & { boots: number; scripts: stri
       frame.scripts.push(kind)
       if (kind === 'storage') return answer(kind, {})
       const json = code.slice(code.lastIndexOf(')(') + 2, -1)
-      return answer(kind, JSON.parse(json))
+      const args = JSON.parse(`[${json}]`) as (Record<string, unknown> | string)[]
+      return answer(kind, args.length === 1 ? (args[0] as Record<string, unknown> | string) : { args })
     },
     runAdapter: async () => {
       throw new Error('no adapter code here')
@@ -305,13 +306,57 @@ describe('the agents’ input', () => {
     expect(drag.at(-1)).toMatchObject({ type: 'up', x: 100 })
   })
 
-  it('lets the mouse go where it started when the drop target can’t be found', async () => {
+  it('finds both ends before pressing, so nothing scrolls the page mid-drag', async () => {
+    const asked: unknown[] = []
+    const { browser, surface } = await open((kind, args) => {
+      if (kind !== 'point') return defaults(kind)
+      asked.push((args as { args: unknown[] }).args)
+      return asked.length === 1 ? point : { ...point, x: 100, y: 70 }
+    })
+    await browser.drag('e1', 'e3')
+    // The source is scrolled to the middle; the target is only measured where it now is.
+    expect(asked).toEqual([
+      ['e1', 'center'],
+      ['e3', 'none'],
+    ])
+    expect(surface.mice[0]).toEqual({ type: 'move', x: 10, y: 20 })
+    expect(surface.mice[1]).toEqual({ type: 'down', x: 10, y: 20 })
+    expect(surface.mice.at(-1)).toEqual({ type: 'up', x: 100, y: 70 })
+  })
+
+  it('brings an off-screen drop target into view, then measures the source again', async () => {
+    const asked: unknown[] = []
+    const answers = [point, { ...point, inView: false }, { ...point, x: 100, y: 600 }, { ...point, y: 5 }]
+    const { browser, surface } = await open((kind, args) => {
+      if (kind !== 'point') return defaults(kind)
+      asked.push((args as { args: unknown[] }).args)
+      return answers.shift()
+    })
+    await browser.drag('e1', 'e3')
+    expect(asked).toEqual([
+      ['e1', 'center'],
+      ['e3', 'none'],
+      ['e3', 'nearest'],
+      ['e1', 'none'],
+    ])
+    expect(surface.mice[1]).toEqual({ type: 'down', x: 10, y: 5 })
+    expect(surface.mice.at(-1)).toEqual({ type: 'up', x: 100, y: 600 })
+  })
+
+  it('won’t drag between two elements that can’t both be on screen', async () => {
+    const answers = [point, { ...point, inView: false }, point, { ...point, inView: false }]
+    const { browser, surface } = await open((kind) => (kind === 'point' ? answers.shift() : defaults(kind)))
+    expect(await detail(browser.drag('e1', 'e3'))).toMatch(/too far apart/)
+    expect(surface.mice).toEqual([])
+  })
+
+  it('presses nothing when the drop target can’t be found', async () => {
     let n = 0
     const { browser, surface } = await open((kind) =>
       kind === 'point' ? (n++ === 0 ? point : { error: 'stale' }) : defaults(kind),
     )
     expect(await detail(browser.drag('e1', 'e9'))).toMatch(/page changed/)
-    expect(surface.mice.at(-1)).toEqual({ type: 'up', x: 10, y: 20 })
+    expect(surface.mice).toEqual([])
   })
 
   it('fills a field at once, clears it with an empty fill, types slowly, and submits', async () => {
