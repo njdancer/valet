@@ -4,6 +4,8 @@
 // use DirectMessagesFiles (direct-files.ts) on files this process can read; the app never imports
 // it. Both answer the same three questions with the same refusals.
 
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import {
   answerRows,
   type HelperMailFilesOptions,
@@ -17,6 +19,14 @@ export type MessagesDb = 'chat' | 'contacts'
 export type { MailRow as MessagesRow, MailValue as MessagesValue }
 /** The helper's failures are Mail's: invalid, not-found, unavailable, too-large. */
 export { MailFilesError as MessagesFilesError }
+
+/**
+ * The socket the reader helper with this launchd label listens on (valet-messages-helper's serve):
+ * Mail, Messages (the tools and Valet's own code lookup alike), Calendar and Reminders.
+ */
+export function messagesHelperSocketPath(label: string, home: string = homedir()): string {
+  return join(home, 'Library', 'Application Support', label, 'helper.sock')
+}
 
 /** The Contacts database at the top of the AddressBook folder; others are named by their folder. */
 export const MAIN_CONTACT_SOURCE = 'main'

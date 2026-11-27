@@ -80,20 +80,28 @@ declares the tools and checks their input and output. Photos are drawn by Mail's
 The app side is `apps/desktop/src/main/core/messages.ts`: the settings (`messages.json`,
 unreadable reads as off) and `MessagesService`, which the tool caller lists beside Mail.
 
-### One-time codes later
+### Valet's own one-time codes
 
-Valet's own code lookup (`packages/credentials`, messages-otp.ts and the helper's original OTP
-request) still answers one narrow question itself. `MessagesStore.recentFrom(handle, since)` is
-the same question on top of these reads, codes included and ignoring the hidden list, for when that
-lookup moves over. It is never an agent's tool.
+When a login needs a code from Messages, Valet reads it through this same reader:
+`MessagesOtpReader` (`otp.ts`) asks `MessagesStore.recentFrom(handle, services, since)` for the
+recent incoming messages from exactly the sender the person approved, codes included and ignoring
+the hidden list, then keeps only those `looksLikeCode` (`codes.ts`) calls a code. So a code Valet
+types for the person is always one the Messages tools hide from agents, and a sender whose code
+messages that detector misses fails the login as not-found rather than reading an ordinary message.
+The pattern runs in a worker under a deadline (`@valet/credentials`), only a code-shaped capture
+(`isCodeShaped`) is handed back, as a SecretValue for the login's filler, and the checks before
+any read (the grant, one exact sender, a screened pattern) are credentials' `prepareOtpLookup`.
+None of this is an agent's tool or reachable from adapter code. Turning on Messages codes in
+Settings starts the reader helper, whether or not the Messages tools are on.
 
 ## Tests
 
 - `swift-bridge/Tests/ValetHelperKitTests/MessagesAccessTests.swift`: the helper's refusals and
   answers, the text function, and paths outside Attachments.
-- `packages/native-messages/test`: the store and tools against a made-up chat.db and Contacts
-  (`fixture.ts`), and `helper-contract.test.ts`, which runs the real helper on macOS CI and checks it
-  answers exactly as the in-process files do.
+- `packages/native-messages/test`: the store, tools and code lookup (`otp.test.ts`) against a
+  made-up chat.db and Contacts (`fixture.ts`), and `helper-contract.test.ts`, which runs the real
+  helper on macOS CI, checks it answers exactly as the in-process files do, and reads a code
+  through it.
 - `apps/desktop/test/main/messages.test.ts` and `messages-settings.test.tsx`: settings, the hidden
   list and codes rule per call, audit, setup states, and the screen.
 

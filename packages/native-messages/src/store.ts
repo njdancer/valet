@@ -13,7 +13,7 @@
 // that looks like a one-time code comes back with its text hidden and is never a search match.
 //
 // `recentFrom` is the one question that ignores the code rule: it is for Valet's own one-time-code
-// lookups (packages/credentials), never an agent's tool.
+// lookup (otp.ts), never an agent's tool.
 
 import { HIDDEN_CODE_TEXT, looksLikeCode } from './codes'
 import { type MessagesFiles, MessagesFilesError, type MessagesRow, type MessagesValue } from './files'
@@ -182,6 +182,10 @@ export const MAX_MESSAGE_CHARS = 20_000
 const SEARCH_CHARS = 1_000
 /** The most hidden conversations a question names. */
 export const MAX_HIDDEN = 500
+/** recentFrom looks at no more messages than this, and no more of each than MAX_RECENT_CHARS. */
+export const MAX_RECENT = 50
+// Codes sit near the start of a message; the cap also bounds the work a pattern can do on long text.
+export const MAX_RECENT_CHARS = 2_000
 /** Conversations the store looks at when listing them. */
 const MAX_CHATS = 4_000
 const CONTACTS_TTL_MS = 5 * 60_000
@@ -884,15 +888,27 @@ export class MessagesStore {
   }
 
   /**
-   * The texts of recent incoming messages from one handle, newest first, codes included: for
-   * Valet's own one-time-code lookups, never an agent's tool. The hidden list doesn't apply either.
+   * The texts of recent incoming messages from exactly one handle over one of `services`, newest
+   * first, codes included: for Valet's own one-time-code lookup (otp.ts), never an agent's tool. The
+   * hidden list doesn't apply either. Each text is cut to its first `chars` characters.
    */
-  async recentFrom(handle: string, sinceMs: number, limit = 50): Promise<string[]> {
+  async recentFrom(
+    handle: string,
+    services: readonly string[],
+    sinceMs: number,
+    options: { readonly limit?: number; readonly chars?: number } = {},
+  ): Promise<string[]> {
+    if (services.length === 0) return []
     await this.layout()
+    const limit = Math.max(1, Math.min(options.limit ?? MAX_RECENT, MAX_RECENT))
+    const chars = Math.max(1, Math.min(options.chars ?? MAX_RECENT_CHARS, MAX_RECENT_CHARS))
     const rows = await this.#query(
-      `SELECT message_text(m.text, m.attributedBody) AS body FROM message m JOIN handle h ON h.ROWID = m.handle_id
-       WHERE m.is_from_me = 0 AND lower(h.id) = ? AND m.date >= ? * 1000000 ORDER BY m.date DESC LIMIT ?`,
-      [handle.toLowerCase(), appleDate(sinceMs), Math.min(limit, 50)],
+      `SELECT substr(message_text(m.text, m.attributedBody), 1, ?) AS body
+       FROM message m JOIN handle h ON h.ROWID = m.handle_id
+       WHERE m.is_from_me = 0 AND lower(h.id) = ? AND h.service IN (${services.map(() => '?').join(', ')})
+         AND ${msOf('m.date')} >= ?
+       ORDER BY m.date DESC LIMIT ?`,
+      [chars, handle.toLowerCase(), ...services, appleDate(sinceMs), limit],
     )
     return rows.map((r) => r['body']).filter((b): b is string => typeof b === 'string')
   }

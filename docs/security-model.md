@@ -258,20 +258,24 @@ process is the trusted computing base. It isn't a property to advertise.
     adapter, which the manifest parser should enforce (**Designed**).
   - Only codes newer than the start of this login are accepted, and only a capture that looks
     like a code is returned.
-  - The reader opens `~/Library/Messages/chat.db` in place, read-only, for each lookup, with a
+  - The reader opens `~/Library/Messages/chat.db` in place, read-only, for each query, with a
     bounded query on that handle, and closes it. It never copies the database: a copy would be a
     new plaintext store of the person's whole message history outside Messages' protected
     container, which the password grep in AC16 wouldn't notice.
 - **Full Disk Access.** Reading `chat.db` needs it, and it's the broadest permission the app asks
   for: it also covers Mail, Safari history and every process that inherits it, including v0 tool
-  code. A packaged app reads through `valet-messages-helper` instead: a launch agent registered
-  with SMAppService, so launchd starts it and it holds Full Disk Access by itself. It answers only
-  "the newest code-shaped capture from this handle since this time" (at most 30 minutes back, 50
-  messages, 2,000 characters each, the match under a deadline) over a user-only Unix socket, and a
-  signed helper answers only a peer whose audit token is signed by its own team. Valet re-checks
-  the answer's shape (**Built**, needs a signed build to hold;
-  [D8](plan.md#d8-full-disk-access-for-messages)). A development build still reads in process,
-  with the grant on whatever runs it.
+  code. Valet reads through `valet-messages-helper` instead (the "Valet Reader" bundle in a
+  development build): a launch agent registered with SMAppService, so launchd starts it and it
+  holds Full Disk Access by itself. The code lookup is an ordinary read-only `messages.query`, the
+  same one the Messages tools use (`MessagesStore.recentFrom`): incoming messages from that exact
+  handle over its services since the cut-off, at most 30 minutes back, 50 messages, 2,000
+  characters each. Valet's main process then keeps only messages the Messages tools would hide as
+  one-time codes (`looksLikeCode`, one detector for both), runs the pattern in a worker under a
+  deadline, and hands on only a code-shaped capture. The socket is user-only, and a signed helper
+  answers only a peer whose audit token is signed by its own team (**Built**, needs a signed build
+  to hold; [D8](plan.md#d8-full-disk-access-for-messages)). The helper no longer has a narrower
+  code-only question: since the Messages tools it answers read-only SQL on chat.db for the main
+  process anyway, so a narrower one bounded nothing more.
 
 ### Grants are separate from manifests
 

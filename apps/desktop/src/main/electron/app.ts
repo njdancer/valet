@@ -18,12 +18,12 @@ import {
   trialPartitionName,
 } from '@valet/browser-electron'
 import { type AdapterManifest, DEFAULT_SANDBOX, rawEndpoints } from '@valet/core'
-import { KeychainHelper, KeychainTokenSource, messagesHelperSocketPath } from '@valet/credentials'
+import { KeychainHelper, KeychainTokenSource } from '@valet/credentials'
 import { EgressBroker, type OpenTunnels } from '@valet/egress'
 import { startEndpoint } from '@valet/mcp-server'
 import { HelperEventKit } from '@valet/native-calendar'
 import { HelperMailFiles, MailDrafts, MailOrganizer, pdfText, renderPictures } from '@valet/native-mail'
-import { HelperMessagesFiles } from '@valet/native-messages'
+import { HelperMessagesFiles, messagesHelperSocketPath } from '@valet/native-messages'
 import { diskTarballStore, loadDependencies, nodeRuntimeProcess } from '@valet/node-runtime'
 import {
   HostMailReader,
@@ -445,6 +445,9 @@ async function main(): Promise<void> {
   const release = app.isPackaged && app.getName() === RELEASE_DATA_NAME
   const names = nativeNames(release)
   const messagesBinary = app.isPackaged ? nativeHelper('valet-messages-helper') : null
+  // Mail, Messages, Calendar and Reminders on this Mac (docs/mail.md, docs/messages.md): read through
+  // the reader helper, which alone has Full Disk Access.
+  const mailReader = macMailReader(names.messagesHelperLabel, messagesBinary)
   const credentialDeps = {
     ...opDeps,
     keychainHelper: nativeHelper('valet-keychain'),
@@ -452,12 +455,13 @@ async function main(): Promise<void> {
     keyService: names.keyService,
     // The token's Keychain item is shared by every build, so only the release app's erase removes it.
     ownsToken: release,
-    // Only a packaged app has the launch agent's plist for SMAppService; a dev build reads Messages
-    // in process, with Full Disk Access on the app that runs it.
-    messagesHelper:
-      messagesBinary === null
-        ? null
-        : { binary: messagesBinary, socketPath: messagesHelperSocketPath(names.messagesHelperLabel) },
+    // Only a packaged app has the launch agent's plist for SMAppService, which a reset unregisters.
+    messagesHelper: messagesBinary === null ? null : { binary: messagesBinary },
+    // Messages codes for sign-in are read like the Messages tools: through the reader helper, which
+    // alone has Full Disk Access, in a packaged app and a dev build alike.
+    messagesFiles:
+      mailReader === null ? null : new HelperMessagesFiles({ socketPath: mailReader.socketPath }),
+    ...(mailReader === null ? {} : { startMessagesReader: () => mailReader.start() }),
   }
   // The Mac's approval keys: the Secure Enclave helper and a Keychain anchor in a release build,
   // nothing weaker. A build that carries demo mode is never a release (launch.ts).
@@ -572,8 +576,6 @@ async function main(): Promise<void> {
     } else windows.openControlPanel(target.route)
   }, mode.e2e)
 
-  // Mail on this Mac (docs/mail.md): read through the reader helper, which alone has Full Disk Access.
-  const mailReader = macMailReader(names.messagesHelperLabel, messagesBinary)
   log(`Mail reader: ${mailReader === null ? 'none in this build' : 'present'}`)
   service = new AppService({
     paths,
