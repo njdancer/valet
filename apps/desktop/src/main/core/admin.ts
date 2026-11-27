@@ -427,10 +427,11 @@ const EVENT_FIELDS: Readonly<Record<AuditEvent['type'], readonly string[]>> = {
   confirmation: ['adapterId', 'tool', 'client', 'callId', 'answer'],
   // The approval broker's (D). The request's digest names its text, which isn't here.
   'approval-requested': ['requestId', 'kind', 'digest', 'clientId'],
-  'approval-answered': ['requestId', 'answer', 'deviceId', 'reason'],
+  'approval-answered': ['requestId', 'answer', 'deviceId', 'reason', 'by'],
   'agent-change': ['clientId', 'action', 'target', 'value'],
   'device-paired': ['deviceId', 'platform'],
   'device-revoked': ['deviceId', 'by'],
+  'developer-mode': ['on', 'until', 'reason'],
   'device-keys-renewed': [],
   'store-refused': ['store', 'reason', 'records'],
   'draft-created': ['draftId', 'adapterId', 'clientId'],

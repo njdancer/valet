@@ -282,6 +282,21 @@ describe('reset and uninstall', () => {
   })
 })
 
+describe('developer mode', () => {
+  it('turns on from the control panel and the menu bar only, and off from any window', async () => {
+    const { d, calls } = dispatcher()
+    for (const role of ['confirmation', 'needs-user'] as const) {
+      await expect(
+        d.dispatch(invokeChannel('app.setDeveloperMode'), [true], { ...control, role }),
+      ).rejects.toBeInstanceOf(IpcRefused)
+      await d.dispatch(invokeChannel('app.setDeveloperMode'), [false], { ...control, role })
+    }
+    await d.dispatch(invokeChannel('app.setDeveloperMode'), [true], { ...control, role: 'tray' })
+    await d.dispatch(invokeChannel('app.setDeveloperMode'), [true], control)
+    expect(calls.map((c) => c.args)).toEqual([[false], [false], [true], [true]])
+  })
+})
+
 describe('lock down', () => {
   it('can be pulled from any window, but only the control panel and the menu bar unlock', async () => {
     const { d, calls } = dispatcher()
@@ -428,6 +443,7 @@ describe('every channel', () => {
     'app.status': [],
     'app.setPaused': [true],
     'app.setLockedDown': [false],
+    'app.setDeveloperMode': [false],
     'app.openControlPanel': ['#/activity'],
     'app.copyText': ['hello'],
     'app.quit': [],

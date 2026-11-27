@@ -362,6 +362,12 @@ const HANDLERS: Readonly<
     if (!locked && sender.role !== 'control' && sender.role !== 'tray') throw new IpcRefused()
     return api.app.setLockedDown(locked)
   }),
+  // Turning developer mode on widens what is approved without asking: the control panel and the
+  // menu bar only. Off from any window, like lock down.
+  'app.setDeveloperMode': entry(z.tuple([z.boolean()]), (api, [on], sender) => {
+    if (on && sender.role !== 'control' && sender.role !== 'tray') throw new IpcRefused()
+    return api.app.setDeveloperMode(on)
+  }),
   'app.openControlPanel': entry(z.union([none, z.tuple([controlPanelRoute])]), (api, args) =>
     args.length === 0 ? api.app.openControlPanel() : api.app.openControlPanel(args[0] as HashRoute),
   ),

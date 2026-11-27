@@ -175,6 +175,7 @@ import {
   type WideningSetting,
 } from './approvals'
 import { ApnsSender } from './approvals/apns'
+import { DevMode } from './approvals/dev-mode'
 import { MissedItems, sortAttention } from './attention'
 import {
   type AdapterLookup,
@@ -402,6 +403,11 @@ export interface ServiceDeps {
    * Enclave and the Keychain in a packaged app.
    */
   readonly approvalKeys: MacApprovalKeys
+  /**
+   * Whether developer mode can be turned on (approvals/dev-mode.ts): an unpackaged build only.
+   * Absent: never.
+   */
+  readonly developerMode?: boolean
   /**
    * The blind relay (docs/blind-relay.md): where this Mac's tunnel dials, and where its
    * certificate is kept. None: no tunnel.
@@ -648,6 +654,8 @@ export class AppService {
   private settingsNow: Settings = DEFAULT_SETTINGS
   /** Paired devices, once the approval broker is open: whether a phone was told too. */
   private deviceStore: DeviceStore | null = null
+  /** Developer mode (approvals/dev-mode.ts); never on in a packaged build. */
+  private devMode: DevMode | null = null
   /** Paired phones and the relay connection they use (phones.ts). */
   private readonly phones: Phones
   /** This Mac at the blind relay, when one is set up (docs/blind-relay.md). */
@@ -1950,6 +1958,7 @@ export class AppService {
     }
     // In memory at once: no call gets through while the rest happens, even if a write fails.
     const saved = this.appState.setLockedDown(true)
+    await this.devMode?.turnOff('lockdown').catch(() => undefined)
     this.authoring?.closeBrowsers()
     this.agentBrowser?.closeAll()
     // Lockdown ends every lent session and private address (B).
@@ -1966,6 +1975,23 @@ export class AppService {
     await ledger
     await saved
     await this.audit.append({ type: 'lock-down', locked: true, revokedClients: revoked })
+  }
+
+  /**
+   * Developer mode on (one Touch ID) or off. On, it also approves what is waiting that it may:
+   * the card an agent's submitted version is waiting on answers itself.
+   */
+  private async setDeveloperMode(on: boolean): Promise<boolean> {
+    const devMode = this.devMode
+    const broker = this.approvalBroker
+    if (devMode === null || broker === null) return !on
+    if (!on) {
+      await devMode.turnOff('turned-off')
+      return true
+    }
+    if (this.lockedDown || !(await devMode.turnOn())) return false
+    for (const pending of broker.list()) await broker.approveByDevMode(pending.request.id).catch(() => false)
+    return true
   }
 
   /**
@@ -1994,7 +2020,21 @@ export class AppService {
     try {
       const devices = new DeviceStore(ledger, await keys.signer.keys())
       this.deviceStore = devices
+      const devMode = new DevMode({
+        available: this.deps.developerMode === true,
+        devices,
+        channel: keys.signer.channel,
+        now: this.deps.now,
+        timers: this.deps.timers,
+        changed: (on, why) => {
+          const until = devMode.status().until
+          void this.audit.append({ type: 'developer-mode', on, until, reason: why }).catch(() => undefined)
+          this.emit('app-changed')
+        },
+      })
+      this.devMode = devMode
       this.approvalBroker = await ApprovalBroker.open({
+        devMode,
         ledger,
         devices,
         signer: keys.signer,
@@ -2014,6 +2054,11 @@ export class AppService {
       // diagnostics log and Needs you (keysChangedItems) say why.
       if (signedByOldKeys(ledger.data.evidence, devices.macId) !== null)
         this.deps.diagnostics?.({ type: 'approval-keys-changed' })
+      // A key the last run held went with it: its record is revoked, keeping what it approved.
+      if ((await devMode.revokeLeftovers().catch(() => 0)) > 0)
+        await this.audit
+          .append({ type: 'developer-mode', on: false, until: null, reason: 'restart' })
+          .catch(() => undefined)
       await this.openPhones(this.approvalBroker, devices)
     } catch {
       this.approvalBroker = null
@@ -2957,6 +3002,8 @@ export class AppService {
     )
     if (!asked.ok)
       throw new ValetError('config', asked.reason === 'locked-down' ? 'locked-down' : 'unavailable')
+    // Developer mode approved it already (an adapter's version, a tool, an adapter's setting).
+    if (asked.autoApproved === true) return true
     const answered = await broker.approveOnMac(
       asked.requestId,
       extras.typedCode === undefined ? {} : { typedCode: extras.typedCode },
@@ -5855,6 +5902,7 @@ export class AppService {
           lockedDown: this.lockedDown,
           version: deps.version,
           demo: deps.demo,
+          developerMode: this.devMode?.status() ?? { available: false, until: null },
         }),
         setPaused: async (paused) => {
           const changed = this.paused !== paused
@@ -5868,6 +5916,7 @@ export class AppService {
           if (changed) await this.audit.append({ type: 'app-paused', paused })
         },
         setLockedDown: (locked) => this.setLockedDown(locked),
+        setDeveloperMode: (on) => this.setDeveloperMode(on),
         openControlPanel: async (route) => deps.ui.openControlPanel(route ?? null),
         copyText: async (text) => deps.ui.writeClipboard(text),
         quit: async () => deps.ui.quit(),

@@ -1,5 +1,6 @@
 export * from './anchored-file'
 export * from './broker'
+export * from './dev-mode'
 export * from './devices'
 export * from './helper-signer'
 export * from './install-subject'

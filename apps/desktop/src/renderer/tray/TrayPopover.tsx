@@ -33,6 +33,7 @@ import {
   Power,
   RotateCw,
   ShieldCheck,
+  Wrench,
 } from 'lucide-react'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import type { AdapterSummary, AttentionItem, HashRoute, RunSummary } from '../../shared/api'
@@ -70,6 +71,9 @@ export function TrayPopover() {
   const paused = status?.paused === true
   const lockedDown = status !== null && isLockedDown(status)
   const canLockDown = typeof (api.app as { setLockedDown?: unknown }).setLockedDown === 'function'
+  // Unpackaged builds only: adapter versions, tools and adapter settings approve themselves.
+  const devMode = status?.developerMode
+  const devUntil = devMode?.until ?? null
   const sites = adapters.status === 'ready' ? adapters.data : []
   const anyApproved = sites.some((a) => a.approval === 'approved')
   const firstInstall = (id: string) => {
@@ -197,6 +201,11 @@ export function TrayPopover() {
               {status?.demo ? (
                 <Badge tone="warning" size="sm" title="A local fake Woolworths and a test account">
                   Demo
+                </Badge>
+              ) : null}
+              {devUntil !== null ? (
+                <Badge tone="warning" size="sm" title={`Developer mode until ${formatClock(devUntil)}`}>
+                  Dev mode
                 </Badge>
               ) : null}
             </span>
@@ -336,6 +345,19 @@ export function TrayPopover() {
               {lockedDown ? (
                 <MenuRow icon={<Lock />} onClick={() => run(() => setLockedDown(api, false))}>
                   Unlock Valet
+                </MenuRow>
+              ) : null}
+              {devMode?.available === true && !lockedDown ? (
+                <MenuRow
+                  icon={<Wrench />}
+                  hint={
+                    devUntil === null
+                      ? 'Approves new adapter versions, tools and adapter settings for 8 hours'
+                      : `On until ${formatClock(devUntil)}. Logins still ask you.`
+                  }
+                  onClick={() => run(() => api.app.setDeveloperMode(devUntil === null))}
+                >
+                  {devUntil === null ? 'Turn on developer mode…' : 'Turn off developer mode'}
                 </MenuRow>
               ) : null}
             </div>

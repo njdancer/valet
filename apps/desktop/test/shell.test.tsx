@@ -355,7 +355,13 @@ describe('call refs and lock-down state', () => {
     expect(callRef('zz')).toBe('ZZ')
   })
   it('reads lock down only when the main process reports it', () => {
-    const status: AppStatus = { paused: false, version: '1', demo: false, lockedDown: false }
+    const status: AppStatus = {
+      paused: false,
+      version: '1',
+      demo: false,
+      lockedDown: false,
+      developerMode: { available: false, until: null },
+    }
     expect(isLockedDown(status)).toBe(false)
     expect(isLockedDown({ ...status, lockedDown: true })).toBe(true)
   })

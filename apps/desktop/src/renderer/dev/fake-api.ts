@@ -833,7 +833,13 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     disabledReason: null,
   }
 
-  let app: AppStatus = { paused: false, lockedDown: false, version: '0.1.0', demo: false }
+  let app: AppStatus = {
+    paused: false,
+    lockedDown: false,
+    version: '0.1.0',
+    demo: false,
+    developerMode: { available: true, until: null },
+  }
   /**
    * The story's (docs/ux/wireframes/story.md) items nobody answered, kept 24 hours: the 6:10 pm
    * Remove from cart (call 5C10), missed at 6:12 pm.
@@ -2123,6 +2129,18 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         enter('app.setPaused', paused)
         app = { ...app, paused }
         emit({ type: 'app-changed' })
+      },
+      async setDeveloperMode(on) {
+        enter('app.setDeveloperMode', on)
+        app = {
+          ...app,
+          developerMode: {
+            available: true,
+            until: on ? new Date(Date.now() + 8 * 3600_000).toISOString() : null,
+          },
+        }
+        emit({ type: 'app-changed' })
+        return true
       },
       async setLockedDown(locked) {
         enter('app.setLockedDown', locked)

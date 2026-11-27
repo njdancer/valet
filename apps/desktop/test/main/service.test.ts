@@ -167,6 +167,8 @@ async function setup(
     raw?: ServiceDeps['raw']
     scratch?: ServiceDeps['scratch']
     sessionBrowser?: ServiceDeps['sessionBrowser']
+    /** An unpackaged build's developer mode (approvals/dev-mode.ts). */
+    developerMode?: boolean
   } = {},
 ) {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'sa-service-'))
@@ -256,6 +258,7 @@ async function setup(
     ...(options.raw === undefined ? {} : { raw: options.raw }),
     ...(options.scratch === undefined ? {} : { scratch: options.scratch }),
     ...(options.sessionBrowser === undefined ? {} : { sessionBrowser: options.sessionBrowser }),
+    ...(options.developerMode === undefined ? {} : { developerMode: options.developerMode }),
     createDriver: async (_manifest, reporters) => {
       driver.reporters = reporters
       return driver
@@ -384,6 +387,91 @@ async function approved() {
   await s.api.approvals.approve('shop', s.adapter.hash)
   return s
 }
+
+describe('developer mode (docs/approval-broker.md#developer-mode)', () => {
+  const login = (s: Awaited<ReturnType<typeof setup>>) =>
+    s.api.grants.make({
+      adapterId: 'shop',
+      adapterHash: s.adapter.hash,
+      secret: 'login',
+      provider: 'fake',
+      itemRef: 'demo-woolworths',
+      origins: ['https://login.shop.test'],
+    })
+
+  it('approves an adapter version without Touch ID after one Touch ID, and never a login', async () => {
+    const s = await setup({ developerMode: true })
+    expect((await s.api.app.status()).developerMode).toEqual({ available: true, until: null })
+    expect(await s.api.app.setDeveloperMode(true)).toBe(true)
+    expect(s.presence.prompts).toEqual(['turn on developer mode for 8 hours'])
+    expect((await s.api.app.status()).developerMode.until).toBe('2026-11-07T08:00:00.000Z')
+    // The person's finger is gone from here on: what developer mode may approve goes through.
+    s.presence.answer = false
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    expect((await s.api.adapters.list())[0]?.approval).toBe('approved')
+    expect(s.presence.prompts).toHaveLength(1)
+    // A login still asks the person, and without them it isn't given.
+    await login(s).catch(() => undefined)
+    expect(s.presence.prompts).toHaveLength(2)
+    expect((await s.api.adapters.list())[0]?.secrets).toEqual([{ name: 'login', granted: false }])
+    const events = (await s.api.audit.page({ category: 'approvals-grants', limit: 50 })).records.map(
+      (r) => r.event,
+    )
+    expect(events).toContainEqual(expect.objectContaining({ type: 'developer-mode', on: true, reason: 'on' }))
+    const answered = (await s.api.audit.page({ limit: 100 })).records
+      .map((r) => r.event)
+      .filter((e) => e.type === 'approval-answered' && e.answer === 'approved')
+    expect(answered).toEqual([expect.objectContaining({ by: 'developer-mode' })])
+  })
+
+  it('ends after 8 hours, when turned off, and on lock down; what it approved stays approved', async () => {
+    const s = await setup({ developerMode: true })
+    await s.api.app.setDeveloperMode(true)
+    s.advance(8 * 3600_000)
+    s.presence.answer = false
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    // Its window is over: the person is asked, and without them nothing is approved.
+    expect(s.presence.prompts).toHaveLength(2)
+    expect((await s.api.adapters.list())[0]?.approval).toBe('unapproved')
+
+    s.presence.answer = true
+    await s.api.app.setDeveloperMode(true)
+    s.presence.answer = false
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    expect((await s.api.adapters.list())[0]?.approval).toBe('approved')
+    expect(await s.api.app.setDeveloperMode(false)).toBe(true)
+    expect((await s.api.app.status()).developerMode.until).toBeNull()
+
+    // A restart on the same data: the version it approved is still approved, and it is off.
+    await s.service.stop()
+    const restarted = new AppService({
+      ...(s.service as unknown as { deps: ConstructorParameters<typeof AppService>[0] }).deps,
+    })
+    services.push(restarted)
+    await restarted.start()
+    expect((await restarted.api.adapters.list())[0]?.approval).toBe('approved')
+    expect((await restarted.api.app.status()).developerMode.until).toBeNull()
+
+    // Lock down turns it off too.
+    s.presence.answer = true
+    await restarted.api.app.setDeveloperMode(true)
+    await restarted.api.app.setLockedDown(true)
+    expect((await restarted.api.app.status()).developerMode.until).toBeNull()
+    const events = (await restarted.api.audit.page({ category: 'approvals-grants', limit: 50 })).records.map(
+      (r) => r.event,
+    )
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'developer-mode', on: false, reason: 'lockdown' }),
+    )
+  })
+
+  it('is never there in a packaged build', async () => {
+    const s = await setup()
+    expect((await s.api.app.status()).developerMode).toEqual({ available: false, until: null })
+    expect(await s.api.app.setDeveloperMode(true)).toBe(false)
+    expect(s.presence.prompts).toEqual([])
+  })
+})
 
 describe('signed installs (docs/approval-broker.md)', () => {
   it('approves an adapter only with Touch ID: a cancelled prompt leaves it off', async () => {
@@ -1299,6 +1387,7 @@ describe('tool calls', () => {
       lockedDown: false,
       version: '0.1.0',
       demo: true,
+      developerMode: { available: false, until: null },
     })
     // The app's refusal, not the site's: no rate limit, and the stage says it was the app's config.
     expect(

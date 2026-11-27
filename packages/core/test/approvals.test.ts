@@ -227,11 +227,25 @@ describe('approval requests', () => {
     expect(KIND_TIER['irreversible-call']).toBe('approve-each-use')
     expect(approvableOn('device-pair', {} as never)).toEqual(['mac'])
     expect(approvableOn('resume', { from: 'lockdown' } as never)).toEqual(['mac'])
-    expect(approvableOn('adapter-install', { unsandboxed: true, changes: [] } as never)).toEqual(['mac'])
+    // Developer mode approves an install either way; a phone never approves an unsandboxed one.
+    expect(approvableOn('adapter-install', { unsandboxed: true, changes: [] } as never)).toEqual([
+      'mac',
+      'dev',
+    ])
     expect(approvableOn('adapter-install', { unsandboxed: false, changes: [] } as never)).toEqual([
       'mac',
       'phone',
+      'dev',
     ])
+    expect(approvableOn('tool-enable', {} as never)).toEqual(['mac', 'phone', 'dev'])
+    expect(approvableOn('setting', { scope: 'adapter' } as never)).toEqual(['mac', 'phone', 'dev'])
+    // Never by developer mode: a Valet setting, a login, a credential, a connecting agent.
+    expect(approvableOn('setting', { scope: 'valet' } as never)).toEqual(['mac', 'phone'])
+    expect(approvableOn('secret-grant', {} as never)).toEqual(['mac', 'phone'])
+    expect(approvableOn('credential-grant', {} as never)).toEqual(['mac', 'phone'])
+    expect(approvableOn('remote-client', {} as never)).toEqual(['mac', 'phone'])
+    expect(approvableOn('device-pair', {} as never)).toEqual(['mac'])
+    expect(approvableOn('resume', { from: 'lockdown' } as never)).toEqual(['mac'])
     expect(approvalRequestSchema).toBeDefined()
   })
 })
@@ -378,7 +392,7 @@ describe('signed decisions', () => {
       items: ['/opt/tool/run'],
       risk: 'critical',
     }
-    expect(approvableOn('adapter-install', install([command], false))).toEqual(['mac'])
+    expect(approvableOn('adapter-install', install([command], false))).toEqual(['mac', 'dev'])
     const mode: PermissionChange = {
       area: 'sandbox-mode',
       change: 'widened',
@@ -389,7 +403,7 @@ describe('signed decisions', () => {
     expect(() => serializeRequest({ ...base, subject: install([mode], false) } as ApprovalRequest)).toThrow()
     // An update to an adapter that was already unsandboxed has no sandbox-mode line, and stays Mac only.
     const already = serializeRequest({ ...base, subject: install([], true) } as ApprovalRequest)
-    expect(approvableOn('adapter-install', already.request.subject)).toEqual(['mac'])
+    expect(approvableOn('adapter-install', already.request.subject)).toEqual(['mac', 'dev'])
     expect(
       serializeRequest({ ...base, subject: install([mode], true) } as ApprovalRequest).request.kind,
     ).toBe('adapter-install')

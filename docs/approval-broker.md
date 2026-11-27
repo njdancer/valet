@@ -304,7 +304,28 @@ D47's re-bind, with the install's own Touch ID as the gesture instead of a separ
   folder, so nothing is kept unless the snapshot hashes to the approved hash (`snapshotIntact`).
 - **Not for a rollback**: the version rolled back to gets its own grants back, as before.
 
-## Migration
+## Developer mode
+
+**Built** (2026-11-27, Nick's ask: "It's dumb for me to have to approve this while you're
+iterating. I'm comfortable with the risk."). Only an unpackaged build has it (`developerMode` in
+the service's deps, `!app.isPackaged`, never in demo mode); a release build can't turn it on.
+
+- **On**: the menu bar's "Turn on developer mode…" (the control panel and the menu bar only, never
+  a panel that shows adapter text). One Touch ID: the Mac's approval key signs a device record,
+  role `dev`, for a P-256 key made then and held only in the app's memory. The helper signs such a
+  record only alone, with the reason "turn on developer mode for 8 hours".
+- **What it approves** (`devApproves` in core's approvals.ts, enforced by verifyDecision like any
+  device's role): an adapter's version (`adapter-install`, unsandboxed ones too), a tool turned on
+  (`tool-enable`), an adapter's own setting (`setting` with scope `adapter`). Each is signed by
+  the key and answered through the broker like a phone's approval, so the same prechecks, evidence
+  and audit apply; `approval-answered` carries `by: 'developer-mode'`. A request made while it is
+  on is approved at once, and turning it on approves what is already waiting.
+- **What still asks the person**: logins and credentials, pairing, lifting lock down,
+  irreversible calls, a connecting agent, Valet's own settings, browser and network grants.
+- **Off**: after 8 hours, from the menu bar, on lock down, and when Valet stops (the key goes with
+  the process; the record is revoked at the next start). Revoking keeps what it approved, as for a
+  phone: stored evidence counts what a device signed before its revocation. Each change is
+  audited as `developer-mode`, and the menu bar shows DEV while it is on.
 
 **Built** for installs and grants. The first launch of a signed build records, once, a `legacy`
 list in the anchored ledger: the adapters approved in `approvals.json` whose active hash is the

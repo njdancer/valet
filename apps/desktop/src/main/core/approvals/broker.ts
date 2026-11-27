@@ -94,7 +94,11 @@ export interface KindHandler<K extends ApprovalKind> {
 }
 export type KindHandlers = { readonly [K in ApprovalKind]?: KindHandler<K> }
 
-export type AnswerSource = { readonly via: 'mac' } | { readonly via: 'phone'; readonly deviceId: string }
+export type AnswerSource =
+  | { readonly via: 'mac' }
+  | { readonly via: 'phone'; readonly deviceId: string }
+  /** Developer mode's key (dev-mode.ts), approving by itself what approvableOn lets it. */
+  | { readonly via: 'dev'; readonly deviceId: string }
 
 export type Outcome = 'approved' | 'declined' | 'expired' | 'withdrawn'
 
@@ -179,6 +183,8 @@ export type RequestResult =
       readonly expiresAt: string
       /** True if an identical request from the same asker was already waiting. */
       readonly reused: boolean
+      /** True if developer mode approved it at once (dev-mode.ts): it is closed, approved. */
+      readonly autoApproved?: boolean
     }
   | { readonly ok: false; readonly reason: RequestRefusal; readonly until?: string }
 
@@ -205,6 +211,16 @@ export interface BrokerOptions {
   readonly timers?: Timers
   /** Something the Mac's window shows changed. */
   readonly onChange?: () => void
+  /** Developer mode, in an unpackaged build: approves what approvableOn lets `dev` at once. */
+  readonly devMode?: DevApprover
+}
+
+/** What the broker needs of developer mode (dev-mode.ts). */
+export interface DevApprover {
+  /** The key's device id while it is on; null while off. */
+  deviceId(): string | null
+  /** The key's signature over a decision payload; null once it is off. */
+  sign(payload: string): Promise<string | null>
 }
 
 /** Outcomes kept for askers to read back. */
@@ -313,7 +329,7 @@ export class ApprovalBroker {
   }
 
   /** Asks the person. The Mac builds `subject`; nothing here is taken from the asker but its note. */
-  request<K extends ApprovalKind>(
+  async request<K extends ApprovalKind>(
     kind: K,
     subject: ApprovalSubject<K>,
     requester: Requester,
@@ -327,7 +343,7 @@ export class ApprovalBroker {
       replaces,
       onBehalfOf,
     } = typeof extras === 'string' || extras === null ? { agentNote: extras } : extras
-    return this.exclusive(async () => {
+    const asked = await this.exclusive(async (): Promise<RequestResult> => {
       const earlier = replaces === undefined ? undefined : this.pending.get(replaces)
       const replacing =
         earlier !== undefined && sameAsker(earlier.request.requester, requester) ? earlier : undefined
@@ -423,6 +439,33 @@ export class ApprovalBroker {
         reused: false,
       }
     })
+    if (!asked.ok || !approvableOn(kind, subject).includes('dev')) return asked
+    return (await this.approveByDevMode(asked.requestId)) ? { ...asked, autoApproved: true } : asked
+  }
+
+  /**
+   * Developer mode's approval of a waiting request it may approve: signed by its key and answered
+   * like any device's, so the same checks, evidence and audit apply. False while it is off, or
+   * when the answer was refused (stale, locked down).
+   */
+  async approveByDevMode(requestId: string): Promise<boolean> {
+    const dev = this.options.devMode
+    const deviceId = dev?.deviceId() ?? null
+    const request = this.pending.get(requestId)
+    if (dev === undefined || deviceId === null || request === undefined) return false
+    if (!approvableOn(request.request.kind, request.request.subject).includes('dev')) return false
+    const payload = decisionPayload({
+      v: 1,
+      decision: 'approve',
+      macId: this.macId,
+      requestId,
+      requestDigest: request.digest,
+      deviceId,
+      decidedAt: new Date(this.now()).toISOString(),
+    })
+    const signature = await dev.sign(payload).catch(() => null)
+    if (signature === null) return false
+    return (await this.answer({ payload, signature }, { via: 'dev', deviceId })).ok
   }
 
   /**
@@ -517,6 +560,7 @@ export class ApprovalBroker {
         requestId,
         answer: 'approved',
         deviceId: check.decision.deviceId,
+        ...(from.via === 'dev' ? { by: 'developer-mode' as const } : {}),
       })
       const stored = !NEVER_STORED.includes(kind)
       const evidence: Evidence | null = stored
