@@ -140,8 +140,12 @@ describe('a browser session’s dial with network settings', () => {
     agentSessionDial(on, { resolve: at('192.168.1.1'), interfaces: macInterfaces })('router.test', 443)
     expect(connect).toHaveBeenLastCalledWith({ host: '192.168.1.1', port: 443 })
     const calls = connect.mock.calls.length
-    await closed(agentSessionDial(on, { resolve: at('192.168.1.20'), interfaces: macInterfaces })('me.test', 443))
-    await closed(agentSessionDial(on, { resolve: at('127.0.0.1'), interfaces: macInterfaces })('lo.test', 443))
+    await closed(
+      agentSessionDial(on, { resolve: at('192.168.1.20'), interfaces: macInterfaces })('me.test', 443),
+    )
+    await closed(
+      agentSessionDial(on, { resolve: at('127.0.0.1'), interfaces: macInterfaces })('lo.test', 443),
+    )
     expect(connect.mock.calls.length).toBe(calls)
   })
 
@@ -154,7 +158,9 @@ describe('a browser session’s dial with network settings', () => {
     expect(connect).toHaveBeenLastCalledWith({ host: '93.184.216.34', port: 443, localAddress: '10.20.0.5' })
     const calls = connect.mock.calls.length
     // No IPv6 address on vlan20: refused, not sent out by the default route.
-    await closed(agentSessionDial(pinned, { resolve: at('2001:db8::1', 6), interfaces: macInterfaces })('v6.test', 443))
+    await closed(
+      agentSessionDial(pinned, { resolve: at('2001:db8::1', 6), interfaces: macInterfaces })('v6.test', 443),
+    )
     await closed(
       agentSessionDial(
         { homeNetwork: false, interface: 'en7' },
