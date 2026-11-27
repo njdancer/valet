@@ -332,7 +332,19 @@ const STEP_FIELDS: Readonly<Record<TraceStep['type'], readonly string[]>> = {
   handoff: ['cookies', 'storageKeys', 'cookieDomains'],
   'tool-code': [],
   waited: ['reason', 'waitedMs', 'ahead'],
-  request: ['method', 'target', 'initiator', 'decision', 'purpose', 'status', 'blockedReason'],
+  request: [
+    'method',
+    'target',
+    'initiator',
+    'decision',
+    'purpose',
+    'status',
+    'blockedReason',
+    'answer',
+    'redirected',
+    'failed',
+    'setting',
+  ],
   confirmation: ['answer'],
   'needs-user': ['reason'],
   failed: ['errorClass'],
@@ -438,12 +450,23 @@ const EVENT_FIELDS: Readonly<Record<AuditEvent['type'], readonly string[]>> = {
   'draft-created': ['draftId', 'adapterId', 'clientId'],
   'draft-submitted': ['draftId', 'adapterId', 'clientId', 'adapterHash', 'packageHash', 'requestId'],
   'draft-deleted': ['draftId', 'adapterId', 'clientId'],
-  'draft-trial': ['draftId', 'adapterId', 'clientId', 'tool', 'host', 'packageHash', 'outcome', 'blocked'],
+  'draft-trial': [
+    'draftId',
+    'adapterId',
+    'clientId',
+    'tool',
+    'host',
+    'packageHash',
+    'outcome',
+    'blocked',
+    'login',
+  ],
   'client-added': ['clientId'],
   'client-revoked': ['clientId'],
   'client-reset': ['clientId'],
   'client-access-changed': ['clientId', 'before', 'after'],
   'client-tool-on': ['clientId', 'tool'],
+  'agent-network-changed': ['clientId', 'homeNetwork', 'interface'],
   'app-paused': ['paused'],
   'call-refused': ['client', 'clientId', 'tool', 'reason'],
   'refusals-dropped': ['client', 'clientId', 'count'],
@@ -481,7 +504,8 @@ function aboutOtherAgent(event: AuditEvent, others: ReadonlySet<string>, mine: s
     event.type === 'client-reset' ||
     event.type === 'client-revoked' ||
     event.type === 'client-access-changed' ||
-    event.type === 'client-tool-on'
+    event.type === 'client-tool-on' ||
+    event.type === 'agent-network-changed'
   )
     return event.clientId !== mine
   const callId = 'callId' in event ? event.callId : null

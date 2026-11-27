@@ -6,7 +6,7 @@ import type { AuthFlowInput } from './types'
 
 export interface FlowContext {
   readonly input: AuthFlowInput
-  /** When the flow started. One-time codes older than this are never used. */
+  /** When the flow started (a workbench's first batch). One-time codes older than this are never used. */
   readonly startedAt: Date
   /** Epoch milliseconds after which the flow has timed out. */
   readonly deadline: number

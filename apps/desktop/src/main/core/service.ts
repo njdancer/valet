@@ -64,12 +64,14 @@ import type { OpenTunnels, RunContext } from '@valet/egress'
 import {
   type AdminReader,
   type Authoring,
+  AuthoringRefusal,
   type CallOutcome,
   displayCode,
   type EndpointClient,
   identityLabel,
   type ListedTool,
   type LiveSessions,
+  mcpToolName,
   type NeedsYouHint,
   normaliseCode,
   normaliseRemoteHost,
@@ -119,6 +121,7 @@ import type {
   AdapterVersions,
   AgentAccessApp,
   AgentAccessChanges,
+  AgentAccessTool,
   AgentAccessView,
   AgentRequestItem,
   AppEvent,
@@ -165,7 +168,24 @@ import {
   NO_APP_ACCESS,
   withWidening,
 } from './agent-access'
-import { AgentBrowserService, BrowserRefusal, type SessionBrowser, sessionPacer } from './agent-browser'
+import {
+  AgentBrowserService,
+  BROWSER_ADAPTER_ID,
+  BrowserRefusal,
+  type SessionBrowser,
+  sessionPacer,
+} from './agent-browser'
+import {
+  type AgentNetwork,
+  AgentNetworkStore,
+  listInterfaces,
+  NETWORK_SETTING_LABELS,
+  networkChangeWidens,
+  networkSettingName,
+  networkSettingOf,
+  networkSettingValue,
+  networkSettingWords,
+} from './agent-network'
 import { agentRequestItem, draftReviewRequest } from './agent-requests'
 import { AppStateStore } from './app-state'
 import {
@@ -241,6 +261,8 @@ import {
   type AskOutcome,
   DraftAuthoring,
   type GrantRequest,
+  type LoginTrialRequest,
+  type LoginTrialResult,
   type PrivateNetworkRequest,
   type RequestState,
   type SessionRequest,
@@ -265,7 +287,7 @@ import {
   signedByOldKeys,
 } from './keys-changed'
 import { createAuthRunner, Handoffs, isBlockedPage, SessionTracker } from './login'
-import { LoginSession } from './login-session'
+import { LoginSession, runLoginTrial } from './login-session'
 import {
   MailService,
   type MailServiceDeps,
@@ -514,7 +536,7 @@ export interface ServiceDeps {
    * its own, through the public-only dial. None in tests that don't drive a browser, and then the
    * browser tools aren't listed.
    */
-  readonly sessionBrowser?: (rules: ScratchRules) => Promise<SessionBrowser>
+  readonly sessionBrowser?: (rules: ScratchRules, network: AgentNetwork) => Promise<SessionBrowser>
   /**
    * A session driver for a draft's live trial (docs/authoring-tools.md#live-trials): partitions in
    * memory named by `label`, through the same public-only dial. None in tests that don't drive a
@@ -798,6 +820,8 @@ export class AppService {
   readonly remote: RemoteAccess
   /** What agents' browser sessions downloaded, until it expires (browser-downloads.ts). */
   private readonly downloadShelf: DownloadShelf
+  /** Each agent's network settings for its browser sessions (agent-network.ts). */
+  private readonly agentNetwork: AgentNetworkStore
   private paused = false
   /** A reset or uninstall is under way: a second one is refused. */
   private erasing = false
@@ -1085,6 +1109,7 @@ export class AppService {
       },
     })
     this.downloadShelf = new DownloadShelf(deps.now)
+    this.agentNetwork = new AgentNetworkStore(join(deps.paths.dir, 'agent-network.json'))
     this.remote = new RemoteAccess({
       downloads: (id) => this.downloadShelf.get(id),
       appTool: (clientId, adapter, declaration) =>
@@ -1214,6 +1239,7 @@ export class AppService {
       ...(this.deps.pacingSleep === undefined ? {} : { pacingSleep: this.deps.pacingSleep }),
       confirmationTimeoutMs: CONFIRMATION_TIMEOUT_MS,
       diagnostics: (d) => this.deps.diagnostics?.(d),
+      requests: (callId, request) => this.memory.requested(callId, request),
     })
     this.host = host
     if (this.packages !== null && this.deps.packages !== undefined) {
@@ -1296,6 +1322,7 @@ export class AppService {
     if (sessionBrowser !== undefined)
       this.agentBrowser = new AgentBrowserService({
         open: sessionBrowser,
+        network: (client) => this.agentNetwork.get(client),
         pace: sessionPacer(() => this.runtime().registeredSites()),
         newId: () => `s${randomBytes(6).toString('hex')}`,
         downloads: { shelf: this.downloadShelf, origin: () => this.publicOrigin() },
@@ -1422,7 +1449,62 @@ export class AppService {
         })),
       })
     }
-    return { clientId: label, apps }
+    const { tools, gone } = await this.accessTools(label)
+    return { clientId: label, apps, tools, gone }
+  }
+
+  /**
+   * A cloud agent's tools as its access page shows them: every tool it could be given (each
+   * approved site's, then Valet's own such as the browser's), on only where it may call it now,
+   * and what its grant still names that Valet doesn't offer. None for an app on this Mac, which
+   * has every approved site's tools unless it turned one off.
+   */
+  private async accessTools(
+    label: string,
+  ): Promise<{ readonly tools: AgentAccessTool[]; readonly gone: string[] }> {
+    if (!label.startsWith('remote:')) return { tools: [], gone: [] }
+    const id = label.slice('remote:'.length)
+    const offered = (await this.remoteSetup()).tools
+    const tools: AgentAccessTool[] = []
+    for (const t of offered) {
+      const declaration =
+        this.nativeDeclaration(t.adapterId, t.tool) ?? this.remoteDeclared(t.adapterId, t.tool)
+      if (declaration === null) continue
+      tools.push({
+        ref: t.ref,
+        adapterId: t.adapterId,
+        siteName: plainName(t.adapterName),
+        tool: t.tool,
+        title: t.toolTitle,
+        sideEffect: t.sideEffect,
+        on: this.remote.allows(t.adapterId, declaration, id),
+        held: this.remote.clients.get(id)?.grant?.tools.includes(t.ref) ?? false,
+      })
+    }
+    // Valet's own first (the browser), as the person meets them, then each site in turn.
+    tools.sort((a, b) => Number(this.isNative(b.adapterId)) - Number(this.isNative(a.adapterId)))
+    const listed = new Set(tools.map((t) => t.ref))
+    const granted = this.remote.clients.get(id)?.grant?.tools ?? []
+    const gone = granted.filter(
+      (ref) => !listed.has(ref) && accessAppOf(ref.slice(0, ref.indexOf('.'))) === null,
+    )
+    return { tools, gone }
+  }
+
+  /** The tool an `agent-access` line names, as listed now at the version and side effect signed; else null. */
+  private signedToolDeclaration(t: ApprovalSubject<'agent-access'>['tools'][number]): ToolDeclaration | null {
+    // Mail's, Calendar's and Reminders' own tools follow from the items, never from a line here.
+    if (accessAppOf(t.adapterId) !== null) return null
+    const native = this.nativeDeclaration(t.adapterId, t.tool)
+    if (native !== null)
+      return t.adapterHash === BUILTIN_TOOLS_HASH && native.sideEffect === t.sideEffect ? native : null
+    const declaration = this.remoteDeclared(t.adapterId, t.tool)
+    if (declaration === null || this.adapter(t.adapterId)?.hash !== t.adapterHash) return null
+    return declaration.sideEffect === t.sideEffect ? declaration : null
+  }
+
+  private isNative(adapterId: string): boolean {
+    return this.natives().some((n) => n.adapterId === adapterId)
   }
 
   /**
@@ -1453,12 +1535,52 @@ export class AppService {
         items.push({ app, id, label: accessLabel(item?.label ?? id), level })
       }
     }
-    if (items.length > 0) {
+    // A cloud agent's tools: on is signed with the rest, off is at once. An app on this Mac has
+    // none to give here.
+    const tools: ApprovalSubject<'agent-access'>['tools'][number][] = []
+    const off: AgentAccessTool[] = []
+    const toolChanges = Object.entries(changes.tools ?? {})
+    if (toolChanges.length > 0 && !label.startsWith('remote:')) throw new ValetError('config', 'invalid')
+    for (const [ref, on] of toolChanges) {
+      const shown = view.tools.find((t) => t.ref === ref)
+      if (!on) {
+        const dot = ref.indexOf('.')
+        // Off for anything its grant still holds, even a tool off for every cloud agent now.
+        if (shown?.on === true || shown?.held === true || view.gone.includes(ref))
+          off.push(
+            shown ?? {
+              ref,
+              adapterId: ref.slice(0, dot),
+              siteName: ref.slice(0, dot),
+              tool: ref.slice(dot + 1),
+              title: ref,
+              sideEffect: 'read',
+              on: true,
+              held: true,
+            },
+          )
+        continue
+      }
+      if (shown === undefined) throw new ValetError('config', 'invalid')
+      if (shown.on) continue
+      const hash = this.isNative(shown.adapterId) ? BUILTIN_TOOLS_HASH : this.adapter(shown.adapterId)?.hash
+      if (hash === undefined) throw new ValetError('config', 'invalid')
+      tools.push({
+        adapterId: shown.adapterId,
+        adapterHash: hash,
+        tool: shown.tool,
+        label: accessLabel(`${shown.siteName}: ${shown.title}`),
+        sideEffect: shown.sideEffect,
+      })
+    }
+    // One request lists at most 100 of each; a Save that adds more is refused, changing nothing.
+    if (items.length > 100 || tools.length > 100) throw new ValetError('config', 'invalid')
+    if (items.length > 0 || tools.length > 0) {
       const subject: ApprovalSubject<'agent-access'> = {
         clientId: label,
         items,
         full: [],
-        tools: [],
+        tools,
         capabilities: [],
       }
       if (!(await this.approveHere('agent-access', subject))) return false
@@ -1466,6 +1588,8 @@ export class AppService {
     // Revoked while the prompt was up: nothing is kept for it.
     if (!this.accessClientKnown(label)) throw new ValetError('config', 'not-found')
     for (const { app, after } of next) await this.agentAccess.set(label, app, after)
+    for (const t of off)
+      await this.setRemoteClientTool(label.slice('remote:'.length), t.adapterId, t.tool, false)
     await this.accessChanged(label)
     return true
   }
@@ -2655,10 +2779,17 @@ export class AppService {
       // Valet's own settings, or an adapter's setting picked on the card (E's admin tools ask;
       // the person's own paths ask too, through changeValetSetting).
       setting: {
-        precheck: (subject) => {
+        precheck: async (subject) => {
           // One cloud agent's Ask for changes: still an approved agent, and only ever turned on.
           const asker = subject.scope === 'valet' ? remoteAskClient(subject.setting) : null
           if (asker !== null) return subject.to === 'On' && this.remote.clients.get(asker)?.grant != null
+          // One agent's browser network: still an agent, still the change it was asked as.
+          const net = subject.scope === 'valet' ? networkSettingOf(subject.setting) : null
+          if (net !== null) {
+            if (!this.agentExists(net.key) || networkSettingValue(net.which, subject.to) === null)
+              return false
+            return networkSettingWords(net.which, await this.agentNetwork.get(net.key)) === subject.from
+          }
           if (subject.scope === 'adapter') {
             const adapter = subject.adapterId === null ? null : this.adapter(subject.adapterId)
             return adapter !== null && Object.hasOwn(adapter.definition.manifest.settings, subject.setting)
@@ -2675,6 +2806,13 @@ export class AppService {
           if (asker !== null) {
             await this.remote.reopenClient(asker).catch(() => undefined)
             this.emit('remote-changed')
+            return
+          }
+          const net = subject.scope === 'valet' ? networkSettingOf(subject.setting) : null
+          if (net !== null) {
+            const value = networkSettingValue(net.which, subject.to)
+            if (value === null) throw new ValetError('config', 'invalid')
+            await this.storeAgentNetwork(net.key, value)
             return
           }
           if (subject.scope === 'adapter') {
@@ -2751,10 +2889,12 @@ export class AppService {
       // applies only what was signed; the Save then writes the rest, which only narrows.
       'agent-access': {
         precheck: async (subject) => {
-          // Tools and capabilities ride on this kind later; nothing asks for them yet.
-          if (subject.tools.length > 0 || subject.capabilities.length > 0 || subject.full.length > 0)
-            return false
+          // Capabilities and full access ride on this kind later; nothing asks for them yet.
+          if (subject.capabilities.length > 0 || subject.full.length > 0) return false
           if (!this.accessClientKnown(subject.clientId)) return false
+          // Tools are a cloud agent's, each at the version and side effect signed for.
+          if (subject.tools.length > 0 && !subject.clientId.startsWith('remote:')) return false
+          if (!subject.tools.every((t) => this.signedToolDeclaration(t) !== null)) return false
           let view: AgentAccessView
           try {
             view = await this.accessView(subject.clientId)
@@ -2776,6 +2916,19 @@ export class AppService {
               app,
               withWidening(before, { items: raised, full: false }),
             )
+          }
+          if (subject.tools.length > 0) {
+            const client = subject.clientId.slice('remote:'.length)
+            for (const t of subject.tools) {
+              const declaration = this.signedToolDeclaration(t)
+              if (declaration === null) throw new ValetError('config', 'not-found')
+              // On for cloud agents if it isn't (each still needs it in its own grant), then in this
+              // agent's grant.
+              if (!this.remote.allows(t.adapterId, declaration))
+                await this.setRemoteTool(t.adapterId, t.tool, true)
+              if (!this.remote.allows(t.adapterId, declaration, client))
+                await this.remote.allowForClient(t.adapterId, declaration, client)
+            }
           }
           // An agent's own ask, approved here or on the phone, has no Save to refresh after it.
           await this.accessChanged(subject.clientId)
@@ -3547,6 +3700,69 @@ export class AppService {
     if (!(await this.approveHere(kind, subject, extras))) throw new ValetError('config', 'not-granted')
   }
 
+  /** An agent Valet knows now: an app on this Mac, or an approved cloud agent. */
+  private agentExists(key: string): boolean {
+    const [origin, id = ''] = key.split(':')
+    if (origin === 'local') return this.clients.get(id) !== null
+    return origin === 'remote' && this.remote.clients.get(id)?.grant != null
+  }
+
+  /** One agent's browser network settings, and the interfaces it could be pinned to. */
+  private async agentNetworkView(key: string): Promise<import('../../shared/api').AgentNetworkView> {
+    if (!this.agentExists(key)) throw new ValetError('config', 'not-found')
+    return { ...(await this.agentNetwork.get(key)), interfaces: listInterfaces() }
+  }
+
+  /**
+   * The person changes an agent's browser network (its page in Valet). Turning the home network
+   * on, or pinning a different interface, asks for Touch ID like turning a tool on; anything that
+   * only narrows is done at once. New sessions take the change; open ones keep what they had.
+   */
+  private async setAgentNetwork(key: string, patch: Partial<AgentNetwork>): Promise<void> {
+    if (!this.agentExists(key)) throw new ValetError('config', 'not-found')
+    for (const which of ['home', 'nic'] as const) {
+      const part: Partial<AgentNetwork> =
+        which === 'home'
+          ? patch.homeNetwork === undefined
+            ? {}
+            : { homeNetwork: patch.homeNetwork }
+          : patch.interface === undefined
+            ? {}
+            : { interface: patch.interface }
+      if (Object.keys(part).length === 0) continue
+      const from = await this.agentNetwork.get(key)
+      const to = { ...from, ...part }
+      if (networkSettingWords(which, from) === networkSettingWords(which, to)) continue
+      if (!networkChangeWidens(which, from, part)) {
+        await this.storeAgentNetwork(key, part)
+        continue
+      }
+      const setting = networkSettingName(key, which)
+      if (setting === null) throw new ValetError('config', 'invalid')
+      await this.approveOrRefuse('setting', {
+        scope: 'valet',
+        adapterId: null,
+        setting,
+        label: NETWORK_SETTING_LABELS[which],
+        from: networkSettingWords(which, from),
+        to: networkSettingWords(which, to),
+      })
+    }
+  }
+
+  private async storeAgentNetwork(key: string, part: Partial<AgentNetwork>): Promise<void> {
+    const to = await this.agentNetwork.set(key, part)
+    await this.audit
+      .append({
+        type: 'agent-network-changed',
+        clientId: key,
+        homeNetwork: to.homeNetwork,
+        interface: to.interface,
+      })
+      .catch(() => undefined)
+    this.emit(key.startsWith('remote:') ? 'remote-changed' : 'clients-changed')
+  }
+
   /** Valet's own widening settings: where each is read and written. */
   private valetSetting(name: WideningSetting): {
     get(): unknown
@@ -4021,6 +4237,10 @@ export class AppService {
       },
       ...(this.deps.scratch === undefined ? {} : { research: this.scratchSessions(this.deps.scratch) }),
       ...(this.deps.fixtureBrowser === undefined ? {} : { caseBrowser: this.deps.fixtureBrowser }),
+      // Login trials need login sessions, which open only in a build with developer mode.
+      ...(this.deps.developerMode === true
+        ? { loginTrial: (request: LoginTrialRequest) => this.loginTrial(request) }
+        : {}),
       ...(this.deps.trialDriver === undefined
         ? {}
         : {
@@ -4634,6 +4854,29 @@ export class AppService {
    * adapter, and never beside a login window handed to the person (they share the partition).
    */
   private async openLoginSession(adapterId: string, clientName: string): Promise<LoginSession> {
+    const { adapter, driver, manifest } = this.loginSite(adapterId)
+    if (this.handoffs.has(adapterId))
+      throw new BrowserRefusal(
+        `${manifest.name}’s login window is open for the person. Try again once they have finished with it.`,
+      )
+    const open = this.loginSessions.get(adapterId)
+    if (open !== undefined && !open.isClosed())
+      throw new BrowserRefusal(`A login session for ${manifest.name} is already open. Close it first.`)
+    const session = await this.startLoginSession(adapter, driver)
+    this.loginSessions.set(adapterId, session)
+    session.onClosed(() => {
+      if (this.loginSessions.get(adapterId) === session) this.loginSessions.delete(adapterId)
+    })
+    this.notifier.draftActivity(`${clientName} opened a login session for ${manifest.name}.`)
+    return session
+  }
+
+  /** The installed site a login session is for, while developer mode is on, or a refusal. */
+  private loginSite(adapterId: string): {
+    adapter: BuiltinAdapter
+    driver: SessionDriver
+    manifest: AdapterManifest
+  } {
     const until = this.devMode?.status().until ?? null
     if (until === null || Date.parse(until) <= this.deps.now())
       throw new BrowserRefusal(
@@ -4646,15 +4889,25 @@ export class AppService {
     const manifest = adapter.definition.manifest
     if (manifest.session.probe.kind === 'none' || Object.keys(manifest.secrets).length === 0)
       throw new BrowserRefusal(`${manifest.name} has no login to work on.`)
-    if (this.handoffs.has(adapterId))
-      throw new BrowserRefusal(
-        `${manifest.name}’s login window is open for the person. Try again once they have finished with it.`,
-      )
-    const open = this.loginSessions.get(adapterId)
-    if (open !== undefined && !open.isClosed())
-      throw new BrowserRefusal(`A login session for ${manifest.name} is already open. Close it first.`)
+    return { adapter, driver, manifest }
+  }
+
+  /**
+   * A login session on `driver`'s auth page, for the installed `adapter`, under its walls. Each of
+   * its batches is one runtime login step, bounded by `stepMs` (the runtime's own bound if unset).
+   */
+  private async startLoginSession(
+    adapter: BuiltinAdapter,
+    driver: SessionDriver,
+    stepMs?: number,
+  ): Promise<LoginSession> {
+    const manifest = adapter.definition.manifest
+    const adapterId = manifest.id
     const loginStep = <T>(step: (ctx: LoginStepContext) => Promise<T>) =>
-      this.runtime().runLoginStep(adapterId, step, { waitMs: LOGIN_WAIT_MS })
+      this.runtime().runLoginStep(adapterId, step, {
+        waitMs: LOGIN_WAIT_MS,
+        ...(stepMs === undefined ? {} : { timeoutMs: stepMs }),
+      })
     let page: AuthPage
     try {
       page = await loginStep(() => driver.openAuthPage(this.blocked.authPage(adapterId, null)))
@@ -4665,7 +4918,7 @@ export class AppService {
       this.mail === null
         ? this.deps.credentials
         : { ...this.deps.credentials, mailReader: () => this.mail as MailReader }
-    const session = new LoginSession({
+    return new LoginSession({
       adapterId,
       manifest,
       adapterHash: adapter.hash,
@@ -4681,12 +4934,73 @@ export class AppService {
       loginStep,
       ...(this.deps.timers === undefined ? {} : { timers: this.deps.timers }),
     })
-    this.loginSessions.set(adapterId, session)
-    session.onClosed(() => {
-      if (this.loginSessions.get(adapterId) === session) this.loginSessions.delete(adapterId)
-    })
-    this.notifier.draftActivity(`${clientName} opened a login session for ${manifest.name}.`)
-    return session
+  }
+
+  /**
+   * A draft's login trial (drafts/authoring.ts loginTrial): a login session for the installed
+   * adapter, under its walls, on an auth page of a trial's own: partitions in memory, new for the
+   * trial, so it starts signed out and nothing of the person's login browser is touched or kept.
+   * assertLoggedIn alone first, the draft's steps, then assertLoggedIn again. Everything is closed
+   * after, whatever happened; it never hands a session to the tools.
+   */
+  private async loginTrial(request: LoginTrialRequest): Promise<LoginTrialResult> {
+    const refused = (error: unknown): never => {
+      if (error instanceof BrowserRefusal) throw new AuthoringRefusal(`Not tried: ${error.detail}`)
+      throw error
+    }
+    const trialDriver = this.deps.trialDriver
+    if (trialDriver === undefined)
+      throw new AuthoringRefusal('Not tried: this build of Valet has no trial browser.')
+    let site: ReturnType<AppService['loginSite']>
+    try {
+      site = this.loginSite(request.adapterId)
+    } catch (error) {
+      return refused(error)
+    }
+    const { adapter, manifest } = site
+    // A trial types the person's login as a login session's browser_login_steps does, so only an
+    // agent that may use that tool may ask for one.
+    if (!this.mayRunLoginSteps(request.viewer))
+      throw new AuthoringRefusal(
+        'Not tried: a login trial needs the browser tool browser_login_steps, which you don’t have. valet_request_access asks the person for it.',
+      )
+    let driver: SessionDriver
+    try {
+      // The site's own hosts only, as a login session reaches: never the draft's private addresses.
+      driver = await trialDriver(manifest, request.label, () => false, null)
+    } catch {
+      throw new AuthoringRefusal('Not tried: Valet couldn’t open a browser for the trial.')
+    }
+    try {
+      let session: LoginSession
+      try {
+        // The steps are a whole login: a real login's time, and room for the lock and pacing.
+        session = await this.startLoginSession(adapter, driver, AUTH_FLOW_TIMEOUT_MS + 30_000)
+      } catch (error) {
+        return refused(error)
+      }
+      try {
+        return await runLoginTrial(session, request.steps, AUTH_FLOW_TIMEOUT_MS)
+      } catch (error) {
+        return refused(error)
+      } finally {
+        session.close()
+      }
+    } finally {
+      await driver.close().catch(() => undefined)
+    }
+  }
+
+  /** Whether this agent may call the agents' browser's browser_login_steps now. */
+  private mayRunLoginSteps(viewer: {
+    readonly origin: 'local' | 'remote'
+    readonly clientId: string
+  }): boolean {
+    const native = this.nativeDeclaration(BROWSER_ADAPTER_ID, 'login_steps')
+    if (native === null) return false
+    return viewer.origin === 'local'
+      ? !this.localToolsOff(viewer.clientId).has(`${BROWSER_ADAPTER_ID}.login_steps`)
+      : this.remote.allows(BROWSER_ADAPTER_ID, native, viewer.clientId)
   }
 
   private adapter(adapterId: string): BuiltinAdapter | null {
@@ -5200,6 +5514,15 @@ export class AppService {
    */
   private writerSource(): WriterSource {
     return {
+      agentNetwork: (key) => this.agentNetwork.get(key),
+      interfaceNames: () => listInterfaces().map((i) => i.name),
+      narrowAgentNetwork: async (key, part) => {
+        const from = await this.agentNetwork.get(key)
+        const which = part.homeNetwork !== undefined ? 'home' : 'nic'
+        // Checked again here: only this writer files an agent's asks, and this path never widens.
+        if (networkChangeWidens(which, from, part)) throw new ValetError('config', 'invalid')
+        await this.storeAgentNetwork(key, part)
+      },
       now: () => this.deps.now(),
       lockedDown: () => this.lockedDown,
       client: (viewer) => {
@@ -5212,15 +5535,44 @@ export class AppService {
         return client === null ? null : { name: client.name }
       },
       itemRequest: (viewer, app, item, level) => this.itemRequest(identityLabel(viewer), app, item, level),
-      toolRequest: (viewer, adapterId, tool) => {
+      toolRequest: (viewer, adapterId, asked) => {
+        const agent = viewer.origin === 'remote' ? viewer.clientId : null
+        if (agent === null) return { ok: false, reason: 'not-found' }
+        // The adapter's own name (login_steps) first, then the name as the agent's list shows it
+        // (browser_login_steps).
+        const prefix = mcpToolName(adapterId, '')
+        const known = (name: string) =>
+          this.nativeDeclaration(adapterId, name) !== null || this.remoteDeclared(adapterId, name) !== null
+        const tool = !known(asked) && asked.startsWith(prefix) ? asked.slice(prefix.length) : asked
+        // The agents' browser alone of Valet's own tools: signed for the built-in "version", as a
+        // Save on the agent's page signs it. Messages reads the person's texts, so only the person
+        // turns it on, on the agent's page; Mail's, Calendar's and Reminders' follow from items.
+        const native = adapterId === BROWSER_ADAPTER_ID ? this.nativeDeclaration(adapterId, tool) : null
+        if (native !== null) {
+          if (this.remote.allows(adapterId, native, agent))
+            return { ok: false, reason: 'already', title: native.title }
+          if (!this.remote.canRequestForClient(adapterId, native, agent))
+            return { ok: false, reason: 'not-found' }
+          return {
+            ok: true,
+            title: native.title,
+            subject: {
+              adapterId,
+              adapterHash: BUILTIN_TOOLS_HASH,
+              tool,
+              scope: 'remote',
+              clientId: `remote:${agent}`,
+              sideEffect: native.sideEffect,
+            },
+          }
+        }
         const adapter = this.adapter(adapterId)
         const declaration = this.remoteDeclared(adapterId, tool)
-        const agent = viewer.origin === 'remote' ? viewer.clientId : null
         // Only a tool of an approved adapter, as the caller lists them (the precheck asks again).
         const listed = this.caller
           ?.listTools()
           .some((t) => t.adapterId === adapterId && t.declaration.name === tool)
-        if (adapter === null || declaration === null || agent === null || listed !== true)
+        if (adapter === null || declaration === null || listed !== true)
           return { ok: false, reason: 'not-found' }
         if (this.remote.allows(adapterId, declaration, agent))
           return { ok: false, reason: 'already', title: declaration.title }
@@ -5404,6 +5756,7 @@ export class AppService {
           this.dropAgentAsks(`remote:${id}`)
           await this.dropRemoteCapabilities(id)
           await this.agentAccess.forget(`remote:${id}`)
+          await this.agentNetwork.forget(`remote:${id}`)
           // Just after, so this call's own result still reaches the agent.
           const timer = setTimeout(() => void this.remote.revokeClient(id).catch(() => false), 1000)
           timer.unref?.()
@@ -5981,6 +6334,7 @@ export class AppService {
             await rm(this.clients.configPath(clientId), { force: true })
           } finally {
             await this.audit.append({ type: 'client-revoked', clientId: label }).catch(() => undefined)
+            await this.agentNetwork.forget(label)
           }
           this.emit('clients-changed')
           this.emit('endpoint-changed')
@@ -6044,6 +6398,8 @@ export class AppService {
           this.refreshEndpoint()
           this.emit('clients-changed')
         },
+        network: (agent) => this.agentNetworkView(agent),
+        setNetwork: (agent, patch) => this.setAgentNetwork(agent, patch),
       },
       attention: {
         list: async (): Promise<AttentionItem[]> => {
@@ -6296,6 +6652,7 @@ export class AppService {
           if (!(await this.remote.revokeClient(id))) throw new ValetError('config', 'not-found')
           await this.dropRemoteCapabilities(id)
           await this.agentAccess.forget(`remote:${id}`)
+          await this.agentNetwork.forget(`remote:${id}`)
         },
         revokeAllClients: async () => {
           const ids = this.remote.remoteClients().map((c) => c.id)
@@ -6304,6 +6661,7 @@ export class AppService {
           for (const id of ids) {
             await this.dropRemoteCapabilities(id)
             await this.agentAccess.forget(`remote:${id}`)
+            await this.agentNetwork.forget(`remote:${id}`)
           }
           return count
         },

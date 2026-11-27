@@ -148,9 +148,14 @@ describe('the shop', () => {
     const identifier = location(await auth.get(authorize))
     const state = new URL(identifier, 'https://x.invalid').searchParams.get('state') ?? ''
     const toPassword = await auth.postForm(identifier, { state, username: SMS.username, action: 'default' })
-    await auth.postForm(location(toPassword), { state, password: SMS.password, action: 'default' })
+    const choice = await auth.postForm(location(toPassword), {
+      state,
+      password: SMS.password,
+      action: 'default',
+    })
+    await auth.postForm(location(choice), { state, type: 'text', action: 'default' })
     const text = (await phone.get('/_demo/phone')).text
-    expect(text).toContain('Your Gumleaf Grocer verification code is 135790.')
+    expect(text).toContain('135790 is your Gumleaf Grocer one-time verification code.')
   })
 
   it('swaps the captured house brand in API answers only when told to', async () => {

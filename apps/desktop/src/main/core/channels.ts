@@ -62,6 +62,8 @@ export const INVOKE_METHODS = [
   'clients.access',
   'clients.setAccess',
   'clients.turnToolOn',
+  'clients.network',
+  'clients.setNetwork',
   'attention.list',
   'attention.dismiss',
   'attention.approveRequest',

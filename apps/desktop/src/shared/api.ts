@@ -755,6 +755,13 @@ export type TraceStep = {
       readonly purpose: Purpose | null
       readonly status: number | null
       readonly blockedReason: BlockedRequest['reason'] | null
+      /** Allowed requests only, while the app remembers the call: what the answer was. */
+      readonly answer?: 'json' | 'html' | 'other' | 'none' | null
+      readonly redirected?: boolean
+      /** Why no answer came back, as the error's class. */
+      readonly failed?: ErrorClass | null
+      /** The apply tool that sent it, run before this call for a setting (a store, say). */
+      readonly setting?: string | null
     }
   | { readonly type: 'confirmation'; readonly answer: 'approved' | 'declined' | 'timed-out' | 'cancelled' }
   | { readonly type: 'needs-user'; readonly reason: NeedsUserReason }
@@ -780,9 +787,9 @@ export interface RunTrace {
   readonly adapterHash: string
   readonly secretsUsed: readonly { readonly secret: string; readonly field: SecretField }[]
   /**
-   * Requests the run made and the driver refused. `sent` and `probes` are null when the main process
-   * can't count them (the runtime audits refusals only, so today they are always null); the
-   * renderer then shows the refused count alone.
+   * Requests the run made and the driver refused. `sent` counts what tool code fetched (with any
+   * setting's run before the call), and is null once the app no longer remembers the call (after a
+   * restart); `probes` is always null. The renderer then shows the refused count alone.
    */
   readonly requests: {
     readonly sent: number | null
@@ -944,6 +951,21 @@ export interface ClientAccess {
   readonly askForChanges: boolean
   /** `<adapterId>.<tool>`, sorted. */
   readonly toolsOff: readonly string[]
+}
+
+/** What an agent's browser sessions may reach, and the Mac's interfaces they could leave from. */
+export interface AgentNetworkView {
+  readonly homeNetwork: boolean
+  /** The interface every connection leaves from; null for the Mac's own routing. */
+  readonly interface: string | null
+  readonly interfaces: readonly {
+    readonly name: string
+    readonly addresses: readonly { readonly address: string; readonly family: 4 | 6 }[]
+  }[]
+}
+export type AgentNetworkPatch = {
+  readonly homeNetwork?: boolean
+  readonly interface?: string | null
 }
 
 export type ClientAccessPatch = Partial<Omit<ClientAccess, 'toolsOff'>>
@@ -1645,14 +1667,40 @@ export interface AgentAccessApp {
   readonly items: readonly AgentAccessItem[]
 }
 
-/** What one agent (`local:<id>` or `remote:<id>`) may use in the Mac's apps. */
+/** One tool a cloud agent could be given: an approved site's, or Valet's own (the browser's). */
+export interface AgentAccessTool {
+  /** `<adapterId>.<tool>`. */
+  readonly ref: string
+  readonly adapterId: string
+  readonly siteName: string
+  readonly tool: string
+  readonly title: string
+  readonly sideEffect: 'read' | 'write' | 'irreversible'
+  /** It may call it now. */
+  readonly on: boolean
+  /** Its grant names it: false for one it can call only once its grant does. */
+  readonly held: boolean
+}
+
+/** What one agent (`local:<id>` or `remote:<id>`) may use in the Mac's apps and, for a cloud agent, its tools. */
 export interface AgentAccessView {
   readonly clientId: string
   readonly apps: readonly AgentAccessApp[]
+  /** Cloud agents only: every tool it could be given, off by default. Empty for an app on this Mac. */
+  readonly tools: readonly AgentAccessTool[]
+  /** Tools in a cloud agent's grant that Valet doesn't offer now (a site since removed): shown, never callable. */
+  readonly gone: readonly string[]
 }
 
-/** A Save on the access page: each changed item's new level, by app. */
-export type AgentAccessChanges = Readonly<Partial<Record<AccessApp, Readonly<Record<string, AccessChoice>>>>>
+/**
+ * A Save on the access page: each changed item's new level, by app, and (cloud agents only) each
+ * changed tool, on or off, by ref.
+ */
+export type AgentAccessChanges = Readonly<
+  Partial<Record<AccessApp, Readonly<Record<string, AccessChoice>>>>
+> & {
+  readonly tools?: Readonly<Record<string, boolean>>
+}
 
 /** Messages on this Mac (docs/messages.md). */
 export interface MessagesSettings {
@@ -1837,6 +1885,13 @@ export interface ValetApi {
     setAccess(clientId: string, patch: ClientAccessPatch): Promise<void>
     /** Turns back on a site tool the app turned off for itself. */
     turnToolOn(clientId: string, qualified: string): Promise<void>
+    /**
+     * An agent's browser sessions' network (docs/agent-browser.md, "Network"), for an app on this
+     * Mac (`local:<id>`) or a cloud agent (`remote:<id>`), with the interfaces it could use.
+     */
+    network(agent: string): Promise<AgentNetworkView>
+    /** Turning the home network on or pinning an interface asks for Touch ID; narrowing doesn't. */
+    setNetwork(agent: string, patch: AgentNetworkPatch): Promise<void>
   }
   readonly attention: {
     /**

@@ -73,9 +73,9 @@ describe('a cloud agent’s page with Mail on', () => {
     await api.mail.update({ enabled: true })
     await api.mail.action('full-disk-access')
     renderPage(api, <ClientPage clientId="rcdemodemodemodemodemo" />)
-    await screen.findByRole('switch', { name: 'Woolworths: Get cart' })
-    // Mail's own tools aren't per-tool switches: they follow from its access below.
-    expect(screen.queryByRole('switch', { name: 'Mail: Search mail' })).toBeNull()
+    await screen.findByRole('radiogroup', { name: 'Woolworths: Get cart' })
+    // Mail's own tools aren't per-tool choices: they follow from its access below.
+    expect(screen.queryByRole('radiogroup', { name: 'Mail: Search mail' })).toBeNull()
     const mail = await screen.findByTestId('access-mail')
     const read = () => within(mail).getAllByRole('radio', { name: 'Read' })[0] as HTMLElement
     const off = () => within(mail).getAllByRole('radio', { name: 'Off' })[0] as HTMLElement

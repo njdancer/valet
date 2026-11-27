@@ -493,9 +493,18 @@ describe('the login, walked against scripted Auth0 pages', () => {
 
   it('reads the SMS code from the Woolworths sender, as a six-digit number', () => {
     const [source] = messagesSourcesIn(steps)
-    expect(source).toEqual({ sender: MESSAGES_SENDER, pattern: '\\b(\\d{6})\\b', maxAgeSeconds: 300 })
+    expect(source).toEqual({
+      sender: MESSAGES_SENDER,
+      pattern: '\\b(\\d{6}) is your Woolworths',
+      maxAgeSeconds: 300,
+    })
     const pattern = new RegExp(source?.pattern ?? '')
-    expect(pattern.exec('Your Woolworths verification code is 135790.')?.[1]).toBe('135790')
+    // As received live, 2026-11-27.
+    expect(
+      pattern.exec(
+        "135790 is your Woolworths one-time verification code. The code is valid for 5 min. If you didn't expect this SMS please call 1800 000 610",
+      )?.[1],
+    ).toBe('135790')
     expect(pattern.exec('Order 1234567 is on its way')).toBeNull()
   })
 

@@ -7,6 +7,7 @@
 import { z } from 'zod'
 import { panelOnlyRoute, parseRoute } from '../../renderer/lib/routes'
 import type { HashRoute, ValetApi } from '../../shared/api'
+import { INTERFACE_NAME } from './agent-network'
 import { EVENTKIT_KINDS, eventKitSettingsPatchSchema } from './calendar'
 import { CHANNEL_PREFIX, INVOKE_METHODS, type InvokeMethod } from './channels'
 import { mailSettingsPatchSchema } from './mail'
@@ -60,6 +61,8 @@ const SETTING = SECRET
 /** Call, confirmation and client ids: the runtime's call-id alphabet. */
 const EVENTKIT_APP = z.enum(EVENTKIT_KINDS)
 const OPAQUE_ID = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)
+/** An agent as audits name it: an app on this Mac or a cloud agent. */
+const AGENT_KEY = z.string().regex(/^(local:c_[0-9a-f]{16}|remote:[a-z0-9_]{1,52})$/)
 const ACCESS_CLIENT = z.string().regex(/^(?:local|remote):[A-Za-z0-9_-]{1,64}$/)
 const accessLevels = z
   .record(z.string().min(1).max(200), z.enum(['off', 'read', 'edit']))
@@ -69,6 +72,10 @@ const accessChanges = z
     mail: accessLevels.optional(),
     calendar: accessLevels.optional(),
     reminders: accessLevels.optional(),
+    tools: z
+      .record(z.string().regex(/^[a-z][a-z0-9-]{0,63}\.[A-Za-z0-9_-]{1,128}$/), z.boolean())
+      .refine((r) => Object.keys(r).length <= 500, 'too many tools')
+      .optional(),
   })
   .strict()
   .transform((c) => stripUndefined(c))
@@ -277,6 +284,19 @@ const HANDLERS: Readonly<
   'clients.turnToolOn': entry(
     z.tuple([OPAQUE_ID, z.string().regex(/^[a-z][a-z0-9-]{1,63}\.[a-z][a-z0-9_]{0,63}$/)]),
     (api, [id, qualified]) => api.clients.turnToolOn(id, qualified),
+  ),
+  'clients.network': entry(z.tuple([AGENT_KEY]), (api, [agent]) => api.clients.network(agent)),
+  'clients.setNetwork': entry(
+    z.tuple([
+      AGENT_KEY,
+      z
+        .object({
+          homeNetwork: z.boolean().optional(),
+          interface: z.string().regex(INTERFACE_NAME).nullable().optional(),
+        })
+        .strict(),
+    ]),
+    (api, [agent, patch]) => api.clients.setNetwork(agent, stripUndefined(patch)),
   ),
   'attention.list': entry(none, (api) => api.attention.list()),
   'attention.dismiss': entry(z.tuple([OPAQUE_ID]), (api, [id]) => api.attention.dismiss(id)),

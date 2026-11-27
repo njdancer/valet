@@ -20,7 +20,7 @@ export const PLACEHOLDER_HOST_KEY = 'SHA256:REPLACEwithYOURserversKEYfromSshKeyg
 
 export interface Finding {
   readonly level: 'error' | 'caution'
-  readonly check: 'package' | 'build' | 'names' | 'lint' | 'cases' | 'reproduction'
+  readonly check: 'package' | 'build' | 'names' | 'lint' | 'cases' | 'reproduction' | 'login'
   readonly text: string
 }
 
@@ -282,8 +282,17 @@ function hasNonReadNear(files: PackageFiles, tool: string): boolean {
   )
 }
 
-/** The cases' own requirements: every case passes, every tool has at least one that passes. */
-export function caseFindings(manifest: AdapterManifest, run: CaseRun, onlyTool?: string): Finding[] {
+/**
+ * The cases' own requirements: every case passes, and every tool has at least one that passes,
+ * except a tool in `unchanged`: its code and declaration are the installed version's, which the
+ * person already approved, so it runs exactly as it does now (changes.ts).
+ */
+export function caseFindings(
+  manifest: AdapterManifest,
+  run: CaseRun,
+  onlyTool?: string,
+  unchanged: readonly string[] = [],
+): Finding[] {
   const out: Finding[] = []
   for (const p of run.problems) out.push({ level: 'error', check: 'cases', text: `${p.file}: ${p.problem}.` })
   const failed = run.results.filter((r) => !r.passed)
@@ -295,6 +304,7 @@ export function caseFindings(manifest: AdapterManifest, run: CaseRun, onlyTool?:
     })
   for (const tool of manifest.tools) {
     if (onlyTool !== undefined && tool.name !== onlyTool) continue
+    if (unchanged.includes(tool.name)) continue
     if (!run.results.some((r) => r.tool === tool.name && r.passed && r.checksOutput))
       out.push({
         level: 'error',

@@ -94,6 +94,13 @@ async function signIn(
   return b.auth.postForm(location(toPassword), { state, password, action: 'default' })
 }
 
+/** Past the password for an SMS account: SMS chosen on the phone page. Returns the code page's path. */
+async function smsChallenge(site: FakeWoolworths, b: Browser, account: FakeAccount = SMS): Promise<string> {
+  const choice = location(await signIn(site, b, account))
+  const reply = await b.auth.postForm(choice, { state: stateOf(choice), type: 'text', action: 'default' })
+  return location(reply)
+}
+
 async function shopper(client: Client): Promise<{ IsLoggedIn: boolean; FirstName: string | null }> {
   const { IsGuest, FirstName } = JSON.parse((await client.get('/api/ui/v2/bootstrap')).text).ShopperRequest
   return { IsLoggedIn: IsGuest === false, FirstName }
@@ -516,18 +523,28 @@ describe('MFA', () => {
     const b = await browser(site)
     const reply = await signIn(site, b, SMS)
     expect(reply.status).toBe(302)
-    expect(location(reply)).toMatch(/^\/u\/mfa-sms-challenge\?state=/)
+    // Live (2026-11-27): first a choice of SMS or a call, and nothing sent yet.
+    expect(location(reply)).toMatch(/^\/u\/mfa-phone-challenge\?state=/)
     expect(reply.setCookies).toEqual([])
+    expect(site.outbox).toEqual([])
+    const choice = await b.auth.get(location(reply))
+    expect(choice.text).toContain('name="type" id="type-sms" value="text" checked')
+    const state = stateOf(location(reply))
+    expect((await b.auth.postForm(location(reply), { state, type: 'voice', action: 'default' })).status).toBe(
+      400,
+    )
+    const sent = await b.auth.postForm(location(reply), { state, type: 'text', action: 'default' })
+    expect(location(sent)).toMatch(/^\/u\/mfa-sms-challenge\?state=/)
     expect(site.outbox).toEqual([
       {
         channel: 'sms',
         username: SMS.username,
-        text: 'Your Woolworths verification code is 135790. It expires in 5 minutes.',
+        text: "135790 is your Woolworths one-time verification code. The code is valid for 5 min. If you didn't expect this SMS please call 1800 000 610",
         at: 5_000,
       },
     ])
     now += 1
-    const page = await b.auth.get(location(reply))
+    const page = await b.auth.get(location(sent))
     expect(page.status).toBe(200)
     expect(page.text).toContain('autocomplete="one-time-code"')
   })
@@ -542,13 +559,13 @@ describe('MFA', () => {
   it('defaults to SMS for an account with a code but no channel', async () => {
     const site = await start({ accounts: [{ username: 'd@example.test', password: 'p', otpCode: '111111' }] })
     const reply = await signIn(site, await browser(site), { username: 'd@example.test', password: 'p' })
-    expect(location(reply)).toMatch(/^\/u\/mfa-sms-challenge\?/)
+    expect(location(reply)).toMatch(/^\/u\/mfa-phone-challenge\?/)
   })
 
   it('refuses another channel’s challenge page, and the challenge before the password', async () => {
     const site = await start()
     const b = await browser(site)
-    const challenge = location(await signIn(site, b, SMS))
+    const challenge = await smsChallenge(site, b)
     const state = stateOf(challenge)
     expect((await b.auth.get(`/u/mfa-otp-challenge?state=${state}`)).status).toBe(400)
     const fresh = await browser(site)
@@ -566,10 +583,16 @@ describe('MFA', () => {
   it('logs in with the right code', async () => {
     const site = await start()
     const b = await browser(site)
-    const challenge = location(await signIn(site, b, SMS))
+    const challenge = await smsChallenge(site, b)
     const reply = await b.auth.postForm(challenge, { code: SMS.otpCode ?? '', action: 'default' })
-    expect(location(reply).startsWith(`${site.origin}/auth/callback?code=`)).toBe(true)
-    await b.www.get(location(reply))
+    // Live (2026-11-27): the passkey offer comes first, and declining it finishes the login.
+    const offer = location(reply)
+    expect(offer).toMatch(/^\/u\/custom-prompt\//)
+    expect((await b.auth.get(offer)).text).toContain('Continue without passkeys')
+    expect((await b.auth.postForm(offer, { state: stateOf(offer), action: 'create' })).status).toBe(400)
+    const done = await b.auth.postForm(offer, { state: stateOf(offer), action: 'skip' })
+    expect(location(done).startsWith(`${site.origin}/auth/callback?code=`)).toBe(true)
+    await b.www.get(location(done))
     expect(await shopper(b.www)).toEqual({ IsLoggedIn: true, FirstName: 'Olive' })
   })
 
@@ -603,7 +626,7 @@ describe('MFA', () => {
   it('resends the code on request, and offers no other method', async () => {
     const site = await start()
     const b = await browser(site)
-    const challenge = location(await signIn(site, b, SMS))
+    const challenge = await smsChallenge(site, b)
     expect((await b.auth.postForm(challenge, { action: 'resend-code' })).status).toBe(200)
     expect(site.outbox).toHaveLength(2)
     expect((await b.auth.postForm(challenge, { action: 'pick-authenticator' })).status).toBe(400)
@@ -615,7 +638,7 @@ describe('MFA', () => {
   it('does not remember the device unless asked', async () => {
     const site = await start()
     const b = await browser(site)
-    const reply = await b.auth.postForm(location(await signIn(site, b, SMS)), {
+    const reply = await b.auth.postForm(await smsChallenge(site, b), {
       code: SMS.otpCode ?? '',
       action: 'default',
     })
@@ -625,7 +648,7 @@ describe('MFA', () => {
   it('remembers the device for 30 days on the auth origin, and skips the code next time', async () => {
     const site = await start()
     const b = await browser(site)
-    const reply = await b.auth.postForm(location(await signIn(site, b, SMS)), {
+    const reply = await b.auth.postForm(await smsChallenge(site, b), {
       code: SMS.otpCode ?? '',
       rememberBrowser: 'true',
       action: 'default',
@@ -643,7 +666,7 @@ describe('MFA', () => {
   it('still asks for the password on a remembered device', async () => {
     const site = await start()
     const b = await browser(site)
-    await b.auth.postForm(location(await signIn(site, b, SMS)), {
+    await b.auth.postForm(await smsChallenge(site, b), {
       code: SMS.otpCode ?? '',
       rememberBrowser: 'true',
       action: 'default',
@@ -656,7 +679,7 @@ describe('MFA', () => {
     const site = await start()
     const forged = await browser(site)
     forged.auth.cookies.set('auth0-mf', 'forged')
-    expect(location(await signIn(site, forged, SMS))).toMatch(/^\/u\/mfa-sms-challenge/)
+    expect(await smsChallenge(site, forged)).toMatch(/^\/u\/mfa-sms-challenge/)
 
     const b = await browser(site)
     await b.auth.postForm(location(await signIn(site, b, TOTP)), {
@@ -665,7 +688,7 @@ describe('MFA', () => {
       action: 'default',
     })
     site.expireAuthSessions()
-    expect(location(await signIn(site, b, SMS))).toMatch(/^\/u\/mfa-sms-challenge/)
+    expect(await smsChallenge(site, b)).toMatch(/^\/u\/mfa-sms-challenge/)
   })
 })
 
@@ -791,10 +814,11 @@ describe('hostile variants', () => {
     await b.auth.postForm(identifier, { username: SMS.username, action: 'default' })
     const state = stateOf(identifier)
     expect((await b.auth.get(`/u/login/password?state=${state}`)).text).toContain('id="password" type="text"')
-    const challenge = await b.auth.postForm(`/u/login/password?state=${state}`, {
+    const choice = await b.auth.postForm(`/u/login/password?state=${state}`, {
       password: SMS.password,
       action: 'default',
     })
+    const challenge = await b.auth.postForm(location(choice), { state, type: 'text', action: 'default' })
     expect((await b.auth.get(location(challenge))).text).toContain('id="code" type="search"')
   })
 })

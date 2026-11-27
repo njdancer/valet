@@ -244,11 +244,16 @@ and its field together:
    primary button (`button[type="submit"][name="action"][value="default"]`, never the passkey or
    Everyday ones). Skipped when Auth0 goes straight to the password.
 2. **Password** (`/u/login/password`, `input#password`): fill it and submit. Typed once per run.
-3. **MFA**, if Auth0 asks: on `/u/mfa-sms-challenge`, the code from Messages (sender
-   `Woolworths`, pattern `\b(\d{6})\b`, at most 5 minutes old); on `/u/mfa-otp-challenge`, the
+3. **MFA**, if Auth0 asks. For an SMS code, Auth0 first shows `/u/mfa-phone-challenge` (SMS or a
+   call, SMS chosen): click Continue, which sends the text. On `/u/mfa-sms-challenge`, the code
+   from Messages (sender `Woolworths`, pattern `\b(\d{6}) is your Woolworths`, at most 5 minutes
+   old; confirmed live 2026-11-27); on `/u/mfa-otp-challenge`, the
    `otp` field of the `login` 1Password item, but only with `createManifest({ totp: true })`;
    otherwise (email, or an authenticator without `totp`) `needsUser`. Then tick "Remember this
    device" if it is unticked (`input[name="rememberBrowser"]:not(:checked)`) and submit.
+   Auth0 may then offer a passkey (`/u/custom-prompt/…`): click "Continue without passkeys"
+   (`*:last-child > button[type="button"]:only-child`, picked by structure since a login's
+   selectors may not test text). Valet never creates one.
 4. If the page is off every login path but still shows Auth0's container (`main._widget`), such
    as a tenant error page, `needsUser` (`site-changed`): conditions can't see the host, so this
    is what keeps an Auth0 page from reaching the probe as "logged in?". Otherwise `assertLoggedIn`.
@@ -338,7 +343,7 @@ From the probe of 2026-11-07 ([findings](../../docs/findings/2026-11-07-woolwort
 | New terms and consent prompts at `/u/terms` and `/u/consent`                                                                                                                                 | **Assumed** (Auth0 standard). Elsewhere they end as `site-changed`                                                                                                                   |
 | A cart call on an expired login answers 401, not an anonymous trolley                                                                                                                        | **Assumed.** If the site serves an anonymous trolley instead, the 401 retry never fires and the next call's probe finds the expired session                                          |
 | MFA pages `/u/mfa-{sms,email,otp}-challenge`, `input#code`, `input[name=rememberBrowser]`                                                                                                    | **Assumed** (Auth0 standard). Whether Nick's account has MFA, and which factor, is decision D4                                                                                       |
-| Messages sender `Woolworths` and a six-digit code                                                                                                                                            | **To be confirmed** when Nick next gets a code. The person approves the real sender when granting Messages access                                                                    |
+| Messages sender `Woolworths` and a six-digit code ("123456 is your Woolworths one-time verification code. …"), after an SMS-or-call page                                                     | Verified live 2026-11-27                                                                                                                                                             |
 | The remember-device checkbox is visible to a click                                                                                                                                           | **Assumed.** If Auth0 styles the real input invisible, the tick is skipped and MFA is asked every login                                                                              |
 | Silent re-login while Auth0's session lives                                                                                                                                                  | **Assumed** (standard Auth0)                                                                                                                                                         |
 | After the callback, www's session cookies are on www or the bare domain, not the auth host                                                                                                   | **Assumed.** The hand-off copies only `woolworths.com.au` and `www.woolworths.com.au`                                                                                                |
@@ -433,7 +438,6 @@ changing one field.
 - **Which CAPTCHA does Auth0 show on auth.woolworths.com.au, and from which origin does its frame
   load?** Next time a challenge appears in a normal browser, the frame's `src` in the inspector is
   enough. That origin then goes in `auth.frameOrigins`.
-- Is the Messages sender for the SMS code shown as `Woolworths`, and is the code six digits?
 - Does the account have MFA, and by SMS, email or an authenticator app (decision D4)?
 
 ## Core change requests

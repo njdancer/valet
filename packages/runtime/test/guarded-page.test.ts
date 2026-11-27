@@ -1,8 +1,8 @@
 // The request-surface guard, exercised the way tool code meets it: through ctx.page inside a call.
 // Each test is tool code trying to get past one guard.
 
-import { defineAdapter, type ToolContext, tool } from '@valet/core'
-import { describe, expect, it } from 'vitest'
+import { defineAdapter, type ToolContext, tool, ValetError } from '@valet/core'
+import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { json } from './fakes'
 import { COOKIE, call, fixture, HOME, manifest } from './fixtures'
@@ -795,5 +795,80 @@ describe('pass-through capabilities', () => {
     expect(page.evaluated).toHaveLength(1)
     expect(page.evaluated[0]).toContain('document.title')
     expect(page.evaluated[0]).not.toMatch(/fetch|XMLHttpRequest|location|cookie|storage/i)
+  })
+})
+
+describe('requests for the trace', () => {
+  it('reports each fetch sent with its declared path and answer, and none of the request itself', async () => {
+    const requests = vi.fn()
+    const { host, page } = fixture(
+      adapterRunning(async (ctx) => (await ctx.page.fetch('/api/trolley?email=nick@example.com')).status),
+      { requests },
+    )
+    page.route('GET', `${HOME}/api/trolley?email=nick@example.com`, {
+      ...json({ items: [] }),
+      redirected: true,
+    })
+
+    expect(await host.call(call)).toEqual({ status: 'ok', output: 200 })
+    expect(requests).toHaveBeenCalledTimes(1)
+    expect(requests).toHaveBeenCalledWith('call-1', {
+      method: 'GET',
+      path: '/api/trolley',
+      host: 'www.example.com',
+      purpose: 'read',
+      status: 200,
+      contentType: 'json',
+      redirected: true,
+      failed: null,
+      at: expect.any(Number),
+      durationMs: expect.any(Number),
+      setting: null,
+    })
+    expect(JSON.stringify(requests.mock.calls)).not.toContain('nick@example.com')
+  })
+
+  it('reports a fetch that got no answer with the class of its error', async () => {
+    const requests = vi.fn()
+    const { host, page } = fixture(
+      adapterRunning(async (ctx) => ctx.page.fetch('/api/trolley')),
+      { requests },
+    )
+    page.route('GET', `${HOME}/api/trolley`, () => {
+      throw new ValetError('tool-run', 'unavailable')
+    })
+
+    expect(await host.call(call)).toMatchObject({ status: 'failed', errorClass: 'unavailable' })
+    expect(requests).toHaveBeenCalledWith(
+      'call-1',
+      expect.objectContaining({
+        path: '/api/trolley',
+        status: null,
+        contentType: null,
+        failed: 'unavailable',
+      }),
+    )
+  })
+
+  it('reports nothing for a request refused before it was sent', async () => {
+    const requests = vi.fn()
+    const { host } = fixture(
+      adapterRunning(async (ctx) => ctx.page.fetch('/api/account')),
+      { requests },
+    )
+    expect(await host.call(call)).toMatchObject({ errorClass: 'undeclared-request' })
+    expect(requests).not.toHaveBeenCalled()
+  })
+
+  it('runs the call as before when the recorder throws', async () => {
+    const { host } = fixture(
+      adapterRunning(async (ctx) => (await ctx.page.fetch('/api/trolley')).status),
+      {
+        requests: () => {
+          throw new Error('recorder broke')
+        },
+      },
+    )
+    expect(await host.call(call)).toEqual({ status: 'ok', output: 200 })
   })
 })

@@ -86,7 +86,7 @@ import { type Clock, type Sleep, systemClock, systemSleep } from './clock'
 import { CredentialGate, type CredentialGateOptions } from './credential-gate'
 import { GuardedHttp, type HttpCredentials, type HttpEgress, NO_HTTP_ACCESS } from './guarded-http'
 import { GuardedImap, type ImapBackend, NO_IMAP_ACCESS } from './guarded-imap'
-import { GuardedToolPage } from './guarded-page'
+import { GuardedToolPage, type SentRequest } from './guarded-page'
 import { GuardedSftp, NO_SFTP_ACCESS, type SftpBackend } from './guarded-sftp'
 import { GuardedSmtp, NO_SMTP_ACCESS, type SmtpBackend } from './guarded-smtp'
 import { checkInputIsolated, type InputCheck, runIsolated, type ToolProcessFactory } from './isolation/host'
@@ -284,6 +284,17 @@ export interface ToolHostOptions {
   readonly loginTimeoutMs?: number
   readonly loginBackoff?: LoginBackoff
   readonly diagnostics?: (diagnostic: RuntimeDiagnostic) => void
+  /**
+   * Told of each fetch a run sent and how it ended, for the call's trace. A setting's run done for a
+   * call (an apply tool before it) is reported under that call's id too, with the setting's tool
+   * name, since the agent that made the call can't see the setting's own run. A throw is ignored.
+   */
+  readonly requests?: (callId: string, request: TracedRequest) => void
+}
+
+/** A request for a call's trace: SentRequest, and the apply tool it was sent by when not the call's own. */
+export interface TracedRequest extends SentRequest {
+  readonly setting: string | null
 }
 
 interface Entry extends RegisteredAdapter {
@@ -338,6 +349,8 @@ export class ToolHost {
   private readonly loginsHeld = new Map<string, number>()
   /** Per adapter, calls waiting their turn, each woken when a login starts holding the lock alone. */
   private readonly loginWatchers = new Map<string, Set<() => void>>()
+  /** A setting's run (by its call id) and the call it runs before, while it runs. */
+  private readonly settingFor = new Map<string, string>()
   private readonly protection: SiteProtection
   private readonly clock: Clock
   private readonly sleep: Sleep
@@ -826,7 +839,7 @@ export class ToolHost {
         if (answer !== 'approved') return { status: 'declined' }
       }
       for (const setting of due) {
-        const applied = await this.applySetting(entry, setting, external)
+        const applied = await this.applySetting(entry, setting, external, request.callId)
         if (applied.status !== 'ok') return applied
         if (external?.aborted) return failed('tool-run', 'aborted')
         if (entry.site.breaker.isOpen()) return blocked(entry.site)
@@ -994,10 +1007,26 @@ export class ToolHost {
     entry: Entry,
     setting: DueSetting,
     external: AbortSignal | undefined,
+    forCall: string,
   ): Promise<ToolCallResult> {
     const adapterId = entry.definition.manifest.id
     const callId = (this.options.newCallId ?? defaultCallId)()
     if (!CALL_ID.test(callId)) return failed('tool-run', 'internal')
+    this.settingFor.set(callId, forCall)
+    try {
+      return await this.applySettingRun(entry, setting, external, adapterId, callId)
+    } finally {
+      this.settingFor.delete(callId)
+    }
+  }
+
+  private async applySettingRun(
+    entry: Entry,
+    setting: DueSetting,
+    external: AbortSignal | undefined,
+    adapterId: string,
+    callId: string,
+  ): Promise<ToolCallResult> {
     const started = this.clock.now()
     try {
       await this.options.audit.append({
@@ -1053,6 +1082,19 @@ export class ToolHost {
     return result
   }
 
+  /** A run's sent request, to its own call's trace and, for a setting's run, to the call it ran for. */
+  private traceRequest(callId: string, tool: string, sent: SentRequest): void {
+    const report = this.options.requests
+    if (report === undefined) return
+    const forCall = this.settingFor.get(callId)
+    try {
+      report(callId, { ...sent, setting: null })
+      if (forCall !== undefined) report(forCall, { ...sent, setting: tool })
+    } catch {
+      // The trace is for reading; a recorder's failure must not change the call.
+    }
+  }
+
   private async run(
     entry: Entry,
     declaration: ToolDeclaration,
@@ -1089,6 +1131,7 @@ export class ToolHost {
       state,
       audit: (event) => this.record(event),
       clock: this.clock,
+      onRequest: (sent) => this.traceRequest(state.callId, declaration.name, sent),
     })
     const ctx: ToolContext = {
       // Declared reads may be answered from the session's cache; everything sent goes through the guard.
