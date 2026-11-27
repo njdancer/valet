@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { LoginWorkbench } from '../src/workbench'
-import { ACCOUNT_PAGE, CANARY, EVIL, LOGIN_PAGE, world } from './fixtures'
+import { ACCOUNT_PAGE, CANARY, EVIL, LOGIN_PAGE, SENDER, START, world } from './fixtures'
 
 function bench(change?: (w: ReturnType<typeof world>) => void) {
   const w = world()
@@ -32,6 +32,25 @@ describe('LoginWorkbench', () => {
     expect(w.audit.events.filter((e) => e.type === 'secret-used')).toHaveLength(2)
     expect(w.remembered).toHaveLength(2)
     b.close()
+  })
+
+  it('reads a code sent during an earlier batch: codes count from the first batch, not their own', async () => {
+    // The click that sends the code usually ends one batch; the otp step starts the next.
+    const { w, bench: b } = bench()
+    w.clock.now = START
+    expect(await b.run({ steps: [{ op: 'goto', url: LOGIN_PAGE }], timeoutMs: 10_000 })).toEqual({
+      status: 'ok',
+    })
+    w.otpReader.messages.push({ at: START + 2000, sender: SENDER, body: `code is ${CANARY.sms}` })
+    w.clock.now = START + 20_000
+    const otp = {
+      op: 'otp',
+      selector: '#otp',
+      source: { messages: { sender: SENDER, pattern: 'code is (\\d{6})', maxAgeSeconds: 300 } },
+    } as const
+    expect(await b.run({ steps: [otp], timeoutMs: 10_000 })).toEqual({ status: 'ok' })
+    expect(w.page.typed.map((t) => t.text)).toEqual([CANARY.sms])
+    expect(w.otpReader.calls.every((call) => call.notBefore.getTime() === START)).toBe(true)
   })
 
   it('types a password once in its whole life, however many batches ask', async () => {

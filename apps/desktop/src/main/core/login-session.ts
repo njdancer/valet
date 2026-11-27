@@ -36,8 +36,13 @@ import { cleanStallSnapshot, stallUrl } from './login-stall'
 
 /** The longest a login session stays open, however busy. */
 export const LOGIN_SESSION_MS = 30 * 60_000
-/** The most one batch of steps may take, waits for a one-time code included. */
-export const LOGIN_BATCH_MS = 90_000
+/**
+ * The most one batch of steps may take, waits for a one-time code included. Under the 60 s that
+ * MCP clients commonly allow a tool call, with room for the adapter's lock and the snapshot after,
+ * so the agent always hears how a batch ended. A longer wait is two batches: an otp step's
+ * maxAgeSeconds still finds a code that arrived during the first.
+ */
+export const LOGIN_BATCH_MS = 40_000
 
 const ONLY =
   'A login session takes browser_login_steps, browser_navigate, browser_snapshot and browser_session_close only.'
