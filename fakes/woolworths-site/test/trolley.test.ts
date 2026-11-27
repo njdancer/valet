@@ -6,7 +6,9 @@ type Item = { Stockcode: number; Quantity: number; QuantityInTrolley: number; Is
 describe('applyTrolleyUpdate', () => {
   it('adds items with the quantity given', () => {
     const trolley: Trolley = new Map()
-    expect(applyTrolleyUpdate(trolley, { items: [{ stockcode: 88436, quantity: 2 }] })).toEqual({ ok: true })
+    expect(applyTrolleyUpdate(trolley, { items: [{ stockcode: 88436, quantity: 2 }] })).toMatchObject({
+      ok: true,
+    })
     expect(trolleyLines(trolley)).toEqual([{ stockcode: 88436, quantity: 2 }])
   })
 
@@ -33,7 +35,7 @@ describe('applyTrolleyUpdate', () => {
         { stockcode: 900201, quantity: 3, evaluateRewardPoints: false },
       ],
     }
-    expect(applyTrolleyUpdate(trolley, body)).toEqual({ ok: true })
+    expect(applyTrolleyUpdate(trolley, body)).toMatchObject({ ok: true })
     expect(trolleyLines(trolley)).toEqual([
       { stockcode: 88436, quantity: 1 },
       { stockcode: 900201, quantity: 3 },
@@ -48,7 +50,9 @@ describe('applyTrolleyUpdate', () => {
 
   it('accepts an unavailable product, which then shows as unavailable', () => {
     const trolley: Trolley = new Map()
-    expect(applyTrolleyUpdate(trolley, { items: [{ stockcode: 900303, quantity: 1 }] })).toEqual({ ok: true })
+    expect(applyTrolleyUpdate(trolley, { items: [{ stockcode: 900303, quantity: 1 }] })).toMatchObject({
+      ok: true,
+    })
     expect(trolley.get(900303)).toBe(1)
   })
 

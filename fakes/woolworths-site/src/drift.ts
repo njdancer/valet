@@ -4,8 +4,8 @@
 // detection name the field.
 
 /**
- * `renamed-field`: every product's `Price` becomes `CurrentPrice`. The adapter's schema declares
- * Price nullish, so this still parses, and only drift detection's absent-field check notices.
+ * `renamed-field`: every product's `Price` becomes `CurrentPrice`, and a trolley line's
+ * `UnitSalePrice` becomes `CurrentUnitPrice`. The adapter's schemas declare both nullish, so this still parses, and only drift detection's absent-field check notices.
  * `changed-type`: every product's `Stockcode` becomes a string, which the schema rejects.
  */
 export type ShapeDrift = 'renamed-field' | 'changed-type'
@@ -19,6 +19,8 @@ export function applyShapeDrift(body: unknown, drift: ShapeDrift): unknown {
   const isProduct = typeof (body as Record<string, unknown>)['Stockcode'] === 'number'
   for (const [key, value] of Object.entries(body)) {
     if (isProduct && drift === 'renamed-field' && key === 'Price') out['CurrentPrice'] = value
+    else if (isProduct && drift === 'renamed-field' && key === 'UnitSalePrice')
+      out['CurrentUnitPrice'] = value
     else if (isProduct && drift === 'changed-type' && key === 'Stockcode') out[key] = String(value)
     else out[key] = applyShapeDrift(value, drift)
   }

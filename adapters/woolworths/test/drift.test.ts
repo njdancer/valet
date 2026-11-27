@@ -68,8 +68,10 @@ describe('recorded fixtures', () => {
       const body = JSON.parse(readFileSync(new URL(name, FIXTURES_DIRECTORY), 'utf8'))
       if (kind === 'product') {
         expect(productTileWire.safeParse(body).success).toBe(true)
-        // As a trolley line, through the trolley's own checks.
-        const trolley = { ...loadFixture('trolley-empty.json'), AvailableItems: [body], TrolleyItemCount: 1 }
+        // As a trolley line, through the trolley's own checks: no Price, but the line's prices.
+        const { Price: price, ...rest } = body
+        const line = { ...rest, QuantityInTrolley: 1, UnitSalePrice: price, SalePrice: price }
+        const trolley = { ...loadFixture('trolley-empty.json'), AvailableItems: [line], TrolleyItemCount: 1 }
         expectClean('trolley', trolley)
       } else {
         expectClean(kind, body)
@@ -134,7 +136,7 @@ describe('drift is caught', () => {
     for (const [endpoint, fixture, path] of [
       ['search', 'search-milk.json', 'Products[].Products[].Price'],
       ['productDetail', 'product-detail-88436.json', 'Product.Price'],
-      ['trolley', 'trolley-two-items.json', 'AvailableItems[].Price'],
+      ['trolley', 'trolley-two-items.json', 'AvailableItems[].UnitSalePrice'],
     ] as const) {
       const report = checkResponse(endpoint, applyShapeDrift(loadFixture(fixture), 'renamed-field'))
       expect(report).toEqual({ ok: false, issues: [], absent: [path] })

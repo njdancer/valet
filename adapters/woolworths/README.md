@@ -78,6 +78,12 @@ The fake answers an unknown stockcode that way; what the live site sends is unve
 Every write returns `{ stockcode, quantity, confirmed, cart, notices }`, plus `requestedQuantity`
 (and `previousQuantity` for `add_to_cart`), or `wasInCart` and `removed` for `remove_from_cart`:
 
+- **The live site's reply** (signed in, 2026-11-27) is not the trolley but the lines the update
+  changed, in `UpdatedItems`, with totals. `quantity` is the line's `QuantityInTrolley` there and
+  `confirmed` is true; a line asked to be 0 that the reply leaves out is confirmed at 0 (that is how
+  the site answers a removal). A line asked for more than 0 that the reply leaves out, or shows
+  twice, is unconfirmed. `cart` is null: call `get_cart` for the whole cart. A notice says when the
+  site stored a different quantity, or when the line came back with `IsAvailable: false`.
 - When the reply is a trolley, `quantity` is the line's quantity **in that trolley**, not the one
   asked for, and `confirmed` is true. The site clamps to its own supply limits, so
   `set_cart_quantity { quantity: 20 }` can return `quantity: 12`; a notice then says the two
@@ -85,7 +91,7 @@ Every write returns `{ stockcode, quantity, confirmed, cart, notices }`, plus `r
   of stock, say) gets a notice naming the bucket's reason: it is in the cart but not in the
   subtotal. `removed` is true only when the product was in the cart and the reply is without it; a
   product that was never there gives `wasInCart: false`, `removed: false` and a notice.
-- When the reply isn't a trolley, `quantity`, `cart` and `removed` are null, `confirmed` is false,
+- When the reply is neither, `quantity`, `cart` and `removed` are null, `confirmed` is false,
   and a notice says to call `get_cart`. The write may or may not have happened. The tools don't
   spend another request finding out.
 - When the reply is a trolley the adapter can't fully read and the line isn't in the part it
@@ -154,8 +160,10 @@ Nick hasn't been asked about ([benchmark](../../docs/findings/2026-11-10-shop-be
 - **At most 100 requests an hour** (`limits.requestsPerHour`). D28 said 60, which a thirty-item
   shop can't fit. A call that would start past the cap is refused with a time to try again.
 - **The runtime's read cache** (D28). Search and product answers are reused for 15 minutes. The
-  trolley is reused for 2 minutes and only as the starting point of an `add_to_cart`; a cart
-  write's reply replaces it. So a run of adds reads the trolley once. An add that starts from a
+  trolley is reused for 2 minutes and only as the starting point of an `add_to_cart`; any cart
+  write drops it. The live update reply isn't the trolley (2026-11-27), so it can't stand in for
+  one, and every `add_to_cart` reads the trolley before its write: two requests an add. A list goes
+  in one `update_cart` instead. An add that starts from a
   cached trolley the person has since changed in their own browser overwrites that one line's
   quantity, as it would have within the 10 s between its read and its write before. A cached
   trolley the adapter can't fully read is never used: the site is asked.
@@ -349,7 +357,8 @@ From the probe of 2026-11-07 ([findings](../../docs/findings/2026-11-07-woolwort
 | After the callback, www's session cookies are on www or the bare domain, not the auth host                                                                                                   | **Assumed.** The hand-off copies only `woolworths.com.au` and `www.woolworths.com.au`                                                                                                                                                                                                           |
 | Login probe `GET /api/ui/v2/bootstrap` → `ShopperRequest.IsGuest === false`, 401 when logged out                                                                                             | **Seen live** 2026-11-27 for a guest (`IsGuest: true`; `ShopperDetails` is gone). The logged-in value is unconfirmed                                                                                                                                                                            |
 | Search `IsSpecial` flag                                                                                                                                                                      | **Assumed.** The tool also filters to specials locally, so results are right either way, but `total` is then the site's count                                                                                                                                                                   |
-| Trolley item shape: product tiles with `QuantityInTrolley`                                                                                                                                   | **Assumed.** The anonymous trolley was empty, so `trolley-two-items.json` is synthesised from real search tiles                                                                                                                                                                                 |
+| Trolley item shape: product tiles with `QuantityInTrolley`, no `Price`, one unit in `UnitSalePrice` and the line in `SalePrice`                                                              | **Live signed in** 2026-11-27 (keys only, from call traces): `price` is `UnitSalePrice`, `lineTotal` is `SalePrice` (0.5.5). Which is which is from the names, still to check live with a line of two. `trolley-two-items.json` is synthesised in that shape                                    |
+| Update reply: `{ Message, UpdatedItems: [line], Totals, TrolleyItemCount, … }`, a line set to 0 left out                                                                                     | **Live signed in** 2026-11-27 (keys only). Read as the confirmation of each line (0.5.5)                                                                                                                                                                                                        |
 | Update body `{ items: [{ stockcode, quantity }] }`, absolute quantities, quantity 0 removes                                                                                                  | **Assumed** from community code. Real clients may send more fields (`source`, `diagnostics`, …)                                                                                                                                                                                                 |
 | Update response is the updated trolley                                                                                                                                                       | **Assumed.** Otherwise the write is reported unconfirmed                                                                                                                                                                                                                                        |
 | Other trolley buckets hold product tiles; `ExceededSupplyLimitGroups` holds `{ Items }` groups                                                                                               | **Assumed.** Captured empty. An item that doesn't parse makes the trolley incomplete, so `add_to_cart` refuses it                                                                                                                                                                               |

@@ -17,10 +17,20 @@ export const productTileWire = z.object({
   IsOnSpecial: z.boolean().nullish(),
   IsAvailable: z.boolean().nullish(),
   MediumImageFile: z.string().nullish(),
-  /** Unverified for trolley items: the anonymous capture had an empty trolley. */
+  /** The line's quantity in the trolley (live, 2026-11-27). */
   QuantityInTrolley: z.number().nullish(),
 })
 export type ProductTileWire = z.infer<typeof productTileWire>
+
+/**
+ * A trolley line, signed in (live, 2026-11-27): a product tile without Price, and with the price of
+ * one unit (UnitSalePrice) and of the whole line (SalePrice), in dollars.
+ */
+export const trolleyLineWire = productTileWire.omit({ Price: true }).extend({
+  UnitSalePrice: z.number().nullish(),
+  SalePrice: z.number().nullish(),
+})
+export type TrolleyLineWire = z.infer<typeof trolleyLineWire>
 
 /** POST /apis/ui/Search/products. Results come in groups of variants, each with its own products. */
 export const searchWire = z.object({
@@ -65,12 +75,12 @@ export type ProductDetailWire = z.infer<typeof productDetailWire>
 const unconfirmedBucket = z.array(z.unknown()).nullish()
 
 /** Assumed, not seen live: a supply-limit group holds its products under Items. */
-export const supplyLimitGroupWire = z.object({ Items: z.array(productTileWire) })
+export const supplyLimitGroupWire = z.object({ Items: z.array(trolleyLineWire) })
 
 /** GET /apis/ui/Trolley. Verified shape for an empty, anonymous trolley; item shape assumed. */
 export const trolleyWire = z.object({
-  AvailableItems: z.array(productTileWire),
-  UnavailableItems: z.array(productTileWire),
+  AvailableItems: z.array(trolleyLineWire),
+  UnavailableItems: z.array(trolleyLineWire),
   ExceededSupplyLimitGroups: unconfirmedBucket,
   ExceededAtpLimitItems: unconfirmedBucket,
   ConflictedItems: unconfirmedBucket,
@@ -87,6 +97,15 @@ export const trolleyWire = z.object({
   Errors: z.array(z.object({ Message: z.string().nullish() })).nullish(),
 })
 export type TrolleyWire = z.infer<typeof trolleyWire>
+
+/**
+ * POST /api/v3/ui/trolley/update, as the live site answers it (2026-11-27): not the trolley, but the
+ * lines the update changed, with totals. A line set to 0 is left out of UpdatedItems.
+ */
+export const trolleyUpdateWire = z.object({
+  UpdatedItems: z.array(trolleyLineWire),
+})
+export type TrolleyUpdateWire = z.infer<typeof trolleyUpdateWire>
 
 /**
  * The status fields an update reply may carry when it is not a trolley. Assumed, from the shape

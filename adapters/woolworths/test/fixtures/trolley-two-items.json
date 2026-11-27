@@ -12,7 +12,6 @@
       "InstoreCupString": "$2.35 / 1L",
       "HasCupPrice": true,
       "InstoreHasCupPrice": true,
-      "Price": 4.2,
       "IncrementalPrice": null,
       "IncrementalWasPrice": null,
       "IncrementalMinimumQuantity": null,
@@ -134,7 +133,7 @@
       "AdditionalAttributes": {
         "brand": "dairy farmers",
         "sapcategoryname": "DAIRY - MILK",
-        "description": "Dairy Farmers Full Cream Milk 2L is Australian owned, made and loved.<br><br>Rich, creamy and nutritious, it naturally provides 8 essential nutrients to supportÂ a healthy mind and body:Â <br><br>â€¢ Protein â€“ for muscle growth and repairÂ <br>â€¢ Calcium and phosphorous â€“ for strong bones and teethÂ <br>â€¢ Iodine and vitamin B5 â€“ for healthy brain and cognitive functionÂ <br>â€¢ Potassium â€“ for muscle function and hydrationÂ <br>â€¢ Vitamin B2 and B12 â€“ for energy maintenance and immune supportÂ <br><br>Consume as part of a varied diet.<br><br>4 health star rating.Â <br><br>Proud supporters of our Australian dairy farming communities for over 120 years, choose high quality, nutritious and delicious milk from Dairy Farmers.<br><br>Australian milk<br><br>Fresh milk<br><br>From Australian farmers<br><br>Rich in calcium<br><br>Natural source of protein<br><br>High quality<br><br>Nutritious and delicious milk"
+        "description": "Dairy Farmers Full Cream Milk 2L is Australian owned, made and loved.<br><br>Rich, creamy and nutritious, it naturally provides 8 essential nutrients to support\u00c2\u00a0a healthy mind and body:\u00c2\u00a0<br><br>\u00e2\u20ac\u00a2 Protein \u00e2\u20ac\u201c for muscle growth and repair\u00c2\u00a0<br>\u00e2\u20ac\u00a2 Calcium and phosphorous \u00e2\u20ac\u201c for strong bones and teeth\u00c2\u00a0<br>\u00e2\u20ac\u00a2 Iodine and vitamin B5 \u00e2\u20ac\u201c for healthy brain and cognitive function\u00c2\u00a0<br>\u00e2\u20ac\u00a2 Potassium \u00e2\u20ac\u201c for muscle function and hydration\u00c2\u00a0<br>\u00e2\u20ac\u00a2 Vitamin B2 and B12 \u00e2\u20ac\u201c for energy maintenance and immune support\u00c2\u00a0<br><br>Consume as part of a varied diet.<br><br>4 health star rating.\u00c2\u00a0<br><br>Proud supporters of our Australian dairy farming communities for over 120 years, choose high quality, nutritious and delicious milk from Dairy Farmers.<br><br>Australian milk<br><br>Fresh milk<br><br>From Australian farmers<br><br>Rich in calcium<br><br>Natural source of protein<br><br>High quality<br><br>Nutritious and delicious milk"
       },
       "TgaAttributes": {
         "Directions": null,
@@ -233,7 +232,10 @@
       "FulfilmentStoreId": 1101,
       "B2BExtendedRange": null,
       "OfferId": "24573763",
-      "BundleProductGroups": null
+      "BundleProductGroups": null,
+      "UnitSalePrice": 4.2,
+      "SalePrice": 8.4,
+      "ListPrice": 9.4
     },
     {
       "TileID": 5,
@@ -247,7 +249,6 @@
       "InstoreCupString": "$1.70 / 1L",
       "HasCupPrice": true,
       "InstoreHasCupPrice": true,
-      "Price": 3.4,
       "IncrementalPrice": null,
       "IncrementalWasPrice": null,
       "IncrementalMinimumQuantity": null,
@@ -428,7 +429,10 @@
       "FulfilmentStoreId": 1101,
       "B2BExtendedRange": null,
       "OfferId": null,
-      "BundleProductGroups": null
+      "BundleProductGroups": null,
+      "UnitSalePrice": 3.4,
+      "SalePrice": 3.4,
+      "ListPrice": 3.4
     }
   ],
   "BundleItems": [],

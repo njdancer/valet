@@ -50,4 +50,4 @@ export {
   type UnknownSensor,
 } from './server'
 export { type PickupStore, pickupStores } from './stores'
-export { type Trolley, type TrolleyLine, trolleyResponse } from './trolley'
+export { type Trolley, type TrolleyLine, trolleyResponse, trolleyUpdateResponse } from './trolley'
