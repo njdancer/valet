@@ -88,8 +88,25 @@ describe('a cloud agent’s page with Mail on', () => {
       ]),
     )
     await waitFor(() => expect(within(mail).queryByText(/not saved/)).toBeNull())
-    // Taking it away is a plain Save.
+    // Taking it away is a plain Save; Discard puts the saved level back.
     await user.click(off())
     expect(screen.getByRole('button', { name: 'Save' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Discard changes' }))
+    expect(within(mail).queryByText(/not saved/)).toBeNull()
+  })
+
+  it('keeps the changes when Touch ID is cancelled', async () => {
+    const user = userEvent.setup()
+    const fake = createFakeApi({ now: NOW })
+    await fake.remote.approveConsent('ABCDEFGH', ['woolworths.get_cart'])
+    await fake.mail.update({ enabled: true })
+    await fake.mail.action('full-disk-access')
+    const api = { ...fake, agentAccess: { ...fake.agentAccess, save: async () => false } }
+    renderPage(api, <ClientPage clientId="rcdemodemodemodemodemo" />)
+    const mail = await screen.findByTestId('access-mail')
+    await user.click(within(mail).getAllByRole('radio', { name: 'Edit' })[0] as HTMLElement)
+    await user.click(screen.getByRole('button', { name: 'Save with Touch ID' }))
+    expect(await screen.findByText('Nothing changed')).toBeTruthy()
+    expect(within(mail).getByText(/not saved/)).toBeTruthy()
   })
 })

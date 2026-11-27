@@ -2914,10 +2914,17 @@ describe('remote access', () => {
     expect(await level(`remote:${reader.id}`)).toBe('read')
     expect(await level(`remote:${none.id}`)).toBe('off')
     expect(await level(`local:${local.id}`)).toBe('edit')
+    // A local app holds Mail's tools by its access: all of them at Edit, none once it is Off.
+    const off = () =>
+      (restarted as unknown as { localToolsOff(id: string): ReadonlySet<string> }).localToolsOff(local.id)
+    expect(off().has('mail.search')).toBe(false)
+    expect(off().has('mail.create_draft')).toBe(false)
     // Once only: what the person changes afterwards stays.
     expect(
       await restarted.api.agentAccess.save(`local:${local.id}`, { mail: { [MAIL_ALLOWED]: 'off' } }),
     ).toBe(true)
+    expect(off().has('mail.search')).toBe(true)
+    expect(off().has('mail.create_draft')).toBe(true)
     await restarted.stop()
     const third = new AppService({
       ...(s.service as unknown as { deps: ConstructorParameters<typeof AppService>[0] }).deps,
