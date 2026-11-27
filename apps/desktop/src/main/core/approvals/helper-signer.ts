@@ -21,8 +21,12 @@ export const APPROVER_EXIT = {
 } as const
 
 export class ApproverError extends Error {
-  constructor(readonly reason: 'unavailable' | 'refused' | 'failed') {
-    super(`approver ${reason}`)
+  /** `detail`: the helper's exit code, or that it gave no answer in time, for the log only. */
+  constructor(
+    readonly reason: 'unavailable' | 'refused' | 'failed',
+    detail?: string,
+  ) {
+    super(detail === undefined ? `approver ${reason}` : `approver ${reason} (${detail})`)
     this.name = 'ApproverError'
   }
 }
@@ -56,14 +60,16 @@ export class HelperSigner implements MacSigner {
     signTransport: async (payload) => {
       const outcome = await this.run(['sign-transport'], CHANNEL_TIMEOUT_MS, Buffer.from(payload, 'utf8'))
       const signature = outcome.stdout.trim()
-      if (outcome.code !== APPROVER_EXIT.ok || !SIGNATURE.test(signature)) throw new ApproverError('failed')
+      if (outcome.code !== APPROVER_EXIT.ok || !SIGNATURE.test(signature))
+        throw new ApproverError('failed', exitDetail(outcome.code))
       return signature
     },
     agree: async (peer: KeyObject) => {
       const spki = peer.export({ type: 'spki', format: 'der' }).toString('base64url')
       const outcome = await this.run(['agree'], CHANNEL_TIMEOUT_MS, Buffer.from(spki, 'utf8'))
       const secret = outcome.stdout.trim()
-      if (outcome.code !== APPROVER_EXIT.ok || !SECRET.test(secret)) throw new ApproverError('failed')
+      if (outcome.code !== APPROVER_EXIT.ok || !SECRET.test(secret))
+        throw new ApproverError('failed', exitDetail(outcome.code))
       return Buffer.from(secret, 'base64url')
     },
     signApproval: async (domain, payload) => (await this.signApprovals(domain, [payload]))?.[0] ?? null,
@@ -179,4 +185,10 @@ export class HelperSigner implements MacSigner {
     if (outcome.kind !== 'exited') return { code: null, stdout: '' }
     return { code: outcome.code, stdout: outcome.stdout.toString('utf8') }
   }
+}
+
+/** The helper's exit for the log: its code, a bad answer with exit 0, or none (timed out, killed). */
+export function exitDetail(code: number | null): string {
+  if (code === null) return 'no exit code: timed out or stopped'
+  return code === APPROVER_EXIT.ok ? 'an answer it could not read' : `exit ${code}`
 }

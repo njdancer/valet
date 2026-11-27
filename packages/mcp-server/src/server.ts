@@ -298,6 +298,7 @@ export function createMcpServer(
     // The app's own words for the call: its ref and the names the person approved with the adapter.
     const context: ResultContext = {
       callId,
+      adapterId: listed.adapterId,
       adapterName: listed.adapterName,
       toolTitle: listed.declaration.title,
       ...(options.timeZone === undefined ? {} : { timeZone: options.timeZone }),

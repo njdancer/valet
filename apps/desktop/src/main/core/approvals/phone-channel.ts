@@ -264,8 +264,10 @@ export class PhoneChannel implements PhoneOutbox {
         },
         this.agree,
       )
-    } catch {
-      this.options.log?.('phone channel: could not seal a message')
+    } catch (error) {
+      // Why, without the message: the key agreement is the Secure Enclave helper's (feedback #34:
+      // these went on for two hours with nothing to say why).
+      this.options.log?.(`phone channel: could not seal a message: ${sealFailure(error)}`)
       return null
     }
   }
@@ -633,4 +635,15 @@ export class PhoneChannel implements PhoneOutbox {
     await this.inbound
     await this.saving
   }
+}
+
+/** A seal failure's kind and code, never a key or the message: a name, a code, a short reason. */
+export function sealFailure(error: unknown): string {
+  if (!(error instanceof Error)) return 'not an error'
+  const code = (error as { readonly code?: unknown }).code
+  const reason = error.message
+    .replace(/[^\w .:()'-]/g, ' ')
+    .slice(0, 120)
+    .trim()
+  return `${error.name}${typeof code === 'string' || typeof code === 'number' ? ` ${code}` : ''}${reason === '' ? '' : `: ${reason}`}`
 }

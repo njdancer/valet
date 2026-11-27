@@ -86,3 +86,11 @@ reports no access, and the screen says so.
 Tests never touch real calendars: `packages/native-calendar` and the app's tests use a fake
 EventKit, and CI's helper contract suite only checks status answers and refusals on a runner that
 has no access.
+
+**When EventKit stalls** (feedback #34, 2026-11-27): on Nick's Mac, EventKit inside the reader
+helper stopped answering for two hours while the helper's Mail reads kept working, until the Mac
+was restarted. Each request now gives up after 15 s (was 25 s), and every failed exchange logs one
+line to the diagnostics log: the operation and why (no socket, no answer in time, a socket error by
+its code, a bad answer, the helper's own error), never what was asked or answered. The agent is told
+plainly that the Mac's Calendar or Reminders didn't answer, that a change may have happened anyway,
+and that restarting fixes it (`macAppUnavailable` in the endpoint's results).

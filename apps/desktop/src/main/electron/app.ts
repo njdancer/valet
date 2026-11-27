@@ -587,12 +587,12 @@ async function main(): Promise<void> {
             reader: mailReader,
             files: new HelperMailFiles({ socketPath: mailReader.socketPath }),
             drafts: new MailDrafts(),
-            organizer: new MailOrganizer(),
+            organizer: new MailOrganizer(undefined, undefined, undefined, log),
             pdfText: (bytes) => pdfText(bytes),
             render: (bytes, request) => renderPictures(bytes, request),
           },
     // Calendar and Reminders (docs/calendar.md): EventKit in the same reader helper.
-    eventKit: mailReader === null ? null : new HelperEventKit({ socketPath: mailReader.socketPath }),
+    eventKit: mailReader === null ? null : new HelperEventKit({ socketPath: mailReader.socketPath, log }),
     // Messages (docs/messages.md): chat.db through the same reader helper.
     messages: mailReader === null ? null : new HelperMessagesFiles({ socketPath: mailReader.socketPath }),
     version: app.getVersion(),

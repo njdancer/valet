@@ -351,3 +351,24 @@ describe('the phone channel', () => {
     expect(lastEnvelopes(t, stranger.deviceId)).toHaveLength(0)
   })
 })
+
+describe('why a message could not be sealed (feedback #34)', () => {
+  it('names the helper’s exit, never more than a short cleaned reason', async () => {
+    const { sealFailure } = await import('../../src/main/core/approvals/phone-channel')
+    const { ApproverError, exitDetail } = await import('../../src/main/core/approvals/helper-signer')
+    expect(sealFailure(new ApproverError('failed', exitDetail(70)))).toBe(
+      'ApproverError: approver failed (exit 70)',
+    )
+    expect(sealFailure(new ApproverError('failed', exitDetail(null)))).toBe(
+      'ApproverError: approver failed (no exit code: timed out or stopped)',
+    )
+    expect(sealFailure(new ApproverError('failed', exitDetail(0)))).toBe(
+      'ApproverError: approver failed (an answer it could not read)',
+    )
+    expect(sealFailure(Object.assign(new Error('x\n'.repeat(200)), { code: 'ERR_X' }))).toMatch(
+      /^Error ERR_X: x( x)*$/,
+    )
+    expect(sealFailure(new Error('')).length).toBeLessThan(10)
+    expect(sealFailure('nope')).toBe('not an error')
+  })
+})

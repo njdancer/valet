@@ -41,6 +41,8 @@ export interface ResultContext {
   readonly adapterName?: string
   /** The tool's approved title, which the confirmation was shown under. */
   readonly toolTitle?: string
+  /** The adapter's id: Valet's own Mac tools (mail, calendar) word a stall their own way. */
+  readonly adapterId?: string
   /** For clock times; the machine's own zone when absent. */
   readonly timeZone?: string
   readonly now?: () => number
@@ -185,6 +187,27 @@ export function toolResult(
  * a runtime bug that put free text here still can't reach the client. The app's own refusals
  * (stage config: Valet paused, the site paused, Valet locked down) say so in the app's words.
  */
+/** Valet's own tools over the Mac's apps, by adapter id, and the app each one waits on. */
+const MAC_APPS: Readonly<Record<string, string>> = {
+  mail: 'Mail',
+  calendar: 'Calendar',
+  reminders: 'Reminders',
+  messages: 'Messages',
+}
+
+/**
+ * Feedback #34: a Mac app that stopped answering came back as a bare "tool-run: unavailable" after
+ * a long wait, which told the agent nothing it could act on.
+ */
+export function macAppUnavailable(app: string, context: ResultContext = {}): string {
+  return (
+    `The Mac's ${app} didn't answer Valet in time (stage tool-run: unavailable). A tool that only ` +
+    'reads changed nothing. One that changes something may have done it anyway, so read the current ' +
+    'state before trying it again. Try again in a few minutes. If it keeps happening, tell the person: ' +
+    `quitting and reopening ${app}, or restarting Valet or the Mac, fixes it.${seeCall(context)}`
+  )
+}
+
 export function failedResult(
   stage: Stage,
   errorClass: ErrorClass,
@@ -197,6 +220,9 @@ export function failedResult(
     if (safe.errorClass === 'site-paused')
       return textResult(sitePausedResult(context.adapterName ?? 'This site'), true)
   }
+  const app = context.adapterId === undefined ? undefined : MAC_APPS[context.adapterId]
+  if (app !== undefined && safe.stage === 'tool-run' && safe.errorClass === 'unavailable')
+    return textResult(macAppUnavailable(app, context), true)
   return textResult(`The tool failed at stage ${safe.stage}: ${safe.errorClass}.${seeCall(context)}`, true)
 }
 
