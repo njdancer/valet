@@ -12,6 +12,7 @@ import {
   checkMailMessage,
   type ImapAccess,
   isMailAddress,
+  isMessageId,
   type ToolContext,
   tool,
   ValetError,
@@ -27,8 +28,14 @@ function imap(ctx: ToolContext): ImapAccess {
 }
 
 const address = z.string().max(190)
+
+const bracketed = (id: string): string => (id.startsWith('<') ? id : `<${id}>`)
+
 /** A Message-ID as mail_read shows it, with or without its angle brackets. */
-const messageId = z.string().min(3).max(200)
+const messageId = z
+  .string()
+  .max(200)
+  .refine((id) => isMessageId(bracketed(id)), 'Not a Message-ID: id@host, as mail_read shows it.')
 
 const fields = {
   from: address.describe('The address the draft is from: one of the account’s own (mail_accounts).'),
@@ -59,8 +66,6 @@ const output = z.object({
 })
 
 const NOTE = 'Saved to iCloud Drafts. Nothing was sent: the person reviews and sends it from Mail.'
-
-const bracketed = (id: string): string => (id.startsWith('<') ? id : `<${id}>`)
 
 function randomId(domain: string): string {
   const hex = (n: number) =>
@@ -138,15 +143,23 @@ export const tools = {
     output: output.extend({ replaced: z.number().int() }),
     async run(ctx, input) {
       const { draftMessageId, ...rest } = input
-      const old = await imap(ctx).search(
+      const wanted = bracketed(draftMessageId)
+      // IMAP's HEADER search matches any part of the header, so each match is checked whole.
+      const found = await imap(ctx).search(
         DRAFTS,
-        { header: { name: 'Message-ID', value: bracketed(draftMessageId) } },
+        { header: { name: 'Message-ID', value: wanted } },
         { limit: 5 },
       )
-      if (old.uids.length === 0) throw new ValetError('tool-input', 'not-found')
+      const exact =
+        found.uids.length === 0
+          ? []
+          : (await imap(ctx).fetch(DRAFTS, found.uids)).messages
+              .filter((m) => m.envelope?.messageId === wanted)
+              .map((m) => m.uid)
+      if (exact.length === 0) throw new ValetError('tool-input', 'not-found')
       // The new version first: if moving the old one fails, both are in Drafts and nothing is lost.
       const saved = await save(ctx, rest)
-      const moved = await imap(ctx).move(DRAFTS, old.uids, DELETED)
+      const moved = await imap(ctx).move(DRAFTS, exact, DELETED)
       return { ...saved, replaced: moved.uids }
     },
   }),

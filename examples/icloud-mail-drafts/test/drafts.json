@@ -44,7 +44,50 @@
         {
           "op": "search",
           "args": ["Drafts", { "header": { "name": "Message-ID", "value": "<1234-abcd@icloud.example>" } }],
-          "answer": { "folder": "Drafts", "uidValidity": 1, "total": 1, "uids": [52] }
+          "answer": { "folder": "Drafts", "uidValidity": 1, "total": 2, "uids": [52, 53] }
+        },
+        {
+          "op": "fetch",
+          "args": ["Drafts", [52, 53]],
+          "answer": {
+            "folder": "Drafts",
+            "messages": [
+              {
+                "uid": 52,
+                "flags": ["\\Draft"],
+                "internalDate": "2026-11-27T07:00:00Z",
+                "size": 600,
+                "envelope": {
+                  "date": null,
+                  "subject": "Lunch",
+                  "from": [],
+                  "sender": [],
+                  "replyTo": [],
+                  "to": [],
+                  "cc": [],
+                  "inReplyTo": null,
+                  "messageId": "<1234-abcd@icloud.example>"
+                }
+              },
+              {
+                "uid": 53,
+                "flags": ["\\Draft"],
+                "internalDate": "2026-11-27T07:00:00Z",
+                "size": 600,
+                "envelope": {
+                  "date": null,
+                  "subject": "Lunch",
+                  "from": [],
+                  "sender": [],
+                  "replyTo": [],
+                  "to": [],
+                  "cc": [],
+                  "inReplyTo": null,
+                  "messageId": "<1234-abcd@icloud.example.other>"
+                }
+              }
+            ]
+          }
         },
         { "op": "append", "args": ["Drafts"], "answer": { "folder": "Drafts", "bytes": 512 } },
         {
@@ -73,6 +116,64 @@
         }
       ],
       "expect": { "error": { "stage": "tool-input", "errorClass": "not-found" } }
+    },
+    {
+      "name": "a draft whose Message-ID only contains the one asked for is never replaced",
+      "tool": "replace_draft",
+      "input": {
+        "draftMessageId": "ab@icloud.example",
+        "from": "me@icloud.example",
+        "to": ["ann@example.com"],
+        "subject": "Hello",
+        "body": "Hi"
+      },
+      "imap": [
+        {
+          "op": "search",
+          "args": ["Drafts"],
+          "answer": { "folder": "Drafts", "uidValidity": 1, "total": 1, "uids": [60] }
+        },
+        {
+          "op": "fetch",
+          "args": ["Drafts", [60]],
+          "answer": {
+            "folder": "Drafts",
+            "messages": [
+              {
+                "uid": 60,
+                "flags": ["\\Draft"],
+                "internalDate": "2026-11-27T07:00:00Z",
+                "size": 600,
+                "envelope": {
+                  "date": null,
+                  "subject": "Lunch",
+                  "from": [],
+                  "sender": [],
+                  "replyTo": [],
+                  "to": [],
+                  "cc": [],
+                  "inReplyTo": null,
+                  "messageId": "<xab@icloud.example>"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "expect": { "error": { "stage": "tool-input", "errorClass": "not-found" } }
+    },
+    {
+      "name": "a Message-ID prefix is not an id",
+      "tool": "replace_draft",
+      "input": {
+        "draftMessageId": "<ab",
+        "from": "me@icloud.example",
+        "to": ["ann@example.com"],
+        "subject": "Hello",
+        "body": "Hi"
+      },
+      "imap": [],
+      "expect": { "error": { "stage": "tool-input", "errorClass": "invalid" } }
     },
     {
       "name": "an address with a second recipient hidden in it is refused before anything is written",
