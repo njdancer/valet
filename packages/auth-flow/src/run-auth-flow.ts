@@ -96,7 +96,8 @@ async function execute(ctx: FlowContext): Promise<AuthOutcome> {
   }
 }
 
-function toOutcome(error: unknown): AuthOutcome {
+/** How a thrown step ends a flow: needsUser, blocked or failed, with codes and the note only. */
+export function toOutcome(error: unknown): AuthOutcome {
   if (error instanceof NeedsUserHalt) {
     return error.note === undefined
       ? { status: 'needsUser', reason: error.reason }

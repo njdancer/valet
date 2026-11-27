@@ -277,6 +277,7 @@ describe('the agents’ browser tools', () => {
       'storage_list',
       'take_screenshot',
       'file_upload',
+      'login_steps',
     ])
     const writes = tools.filter((t) => t.declaration.sideEffect === 'write').map((t) => t.declaration.name)
     expect(writes).toEqual([
@@ -289,6 +290,7 @@ describe('the agents’ browser tools', () => {
       'drag',
       'evaluate',
       'file_upload',
+      'login_steps',
     ])
     expect(tools.every((t) => t.adapterId === 'browser')).toBe(true)
     expect(tools.some((t) => /grant|approve/i.test(t.declaration.name))).toBe(false)
@@ -869,6 +871,105 @@ describe('a session’s pace', () => {
     const slow = sessionPacer(() => [site('shop.example.com', { wait: 90_500 }).site])
     await expect(slow('shop.example.com')).rejects.toMatchObject({
       detail: 'Valet spaces page loads on example.com. Try again in 91 seconds.',
+    })
+  })
+})
+
+describe('a login session', () => {
+  function withLogin(openLogin?: (adapterId: string, clientName: string) => Promise<SessionBrowser>) {
+    const ran: unknown[] = []
+    const login = {
+      ...browser(),
+      loginSteps: async (steps: unknown) => {
+        ran.push(steps)
+        return {
+          page: {
+            url: 'https://auth.shop.test/u/mfa',
+            title: 'Verify',
+            yaml: '- heading "Verify"',
+            previous: null,
+            cut: false,
+          },
+          outcome: { status: 'needsUser' as const, reason: 'site-changed', stage: null, errorClass: null },
+        }
+      },
+    }
+    const opened: string[] = []
+    const service = new AgentBrowserService({
+      open: async () => browser(),
+      ...(openLogin === undefined
+        ? {}
+        : {
+            openLogin: async (adapterId: string, clientName: string) => {
+              opened.push(`${adapterId} for ${clientName}`)
+              return (await openLogin(adapterId, clientName)) ?? login
+            },
+          }),
+      pace: async () => {},
+      secretIn: async () => false,
+      notify: () => {},
+      audit: async () => {},
+      now: () => 0,
+      newId: () => 's00000001',
+    })
+    const call = async (tool: string, input: unknown) =>
+      (await service.call(
+        {
+          adapterId: 'browser',
+          tool,
+          input,
+          client: 'Test agent',
+          identity: { origin: 'remote', clientId: 'a' },
+          callId: `c-${tool}`,
+        } as ToolCall,
+        new AbortController().signal,
+      )) as { status: string; output: Record<string, unknown> }
+    return { call, ran, opened, login }
+  }
+
+  it('opens through openLogin, and runs steps there with how they ended', async () => {
+    const t = withLogin(async () => null as never)
+    const created = await t.call('session_create', { login: { site: 'shop' } })
+    expect(created.output).toEqual({ session: 's00000001', network: null, problem: null })
+    expect(t.opened).toEqual(['shop for Test agent'])
+    const steps = [{ op: 'goto', url: 'https://auth.shop.test/u/login' }]
+    const ran = await t.call('login_steps', { session: 's00000001', steps })
+    expect(t.ran).toEqual([steps])
+    expect(ran.output).toMatchObject({
+      session: 's00000001',
+      outcome: { status: 'needsUser', reason: 'site-changed' },
+      page: {
+        url: { fromSite: 'https://auth.shop.test/u/mfa' },
+        snapshot: { fromSite: '- heading "Verify"' },
+      },
+      problem: null,
+    })
+  })
+
+  it('refuses bad steps, login steps on an ordinary session, and login where it can’t open one', async () => {
+    const t = withLogin(async () => null as never)
+    await t.call('session_create', { login: { site: 'shop' } })
+    expect(
+      (await t.call('login_steps', { session: 's00000001', steps: [{ op: 'eval', code: 'x' }] })).status,
+    ).toBe('failed')
+    const plain = withLogin()
+    await plain.call('session_create', {})
+    expect(
+      (await plain.call('login_steps', { session: 's00000001', steps: [{ op: 'pause', ms: 1 }] })).output,
+    ).toMatchObject({
+      outcome: null,
+      problem: expect.stringMatching(/isn’t a login session/),
+    })
+    expect((await plain.call('session_create', { login: { site: 'shop' } })).output).toEqual({
+      session: null,
+      problem: 'This Valet can’t open login sessions.',
+    })
+    const refusing = withLogin(async () => {
+      throw new BrowserRefusal('Login sessions open only while developer mode is on.')
+    })
+    expect((await refusing.call('session_create', { login: { site: 'shop' } })).output).toEqual({
+      session: null,
+      problem: 'Login sessions open only while developer mode is on.',
     })
   })
 })
