@@ -394,6 +394,7 @@ export function runTrace(
     input: remembered?.input ?? [{ kind: 'text', text: '(not kept: the app restarted since this call)' }],
     output: summary.outcome === 'ok' ? (remembered?.output ?? null) : null,
     outputBytes,
+    loginStall: remembered?.loginStall ?? null,
   }
 }
 

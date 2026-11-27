@@ -1149,6 +1149,7 @@ export class AppService {
           return { tool: run?.tool ?? null, client: run?.client ?? null }
         },
         filledFor: (adapterId, callId, since) => this.filledFor(adapterId, callId, since),
+        onStall: (callId, stall) => this.memory.loginStalled(callId, stall),
       }),
       markers: this.markers,
       breakerStore: new JsonFileStore(paths.breakers),

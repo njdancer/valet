@@ -553,6 +553,20 @@ describe('audit views', () => {
     expect(failed?.steps.at(-1)).toMatchObject({ type: 'failed', errorClass: 'unavailable' })
     expect(failed?.output).toBeNull()
     expect(failed?.input).toEqual([{ kind: 'text', text: '(not kept: the app restarted since this call)' }])
+    expect(failed?.loginStall).toBeNull()
+    // Where a call's login stopped short is kept with the call while Valet remembers it.
+    const stall = {
+      at: '2026-11-07T09:00:05.000Z',
+      outcome: 'needsUser' as const,
+      reason: 'site-changed',
+      page: { url: 'https://login.shop.test/u/x', title: 'X', snapshot: '- text: hi', cut: false },
+    }
+    memory.loginStalled('c1', stall)
+    memory.loginStalled('forgotten', stall)
+    expect(
+      runTrace(records, 'c1', lookup, memory, () => ({ version: '1.0.0', hash: '' }))?.loginStall,
+    ).toEqual(stall)
+    expect(memory.get('forgotten')).toBeUndefined()
     expect(
       runTrace(records, 'c2', lookup, memory, () => ({ version: '', hash: '' }))?.steps.at(-1),
     ).toMatchObject({ type: 'needs-user' })

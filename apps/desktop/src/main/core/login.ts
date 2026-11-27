@@ -33,10 +33,11 @@ import {
   type LoginMarkerStore,
   type LoginStepContext,
 } from '@valet/runtime'
-import type { NeedsUserItem, SessionStatus } from '../../shared/api'
+import type { LoginStall, NeedsUserItem, SessionStatus } from '../../shared/api'
 import type { BlockedAudit, LoginSecrets } from './blocked'
 import type { Timers } from './confirmations'
 import type { Credentials } from './credentials'
+import { loginStall } from './login-stall'
 
 // ---------- Session status ----------
 
@@ -332,12 +333,38 @@ export interface AuthRunnerOptions {
     readonly tool: string | null
     readonly client: string | null
   }
+  /**
+   * Told where a call's login stopped when it didn't log in (login-stall.ts), with the page already
+   * cleaned of field values and secrets, for the call trace. Not for a login the person started,
+   * nor one the call gave up on.
+   */
+  readonly onStall?: (callId: string, stall: LoginStall) => void
   /** Secret fields this login filled, and where: read back from the audit events it wrote. */
   readonly filledFor: (
     adapterId: string,
     callId: string | null,
     since: Date,
   ) => Promise<{ filled: { secret: string; field: SecretField }[]; origin: string | null }>
+}
+
+/** Keeps the page a call's login stopped on, for the call trace. Never fails the login. */
+async function recordStall(
+  options: AuthRunnerOptions,
+  adapterId: string,
+  callId: string | null,
+  page: AuthPage,
+  outcome: Exclude<Awaited<ReturnType<typeof runAuthFlow>>, { status: 'ok' }>,
+): Promise<void> {
+  if (callId === null || options.onStall === undefined) return
+  if (outcome.status === 'failed' && outcome.errorClass === 'aborted') return
+  try {
+    const view = (await page.describe?.()) ?? null
+    const reason = outcome.status === 'needsUser' ? outcome.reason : `${outcome.stage}/${outcome.errorClass}`
+    const holdsSecret = (text: string) => options.secrets.occursIn(adapterId, text)
+    options.onStall(callId, loginStall(options.clock(), outcome.status, reason, view, holdsSecret))
+  } catch {
+    // The trace goes without it; the login's outcome stands.
+  }
 }
 
 async function refreshCopies(
@@ -412,6 +439,7 @@ export function createAuthRunner(options: AuthRunnerOptions): AuthRunner {
         signal: request.signal,
         beforeAttempt: () => request.attemptStarting(),
       })
+      if (outcome.status !== 'ok') await recordStall(options, adapterId, callId, page, outcome)
       switch (outcome.status) {
         case 'ok':
           finished = 'ok'
