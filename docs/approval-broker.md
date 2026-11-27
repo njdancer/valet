@@ -280,16 +280,21 @@ Revoking one of these removes its evidence from the ledger (a tightening, no sig
 ### Grants across an update
 
 **Built** (2026-11-12), after the authoring evals found that the person granted the same login
-again after every install. A signed `adapter-install` whose subject says `inheritsSession` (the
-card already says the new version takes over the session and grants) keeps each of the replaced
-version's grants that the update doesn't widen, for the new hash. This is D47's re-bind, with the
-install's own Touch ID as the gesture instead of a separate tick box.
+again after every install; **revised** 2026-11-27. A signed `adapter-install` whose subject says
+`inheritsSession` (the card already says the new version takes over the session and grants) keeps
+each of the replaced version's grants that the new version still uses, for the new hash. This is
+D47's re-bind, with the install's own Touch ID as the gesture instead of a separate tick box.
 
-- **Not widened** (`carriesOver` in `core/grants.ts`): the secret is still requested, for the same
-  or fewer fields and origins, and every origin the grant names is still among them; no new fill
-  step types it; the login loads no new frame origin. A Messages grant keeps its sender read with
-  the same pattern and age, and the navigation origins don't grow. Anything else stays behind and
-  the person grants it again, as before.
+- **Still used** (`carriedOrigins` in `core/grants.ts`): the new version still declares the secret.
+  The grant keeps its own origins that the new version still declares, plus any origin the update
+  itself added. A Messages or Mail grant is kept while the new version still reads that sender,
+  for its origins within the new navigation. A changed field list, fill selector or frame origin no
+  longer drops the login: before the revision, the Woolworths 0.5.1 update lost the person's login
+  because the password field's selector changed. Approving an update the card shows is trusting it
+  with the login; asking again added a chore and no protection (Nick, 2026-11-27).
+- **Through several updates**: a grant carried to one version carries on to the next. Its backing
+  for the next carry is the ledger's `carried` record, since the earlier install's evidence is
+  superseded by the time the next is applied.
 - **Where it's recorded**: `carried` in the anchored ledger (adapter, from and to hashes, secret,
   provider, item fingerprint, origins), written by the Mac straight after it applies the signed
   install, then the grant itself in `grants.json` and a `grant-made` audit event with

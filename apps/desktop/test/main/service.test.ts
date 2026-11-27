@@ -715,41 +715,81 @@ describe('an update', () => {
     })
   })
 
-  it('asks again for a login the update widens: a new origin, field or fill', async () => {
-    const widenings: (typeof SHOP)[] = [
+  it('keeps the login through an approved update that changes how it is typed in: a new origin, field or fill', async () => {
+    const changes: { input: typeof SHOP; origins: string[] }[] = [
       {
-        ...SHOP,
-        version: '1.1.0',
-        navigation: [...(SHOP.navigation ?? []), 'https://sso.shop.test'],
-        secrets: {
-          login: { ...SHOP_LOGIN, origins: ['https://login.shop.test', 'https://sso.shop.test'] },
-        } as typeof SHOP.secrets,
+        input: {
+          ...SHOP,
+          version: '1.1.0',
+          navigation: [...(SHOP.navigation ?? []), 'https://sso.shop.test'],
+          secrets: {
+            login: { ...SHOP_LOGIN, origins: ['https://login.shop.test', 'https://sso.shop.test'] },
+          } as typeof SHOP.secrets,
+        },
+        // The origin the approved update added goes with the login.
+        origins: ['https://login.shop.test', 'https://sso.shop.test'],
       },
       {
-        ...SHOP,
-        version: '1.1.0',
-        secrets: {
-          login: { ...SHOP_LOGIN, fields: ['username', 'password', 'otp'] },
-        } as typeof SHOP.secrets,
+        input: {
+          ...SHOP,
+          version: '1.1.0',
+          secrets: {
+            login: { ...SHOP_LOGIN, fields: ['username', 'password', 'otp'] },
+          } as typeof SHOP.secrets,
+        },
+        origins: ['https://login.shop.test'],
       },
       {
-        ...SHOP,
-        version: '1.1.0',
-        auth: {
-          steps: [
-            ...SHOP_STEPS.slice(0, 3),
-            { op: 'fill', selector: '#again', value: { secret: 'login', field: 'password' } },
-            ...SHOP_STEPS.slice(3),
-          ],
-        } as typeof SHOP.auth,
+        // A login page's markup changed: the password goes into a new selector (Woolworths 0.5.1).
+        input: {
+          ...SHOP,
+          version: '1.1.0',
+          auth: {
+            steps: [
+              ...SHOP_STEPS.slice(0, 3),
+              { op: 'fill', selector: '#again', value: { secret: 'login', field: 'password' } },
+              ...SHOP_STEPS.slice(3),
+            ],
+          } as typeof SHOP.auth,
+        },
+        origins: ['https://login.shop.test'],
       },
     ]
-    for (const input of widenings) {
-      const { next, restarted } = await updated(input)
+    for (const { input, origins } of changes) {
+      const { first, next, restarted } = await updated(input)
       await restarted.api.approvals.approve('shop', next.hash)
       expect((await restarted.api.adapters.list())[0]?.approval).toBe('approved')
-      expect((await restarted.api.adapters.list())[0]?.secrets).toEqual([{ name: 'login', granted: false }])
-      expect((await grantEvents(restarted)).some((e) => 'carriedFrom' in e)).toBe(false)
+      expect((await restarted.api.adapters.list())[0]?.secrets).toEqual([{ name: 'login', granted: true }])
+      expect(await grantEvents(restarted)).toContainEqual(
+        expect.objectContaining({ adapterHash: next.hash, origins, carriedFrom: first.adapter.hash }),
+      )
+    }
+  })
+
+  it('keeps the login through a second approved update, and a third', async () => {
+    const { first, next, restarted } = await updated({ ...SHOP, version: '1.1.0' })
+    await restarted.api.approvals.approve('shop', next.hash)
+    let service = restarted
+    let previous = next.hash
+    for (const version of ['1.2.0', '1.3.0']) {
+      await service.stop()
+      const bumped = builtinAdapter(shopDefinition({ ...SHOP, version }), {
+        ...SHOP_FILES,
+        'src/index.ts': `${version}\n`,
+      })
+      const again = new AppService({
+        ...(first.service as unknown as { deps: ConstructorParameters<typeof AppService>[0] }).deps,
+        adapters: [bumped],
+      })
+      services.push(again)
+      await again.start()
+      await again.api.approvals.approve('shop', bumped.hash)
+      expect((await again.api.adapters.list())[0]?.secrets).toEqual([{ name: 'login', granted: true }])
+      expect(await grantEvents(again)).toContainEqual(
+        expect.objectContaining({ adapterHash: bumped.hash, carriedFrom: previous }),
+      )
+      service = again
+      previous = bumped.hash
     }
   })
 

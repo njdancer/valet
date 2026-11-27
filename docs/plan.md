@@ -2084,6 +2084,9 @@ review of 2026-11-10; Nick has answered all three.
   install card (which says the new version takes over the session) instead of a separate unticked
   box: a grant the update doesn't widen is kept, audited `grant-made` with `carriedFrom`; any
   widening asks again. See [Grants across an update](approval-broker.md#grants-across-an-update).
+- Revised (Nick, 2026-11-27): any update the person approves keeps a login the new version still
+  uses. "If I don't trust it with my login why would I approve it in the first place?" A changed
+  selector, field or frame no longer counts as a widening; an origin the update adds goes with it.
 
 ### D48. Tool titles with the adapter name
 
