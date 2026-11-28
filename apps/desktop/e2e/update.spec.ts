@@ -35,8 +35,10 @@ test.describe.configure({ mode: 'serial' })
 
 const TOOLS = [
   'woolworths_add_to_cart',
+  'woolworths_choose_pickup_time',
   'woolworths_get_cart',
   'woolworths_get_product',
+  'woolworths_list_pickup_times',
   'woolworths_remove_from_cart',
   'woolworths_search_products',
   'woolworths_set_cart_quantity',
