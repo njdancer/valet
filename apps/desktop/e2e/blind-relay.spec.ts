@@ -406,11 +406,12 @@ test('the person gives the agent See Valet and Ask for changes on its card, and 
   const listed = () => asAgent(async (c) => (await c.listTools()).tools.map((t) => t.name))
   const text = (r: Awaited<ReturnType<Client['callTool']>>): string =>
     (r.content as { type: string; text?: string }[]).map((c) => c.text ?? '').join('\n')
-  // An ask-only tool on a draft that doesn't exist: refused for want of Ask, or not found with it.
+  // An ask-only tool on a well-formed draft id that doesn't exist: refused for want of Ask, or
+  // not found with it.
   const askRefused = () =>
     asAgent(async (c) =>
       /isn't allowed to ask for changes/.test(
-        text(await c.callTool({ name: 'valet_delete_draft', arguments: { draftId: 'no-such-draft' } })),
+        text(await c.callTool({ name: 'valet_delete_draft', arguments: { draftId: 'dr-aaaaaaaaaa' } })),
       ),
     )
   const status = () => asAgent(async (c) => await c.callTool({ name: 'valet_status', arguments: {} }))
