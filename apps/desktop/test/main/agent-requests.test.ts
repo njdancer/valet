@@ -33,7 +33,7 @@ describe('agentRequestItem for agent-access', () => {
     expect(item).toMatchObject({
       title: 'Give claude.example 3 more things',
       details: [
-        'Calendar, “Home”: Edit, to see, add, change and delete its events.',
+        'Calendar, “Home”: Edit, to see, add, change and delete its events (and, with Full access, delete the calendar itself).',
         'The tool “Shop: Add”, which changes things on the site.',
         'Ask for changes: build and repair adapters, and ask you for access, settings and logins.',
       ],

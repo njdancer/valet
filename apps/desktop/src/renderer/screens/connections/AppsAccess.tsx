@@ -45,8 +45,9 @@ const APP_NAMES: Readonly<Record<AccessApp, string>> = {
 /** What Edit lets it do in each app, beside reading. */
 const EDIT_MEANS: Readonly<Record<AccessApp, string>> = {
   mail: 'Edit: drafts, moves and marks messages. It never sends.',
-  calendar: 'Edit: adds, changes and deletes events, invitations included.',
-  reminders: 'Edit: adds, changes and completes reminders.',
+  calendar:
+    'Edit: adds, changes and deletes events, invitations included. With Full access, it may delete the calendar too.',
+  reminders: 'Edit: adds, changes and completes reminders. With Full access, it may delete the list too.',
 }
 
 const RANK: Readonly<Record<AccessChoice, number>> = { off: 0, read: 1, edit: 2 }
@@ -54,6 +55,7 @@ const RANK: Readonly<Record<AccessChoice, number>> = { off: 0, read: 1, edit: 2 
 type ValetKey = 'seeValet' | 'allActivity' | 'askForChanges'
 type Draft = Partial<Record<AccessApp, Record<string, AccessChoice>>> & {
   tools?: Record<string, boolean>
+  full?: Partial<Record<'calendar' | 'reminders', boolean>>
   /** `seeByAsk`: See Valet went on only because Ask for changes did, so it goes off with it. */
   valet?: Partial<Record<ValetKey | 'seeByAsk', boolean>>
 }
@@ -109,6 +111,7 @@ export function accessChanges(
 ): { readonly changes: AgentAccessChanges; readonly count: number; readonly widens: boolean } {
   const changes: Partial<Record<AccessApp, Record<string, AccessChoice>>> & {
     tools?: Record<string, boolean>
+    full?: Partial<Record<'calendar' | 'reminders', boolean>>
     valet?: Partial<Record<ValetKey, boolean>>
   } = {}
   let count = 0
@@ -137,6 +140,18 @@ export function accessChanges(
     if (on) widens = true
   }
   for (const app of apps) {
+    const fullTo = app.app === 'mail' ? undefined : draft.full?.[app.app]
+    if (
+      app.app !== 'mail' &&
+      app.full !== null &&
+      fullTo !== undefined &&
+      fullTo !== app.full &&
+      (app.ready || !fullTo)
+    ) {
+      changes.full = { ...(changes.full ?? {}), [app.app]: fullTo }
+      count += 1
+      if (fullTo) widens = true
+    }
     for (const item of app.items) {
       const next = draft[app.app]?.[item.id]
       if (next === undefined || next === item.level) continue
@@ -246,6 +261,15 @@ export function AppsAccess({ clientId, name }: { readonly clientId: string; read
                   {EDIT_MEANS[app.app]}
                 </Text>
               </>
+            )}
+            {/* Off stays in reach while the app isn't set up; on needs it set up. */}
+            {app.app === 'mail' || app.full === null || (!app.ready && !app.full) ? null : (
+              <FullAccess
+                app={app.app}
+                on={draft.full?.[app.app] ?? app.full}
+                changed={(draft.full?.[app.app] ?? app.full) !== app.full}
+                onChange={(on) => setDraft((d) => ({ ...d, full: { ...(d.full ?? {}), [app.app]: on } }))}
+              />
             )}
           </section>
         ))}
@@ -427,5 +451,29 @@ function ValetSwitch({
         </Text>
       </Stack>
     </div>
+  )
+}
+
+/** Full access in Calendar or Reminders: adding whole calendars or lists, and deleting its own. */
+function FullAccess({
+  app,
+  on,
+  changed,
+  onChange,
+}: {
+  readonly app: 'calendar' | 'reminders'
+  readonly on: boolean
+  readonly changed: boolean
+  readonly onChange: (on: boolean) => void
+}) {
+  const what = app === 'calendar' ? 'calendars' : 'lists'
+  return (
+    <ValetSwitch
+      label={`Let it add and remove ${what}`}
+      description={`Full access: it may add ${what}, which only it is given, and delete the ones it may edit, with everything in them. Off unless you need it.`}
+      on={on}
+      changed={changed}
+      onChange={onChange}
+    />
   )
 }

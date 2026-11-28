@@ -100,6 +100,8 @@ export interface EventKitServiceDeps {
    * a call without an identity: nothing.
    */
   readonly access?: (call: ToolCall) => AppAccess
+  /** Full access: a calendar or list the calling agent just added becomes its own, at Edit. */
+  readonly added?: (call: ToolCall, id: string) => Promise<void>
   readonly audit: (call: ToolCall, result: ToolCallResult, durationMs: number) => Promise<void>
   readonly now: () => number
   /** Tells the app the tool list changed. */
@@ -169,6 +171,12 @@ export class EventKitService implements NativeTools {
         allowed: () => (this.current.enabled ? readable : new Set<string>()),
         editable: () => (this.current.enabled ? editable : new Set<string>()),
         writes: () => this.current.enabled && editable.size > 0,
+        full: () => this.current.enabled && access.full,
+        added: async (id: string) => {
+          // The next call lists it; this one's store has it already.
+          this.refreshedAt = Number.NEGATIVE_INFINITY
+          await this.deps.added?.(call, id)
+        },
         spend: () => this.spend(),
         now: this.deps.now,
       }

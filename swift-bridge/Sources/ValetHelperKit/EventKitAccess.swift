@@ -16,6 +16,8 @@
 // - eventkit.saveReminder  creates a reminder, or changes or completes one
 // - eventkit.removeEvent   deletes an event (one occurrence of a recurring one)
 // - eventkit.removeReminder  deletes a reminder
+// - eventkit.createCalendar  adds a calendar (events) or list (reminders) in the default account
+// - eventkit.removeCalendar  deletes a calendar or list, with everything in it
 //
 // No request adds attendees. Changing or deleting an event other people are on may send them an
 // update, as it would from the Calendar app (Nick, 2026-11-24: allowed, audited).
@@ -78,6 +80,9 @@ public enum EventKitRequest: Equatable {
   case saveReminder(calendar: String, id: String?, fields: ReminderFields)
   case removeEvent(calendar: String, id: String, occurrenceMs: Int64?)
   case removeReminder(calendar: String, id: String)
+  /// A new calendar or list, in the account new events (or reminders) go to.
+  case createCalendar(kind: EventKitKind, title: String)
+  case removeCalendar(kind: EventKitKind, calendar: String)
 }
 
 let maxEventKitResults = 500
@@ -277,6 +282,18 @@ public func parseEventKitRequest(_ data: Data) throws -> EventKitRequest {
       occurrence = n
     }
     return .removeEvent(calendar: calendar, id: id, occurrenceMs: occurrence)
+  case "eventkit.createCalendar":
+    try only(["kind", "title"], required: ["kind", "title"])
+    let k = try kind(object)
+    guard let title = text(object["title"], max: 200),
+      !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    else { throw EventKitFailure.invalid }
+    return .createCalendar(kind: k, title: title)
+  case "eventkit.removeCalendar":
+    try only(["kind", "calendar"], required: ["kind", "calendar"])
+    let k = try kind(object)
+    guard let calendar = text(object["calendar"], max: 200), !calendar.isEmpty else { throw EventKitFailure.invalid }
+    return .removeCalendar(kind: k, calendar: calendar)
   default:
     throw EventKitFailure.invalid
   }
@@ -723,6 +740,37 @@ public func answerEventKit(_ request: EventKitRequest) -> [String: Any] {
         throw EventKitFailure.unavailable
       }
       return ["reminder": removed]
+    case .createCalendar(let kind, let title):
+      guard hasFullAccess(kind) else { throw EventKitFailure.denied }
+      let store = try liveStore()
+      let usual = kind == .events ? store.defaultCalendarForNewEvents : store.defaultCalendarForNewReminders()
+      // An account that takes no new calendars is the account's answer, not a stuck reader: read-only,
+      // so the Mac doesn't restart its reader on each try.
+      guard let source = usual?.source else { throw EventKitFailure.readOnly }
+      let calendar = EKCalendar(for: kind.entity, eventStore: store)
+      calendar.title = title
+      calendar.source = source
+      do {
+        try store.saveCalendar(calendar, commit: true)
+      } catch {
+        throw EventKitFailure.readOnly
+      }
+      return ["calendar": calendarJSON(calendar)]
+    case .removeCalendar(let kind, let calendarId):
+      guard hasFullAccess(kind) else { throw EventKitFailure.denied }
+      let store = try liveStore()
+      guard let calendar = calendars([calendarId], kind, store).first else { throw EventKitFailure.notFound }
+      // A subscribed, birthdays or otherwise fixed calendar can't be removed from here.
+      guard calendar.allowsContentModifications, !calendar.isImmutable, calendar.type != .subscription,
+        calendar.type != .birthday
+      else { throw EventKitFailure.readOnly }
+      let removed = calendarJSON(calendar)
+      do {
+        try store.removeCalendar(calendar, commit: true)
+      } catch {
+        throw EventKitFailure.unavailable
+      }
+      return ["calendar": removed]
     }
   } catch let failure as EventKitFailure {
     return ["error": failure.rawValue]

@@ -808,6 +808,8 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
   ]
   // Each agent's own access, by app and item id (docs/access.md).
   const appAccess = new Map<string, Partial<Record<AccessApp, Record<string, 'read' | 'edit'>>>>()
+  // Full access, by agent: the apps it may add and remove calendars or lists in.
+  const appFull = new Map<string, Set<'calendar' | 'reminders'>>()
   const accessView = (clientId: string): AgentAccessView => {
     const level = (app: AccessApp, id: string): AccessChoice => appAccess.get(clientId)?.[app]?.[id] ?? 'off'
     const mail = mailStatus()
@@ -824,6 +826,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
             level: level('mail', a.id),
             editable: true,
           })),
+          full: null,
         },
         ...(['calendar', 'reminders'] as const).map((app) => {
           const status = eventKitStatus(app)
@@ -837,6 +840,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
               level: level(app, c.id),
               editable: c.writable,
             })),
+            full: appFull.get(clientId)?.has(app) ?? false,
           }
         }),
       ],
@@ -1953,7 +1957,15 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       async save(clientId, changes) {
         enter('agentAccess.save', clientId, changes)
         const record = { ...(appAccess.get(clientId) ?? {}) }
-        const { tools: toolChanges, valet, ...apps } = changes
+        const { tools: toolChanges, valet, full, ...apps } = changes
+        if (full !== undefined) {
+          const on = new Set(appFull.get(clientId) ?? [])
+          for (const [app, to] of Object.entries(full)) {
+            if (to) on.add(app as 'calendar' | 'reminders')
+            else on.delete(app as 'calendar' | 'reminders')
+          }
+          appFull.set(clientId, on)
+        }
         if (valet !== undefined) {
           const [origin, id = ''] = clientId.split(':')
           if (origin === 'local') access.set(id, { ...accessOf(id), ...valet })

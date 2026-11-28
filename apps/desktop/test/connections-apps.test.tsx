@@ -437,6 +437,40 @@ describe('a cloud agent’s page', () => {
     expect(called(api, 'remote.setAskForChanges')).toEqual([])
   })
 
+  it('turns Full access on for Calendar in the Save, with Touch ID, and off with a plain Save', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    await api.remote.approveConsent('ABCDEFGH', ['woolworths.get_cart'])
+    await api.eventKit.update('calendar', { enabled: true })
+    await api.eventKit.action('calendar', 'request-access')
+    renderPage(api, <ClientPage clientId="rcdemodemodemodemodemo" />)
+    const full = await screen.findByRole('switch', { name: 'Let it add and remove calendars' })
+    expect(full.getAttribute('aria-checked')).toBe('false')
+    // Reminders isn't set up: no switch for it.
+    expect(screen.queryByRole('switch', { name: 'Let it add and remove lists' })).toBeNull()
+    await user.click(full)
+    await user.click(screen.getByRole('button', { name: 'Save with Touch ID' }))
+    await waitFor(() =>
+      expect(called(api, 'agentAccess.save').at(-1)).toEqual([
+        'remote:rcdemodemodemodemodemo',
+        { full: { calendar: true } },
+      ]),
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByRole('switch', { name: 'Let it add and remove calendars' }).getAttribute('aria-checked'),
+      ).toBe('true'),
+    )
+    await user.click(screen.getByRole('switch', { name: 'Let it add and remove calendars' }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(called(api, 'agentAccess.save').at(-1)).toEqual([
+        'remote:rcdemodemodemodemodemo',
+        { full: { calendar: false } },
+      ]),
+    )
+  })
+
   it('changes an app’s See Valet and All agents’ activity in the access card, without Touch ID', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })

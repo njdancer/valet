@@ -206,6 +206,26 @@ export class AgentAccessStore {
     })
   }
 
+  /**
+   * Gives an agent Edit on a calendar or list it just created, read and written in one step: only
+   * while its record, as saved at that moment, still has Full access. A Save that took Full away
+   * (or narrowed anything) while the call ran is never undone by it. True when it was given.
+   */
+  async addCreated(clientId: string, app: AccessApp, id: string): Promise<boolean> {
+    let given = false
+    await this.update((doc) => {
+      const current = doc.clients[clientId]?.[app]
+      if (current === undefined || !current.full) return doc
+      given = true
+      const client = {
+        ...doc.clients[clientId],
+        [app]: { ...current, items: { ...current.items, [id]: 'edit' } },
+      }
+      return { ...doc, clients: { ...doc.clients, [clientId]: client } }
+    })
+    return given
+  }
+
   /** Takes an item away from every agent (it is gone from the Mac, say). */
   async dropItem(app: AccessApp, id: string): Promise<void> {
     if (!Object.values(this.current.clients).some((c) => c[app]?.items[id] !== undefined)) return

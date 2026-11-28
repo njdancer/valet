@@ -123,6 +123,27 @@ class FakeKit implements EventKit {
     this.removed.push(request)
     return rem({ id: request.id, listId: request.calendar })
   }
+  created: { kind: string; title: string }[] = []
+  async createCalendar(kind: 'events' | 'reminders', title: string) {
+    if (this.fail !== null) throw this.fail
+    this.created.push({ kind, title })
+    const made = {
+      id: `new-${this.created.length}`,
+      title,
+      account: 'iCloud',
+      writable: true,
+      subscribed: false,
+    }
+    this.calendarsOf[kind].push(made)
+    return made
+  }
+  async removeCalendar(kind: 'events' | 'reminders', calendar: string) {
+    this.removed.push({ kind, calendar })
+    const found = this.calendarsOf[kind].find((c) => c.id === calendar)
+    if (found === undefined) throw new EventKitError('not-found')
+    this.calendarsOf[kind] = this.calendarsOf[kind].filter((c) => c.id !== calendar)
+    return found
+  }
 }
 
 function setup(options: { writes?: boolean; allowance?: number; readOnly?: string[] } = {}) {
@@ -160,6 +181,8 @@ describe('listing', () => {
       'create_event',
       'update_event',
       'delete_event',
+      'create_calendar',
+      'delete_calendar',
     ])
     expect(reminderTools({ writes: false }).map((t) => t.declaration.name)).toEqual(['lists', 'search'])
     for (const t of [...calendarTools({ writes: true }), ...reminderTools({ writes: true })])
@@ -453,6 +476,87 @@ describe('reminders', () => {
     ).toMatchObject({
       errorClass: 'invalid',
       issue: { path: ['priority'], reason: 'not-allowed' },
+    })
+  })
+})
+
+describe('full access: whole calendars and lists', () => {
+  it('adds a calendar only with full access, and gives it to the agent that added it', async () => {
+    const { kit, calendar } = setup({ writes: true })
+    // Edit everywhere isn't enough.
+    expect(await callCalendarTool(calendar, 'create_calendar', { title: 'Trips' })).toMatchObject({
+      errorClass: 'not-found',
+    })
+    const added: string[] = []
+    const full = { ...calendar, full: () => true, added: async (id: string) => void added.push(id) }
+    expect(await callCalendarTool(full, 'create_calendar', { title: '   ' })).toMatchObject({
+      errorClass: 'invalid',
+    })
+    const done = await callCalendarTool(full, 'create_calendar', { title: ' Trips ' })
+    const out = calendarOutputs.create_calendar.parse((done as { output: unknown }).output)
+    expect(out.calendar).toMatchObject({ id: 'new-1', title: 'Trips', writable: true })
+    expect(kit.created).toEqual([{ kind: 'events', title: 'Trips' }])
+    expect(added).toEqual(['new-1'])
+  })
+
+  it('reports a calendar it added as added, even when its access to it could not be saved', async () => {
+    const { kit, calendar } = setup({ writes: true })
+    const full = {
+      ...calendar,
+      full: () => true,
+      added: async (): Promise<void> => {
+        throw new Error('disk full')
+      },
+    }
+    const done = await callCalendarTool(full, 'create_calendar', { title: 'Trips' })
+    expect(done).toMatchObject({ status: 'ok' })
+    const out = calendarOutputs.create_calendar.parse((done as { output: unknown }).output)
+    expect(out.note).toMatch(/Don’t add it again/)
+    expect(kit.created).toHaveLength(1)
+  })
+
+  it('deletes only a calendar the agent may change, and counts it as a change', async () => {
+    const { kit, calendar } = setup({ writes: true, readOnly: ['work'], allowance: 1 })
+    const full = { ...calendar, full: () => true }
+    // Read only, or not given at all: refused, and nothing is removed.
+    expect(await callCalendarTool(full, 'delete_calendar', { calendarId: 'work' })).toMatchObject({
+      issue: { reason: 'read-access-only' },
+    })
+    expect(await callCalendarTool(full, 'delete_calendar', { calendarId: 'nope' })).toMatchObject({
+      errorClass: 'not-found',
+    })
+    const done = await callCalendarTool(full, 'delete_calendar', { calendarId: 'home' })
+    expect(calendarOutputs.delete_calendar.parse((done as { output: unknown }).output).deleted.id).toBe(
+      'home',
+    )
+    expect(kit.removed).toEqual([{ kind: 'events', calendar: 'home' }])
+    // The hour's allowance is spent now.
+    expect(await callCalendarTool(full, 'create_calendar', { title: 'More' })).toMatchObject({
+      errorClass: 'rate-limited',
+    })
+    expect(
+      await callCalendarTool({ ...full, full: () => false }, 'delete_calendar', { calendarId: 'home' }),
+    ).toMatchObject({
+      errorClass: 'not-found',
+    })
+  })
+
+  it('adds and deletes reminder lists the same way', async () => {
+    const { kit, reminders } = setup({ writes: true })
+    expect(await callReminderTool(reminders, 'create_list', { title: 'Shopping' })).toMatchObject({
+      errorClass: 'not-found',
+    })
+    const full = { ...reminders, full: () => true }
+    const made = await callReminderTool(full, 'create_list', { title: 'Shopping' })
+    expect(reminderOutputs.create_list.parse((made as { output: unknown }).output).list.title).toBe(
+      'Shopping',
+    )
+    const gone = await callReminderTool(full, 'delete_list', { listId: 'todo' })
+    expect(reminderOutputs.delete_list.parse((gone as { output: unknown }).output).deleted.id).toBe('todo')
+    expect(kit.removed).toEqual([{ kind: 'reminders', calendar: 'todo' }])
+    kit.fail = new EventKitError('unavailable')
+    expect(await callReminderTool(full, 'create_list', { title: 'X' })).toMatchObject({
+      errorClass: 'unavailable',
     })
   })
 })

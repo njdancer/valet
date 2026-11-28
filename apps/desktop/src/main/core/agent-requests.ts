@@ -25,8 +25,14 @@ const ACCESS_APP_NAMES = { mail: 'Mail', calendar: 'Calendar', reminders: 'Remin
 /** What each level gives, by app, as the access card words it. */
 const ACCESS_LEVEL_WORDS = {
   mail: { read: 'search and read it', edit: 'read it, draft, move and mark (never send)' },
-  calendar: { read: 'see its events', edit: 'see, add, change and delete its events' },
-  reminders: { read: 'see its reminders', edit: 'see, add, change and complete its reminders' },
+  calendar: {
+    read: 'see its events',
+    edit: 'see, add, change and delete its events (and, with Full access, delete the calendar itself)',
+  },
+  reminders: {
+    read: 'see its reminders',
+    edit: 'see, add, change and complete its reminders (and, with Full access, delete the list itself)',
+  },
 } as const
 /** What a tool's side effect means, as a tool line's clause. */
 const TOOL_EFFECT_WORDS = {
@@ -170,7 +176,7 @@ export function agentRequestItem(
     case 'agent-access': {
       const s = request.subject
       // Ask for changes brings See Valet: one line for Valet itself.
-      const n = s.items.length + s.tools.length + (s.capabilities.length > 0 ? 1 : 0)
+      const n = s.items.length + s.full.length + s.tools.length + (s.capabilities.length > 0 ? 1 : 0)
       return {
         ...base,
         requestKind: 'agent-access',
@@ -181,6 +187,10 @@ export function agentRequestItem(
           ...s.items.map(
             (i) =>
               `${ACCESS_APP_NAMES[i.app]}, “${i.label}”: ${i.level === 'edit' ? 'Edit' : 'Read'}, to ${ACCESS_LEVEL_WORDS[i.app][i.level]}.`,
+          ),
+          ...s.full.map(
+            (app) =>
+              `${ACCESS_APP_NAMES[app]}: Full access, to add ${app === 'calendar' ? 'calendars' : 'lists'} and delete any it may edit, with everything in them.`,
           ),
           ...s.tools.map((t) => `The tool “${t.label}”, which ${TOOL_EFFECT_WORDS[t.sideEffect]}.`),
           ...(s.capabilities.includes('ask-for-changes')

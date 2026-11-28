@@ -1704,6 +1704,8 @@ export interface AgentAccessApp {
   /** Whether the app is set up and its items could be read; its items are empty otherwise. */
   readonly ready: boolean
   readonly items: readonly AgentAccessItem[]
+  /** Calendar and Reminders: whether it may add and remove whole calendars or lists. Null for Mail. */
+  readonly full: boolean | null
 }
 
 /** One tool a cloud agent could be given: an approved site's, or Valet's own (the browser's). */
@@ -1758,6 +1760,8 @@ export type AgentAccessChanges = Readonly<
   Partial<Record<AccessApp, Readonly<Record<string, AccessChoice>>>>
 > & {
   readonly tools?: Readonly<Record<string, boolean>>
+  /** Full access in Calendar or Reminders, on or off. */
+  readonly full?: Readonly<Partial<Record<'calendar' | 'reminders', boolean>>>
   /** Valet itself: each capability changed, on or off. */
   readonly valet?: Readonly<Partial<Record<'seeValet' | 'allActivity' | 'askForChanges', boolean>>>
 }
