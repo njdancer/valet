@@ -394,7 +394,14 @@ describe('a cloud agent’s page', () => {
     )
     // A cloud agent has no All agents' activity.
     expect(within(valet).queryByRole('switch', { name: 'All agents’ activity' })).toBeNull()
+    // On and off again: See Valet, which only came with it, goes back off, and nothing is left to save.
     await user.click(ask)
+    await user.click(within(valet).getByRole('switch', { name: 'Ask for changes' }))
+    expect(within(valet).getByRole('switch', { name: 'See Valet' }).getAttribute('aria-checked')).toBe(
+      'false',
+    )
+    expect(screen.getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(true)
+    await user.click(within(valet).getByRole('switch', { name: 'Ask for changes' }))
     expect(within(valet).getByRole('switch', { name: 'See Valet' }).getAttribute('aria-checked')).toBe('true')
     expect(within(valet).getAllByText(/not saved/)).toHaveLength(2)
     await user.click(screen.getByRole('button', { name: 'Save with Touch ID' }))
@@ -411,6 +418,13 @@ describe('a cloud agent’s page', () => {
           .getAttribute('aria-checked'),
       ).toBe('true'),
     )
+    // Ask for changes off alone keeps See Valet, signed once more: the page says so.
+    await user.click(
+      within(screen.getByTestId('access-valet')).getByRole('switch', { name: 'Ask for changes' }),
+    )
+    expect(screen.getByTestId('see-valet-signed-again')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Save with Touch ID' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Discard changes' }))
     // See Valet off takes Ask for changes too, and only narrows.
     await user.click(within(screen.getByTestId('access-valet')).getByRole('switch', { name: 'See Valet' }))
     await user.click(screen.getByRole('button', { name: 'Save' }))

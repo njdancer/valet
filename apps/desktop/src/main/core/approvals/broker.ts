@@ -726,9 +726,18 @@ export class ApprovalBroker {
             draft.safety.lockdown = true
             // Lockdown revokes every remote client and ends authoring sessions (B); resuming
             // brings none of them back.
+            // A cloud agent's See Valet and Ask for changes go too, wherever they were signed.
             draft.evidence = draft.evidence.filter((e) => {
-              const kind = parseRequestText(e.requestText)?.request.kind
-              return kind !== 'remote-client' && kind !== 'authoring-session' && kind !== 'browser-grant'
+              const request = parseRequestText(e.requestText)?.request
+              if (request === undefined) return true
+              const kind = request.kind
+              if (kind === 'remote-client' || kind === 'authoring-session' || kind === 'browser-grant')
+                return false
+              if (kind === 'agent-access')
+                return (request.subject as ApprovalSubject<'agent-access'>).capabilities.length === 0
+              if (kind === 'setting')
+                return !/^remote_ask_/.test((request.subject as ApprovalSubject<'setting'>).setting)
+              return true
             })
           },
           { tightening: true },

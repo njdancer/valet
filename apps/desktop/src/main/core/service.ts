@@ -1486,9 +1486,19 @@ export class AppService {
     if (label.startsWith('local:')) {
       const c = this.clients.capabilities(id)
       if (c === null) throw new ValetError('config', 'not-found')
-      return { seeValet: c.seeValet, allActivity: c.allActivity, askForChanges: c.askForChanges }
+      return {
+        seeValet: c.seeValet,
+        allActivity: c.allActivity,
+        askForChanges: c.askForChanges,
+        seeValetSignedAgain: false,
+      }
     }
-    return { ...this.remoteCapabilities(id), allActivity: null }
+    const now = this.remoteCapabilities(id)
+    return {
+      ...now,
+      allActivity: null,
+      seeValetSignedAgain: now.askForChanges && !this.seeValetWithoutAsk(id),
+    }
   }
 
   /**
@@ -3936,13 +3946,18 @@ export class AppService {
 
   /** Removes the evidence behind a cloud agent's See Valet and Ask for changes. Only tightens. */
   private async dropRemoteCapabilities(clientId: string): Promise<void> {
-    await this.revokeCapabilityEvidence(clientId, 'see-valet')
+    try {
+      await this.revokeCapabilityEvidence(clientId, 'see-valet')
+    } catch {
+      // Revoking and disconnecting go on: without its grant, no signature gives it anything.
+    }
   }
 
   /**
    * Removes every signature behind one of a cloud agent's capabilities: Ask for changes' own, or
    * See Valet's, which takes Ask for changes too. Only tightens. A signature that gave items or
    * tools as well goes too: what it gave is kept where it was written, not in the signature.
+   * Throws if the ledger couldn't be written, so a Save never says it took away what it didn't.
    */
   private async revokeCapabilityEvidence(clientId: string, capability: RemoteCapability): Promise<void> {
     const broker = this.approvalBroker
@@ -3951,9 +3966,9 @@ export class AppService {
     const hits = (capabilities: readonly RemoteCapability[] | undefined): boolean =>
       capability === 'see-valet' ? (capabilities ?? []).length > 0 : (capabilities ?? []).includes(capability)
     const setting = remoteAskSetting(clientId)
-    if (setting !== null) await broker.revoke('setting', (s) => s.setting === setting).catch(() => 0)
-    await broker.revoke('remote-client', (s) => s.clientId === id && hits(s.capabilities)).catch(() => 0)
-    await broker.revoke('agent-access', (s) => s.clientId === id && hits(s.capabilities)).catch(() => 0)
+    if (setting !== null) await broker.revoke('setting', (s) => s.setting === setting)
+    await broker.revoke('remote-client', (s) => s.clientId === id && hits(s.capabilities))
+    await broker.revoke('agent-access', (s) => s.clientId === id && hits(s.capabilities))
   }
 
   /**

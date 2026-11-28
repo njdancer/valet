@@ -51,10 +51,11 @@ const EDIT_MEANS: Readonly<Record<AccessApp, string>> = {
 
 const RANK: Readonly<Record<AccessChoice, number>> = { off: 0, read: 1, edit: 2 }
 
-type ValetKey = keyof AgentValetAccess
+type ValetKey = 'seeValet' | 'allActivity' | 'askForChanges'
 type Draft = Partial<Record<AccessApp, Record<string, AccessChoice>>> & {
   tools?: Record<string, boolean>
-  valet?: Partial<Record<ValetKey, boolean>>
+  /** `seeByAsk`: See Valet went on only because Ask for changes did, so it goes off with it. */
+  valet?: Partial<Record<ValetKey | 'seeByAsk', boolean>>
 }
 
 /**
@@ -68,6 +69,7 @@ export function valetDraft(saved: AgentValetAccess, draft: Draft['valet'] = {}):
     seeValet: see,
     allActivity: saved.allActivity === null ? null : see && (draft.allActivity ?? saved.allActivity),
     askForChanges: see && ask,
+    seeValetSignedAgain: saved.seeValetSignedAgain,
   }
 }
 
@@ -79,7 +81,14 @@ function valetChoose(
   on: boolean,
 ): Draft['valet'] {
   const now = valetDraft(saved, draft)
-  if (key === 'askForChanges' && on) return { ...draft, askForChanges: true, seeValet: true }
+  if (key === 'askForChanges' && on)
+    return { ...draft, askForChanges: true, seeValet: true, seeByAsk: !now.seeValet }
+  if (key === 'askForChanges' && !on) {
+    const { seeByAsk, ...rest } = draft ?? {}
+    return seeByAsk === true
+      ? { ...rest, askForChanges: false, seeValet: false }
+      : { ...rest, askForChanges: false }
+  }
   if (key === 'seeValet' && !on)
     return {
       ...draft,
@@ -113,6 +122,9 @@ export function accessChanges(
       // A cloud agent's are signed for; an app on this Mac's are its own choices.
       if (next[key] === true && valet.allActivity === null) widens = true
     }
+    // Ask for changes off alone, with See Valet signed only beside it: See Valet is signed again.
+    if (valet.seeValetSignedAgain && valet.askForChanges && !next.askForChanges && next.seeValet)
+      widens = true
   }
   for (const [ref, on] of Object.entries(draft.tools ?? {})) {
     const tool = tools.find((t) => t.ref === ref)
@@ -352,6 +364,15 @@ export function AppsAccess({ clientId, name }: { readonly clientId: string; read
             changed={valetNow.askForChanges !== valet.askForChanges}
             onChange={(on) => chooseValet('askForChanges', on)}
           />
+          {valet.seeValetSignedAgain &&
+          valet.askForChanges &&
+          !valetNow.askForChanges &&
+          valetNow.seeValet ? (
+            <Text size="sm" tone="muted" data-testid="see-valet-signed-again">
+              You gave See Valet together with Ask for changes, so keeping it needs Touch ID once more. Turn
+              See Valet off too to take both away without it.
+            </Text>
+          ) : null}
         </section>
         <Stack gap={2}>
           <Inline gap={2}>

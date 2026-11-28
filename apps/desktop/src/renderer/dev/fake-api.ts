@@ -849,11 +849,17 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     const [origin, id = ''] = clientId.split(':')
     if (origin === 'local') {
       const a = accessOf(id)
-      return { seeValet: a.seeValet, allActivity: a.allActivity, askForChanges: a.askForChanges }
+      return {
+        seeValet: a.seeValet,
+        allActivity: a.allActivity,
+        askForChanges: a.askForChanges,
+        seeValetSignedAgain: false,
+      }
     }
     const agent = remoteClients.find((c) => c.id === id)
     return {
       seeValet: agent?.seeValet ?? false,
+      seeValetSignedAgain: agent?.askForChanges ?? false,
       allActivity: null,
       askForChanges: agent?.askForChanges ?? false,
     }

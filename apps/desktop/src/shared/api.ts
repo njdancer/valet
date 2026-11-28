@@ -1727,6 +1727,11 @@ export interface AgentValetAccess {
   readonly seeValet: boolean
   readonly allActivity: boolean | null
   readonly askForChanges: boolean
+  /**
+   * A cloud agent's See Valet is signed only together with Ask for changes: taking Ask away alone
+   * signs See Valet again, so that Save asks for Touch ID.
+   */
+  readonly seeValetSignedAgain: boolean
 }
 
 /**
@@ -1738,7 +1743,7 @@ export type AgentAccessChanges = Readonly<
 > & {
   readonly tools?: Readonly<Record<string, boolean>>
   /** Valet itself: each capability changed, on or off. */
-  readonly valet?: Readonly<Partial<Record<keyof AgentValetAccess, boolean>>>
+  readonly valet?: Readonly<Partial<Record<'seeValet' | 'allActivity' | 'askForChanges', boolean>>>
 }
 
 /** Messages on this Mac (docs/messages.md). */

@@ -3871,7 +3871,12 @@ describe('remote access', () => {
     const names = async () =>
       (await (await remoteClient(port, agent.token)).listTools()).tools.map((t) => t.name)
     const valet = async () => (await s.api.agentAccess.view(label)).valet
-    expect(await valet()).toEqual({ seeValet: false, allActivity: null, askForChanges: false })
+    expect(await valet()).toEqual({
+      seeValet: false,
+      allActivity: null,
+      askForChanges: false,
+      seeValetSignedAgain: false,
+    })
     const broker = (s.service as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
     const signed = () =>
       broker.honoured('agent-access', (sub) => sub.clientId === label && sub.capabilities.length > 0)
@@ -3889,7 +3894,8 @@ describe('remote access', () => {
     ).toBe(true)
     expect(s.presence.prompts.length).toBe(before + 1)
     expect(s.presence.prompts.at(-1)).toMatch(/\(3 additions\)/)
-    expect(await valet()).toMatchObject({ seeValet: true, askForChanges: true })
+    // See Valet is signed only beside Ask for changes: the page says keeping it alone signs again.
+    expect(await valet()).toMatchObject({ seeValet: true, askForChanges: true, seeValetSignedAgain: true })
     expect(await names()).toEqual(
       expect.arrayContaining(['valet_list_adapters', 'valet_request_access', 'shop_add']),
     )
@@ -3913,6 +3919,7 @@ describe('remote access', () => {
 
     // Ask for changes on again, then off: See Valet now has its own signature, so no prompt.
     expect(await s.api.agentAccess.save(label, { valet: { askForChanges: true } })).toBe(true)
+    expect(await valet()).toMatchObject({ seeValetSignedAgain: false })
     const again = s.presence.prompts.length
     expect(await s.api.agentAccess.save(label, { valet: { askForChanges: false } })).toBe(true)
     expect(s.presence.prompts.length).toBe(again)
@@ -3932,6 +3939,11 @@ describe('remote access', () => {
     await expect(s.api.agentAccess.save(label, { valet: { allActivity: true } })).rejects.toMatchObject({
       errorClass: 'invalid',
     })
+    // Lockdown takes every signature behind either away, wherever it was given.
+    expect(await s.api.agentAccess.save(label, { valet: { askForChanges: true } })).toBe(true)
+    expect(signed()).not.toBeNull()
+    await broker.lockdown()
+    expect(signed()).toBeNull()
   })
 
   it('saves an app’s own See Valet, All agents’ activity and Ask for changes with its access, without Touch ID', async () => {
