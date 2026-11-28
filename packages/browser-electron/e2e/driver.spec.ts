@@ -563,6 +563,21 @@ test('a tool page’s own dialogs return at once and never show its window or ho
   })
 })
 
+test('a tool page whose renderer crashed is replaced, and calls work again without a restart', async () => {
+  const round = {
+    reason: 'crashed',
+    oldWindowClosed: true,
+    began: true,
+    freshPage: true,
+    answer: 2,
+    cleanUserAgent: true,
+  }
+  expect(await scenario(app, 'rendererCrash')).toEqual({
+    rounds: [round, round],
+    diagnostics: ['renderer-gone', 'renderer-gone'],
+  })
+})
+
 test('close destroys every window the driver opened', async () => {
   expect(await scenario(app, 'close')).toEqual({ windows: 0 })
 })

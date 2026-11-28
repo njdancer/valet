@@ -252,6 +252,7 @@ export function adminReader(source: AdminSource): AdminReader {
           input: previewText(trace.input),
           steps: trace.steps.map(stepEntry),
           loginStall: trace.loginStall,
+          fault: trace.fault ?? null,
         },
         matches: [],
         otherAgent: false,

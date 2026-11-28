@@ -822,6 +822,22 @@ export interface RunTrace {
   readonly outputBytes: number | null
   /** Where the login this call started stopped short, while Valet still remembers the call. */
   readonly loginStall: LoginStall | null
+  /** What went wrong inside Valet's browser, when that is why it failed, while Valet remembers the call. */
+  readonly fault?: CallFault | null
+}
+
+/**
+ * Where Valet's own browser failed a call before tool code ran (main/core/driver-fault.ts). Fixed
+ * words, an error's name, and its message only when it reads as the browser's own wording.
+ */
+export interface CallFault {
+  /** The part of the call: session-secrets, begin-run or tool-page. */
+  readonly step: string
+  /** The driver's own step, such as tool-storage-watch or tool-partition; null when it named none. */
+  readonly at: string | null
+  /** The thrown error's name, such as Error or TypeError. */
+  readonly error: string
+  readonly message: string | null
 }
 
 export type LoginStallOutcome = 'needsUser' | 'failed' | 'blocked'

@@ -276,6 +276,7 @@ import { RepairTickets } from './drafts/repairs'
 import { draftDomains, type ScratchHandle, ScratchSessions } from './drafts/research'
 import { type DraftRecord, DraftStore } from './drafts/store'
 import type { SignedInTrial } from './drafts/trial'
+import { callFault } from './driver-fault'
 import { type EraseKind, type EraseReport, type EraseStep, eraseEverything } from './erase'
 import { FeedbackDeskImpl } from './feedback'
 import { ensurePrivateDir, JsonDocument } from './files'
@@ -574,9 +575,7 @@ export interface ServiceDeps {
    * may update itself, otherwise one that says why not (disabledUpdates).
    */
   readonly updates: (hooks: UpdatesHooks) => Promise<UpdatesPort>
-  readonly diagnostics?: (
-    diagnostic: RuntimeDiagnostic | { readonly type: string; readonly adapterId?: string },
-  ) => void
+  readonly diagnostics?: (diagnostic: AppDiagnostic) => void
   readonly newId?: () => string
   /** What a reset or an uninstall removes besides the data folder (erase.ts); none by default. */
   readonly leftovers?: readonly string[]
@@ -586,6 +585,25 @@ export interface ServiceDeps {
   readonly timeZone?: string
 }
 
+/**
+ * What a browser driver tells the app's diagnostics (browser-electron's DriverDiagnostic): a page's
+ * renderer that died, or a set-up step that failed and what it threw there.
+ */
+export interface DriverDiagnosticLike {
+  readonly type: string
+  readonly role?: string
+  readonly reason?: string
+  readonly exitCode?: number
+  readonly step?: string
+  readonly error?: unknown
+}
+
+/** Everything the app's diagnostics hear: the runtime's, a driver's, and the app's own. */
+export type AppDiagnostic =
+  | RuntimeDiagnostic
+  | { readonly type: 'browser'; readonly adapterId: string; readonly diagnostic: DriverDiagnosticLike }
+  | { readonly type: string; readonly adapterId?: string }
+
 /** Where a driver reports refusals outside the runtime's runs (browser-electron's DriverOptions). */
 export interface DriverReporters {
   /** The tool partition's refusals between runs. */
@@ -593,6 +611,8 @@ export interface DriverReporters {
   /** The auth partition's refusals that no open login page took. */
   readonly onAuthBlocked: (blocked: BlockedRequest) => void
   readonly onAuthReportsDropped: () => void
+  /** What went wrong inside the driver, for the diagnostics log. */
+  readonly onDiagnostic: (diagnostic: DriverDiagnosticLike) => void
 }
 
 /** Wraps the audit log so every record also tells the windows what changed. */
@@ -1262,7 +1282,11 @@ export class AppService {
       clock: { now: this.deps.now },
       ...(this.deps.pacingSleep === undefined ? {} : { pacingSleep: this.deps.pacingSleep }),
       confirmationTimeoutMs: CONFIRMATION_TIMEOUT_MS,
-      diagnostics: (d) => this.deps.diagnostics?.(d),
+      diagnostics: (d) => {
+        // Kept for the call's trace (valet_get_call's fault), so an agent can see why it failed.
+        if (d.type === 'driver-failed') this.memory.faulted(d.callId, callFault(d.step, d.error))
+        this.deps.diagnostics?.(d)
+      },
       requests: (callId, request) => this.memory.requested(callId, request),
     })
     this.host = host
@@ -3150,6 +3174,7 @@ export class AppService {
       onBlocked: this.blocked.betweenRuns(id),
       onAuthBlocked: this.blocked.authPartition(id),
       onAuthReportsDropped: () => this.deps.diagnostics?.({ type: 'auth-reports-dropped', adapterId: id }),
+      onDiagnostic: (diagnostic) => this.deps.diagnostics?.({ type: 'browser', adapterId: id, diagnostic }),
     })
   }
 

@@ -7,6 +7,7 @@ import {
   type AuthPage,
   type AuthPageOptions,
   type BlockedRequest,
+  faulted,
   hostAllowed,
   httpsOrigin,
   isBareOrigin,
@@ -42,6 +43,7 @@ import type {
   OutgoingRequest,
   PartitionSession,
   ProxyHandle,
+  RendererGone,
   Role,
   Timers,
 } from './platform'
@@ -132,6 +134,15 @@ export interface DriverOptions {
   readonly onAuthReportsDropped?: () => void
   readonly timers?: Timers
   /**
+   * How long the tool page may sit idle after a run before its window is closed, so a site's own
+   * scripts don't run on for hours between calls (a Woolworths page left open for five hours died
+   * in V8). The partition and its cookies stay; the next call opens a fresh window on home.
+   * Defaults to 30 minutes; 0 keeps it open.
+   */
+  readonly idleToolPageMs?: number
+  /** Told what went wrong inside the driver, for the app's diagnostics log. Must not throw. */
+  readonly onDiagnostic?: (diagnostic: DriverDiagnostic) => void
+  /**
    * A draft's live trial (docs/authoring-tools.md#live-trials): both partitions in memory, named by
    * this label, in place of the adapter's persistent ones, so nothing the trial does reaches or
    * outlives the installed adapter's session. Each trial its own label.
@@ -145,6 +156,21 @@ export interface DriverOptions {
    */
   readonly trialSession?: { readonly adapterId: string; readonly cookieDomains: readonly string[] }
 }
+
+/** What the driver tells the app's diagnostics (DriverOptions.onDiagnostic). */
+export type DriverDiagnostic =
+  /** A page's renderer died with its window open. The window is closed, so the next use opens a new one. */
+  | ({ readonly type: 'renderer-gone'; readonly role: Role } & RendererGone)
+  /** Setting up a partition or a new window failed; `error` is what was thrown, at `step`. */
+  | {
+      readonly type: 'setup-failed'
+      readonly role: Role
+      readonly step: SetupStep
+      readonly error: unknown
+    }
+
+/** Where a partition or window set-up failed. */
+export type SetupStep = 'partition' | 'user-agent' | 'storage-watch'
 
 /** What openAuthPage() may be given: core's AuthPageOptions, with the driver's reporting rules. */
 export interface AuthPageRequest extends AuthPageOptions {
@@ -166,6 +192,7 @@ export type ManifestOptions = Omit<
 >
 
 const DEFAULT_STEP_TIMEOUT_MS = 30_000
+const DEFAULT_IDLE_TOOL_PAGE_MS = 30 * 60_000
 const DEFAULT_TYPING_DELAY_MS = 60
 const DEFAULT_TYPING_JITTER_MS = 80
 const DEFAULT_REQUESTS_PER_RUN = 50
@@ -244,6 +271,8 @@ export class ElectronSessionDriver implements SessionDriver {
   private readonly navigations = new Set<number>()
   /** Until when (epoch ms) the next main-frame navigation counts as a tool click's, already paced. */
   private clickPacedUntil = 0
+  /** The timer that closes an idle tool page, while one is set. */
+  private idleTimer: unknown = null
 
   constructor(
     private readonly platform: BrowserPlatform,
@@ -274,6 +303,7 @@ export class ElectronSessionDriver implements SessionDriver {
    * again from zero, and irreversible declarations stay refused until unlockIrreversible().
    */
   beginRun(policy: ToolRunPolicy, onBlocked: (request: BlockedRequest) => void): void {
+    this.stopIdleTimer()
     this.snapshotStorage()
     this.run = { policy, onBlocked, inRun: true, irreversibleUnlocked: false, counted: 0, assets: 0 }
   }
@@ -295,6 +325,7 @@ export class ElectronSessionDriver implements SessionDriver {
   endRun(): void {
     this.snapshotStorage()
     this.run = this.betweenRuns()
+    this.startIdleTimer()
   }
 
   /**
@@ -314,6 +345,7 @@ export class ElectronSessionDriver implements SessionDriver {
   }
 
   toolPage(): Promise<ToolPage> {
+    this.stopIdleTimer()
     const current = this.tool
     if (current !== null && (current.surface === null || !current.surface.isDestroyed())) return current.page
     const slot: ToolSlot = { surface: null, page: Promise.resolve(null as never) }
@@ -422,6 +454,7 @@ export class ElectronSessionDriver implements SessionDriver {
 
   /** Closes every window this driver opened, and the tool partition's proxy. */
   async close(): Promise<void> {
+    this.stopIdleTimer()
     // Closing a page first cancels any probe it has in flight.
     for (const page of this.authPages.values()) await page.close()
     const surfaces = [...this.authPages.keys(), ...this.helpers]
@@ -607,8 +640,15 @@ export class ElectronSessionDriver implements SessionDriver {
    * starts (left from an earlier app session, say) is recorded before tool code can remove it.
    */
   private snapshotStorage(): void {
-    const surface = this.openSurfaces('tool')[0]
-    const origin = surface?.frames()[0]?.origin
+    // Never throws: beginRun() and endRun() call this, and a run that can't begin fails every call.
+    let surface: BrowserSurface | undefined
+    let origin: string | undefined
+    try {
+      surface = this.openSurfaces('tool')[0]
+      origin = surface?.frames()[0]?.origin
+    } catch {
+      return
+    }
     if (surface === undefined || origin === undefined) return
     const keys = this.values.watchedKeys(origin)
     if (keys.length === 0) return
@@ -677,6 +717,16 @@ export class ElectronSessionDriver implements SessionDriver {
   private async open(role: Role): Promise<BrowserSurface> {
     await this.session(role)
     const surface = this.platform.openSurface(this.partitions[role])
+    // A dead page answers nothing, and loading it again would bring it back without the user-agent
+    // override or the storage watch set up below. So its window goes, and the next use opens a new
+    // one. Closed after the event, not inside it: Electron is still dispatching it.
+    surface.onRendererGone((gone) => {
+      this.diagnose({ type: 'renderer-gone', role, reason: gone.reason, exitCode: gone.exitCode })
+      void Promise.resolve().then(() => {
+        if (!surface.isDestroyed()) surface.destroy()
+      })
+    })
+    let step: SetupStep = 'user-agent'
     try {
       if (this.options.userAgent !== 'electron') {
         const { chromeVersion, os, systemVersion, arch } = this.platform
@@ -687,16 +737,55 @@ export class ElectronSessionDriver implements SessionDriver {
         )
       }
       if (role === 'tool') {
+        step = 'storage-watch'
         await withTimeout(this.timing.timers, this.timing.stepTimeoutMs, () =>
           surface.watchStorage((value) => this.values.storageValue(value)),
         )
       }
     } catch (error) {
       surface.destroy()
-      if (error instanceof ValetError) throw error
-      throw new ValetError(role === 'tool' ? 'egress' : 'navigate', 'internal')
+      throw this.setupFailed(role, step, error)
     }
     return surface
+  }
+
+  /**
+   * The error a failed set-up step throws: a ValetError as it was (a timeout, say), anything else as
+   * internal, keeping what was thrown for the diagnostics log and the call's trace.
+   */
+  private setupFailed(role: Role, step: SetupStep, error: unknown): ValetError {
+    this.diagnose({ type: 'setup-failed', role, step, error })
+    if (error instanceof ValetError) return error
+    return faulted(role === 'tool' ? 'egress' : 'navigate', 'internal', `${role}-${step}`, error)
+  }
+
+  private diagnose(diagnostic: DriverDiagnostic): void {
+    try {
+      this.options.onDiagnostic?.(diagnostic)
+    } catch {
+      // The log's failure must not change what the driver does.
+    }
+  }
+
+  /** After a run: closes the tool page once it has sat idle for idleToolPageMs. */
+  private startIdleTimer(): void {
+    this.stopIdleTimer()
+    const ms = this.options.idleToolPageMs ?? DEFAULT_IDLE_TOOL_PAGE_MS
+    if (!(ms > 0) || this.openSurfaces('tool').length === 0) return
+    const handle = this.timing.timers.setTimeout(() => {
+      if (this.idleTimer !== handle) return
+      this.idleTimer = null
+      if (!this.run.inRun) this.discardToolPage()
+    }, ms)
+    // Not what keeps a process running.
+    ;(handle as { unref?: () => void } | null)?.unref?.()
+    this.idleTimer = handle
+  }
+
+  private stopIdleTimer(): void {
+    if (this.idleTimer === null) return
+    this.timing.timers.clearTimeout(this.idleTimer)
+    this.idleTimer = null
   }
 
   /** The partition's session, hardened and guarded before any page opens in it. */
@@ -717,8 +806,7 @@ export class ElectronSessionDriver implements SessionDriver {
     try {
       return await this.configureUnchecked(role)
     } catch (error) {
-      if (error instanceof ValetError) throw error
-      throw new ValetError(role === 'tool' ? 'egress' : 'navigate', 'internal')
+      throw this.setupFailed(role, 'partition', error)
     }
   }
 

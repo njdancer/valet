@@ -423,6 +423,7 @@ export function runTrace(
     output: summary.outcome === 'ok' ? (remembered?.output ?? null) : null,
     outputBytes,
     loginStall: remembered?.loginStall ?? null,
+    fault: remembered?.fault ?? null,
   }
 }
 

@@ -105,6 +105,7 @@ import {
   type ConfirmationAnswer,
   type ConfirmationPrompt,
   type ConfirmationQuestion,
+  type DriverFailureStep,
   type ListedTool,
   type LoginStepContext,
   type LoginStepOptions,
@@ -903,7 +904,8 @@ export class ToolHost {
         // Before the run begins: opening the tool page loads home under the run policy, and what
         // the driver refuses then is redacted against these.
         await this.collectSessionSecrets(entry, state)
-      } catch {
+      } catch (error) {
+        this.driverFailed(entry, state, 'session-secrets', error)
         return failed('tool-run', 'internal')
       }
       try {
@@ -914,6 +916,7 @@ export class ToolHost {
         // Only the runtime's own confirmation unlocks; ctx.confirm() never does.
         if (declaration.sideEffect === 'irreversible') entry.driver.unlockIrreversible()
       } catch (error) {
+        this.driverFailed(entry, state, 'begin-run', error)
         // Without the driver's policy in force, nothing tool code does would be held to it.
         return fromReportable(toReportable(error, 'egress'))
       }
@@ -1172,6 +1175,10 @@ export class ToolHost {
     try {
       inner = await entry.driver.toolPage()
     } catch (error) {
+      // A site that refused or a step that timed out is the call's own story; anything else is ours.
+      if (!(error instanceof ValetError) || error.errorClass === 'internal') {
+        this.driverFailed(entry, state, 'tool-page', error)
+      }
       return fromReportable(toReportable(error, 'navigate'))
     }
 
@@ -1598,6 +1605,21 @@ export class ToolHost {
    * a site's cookie holding its own host name would otherwise redact every link to the site, the
    * cart page the person checks out on included.
    */
+  /** Tells the app's diagnostics what the driver threw. Never throws. */
+  private driverFailed(entry: Entry, state: CallState, step: DriverFailureStep, error: unknown): void {
+    try {
+      this.diagnostics({
+        type: 'driver-failed',
+        adapterId: entry.definition.manifest.id,
+        callId: state.callId,
+        step,
+        error,
+      })
+    } catch {
+      // The log's failure must not change the call's result.
+    }
+  }
+
   private async collectSessionSecrets(entry: Entry, state: CallState): Promise<void> {
     const manifest = entry.definition.manifest
     const { cookieDomains, storage } = manifest.session

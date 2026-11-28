@@ -423,8 +423,8 @@ async function filed(service: AppService): Promise<void> {
   }
 }
 
-async function approved() {
-  const s = await setup()
+async function approved(options: Parameters<typeof setup>[0] = {}) {
+  const s = await setup(options)
   await s.api.approvals.approve('shop', s.adapter.hash)
   return s
 }
@@ -1543,6 +1543,30 @@ describe('tool calls', () => {
     expect(trace?.output).not.toBeNull()
     expect(await s.api.runs.trace('call_none')).toBeNull()
     expect((await s.api.runs.statsToday()).toolCalls).toBe(1)
+  })
+
+  it('keeps what Valet’s browser threw with the call, for its trace, and tells the diagnostics', async () => {
+    const diagnostics: string[] = []
+    const s = await approved({ diagnostics })
+    const thrown = new Error('Render frame was disposed before WebFrameMain could be accessed')
+    s.driver.beginRun = () => {
+      throw thrown
+    }
+    expect(await s.call('echo', { text: 'hello' }, 'Claude Code', 'call_dead')).toEqual({
+      status: 'failed',
+      stage: 'egress',
+      errorClass: 'internal',
+    })
+    expect((await s.api.runs.trace('call_dead'))?.fault).toEqual({
+      step: 'begin-run',
+      at: null,
+      error: 'Error',
+      message: 'Render frame was disposed before WebFrameMain could be accessed',
+    })
+    expect(diagnostics).toContain('driver-failed')
+    // A driver's own report of a dead page reaches the diagnostics too, named by its adapter.
+    s.driver.reporters?.onDiagnostic({ type: 'renderer-gone', role: 'tool', reason: 'crashed', exitCode: 5 })
+    expect(diagnostics).toContain('browser')
   })
 
   it('attributes calls to the client whose token made them, with what it says beside it', async () => {

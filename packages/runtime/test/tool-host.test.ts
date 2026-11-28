@@ -370,6 +370,72 @@ describe('ToolHost.call: errors never leak', () => {
     expect(diagnostics).toHaveBeenCalledWith({ type: 'audit-write-failed', event: 'tool-finished' })
   })
 
+  it('tells the diagnostics what the driver threw when a run cannot begin, and fails as before', async () => {
+    const { host, driver, diagnostics } = fixture(readTrolley)
+    const thrown = new Error('Render frame was disposed before WebFrameMain could be accessed')
+    driver.beginRun = () => {
+      throw thrown
+    }
+    expect(await host.call(call)).toEqual({ status: 'failed', stage: 'egress', errorClass: 'internal' })
+    expect(diagnostics).toHaveBeenCalledWith({
+      type: 'driver-failed',
+      adapterId: 'example-shop',
+      callId: 'call-1',
+      step: 'begin-run',
+      error: thrown,
+    })
+  })
+
+  it('tells the diagnostics when the session values or the tool page cannot be had', async () => {
+    const secrets = fixture(readTrolley)
+    const lost = new ValetError('session-handoff', 'internal')
+    secrets.driver.sessionSecrets = async () => {
+      throw lost
+    }
+    expect(await secrets.host.call(call)).toEqual({
+      status: 'failed',
+      stage: 'tool-run',
+      errorClass: 'internal',
+    })
+    expect(secrets.diagnostics).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'driver-failed', step: 'session-secrets', error: lost }),
+    )
+
+    const page = fixture(readTrolley)
+    const internal = new ValetError('egress', 'internal')
+    page.driver.toolPage = async () => {
+      throw internal
+    }
+    expect(await page.host.call(call)).toMatchObject({
+      status: 'failed',
+      stage: 'egress',
+      errorClass: 'internal',
+    })
+    expect(page.diagnostics).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'driver-failed', step: 'tool-page', error: internal }),
+    )
+
+    // A step that timed out is the call's own story, not the driver's fault.
+    const slow = fixture(readTrolley)
+    slow.driver.toolPage = async () => {
+      throw new ValetError('timeout', 'timed-out')
+    }
+    expect(await slow.host.call(call)).toMatchObject({ status: 'failed', stage: 'timeout' })
+    expect(slow.diagnostics).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'driver-failed' }))
+  })
+
+  it('keeps a call’s result when the diagnostics hook throws', async () => {
+    const { host, driver } = fixture(readTrolley, {
+      diagnostics: () => {
+        throw new Error('log is gone')
+      },
+    })
+    driver.beginRun = () => {
+      throw new Error('boom')
+    }
+    expect(await host.call(call)).toEqual({ status: 'failed', stage: 'egress', errorClass: 'internal' })
+  })
+
   it('tolerates a failed audit write with no diagnostics hook', async () => {
     const { host, audit } = fixture(readTrolley, { diagnostics: undefined })
     audit.failNext = 'tool-finished'

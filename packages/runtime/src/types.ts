@@ -327,6 +327,9 @@ export interface SiteHealthSnapshot {
 }
 
 /** Things the app may want to show or log that are not audit events. Never carries page text. */
+/** Where in a call the browser driver failed (RuntimeDiagnostic driver-failed). */
+export type DriverFailureStep = 'session-secrets' | 'begin-run' | 'tool-page'
+
 export type RuntimeDiagnostic =
   | { readonly type: 'audit-write-failed'; readonly event: string }
   /** The persisted breaker state could not be read: every site's breaker opens for its cooldown. */
@@ -337,3 +340,15 @@ export type RuntimeDiagnostic =
   | { readonly type: 'budget-state-write-failed' }
   /** A run hit the cap on request-blocked audit events; later blocks in it are not recorded. */
   | { readonly type: 'request-blocked-capped'; readonly adapterId: string; readonly callId: string }
+  /**
+   * The browser driver failed before tool code ran, with no site refusal behind it: collecting the
+   * session's values, beginning the run, or opening the tool page. `error` is what it threw, for
+   * the app's own log (by name, code, stack and the ValetError's fault, never a message as is).
+   */
+  | {
+      readonly type: 'driver-failed'
+      readonly adapterId: string
+      readonly callId: string
+      readonly step: DriverFailureStep
+      readonly error: unknown
+    }

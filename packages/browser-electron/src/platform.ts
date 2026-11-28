@@ -292,6 +292,13 @@ export interface NetworkResponse {
 }
 
 /** One hidden-but-headed window with its web contents. */
+/** How a page's renderer process ended, in Electron's own fixed vocabulary. */
+export interface RendererGone {
+  /** Such as crashed, oom, killed, launch-failed or integrity-failure. */
+  readonly reason: string
+  readonly exitCode: number
+}
+
 export interface BrowserSurface {
   load(url: string): Promise<LoadResult>
   isLoading(): boolean
@@ -366,6 +373,12 @@ export interface BrowserSurface {
   onCloseRequested(handler: () => boolean): () => void
   /** Returns a function that removes the handler. */
   onDestroyed(handler: () => void): () => void
+  /**
+   * Called when the page's renderer process ends while the window stays open: it crashed, was
+   * killed or ran out of memory. The page is dead until something loads it again. Returns a
+   * function that removes the handler.
+   */
+  onRendererGone(handler: (gone: RendererGone) => void): () => void
   /** Installs the only navigation guard. Navigations it returns false for are prevented. */
   guardNavigation(allow: (navigation: PendingNavigation) => boolean): void
   onNavigation(listener: (event: NavigationEvent) => void): void

@@ -22,6 +22,7 @@ import type {
   PendingNavigation,
   ProxyHandle,
   ProxyPolicy,
+  RendererGone,
   SessionFetchRequest,
   SessionFetchResponse,
   StorageValue,
@@ -93,6 +94,7 @@ export class FakeSurface implements BrowserSurface {
   private stopWaiters: (() => void)[] = []
   closeHandler: (() => boolean) | null = null
   readonly destroyedHandlers: (() => void)[] = []
+  readonly goneHandlers: ((gone: RendererGone) => void)[] = []
   private guard: ((navigation: PendingNavigation) => boolean) | null = null
   private readonly listeners: ((event: NavigationEvent) => void)[] = []
   /** Called after each sendChar, to let a test act mid-typing. */
@@ -297,6 +299,14 @@ export class FakeSurface implements BrowserSurface {
     }
   }
 
+  onRendererGone(handler: (gone: RendererGone) => void): () => void {
+    this.goneHandlers.push(handler)
+    return () => {
+      const index = this.goneHandlers.indexOf(handler)
+      if (index >= 0) this.goneHandlers.splice(index, 1)
+    }
+  }
+
   guardNavigation(allow: (navigation: PendingNavigation) => boolean): void {
     this.guard = allow
   }
@@ -316,6 +326,12 @@ export class FakeSurface implements BrowserSurface {
   }
 
   // Test controls.
+
+  /** The renderer dies, as render-process-gone reports it: the page has no frames left. */
+  crashRenderer(reason = 'crashed', exitCode = 5): void {
+    this.frameList = []
+    for (const handler of [...this.goneHandlers]) handler({ reason, exitCode })
+  }
 
   /** Offers a navigation to the guard, as will-frame-navigate would. Returns whether it may proceed. */
   attemptNavigation(url: string, isMainFrame = true): boolean {

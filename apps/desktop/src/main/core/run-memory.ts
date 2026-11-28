@@ -3,7 +3,7 @@
 // runtime returned, already redacted; its "[redacted]" markers become redaction parts.
 
 import { REDACTED, type TracedRequest } from '@valet/runtime'
-import type { LoginStall, PreviewPart } from '../../shared/api'
+import type { CallFault, LoginStall, PreviewPart } from '../../shared/api'
 import { RUN_MEMORY } from './constants'
 import { type CallSubject, detailOf, subjectOf } from './run-detail'
 
@@ -25,6 +25,8 @@ export interface RememberedRun {
   readonly subject: CallSubject
   /** Where the login this call started stopped short, if it did. */
   readonly loginStall?: LoginStall
+  /** What Valet's browser threw, if that is why the call failed. */
+  readonly fault?: CallFault
   /** The requests its runs sent (the first MAX_TRACED_REQUESTS), and how many there were. */
   readonly requests?: readonly TracedRequest[]
   readonly requestsSent?: number
@@ -89,6 +91,12 @@ export class RunMemory {
   loginStalled(callId: string, stall: LoginStall): void {
     const run = this.runs.get(callId)
     if (run !== undefined) this.runs.set(callId, { ...run, loginStall: stall })
+  }
+
+  /** Keeps what Valet's browser threw during a call. Ignored for a call no longer remembered. */
+  faulted(callId: string, fault: CallFault): void {
+    const run = this.runs.get(callId)
+    if (run !== undefined) this.runs.set(callId, { ...run, fault })
   }
 
   /** Keeps a request a call's run sent. Ignored for a call no longer remembered. */

@@ -63,6 +63,7 @@ import {
   type DiagnosticsLog,
   processGoneLine,
 } from '../core/diagnostics-log'
+import { diagnosticLines } from '../core/driver-fault'
 import {
   appBundlePath,
   type EraseReport,
@@ -895,7 +896,9 @@ async function main(): Promise<void> {
       log,
     }),
     checkOp: (path) => checkOpBinary(path, opDeps),
-    diagnostics: (d) => log(`diagnostic: ${d.type}`),
+    diagnostics: (d) => {
+      for (const line of diagnosticLines(d)) log(line)
+    },
   })
   const running = service
 
