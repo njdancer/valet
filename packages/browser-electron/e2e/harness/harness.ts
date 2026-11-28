@@ -24,6 +24,7 @@ import {
 import { app, BrowserWindow, type Cookie, session, type WebFrameMain } from 'electron'
 import {
   createElectronSessionDriver,
+  type DriverDiagnostic,
   hardenProcess,
   type ManifestOptions,
   openElectronFixtureBrowser,
@@ -245,7 +246,12 @@ async function setup() {
     },
   }
   const siteManifest = manifest(site)
-  const driver = await createElectronSessionDriver(siteManifest, options, local)
+  const driverDiagnostics: DriverDiagnostic[] = []
+  const driver = await createElectronSessionDriver(
+    siteManifest,
+    { ...options, onDiagnostic: (d) => driverDiagnostics.push(d) },
+    local,
+  )
   // The same site, typed with keyDown/char/keyUp set explicitly (also the default, D38).
   const keysDriver = await createElectronSessionDriver(
     manifest(site, 'e2e-keys'),
@@ -1487,6 +1493,46 @@ async function setup() {
       const freshWindow = fresh !== tool
       driver.endRun()
       return { hidden, answers, hiddenAfterShow, movedOn, quick: nextLoadMs < 10_000, discarded, freshWindow }
+    },
+
+    // The tool page's renderer dies, as one did on a Mac after five idle hours: a run must still
+    // begin, the dead window must go, and the next toolPage() must load and read a fresh page with
+    // the user-agent override in place. Twice, so recovery isn't a one-off.
+    rendererCrash: async () => {
+      const rounds: Record<string, unknown>[] = []
+      for (let round = 0; round < 2; round++) {
+        begin()
+        const tool = await driver.toolPage()
+        await tool.goto(site.url('site.test', '/'))
+        const window = windowAt(site.url('site.test', '/'))
+        driver.endRun()
+        const gone = new Promise<string>((resolve) =>
+          window?.webContents.once('render-process-gone', (_event, details) => resolve(details.reason)),
+        )
+        window?.webContents.forcefullyCrashRenderer()
+        const reason = await gone
+        for (let i = 0; i < 50 && window?.isDestroyed() !== true; i++) await sleep(20)
+        let began = true
+        try {
+          begin()
+        } catch {
+          began = false
+        }
+        const fresh = await driver.toolPage()
+        await fresh.goto(site.url('site.test', '/'))
+        const answer = await fresh.evaluate('1 + 1')
+        const userAgent = await fresh.evaluate('navigator.userAgent')
+        driver.endRun()
+        rounds.push({
+          reason,
+          oldWindowClosed: window?.isDestroyed() === true,
+          began,
+          freshPage: fresh !== tool,
+          answer,
+          cleanUserAgent: typeof userAgent === 'string' && !userAgent.includes('Electron'),
+        })
+      }
+      return { rounds, diagnostics: driverDiagnostics.map((d) => d.type) }
     },
 
     close: async () => {

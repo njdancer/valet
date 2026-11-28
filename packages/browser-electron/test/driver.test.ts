@@ -7,7 +7,7 @@ import {
   ValetError,
 } from '@valet/core'
 import { describe, expect, it } from 'vitest'
-import { type DriverOptions, ElectronSessionDriver } from '../src/driver'
+import { type DriverDiagnostic, type DriverOptions, ElectronSessionDriver } from '../src/driver'
 import type { CookieRecord, SessionFetchResponse } from '../src/platform'
 import { chromeUserAgentOverride } from '../src/user-agent'
 import { FakeFrame, FakePlatform, FakeSurface, flush, ManualTimers } from './fake-browser'
@@ -149,6 +149,213 @@ describe('ElectronSessionDriver.forManifest', () => {
     expect(platform.session(TOOL).setCalls).toEqual([])
     // The copied value is one tool output must never carry.
     expect(await driver.sessionSecrets(['www.example.com'], [])).toContain('session-token-value')
+  })
+})
+
+describe('a tool page whose renderer died', () => {
+  const policy: ToolRunPolicy = {
+    egress: OPTIONS.egress,
+    requests: [],
+    maxPurpose: 'read',
+    ceiling: 5,
+  }
+
+  it('is closed and reported, and the next toolPage opens a fresh window on home', async () => {
+    const { platform } = browserLike()
+    const diagnostics: DriverDiagnostic[] = []
+    const driver = new ElectronSessionDriver(platform, {
+      ...OPTIONS,
+      onDiagnostic: (d) => diagnostics.push(d),
+    })
+    const first = await driver.toolPage()
+    const old = platform.surfaces.at(-1)!
+    old.crashRenderer('crashed', 5)
+    expect(diagnostics).toEqual([{ type: 'renderer-gone', role: 'tool', reason: 'crashed', exitCode: 5 }])
+    await flush()
+    expect(old.isDestroyed()).toBe(true)
+    // A run still begins: a dead page must not fail every call after it.
+    expect(() => driver.beginRun(policy, () => {})).not.toThrow()
+    const second = await driver.toolPage()
+    expect(second).not.toBe(first)
+    const fresh = platform.surfaces.at(-1)!
+    expect(fresh).not.toBe(old)
+    expect(fresh.loads).toEqual([OPTIONS.home])
+    // The new window gets the user-agent override and the storage watch again.
+    expect(fresh.overrides).toHaveLength(1)
+    expect(fresh.storageWatches).toHaveLength(1)
+    driver.endRun()
+  })
+
+  it('lets a run begin even when reading its frames throws, as Electron does after a crash', async () => {
+    const { platform } = browserLike()
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    await driver.toolPage()
+    await driver.sessionSecrets([], [{ origin: 'https://www.example.com', keys: ['token'] }])
+    const surface = platform.surfaces.at(-1)!
+    surface.frames = () => {
+      throw new Error('Render frame was disposed before WebFrameMain could be accessed')
+    }
+    expect(() => driver.beginRun(policy, () => {})).not.toThrow()
+    expect(() => driver.endRun()).not.toThrow()
+  })
+
+  it('reports an auth page’s death too, and closes it', async () => {
+    const { platform } = browserLike()
+    const diagnostics: DriverDiagnostic[] = []
+    const driver = new ElectronSessionDriver(platform, {
+      ...OPTIONS,
+      onDiagnostic: (d) => diagnostics.push(d),
+    })
+    await driver.openAuthPage()
+    const surface = platform.surfaces.at(-1)!
+    surface.crashRenderer('oom', 0)
+    await flush()
+    expect(diagnostics).toEqual([{ type: 'renderer-gone', role: 'auth', reason: 'oom', exitCode: 0 }])
+    expect(surface.isDestroyed()).toBe(true)
+  })
+
+  it('keeps working when the diagnostics reporter throws', async () => {
+    const { platform } = browserLike()
+    const driver = new ElectronSessionDriver(platform, {
+      ...OPTIONS,
+      onDiagnostic: () => {
+        throw new Error('log is gone')
+      },
+    })
+    await driver.toolPage()
+    const old = platform.surfaces.at(-1)!
+    expect(() => old.crashRenderer()).not.toThrow()
+    await flush()
+    expect(old.isDestroyed()).toBe(true)
+    await driver.toolPage()
+    expect(platform.surfaces.at(-1)).not.toBe(old)
+  })
+})
+
+describe('set-up failures', () => {
+  it('keep what was thrown and where, for the diagnostics log, and report it', async () => {
+    const { platform } = browserLike()
+    const diagnostics: DriverDiagnostic[] = []
+    const thrown = new Error('No target with given id found')
+    const makeSurface = platform.makeSurface
+    platform.makeSurface = (partition) => {
+      const surface = makeSurface(partition)
+      surface.onWatchStorage = async () => {
+        throw thrown
+      }
+      return surface
+    }
+    const driver = new ElectronSessionDriver(platform, {
+      ...OPTIONS,
+      onDiagnostic: (d) => diagnostics.push(d),
+    })
+    const error = await rejection(driver.toolPage())
+    expect(error).toMatchObject({ stage: 'egress', errorClass: 'internal' })
+    expect(error.fault).toEqual({ step: 'tool-storage-watch', cause: thrown })
+    expect(diagnostics).toEqual([
+      { type: 'setup-failed', role: 'tool', step: 'storage-watch', error: thrown },
+    ])
+  })
+
+  it('name the partition step when setting up the partition fails', async () => {
+    const { platform } = browserLike()
+    const diagnostics: DriverDiagnostic[] = []
+    const thrown = new TypeError('Cannot read properties of undefined')
+    const session = platform.session(TOOL)
+    session.harden = () => {
+      throw thrown
+    }
+    const driver = new ElectronSessionDriver(platform, {
+      ...OPTIONS,
+      onDiagnostic: (d) => diagnostics.push(d),
+    })
+    const error = await rejection(driver.toolPage())
+    expect(error).toMatchObject({ stage: 'egress', errorClass: 'internal' })
+    expect(error.fault).toEqual({ step: 'tool-partition', cause: thrown })
+    expect(diagnostics).toEqual([{ type: 'setup-failed', role: 'tool', step: 'partition', error: thrown }])
+  })
+
+  it('pass a timeout on as it is', async () => {
+    const { platform } = browserLike()
+    const timers = new ManualTimers()
+    const diagnostics: DriverDiagnostic[] = []
+    const makeSurface = platform.makeSurface
+    platform.makeSurface = (partition) => {
+      const surface = makeSurface(partition)
+      surface.onOverride = () => new Promise(() => {})
+      return surface
+    }
+    const driver = new ElectronSessionDriver(platform, {
+      ...OPTIONS,
+      timers,
+      onDiagnostic: (d) => diagnostics.push(d),
+    })
+    const error = await timers.settle(rejection(driver.toolPage()))
+    expect(error).toMatchObject({ stage: 'timeout', errorClass: 'timed-out' })
+    expect(error.fault).toBeUndefined()
+    expect(diagnostics).toMatchObject([{ type: 'setup-failed', role: 'tool', step: 'user-agent' }])
+  })
+})
+
+describe('an idle tool page', () => {
+  const policy: ToolRunPolicy = { egress: OPTIONS.egress, requests: [], maxPurpose: 'read', ceiling: 5 }
+
+  it('is closed once it has sat idle after a run, and the next call opens a fresh one', async () => {
+    const { platform } = browserLike()
+    const timers = new ManualTimers()
+    const driver = new ElectronSessionDriver(platform, { ...OPTIONS, timers, idleToolPageMs: 60_000 })
+    driver.beginRun(policy, () => {})
+    await timers.settle(driver.toolPage())
+    driver.endRun()
+    const old = platform.surfaces.at(-1)!
+    await timers.advance(59_999)
+    expect(old.isDestroyed()).toBe(false)
+    await timers.advance(1)
+    expect(old.isDestroyed()).toBe(true)
+    await timers.settle(driver.toolPage())
+    expect(platform.surfaces.at(-1)).not.toBe(old)
+  })
+
+  it('is kept while a run or the next call holds it', async () => {
+    const { platform } = browserLike()
+    const timers = new ManualTimers()
+    const driver = new ElectronSessionDriver(platform, { ...OPTIONS, timers, idleToolPageMs: 60_000 })
+    driver.beginRun(policy, () => {})
+    await timers.settle(driver.toolPage())
+    driver.endRun()
+    await timers.advance(30_000)
+    driver.beginRun(policy, () => {})
+    await timers.advance(120_000)
+    expect(platform.surfaces.at(-1)!.isDestroyed()).toBe(false)
+    driver.endRun()
+    await timers.advance(30_000)
+    await timers.settle(driver.toolPage())
+    await timers.advance(120_000)
+    expect(platform.surfaces.at(-1)!.isDestroyed()).toBe(false)
+    expect(platform.surfaces).toHaveLength(1)
+  })
+
+  it('stays open with idleToolPageMs 0, and no timer is set without a page', async () => {
+    const { platform } = browserLike()
+    const timers = new ManualTimers()
+    const off = new ElectronSessionDriver(platform, { ...OPTIONS, timers, idleToolPageMs: 0 })
+    await timers.settle(off.toolPage())
+    off.endRun()
+    expect(timers.pending).toBe(0)
+    const none = new ElectronSessionDriver(new FakePlatform(), { ...OPTIONS, timers })
+    none.endRun()
+    expect(timers.pending).toBe(0)
+  })
+
+  it('defaults to 30 minutes', async () => {
+    const { platform } = browserLike()
+    const timers = new ManualTimers()
+    const driver = new ElectronSessionDriver(platform, { ...OPTIONS, timers })
+    await timers.settle(driver.toolPage())
+    driver.endRun()
+    expect(timers.requested.at(-1)).toBe(30 * 60_000)
+    await driver.close()
+    expect(timers.pending).toBe(0)
   })
 })
 

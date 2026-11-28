@@ -36,6 +36,7 @@ import type {
   PartitionSession,
   PendingNavigation,
   ProxyHandle,
+  RendererGone,
   SessionFetchRequest,
   SessionFetchResponse,
   StorageValue,
@@ -347,6 +348,7 @@ class ElectronSurface implements BrowserSurface {
   private readonly navigationListeners: ((event: NavigationEvent) => void)[] = []
   private readonly destroyedHandlers: (() => void)[] = []
   private handedToPerson = false
+  private readonly goneHandlers: ((gone: RendererGone) => void)[] = []
 
   constructor(partition: string) {
     // Hidden but headed: headless gets fingerprinted, a hidden window doesn't (the earlier app).
@@ -407,6 +409,18 @@ class ElectronSurface implements BrowserSurface {
     })
     this.window.on('closed', () => {
       for (const handler of [...this.destroyedHandlers]) handler()
+    })
+    contents.on('render-process-gone', (_event, details) => {
+      // A window that closes ends its renderer cleanly; only a page that died while open is gone.
+      if (details.reason === 'clean-exit') return
+      const gone = { reason: details.reason, exitCode: details.exitCode }
+      for (const handler of [...this.goneHandlers]) {
+        try {
+          handler(gone)
+        } catch {
+          // One handler's failure must not keep the others from hearing of it.
+        }
+      }
     })
   }
 
@@ -469,11 +483,19 @@ class ElectronSurface implements BrowserSurface {
 
   frames(): readonly FrameHandle[] {
     if (this.contents.isDestroyed()) return []
-    const main = this.contents.mainFrame
-    const subtree = [
-      main,
-      ...main.framesInSubtree.filter((frame) => frame.frameTreeNodeId !== main.frameTreeNodeId),
-    ]
+    let main: Electron.WebFrameMain
+    let subtree: Electron.WebFrameMain[]
+    try {
+      // After the renderer dies, Electron throws on any access to the main frame ("Render frame was
+      // disposed before WebFrameMain could be accessed"): a dead page has no frames.
+      main = this.contents.mainFrame
+      subtree = [
+        main,
+        ...main.framesInSubtree.filter((frame) => frame.frameTreeNodeId !== main.frameTreeNodeId),
+      ]
+    } catch {
+      return []
+    }
     return subtree.map((frame, index): FrameHandle => {
       const parentId = frame.parent?.frameTreeNodeId
       return {
@@ -513,7 +535,11 @@ class ElectronSurface implements BrowserSurface {
 
   focusedFrameId(): string | null {
     if (this.contents.isDestroyed()) return null
-    return this.contents.focusedFrame?.frameToken ?? null
+    try {
+      return this.contents.focusedFrame?.frameToken ?? null
+    } catch {
+      return null
+    }
   }
 
   click(x: number, y: number): void {
@@ -737,6 +763,14 @@ class ElectronSurface implements BrowserSurface {
     this.closeHandler = handler
     return () => {
       if (this.closeHandler === handler) this.closeHandler = null
+    }
+  }
+
+  onRendererGone(handler: (gone: RendererGone) => void): () => void {
+    this.goneHandlers.push(handler)
+    return () => {
+      const index = this.goneHandlers.indexOf(handler)
+      if (index >= 0) this.goneHandlers.splice(index, 1)
     }
   }
 

@@ -110,7 +110,19 @@ export const ERROR_CLASSES = [
 ] as const
 export type ErrorClass = (typeof ERROR_CLASSES)[number]
 
+/**
+ * Where inside Valet a failure happened and what was thrown there, kept for the app's own
+ * diagnostics (its log, and valet_get_call's fault). `step` is a fixed word the thrower picks;
+ * `cause` is whatever was thrown, which never reaches a client as it is.
+ */
+export interface ValetFault {
+  readonly step: string
+  readonly cause: unknown
+}
+
 export class ValetError extends Error {
+  /** Set (by faulted) where Valet's own code turns an unexpected error into this one. */
+  fault?: ValetFault
   /**
    * For stage tool-input only: where the input was wrong and why, from a fixed vocabulary
    * (input-issue.ts). Checked here, so whatever tool code passed only reaches a client as codes.
@@ -127,6 +139,18 @@ export class ValetError extends Error {
     const checked = stage === 'tool-input' ? inputIssue(issue) : undefined
     if (checked !== undefined) this.issue = checked
   }
+}
+
+/** A ValetError that keeps what was really thrown, and where, for diagnostics. */
+export function faulted(stage: Stage, errorClass: ErrorClass, step: string, cause: unknown): ValetError {
+  const error = new ValetError(stage, errorClass)
+  error.fault = { step, cause }
+  return error
+}
+
+/** The fault a ValetError carries, if any. */
+export function faultOf(error: unknown): ValetFault | undefined {
+  return error instanceof ValetError ? error.fault : undefined
 }
 
 /**
