@@ -51,7 +51,7 @@ import {
   searchQueryFromParams,
   searchResponse,
 } from './search'
-import { fulfilmentChosenBy, pickupStores, pickupWindows, storesForPostcode } from './stores'
+import { deliveryInfo, fulfilmentChosenBy, pickupStores, pickupWindows, storesForPostcode } from './stores'
 import {
   applyTrolleyUpdate,
   MINIMUM_SPEND,
@@ -439,16 +439,19 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
       if (windows === null) return json(exchange, 400, INVALID_REQUEST)
       return json(exchange, 200, windows)
     }
+    if (method === 'GET' && path === '/apis/ui/delivery/deliveryinfo') {
+      // Signed out too, as live (2026-11-28): nothing chosen.
+      return json(exchange, 200, deliveryInfo(exchange.visitor.fulfilment))
+    }
     if (method === 'POST' && path === '/apis/ui/fulfilment') {
       const chosen = fulfilmentChosenBy(parseJson(exchange.body))
       if (chosen === null) return json(exchange, 400, INVALID_REQUEST)
       // The live site answers 401 with an empty body to a guest choosing a store (probe, 2026-11-27).
       if (store.firstNameOf(exchange.visitor) === null) return send(exchange, 401, 'text/plain', '')
-      const previous = exchange.visitor.fulfilment.addressId
       exchange.visitor.fulfilment.addressId = chosen.store.AddressId
-      // Choosing a store without a time keeps a time already reserved at it; another store drops it.
-      if (chosen.timeslotId !== null) exchange.visitor.fulfilment.timeslotId = chosen.timeslotId
-      else if (previous !== chosen.store.AddressId) exchange.visitor.fulfilment.timeslotId = null
+      // Whether the live site keeps a reserved time when the same store is chosen again is unseen.
+      // The fake assumes the worst: choosing any store without a time drops the time.
+      exchange.visitor.fulfilment.timeslotId = chosen.timeslotId
       // Signed in, the live site answers with a 200 and nothing else: no body, no content type
       // (2026-11-27). The site's scripts read { IsSuccessful, ... } only when a body comes.
       return empty(exchange, 200)

@@ -8,6 +8,7 @@ import { FakeToolContext, json } from './fake-context'
 
 const STORES = '/api/v3/ui/fulfilment/stores'
 const FULFILMENT = '/apis/ui/Fulfilment'
+const DELIVERY_INFO = '/apis/ui/Delivery/DeliveryInfo'
 
 const TOWN_HALL = {
   FulfilmentStoreId: 1201,
@@ -18,6 +19,20 @@ const TOWN_HALL = {
   State: 'NSW',
   Postcode: '2000',
 }
+
+/** A session's DeliveryInfo: signed out and nothing chosen, as live (2026-11-28), unless given. */
+function session(address: { AddressId: number } | null = null, timeId = 0): FakeToolContext {
+  return new FakeToolContext().on(
+    'GET',
+    DELIVERY_INFO,
+    json({
+      DeliveryMethod: address === null ? null : 'DriveUp',
+      Address: address,
+      ReservedTime: { Id: timeId },
+    }),
+  )
+}
+const posts = (ctx: FakeToolContext) => ctx.fetches.filter((f) => f.method === 'POST')
 
 const find = (ctx: FakeToolContext, query: string) => findStores.run(ctx, { query })
 const apply = (ctx: FakeToolContext, value: string) => applyStore.run(ctx, applyStore.input.parse({ value }))
@@ -112,14 +127,14 @@ describe('find_stores', () => {
 
 describe('apply_store', () => {
   it('chooses the store for pick-up with one write', async () => {
-    const ctx = new FakeToolContext().on(
+    const ctx = session().on(
       'POST',
       FULFILMENT,
       json({ IsSuccessful: true, AddressId: 9001201, FulfilmentMethod: 'Pickup' }),
     )
     expect(await apply(ctx, '9001201')).toEqual({})
-    expect(ctx.fetches).toHaveLength(1)
-    expect(ctx.fetches[0]).toMatchObject({
+    expect(posts(ctx)).toHaveLength(1)
+    expect(posts(ctx)[0]).toMatchObject({
       method: 'POST',
       path: FULFILMENT,
       json: { fulfilmentMethod: 'Pickup', addressId: 9001201 },
@@ -127,13 +142,13 @@ describe('apply_store', () => {
   })
 
   it('takes a 200 with no body, as the live site answers a signed-in shopper, as the store chosen', async () => {
-    const ctx = new FakeToolContext().on('POST', FULFILMENT, { status: 200, contentType: null, body: '' })
+    const ctx = session().on('POST', FULFILMENT, { status: 200, contentType: null, body: '' })
     expect(await apply(ctx, '9001201')).toEqual({})
-    expect(ctx.fetches).toHaveLength(1)
+    expect(posts(ctx)).toHaveLength(1)
   })
 
   it('still refuses a 200 that says something it cannot read', async () => {
-    const ctx = new FakeToolContext().on('POST', FULFILMENT, {
+    const ctx = session().on('POST', FULFILMENT, {
       status: 200,
       contentType: 'text/plain',
       body: 'try later',
@@ -142,27 +157,27 @@ describe('apply_store', () => {
   })
 
   it('never logs in: it runs before searches too, and a search must not need a login', async () => {
-    const ctx = new FakeToolContext().on('POST', FULFILMENT, json({ IsSuccessful: true }))
+    const ctx = session().on('POST', FULFILMENT, json({ IsSuccessful: true }))
     await apply(ctx, '9001201')
-    expect(ctx.events).toEqual([`POST ${FULFILMENT}`])
+    expect(ctx.events).toEqual([`GET ${DELIVERY_INFO}`, `POST ${FULFILMENT}`])
   })
 
   it('applies nothing for a guest, whom the site refuses with 401, and writes once', async () => {
-    const ctx = new FakeToolContext().on('POST', FULFILMENT, {
+    const ctx = session().on('POST', FULFILMENT, {
       status: 401,
       contentType: 'text/plain',
       body: '',
     })
     expect(await apply(ctx, '9001201')).toEqual({})
-    expect(ctx.fetches).toHaveLength(1)
+    expect(posts(ctx)).toHaveLength(1)
   })
 
   it('chooses the store for direct to boot when the site refuses pick-up there', async () => {
-    const ctx = new FakeToolContext().on('POST', FULFILMENT, (request) =>
+    const ctx = session().on('POST', FULFILMENT, (request) =>
       json({ IsSuccessful: (request.json as { fulfilmentMethod?: string }).fulfilmentMethod === 'DriveUp' }),
     )
     expect(await apply(ctx, '9001201')).toEqual({})
-    expect(ctx.fetches.map((f) => f.json)).toEqual([
+    expect(posts(ctx).map((f) => f.json)).toEqual([
       { fulfilmentMethod: 'Pickup', addressId: 9001201 },
       { fulfilmentMethod: 'DriveUp', addressId: 9001201 },
     ])
@@ -176,25 +191,55 @@ describe('apply_store', () => {
   )
 
   it('fails when the site says the choice was not taken', async () => {
-    const ctx = new FakeToolContext().on('POST', FULFILMENT, json({ IsSuccessful: false }))
+    const ctx = session().on('POST', FULFILMENT, json({ IsSuccessful: false }))
     await expect(apply(ctx, '9001201')).rejects.toEqual(new ValetError('tool-run', 'unavailable'))
     // Pick-up, then direct to boot once; never more.
-    expect(ctx.fetches).toHaveLength(2)
+    expect(posts(ctx)).toHaveLength(2)
   })
 
   it('fails when the site answers with another store', async () => {
-    const ctx = new FakeToolContext().on('POST', FULFILMENT, json({ IsSuccessful: true, AddressId: 42 }))
+    const ctx = session().on('POST', FULFILMENT, json({ IsSuccessful: true, AddressId: 42 }))
     await expect(apply(ctx, '9001201')).rejects.toEqual(new ValetError('tool-run', 'site-changed'))
   })
 
   it('fails on a refusal, and never retries the write', async () => {
-    const ctx = new FakeToolContext().on(
-      'POST',
-      FULFILMENT,
-      json({ Message: 'The request is invalid.' }, 400),
-    )
+    const ctx = session().on('POST', FULFILMENT, json({ Message: 'The request is invalid.' }, 400))
     await expect(apply(ctx, '9001201')).rejects.toEqual(new ValetError('tool-run', 'unavailable'))
-    expect(ctx.fetches).toHaveLength(1)
+    expect(posts(ctx)).toHaveLength(1)
+  })
+
+  it('writes nothing when the session already shops at the store, so a reserved time stays', async () => {
+    const ctx = session({ AddressId: 9001201 }, 1116879)
+    expect(await apply(ctx, '9001201')).toEqual({})
+    expect(ctx.fetches.map((f) => `${f.method} ${f.path}`)).toEqual([`GET ${DELIVERY_INFO}`])
+  })
+
+  it('chooses the store when the session shops at another one', async () => {
+    const ctx = session({ AddressId: 42 }).on('POST', FULFILMENT, json({ IsSuccessful: true }))
+    expect(await apply(ctx, '9001201')).toEqual({})
+    expect(posts(ctx)).toHaveLength(1)
+  })
+
+  it.each([
+    ['an answer in another shape', json({ Address: 'Bracken Ridge' })],
+    ['a moved endpoint', json({ Message: 'Not found' }, 404)],
+    ['an address without an id', json({ Address: { Description: 'Town Hall' } })],
+  ])('chooses the store as before after %s', async (_, reply) => {
+    const ctx = new FakeToolContext()
+      .on('GET', DELIVERY_INFO, reply)
+      .on('POST', FULFILMENT, json({ IsSuccessful: true }))
+    expect(await apply(ctx, '9001201')).toEqual({})
+    expect(posts(ctx)).toHaveLength(1)
+  })
+
+  it('stops, writing nothing, when the site blocks the read', async () => {
+    const ctx = new FakeToolContext().on('GET', DELIVERY_INFO, {
+      status: 403,
+      contentType: 'text/html',
+      body: '<html>Access Denied</html>',
+    })
+    await expect(apply(ctx, '9001201')).rejects.toEqual(new ValetError('tool-run', 'blocked-by-site'))
+    expect(posts(ctx)).toEqual([])
   })
 
   it('makes no call once the run is cancelled', async () => {

@@ -21,6 +21,11 @@ export const PATHS = {
   fulfilment: '/apis/ui/Fulfilment',
   /** A store's pick-up times, by its AreaId (live, anonymous, 2026-11-28). */
   pickupWindows: '/api/v3/ui/fulfilment/windows',
+  /**
+   * The session's store, method and reserved time, as the site's own header reads them (site
+   * scripts and signed out, 2026-11-28). Signed-in Address fields are unseen.
+   */
+  deliveryInfo: '/apis/ui/Delivery/DeliveryInfo',
 } as const
 
 /**

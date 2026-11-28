@@ -7,13 +7,15 @@
 // list. The site reserves one with the same POST /apis/ui/Fulfilment that chooses a store, with
 // { fulfilmentMethod, addressId, timeslotId, windowDate } where windowDate is the day's Date exactly
 // as the times list sent it. What it answers signed in is unseen; choosing a store signed in
-// answered a bare 200, so a bare 200 is taken as done here too, and said so.
+// answered a bare 200. So after reserving, the time is read back the way the site's own header
+// reads it (fulfilment.ts): confirmed means the session now shows that time.
 //
 // The agent names the store by postcode and name, as the person would ("Bracken Ridge, 4017"),
 // because tool code never sees which store the person chose in Valet.
 
 import { tool, ValetError } from '@valet/core'
 import { z } from 'zod'
+import { currentFulfilment } from './fulfilment'
 import { withLogin } from './login'
 import { getJson, PATHS, postJsonOrEmpty } from './site'
 import { htmlToText } from './text'
@@ -34,7 +36,9 @@ export const MAX_TIMES_PER_DAY = 24
 /** Fixed notes, so no page text reaches the client through them. */
 export const PICKUP_NOTICES = {
   noBody:
-    'The site took the request without saying anything back, as it does when a store is chosen. Check the time on the Woolworths site.',
+    'The site took the request without saying anything back, and what the session is set to could not be read. Check the time on the Woolworths site.',
+  otherTime:
+    'The site took the request, but the session shows another pick-up time or none. Check the time on the Woolworths site, or list the times and choose again.',
   storeNotFound:
     'No store in this postcode has that name. storesInPostcode lists the ones that do; call again with one of them.',
 } as const
@@ -220,7 +224,9 @@ export const choosePickupTime = tool({
     price: z.number().nullable(),
     confirmed: z
       .boolean()
-      .describe('True when the site said the time was reserved; false when it took it without a word.'),
+      .describe(
+        'True when the session now shows this time as reserved; false when that could not be seen (see notices).',
+      ),
     notices: z.array(z.string()),
   }),
   async run(ctx, input) {
@@ -246,7 +252,10 @@ export const choosePickupTime = tool({
         fulfilmentWire,
       )
       if (reply !== null && reply.IsSuccessful === false) throw new ValetError('tool-run', 'unavailable')
-      const confirmed = reply !== null && reply.IsSuccessful === true
+      const now = await currentFulfilment(ctx)
+      // The session's own answer wins; only when it can't be read does the reply's word count.
+      const confirmed = now === null ? reply !== null && reply.IsSuccessful === true : now.timeId === time.id
+      const notices = confirmed ? [] : [now === null ? PICKUP_NOTICES.noBody : PICKUP_NOTICES.otherTime]
       return {
         store: { name: store.name, method: store.method as 'Pickup' | 'DriveUp' },
         date: time.date,
@@ -255,7 +264,7 @@ export const choosePickupTime = tool({
         label: time.label,
         price: time.price,
         confirmed,
-        notices: confirmed ? [] : [PICKUP_NOTICES.noBody],
+        notices,
       }
     })
   },

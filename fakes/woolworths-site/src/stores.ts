@@ -185,6 +185,37 @@ export function pickupWindows(
   return { Days }
 }
 
+/**
+ * The `GET /apis/ui/Delivery/DeliveryInfo` body for a session: its pick-up store and reserved time.
+ * Signed out it is the live shape (2026-11-28, cut). Signed in, Address's fields are unseen; the
+ * fake gives AddressId, which the adapter assumes, and the store's own description.
+ */
+export function deliveryInfo(fulfilment: {
+  readonly addressId: number | null
+  readonly timeslotId: number | null
+}): Record<string, unknown> {
+  const store = pickupStores.find((s) => s.AddressId === fulfilment.addressId)
+  const time =
+    store === undefined || fulfilment.timeslotId === null
+      ? undefined
+      : pickupWindows(store.AreaId)
+          ?.Days.flatMap((day) => day.Times)
+          .find((t) => t.Id === fulfilment.timeslotId)
+  return {
+    DeliveryMethod: store?.FulfilmentMethod ?? null,
+    Address: store === undefined ? null : { AddressId: store.AddressId, Description: store.Description },
+    ReservedTime: {
+      DeliveryWindowId: 0,
+      Id: time?.Id ?? 0,
+      TimeWindow: time?.TimeWindow ?? null,
+      StartDateTime: time?.StartDateTime ?? null,
+      EndDateTime: time?.EndDateTime ?? null,
+    },
+    FulfilmentStoreId: store?.FulfilmentStoreId ?? 1101,
+    MinimumSpend: 50,
+  }
+}
+
 export function fulfilmentResponse(store: PickupStore): Record<string, unknown> {
   return {
     IsSuccessful: true,
