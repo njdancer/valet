@@ -28,6 +28,12 @@ const ACCESS_LEVEL_WORDS = {
   calendar: { read: 'see its events', edit: 'see, add, change and delete its events' },
   reminders: { read: 'see its reminders', edit: 'see, add, change and complete its reminders' },
 } as const
+/** What a tool's side effect means, as a tool line's clause. */
+const TOOL_EFFECT_WORDS = {
+  read: 'only reads',
+  write: 'changes things on the site',
+  irreversible: 'does something that can’t be undone, and each call still asks you',
+} as const
 
 /**
  * An agent's request to install its draft, as the Mac's review shows it: the ref the agent was told
@@ -163,17 +169,26 @@ export function agentRequestItem(
     }
     case 'agent-access': {
       const s = request.subject
-      const n = s.items.length
+      // Ask for changes brings See Valet: one line for Valet itself.
+      const n = s.items.length + s.tools.length + (s.capabilities.length > 0 ? 1 : 0)
       return {
         ...base,
         requestKind: 'agent-access',
         adapterId: null,
-        title: n === 1 ? `Give ${base.agentName} more access` : `Give ${base.agentName} access to ${n} items`,
-        // The names are the Mac's own (an account, a calendar), never the agent's words.
-        details: s.items.map(
-          (i) =>
-            `${ACCESS_APP_NAMES[i.app]}, “${i.label}”: ${i.level === 'edit' ? 'Edit' : 'Read'}, to ${ACCESS_LEVEL_WORDS[i.app][i.level]}.`,
-        ),
+        title: n === 1 ? `Give ${base.agentName} more access` : `Give ${base.agentName} ${n} more things`,
+        // The names are the Mac's own (an account, a calendar, a site's tool), never the agent's words.
+        details: [
+          ...s.items.map(
+            (i) =>
+              `${ACCESS_APP_NAMES[i.app]}, “${i.label}”: ${i.level === 'edit' ? 'Edit' : 'Read'}, to ${ACCESS_LEVEL_WORDS[i.app][i.level]}.`,
+          ),
+          ...s.tools.map((t) => `The tool “${t.label}”, which ${TOOL_EFFECT_WORDS[t.sideEffect]}.`),
+          ...(s.capabilities.includes('ask-for-changes')
+            ? ['Ask for changes: build and repair adapters, and ask you for access, settings and logins.']
+            : s.capabilities.includes('see-valet')
+              ? ['See Valet: its status, its sites and their health, and its own calls.']
+              : []),
+        ],
         choices: null,
       }
     }

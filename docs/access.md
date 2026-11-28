@@ -41,9 +41,28 @@ or Reminders' own, which follow from the items. It then raises only what was sig
 turned on for cloud agents if it wasn't, then added to this agent's grant. The Save writes the rest
 of the change, which only narrows.
 
-`agent-access` also carries `full` and `capabilities` fields for later steps (adding and removing
-whole calendars, See Valet and Ask for changes). Nothing asks for them yet, and the handler refuses
-a subject that names any.
+`agent-access` also carries a `full` field for a later step (adding and removing whole calendars
+and lists). Nothing asks for it yet, and the handler refuses a subject that names any.
+
+## Valet itself
+
+The same card ends with what the agent may do in Valet itself, besides calling tools:
+
+- **See Valet**: Valet's own read tools (its status, its sites and their health, its own calls).
+- **All agents' activity** (an app on this Mac only): with See Valet, other agents' calls too.
+- **Ask for changes**: build and repair adapters, and ask the person for access, settings, logins
+  and sessions. It brings See Valet; See Valet off takes it too.
+
+A cloud agent's are signed: turning one on puts it in the Save's `agent-access` `capabilities`,
+so it is on the same Touch ID as the rest. What a signature backs now is what it has
+(`remoteCapabilities`): its consent card's, a later Ask for changes `setting`, or an
+`agent-access` record's. Taking Ask for changes away revokes every signature that gave it, and
+the agent's requests about changes go with it. See Valet stays: if the only signature behind it
+also gave Ask for changes, the Save signs See Valet again, so that Save asks for Touch ID even
+though it only narrows. Taking See Valet away revokes every signature that gave either.
+
+An app on this Mac's are its own choices, stored with it (`clients.json`) and recorded in the
+audit log, as before: they're written with the rest of the Save, and need no Touch ID.
 
 ## Agents ask, with a reason
 

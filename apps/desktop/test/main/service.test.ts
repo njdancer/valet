@@ -3860,6 +3860,108 @@ describe('remote access', () => {
     expect((await s.api.remote.clients()).find((c) => c.id === agent.id)?.grant?.tools).toEqual([])
   })
 
+  it('saves a cloud agent’s See Valet and Ask for changes with its access, signed, and keeps See Valet when Ask goes', async () => {
+    const s = await approved()
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    await s.service.setRemoteTool('shop', 'echo', true)
+    const port = Number(new URL(s.service.remote.status().url as string).port)
+    const agent = approvedClient(s, ['shop.echo'])
+    const label = `remote:${agent.id}`
+    const names = async () =>
+      (await (await remoteClient(port, agent.token)).listTools()).tools.map((t) => t.name)
+    const valet = async () => (await s.api.agentAccess.view(label)).valet
+    expect(await valet()).toEqual({ seeValet: false, allActivity: null, askForChanges: false })
+    const broker = (s.service as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+    const signed = () =>
+      broker.honoured('agent-access', (sub) => sub.clientId === label && sub.capabilities.length > 0)
+
+    // Cancelled: nothing changes.
+    s.presence.answer = false
+    expect(await s.api.agentAccess.save(label, { valet: { askForChanges: true } })).toBe(false)
+    expect(await valet()).toMatchObject({ seeValet: false, askForChanges: false })
+    // Ask for changes and a tool in one Save: one prompt, and Ask brings See Valet.
+    s.presence.answer = true
+    await s.service.setRemoteTool('shop', 'add', true)
+    const before = s.presence.prompts.length
+    expect(
+      await s.api.agentAccess.save(label, { valet: { askForChanges: true }, tools: { 'shop.add': true } }),
+    ).toBe(true)
+    expect(s.presence.prompts.length).toBe(before + 1)
+    expect(s.presence.prompts.at(-1)).toMatch(/\(3 additions\)/)
+    expect(await valet()).toMatchObject({ seeValet: true, askForChanges: true })
+    expect(await names()).toEqual(
+      expect.arrayContaining(['valet_list_adapters', 'valet_request_access', 'shop_add']),
+    )
+    expect((await s.api.remote.clients()).find((c) => c.id === agent.id)).toMatchObject({
+      seeValet: true,
+      askForChanges: true,
+    })
+
+    // Ask for changes off: See Valet stays. The only signature behind See Valet also gave Ask for
+    // changes, so this Save signs See Valet again.
+    const prompts = s.presence.prompts.length
+    expect(await s.api.agentAccess.save(label, { valet: { askForChanges: false } })).toBe(true)
+    expect(s.presence.prompts.length).toBe(prompts + 1)
+    expect(await valet()).toMatchObject({ seeValet: true, askForChanges: false })
+    expect(signed()).not.toBeNull()
+    expect((await s.api.remote.clients()).find((c) => c.id === agent.id)).toMatchObject({
+      seeValet: true,
+      askForChanges: false,
+    })
+    expect(await names()).toEqual(expect.arrayContaining(['valet_list_adapters', 'shop_add']))
+
+    // Ask for changes on again, then off: See Valet now has its own signature, so no prompt.
+    expect(await s.api.agentAccess.save(label, { valet: { askForChanges: true } })).toBe(true)
+    const again = s.presence.prompts.length
+    expect(await s.api.agentAccess.save(label, { valet: { askForChanges: false } })).toBe(true)
+    expect(s.presence.prompts.length).toBe(again)
+    expect(await valet()).toMatchObject({ seeValet: true, askForChanges: false })
+
+    // See Valet off: at once, every signature behind either goes, and the tools stay.
+    expect(await s.api.agentAccess.save(label, { valet: { seeValet: false } })).toBe(true)
+    expect(s.presence.prompts.length).toBe(again)
+    expect(await valet()).toMatchObject({ seeValet: false, askForChanges: false })
+    expect(signed()).toBeNull()
+    expect((await names()).sort()).toEqual(['shop_add', 'shop_echo'])
+
+    // A contradiction, or All agents' activity for a cloud agent, is refused.
+    await expect(
+      s.api.agentAccess.save(label, { valet: { seeValet: false, askForChanges: true } }),
+    ).rejects.toMatchObject({ errorClass: 'invalid' })
+    await expect(s.api.agentAccess.save(label, { valet: { allActivity: true } })).rejects.toMatchObject({
+      errorClass: 'invalid',
+    })
+  })
+
+  it('saves an app’s own See Valet, All agents’ activity and Ask for changes with its access, without Touch ID', async () => {
+    const s = await approved()
+    const local = await s.api.clients.add('Code')
+    const label = `local:${local.id}`
+    const before = (await s.api.agentAccess.view(label)).valet
+    expect(before.allActivity).toBe(false)
+    const prompts = s.presence.prompts.length
+    expect(await s.api.agentAccess.save(label, { valet: { allActivity: true, askForChanges: false } })).toBe(
+      true,
+    )
+    expect(s.presence.prompts.length).toBe(prompts)
+    expect((await s.api.agentAccess.view(label)).valet).toMatchObject({
+      allActivity: true,
+      askForChanges: false,
+    })
+    expect(await s.api.clients.access(local.id)).toMatchObject({ allActivity: true, askForChanges: false })
+    // A signed capability for an app on this Mac is never applied.
+    const broker = (s.service as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+    const asked = await broker.request(
+      'agent-access',
+      { clientId: label, items: [], full: [], tools: [], capabilities: ['ask-for-changes'] },
+      { kind: 'person' },
+    )
+    expect(asked.ok).toBe(true)
+    if (!asked.ok) return
+    expect((await broker.approveOnMac(asked.requestId)).ok).toBe(false)
+  })
+
   it('applies a signed agent-access tool only at the version and side effect it names', async () => {
     const s = await approved()
     await s.service.remote.setHosts([HOST])

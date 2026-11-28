@@ -271,7 +271,8 @@ since it was last told (R23), each once, scanned for secrets like everything els
   tools (B); drafts and the scratch browser, which are F's. `valet_uninstall_site` is built
   (2026-11-13).
 - **The person's side (2026-11-13):** an app's Connections page has switches for See Valet, All
-  agents' activity and Ask for changes (`clients.setAccess`, not signed, like adding the app), and
+  agents' activity and Ask for changes (since 2026-11-28 under Valet itself in the access card's
+  Save, docs/access.md; still not signed for an app, like adding the app), and
   lists the tools it turned off for itself, each with Turn back on (`clients.turnToolOn`). An
   agent's request that no other item shows (a setting, a signed-in session, the home network, a
   tool or a login) is an **agent-request** item in Needs you, with Approve with Touch ID and Decline

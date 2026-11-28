@@ -381,26 +381,80 @@ describe('a cloud agent’s page', () => {
     )
   })
 
-  it('turns Ask for changes on and off from its page', async () => {
+  it('turns Ask for changes on in the access card’s Save, bringing See Valet, and off with a plain Save', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
     await api.remote.approveConsent('ABCDEFGH', ['woolworths.get_cart'])
     renderPage(api, <ClientPage clientId="rcdemodemodemodemodemo" />)
-    const ask = await screen.findByRole('switch', { name: 'Ask for changes' })
+    const valet = await screen.findByTestId('access-valet')
+    const ask = within(valet).getByRole('switch', { name: 'Ask for changes' })
     expect(ask.getAttribute('aria-checked')).toBe('false')
-    expect(screen.getByTestId('agent-see-valet').textContent).toMatch(/can’t see Valet/)
-    await user.click(ask)
-    await waitFor(() =>
-      expect(screen.getByRole('switch', { name: 'Ask for changes' }).getAttribute('aria-checked')).toBe(
-        'true',
-      ),
+    expect(within(valet).getByRole('switch', { name: 'See Valet' }).getAttribute('aria-checked')).toBe(
+      'false',
     )
-    expect(screen.getByTestId('agent-see-valet').textContent).toMatch(/It can see Valet/)
-    await user.click(screen.getByRole('switch', { name: 'Ask for changes' }))
-    expect(called(api, 'remote.setAskForChanges')).toEqual([
-      ['rcdemodemodemodemodemo', true],
-      ['rcdemodemodemodemodemo', false],
-    ])
+    // A cloud agent has no All agents' activity.
+    expect(within(valet).queryByRole('switch', { name: 'All agents’ activity' })).toBeNull()
+    await user.click(ask)
+    expect(within(valet).getByRole('switch', { name: 'See Valet' }).getAttribute('aria-checked')).toBe('true')
+    expect(within(valet).getAllByText(/not saved/)).toHaveLength(2)
+    await user.click(screen.getByRole('button', { name: 'Save with Touch ID' }))
+    await waitFor(() =>
+      expect(called(api, 'agentAccess.save').at(-1)).toEqual([
+        'remote:rcdemodemodemodemodemo',
+        { valet: { seeValet: true, askForChanges: true } },
+      ]),
+    )
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId('access-valet'))
+          .getByRole('switch', { name: 'Ask for changes' })
+          .getAttribute('aria-checked'),
+      ).toBe('true'),
+    )
+    // See Valet off takes Ask for changes too, and only narrows.
+    await user.click(within(screen.getByTestId('access-valet')).getByRole('switch', { name: 'See Valet' }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(called(api, 'agentAccess.save').at(-1)).toEqual([
+        'remote:rcdemodemodemodemodemo',
+        { valet: { seeValet: false, askForChanges: false } },
+      ]),
+    )
+    expect(called(api, 'remote.setAskForChanges')).toEqual([])
+  })
+
+  it('changes an app’s See Valet and All agents’ activity in the access card, without Touch ID', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    const [app] = await api.clients.list()
+    if (app === undefined) throw new Error('no app')
+    renderPage(api, <ClientPage clientId={app.id} />)
+    const valet = await screen.findByTestId('access-valet')
+    const all = within(valet).getByRole('switch', { name: 'All agents’ activity' })
+    expect(all.getAttribute('aria-checked')).toBe('false')
+    await user.click(all)
+    // Adding to an app's own choices is a plain Save.
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(called(api, 'agentAccess.save').at(-1)).toEqual([
+        `local:${app.id}`,
+        { valet: { allActivity: true } },
+      ]),
+    )
+    await user.click(within(screen.getByTestId('access-valet')).getByRole('switch', { name: 'See Valet' }))
+    expect(
+      within(screen.getByTestId('access-valet'))
+        .getByRole('switch', { name: 'All agents’ activity' })
+        .getAttribute('aria-checked'),
+    ).toBe('false')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(called(api, 'agentAccess.save').at(-1)).toEqual([
+        `local:${app.id}`,
+        { valet: { seeValet: false, allActivity: false, askForChanges: false } },
+      ]),
+    )
+    expect(called(api, 'clients.setAccess')).toEqual([])
   })
 })
 
