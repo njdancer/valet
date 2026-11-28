@@ -140,6 +140,10 @@ export interface EventKit {
     readonly occurrenceMs?: number
   }): Promise<EventInfo>
   removeReminder(request: { readonly calendar: string; readonly id: string }): Promise<ReminderInfo>
+  /** Adds a calendar (events) or list (reminders) in the account new ones go to; answers it. */
+  createCalendar(kind: EventKitKind, title: string): Promise<CalendarInfo>
+  /** Deletes a calendar or list, with everything in it; answers what it was. */
+  removeCalendar(kind: EventKitKind, calendar: string): Promise<CalendarInfo>
 }
 
 const ACCESS: ReadonlySet<string> = new Set(['full', 'write-only', 'denied', 'restricted', 'not-determined'])
@@ -260,6 +264,26 @@ export class HelperEventKit implements EventKit {
     const answer = await this.#ask({ op: 'eventkit.removeReminder', ...request })
     if (!isObject(answer['reminder'])) throw new EventKitError('unavailable')
     return answer['reminder'] as unknown as ReminderInfo
+  }
+
+  async createCalendar(kind: EventKitKind, title: string): Promise<CalendarInfo> {
+    const answer = await this.#ask({ op: 'eventkit.createCalendar', kind, title })
+    const made = answer['calendar']
+    // Its id goes into the agent's access record, so it is checked as that record checks one.
+    if (
+      !isObject(made) ||
+      typeof made['id'] !== 'string' ||
+      made['id'].length === 0 ||
+      made['id'].length > 200
+    )
+      throw new EventKitError('unavailable')
+    return made as unknown as CalendarInfo
+  }
+
+  async removeCalendar(kind: EventKitKind, calendar: string): Promise<CalendarInfo> {
+    const answer = await this.#ask({ op: 'eventkit.removeCalendar', kind, calendar })
+    if (!isObject(answer['calendar'])) throw new EventKitError('unavailable')
+    return answer['calendar'] as unknown as CalendarInfo
   }
 
   async #ask(request: Record<string, unknown>): Promise<Record<string, unknown>> {

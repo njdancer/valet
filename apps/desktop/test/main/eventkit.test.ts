@@ -83,6 +83,16 @@ function fakeKit(access: { value: EventKitAccess }) {
     removeReminder: async () => {
       throw new Error('not here')
     },
+    createCalendar: async (_kind, title) => ({
+      id: 'L9',
+      title,
+      account: 'iCloud',
+      writable: true,
+      subscribed: false,
+    }),
+    removeCalendar: async () => {
+      throw new Error('not here')
+    },
     saveReminder: async (r) => {
       saved.push(r)
       return {
@@ -121,13 +131,18 @@ async function setup(app: EventKitApp = 'reminders') {
   }
   let now = 1_000_000
   // The calling agent's own lists (agent-access.ts): L1 to change, L2 not at all, by default.
-  const lists: { items: Record<string, 'read' | 'edit'> } = { items: { L1: 'edit' } }
+  const lists: { items: Record<string, 'read' | 'edit'>; full: boolean } = {
+    items: { L1: 'edit' },
+    full: false,
+  }
+  const added: { call: ToolCall; id: string }[] = []
   const service = new EventKitService({
     app,
     settings: new EventKitSettingsStore(join(root, `${app}.json`)),
     reader,
     kit,
-    access: () => ({ items: lists.items, full: false }),
+    access: () => ({ items: lists.items, full: lists.full }),
+    added: async (c, id) => void added.push({ call: c, id }),
     audit: async (call, result) => void audited.push({ call, result }),
     now: () => now,
     changed: () => {
@@ -140,6 +155,7 @@ async function setup(app: EventKitApp = 'reminders') {
     service,
     access,
     lists,
+    added,
     kit,
     saved,
     asked,
@@ -159,6 +175,21 @@ const call = (tool: string, input: unknown): ToolCall =>
   ({ callId: 'c1', adapterId: 'reminders', tool, input, client: 'test' }) as unknown as ToolCall
 
 describe('EventKitService', () => {
+  it('adds a list only with Full access, and hands the new one to the calling agent', async () => {
+    const s = await setup()
+    await s.service.update({ enabled: true })
+    const signal = new AbortController().signal
+    expect(await s.service.call(call('create_list', { title: 'Trips' }), signal)).toMatchObject({
+      errorClass: 'not-found',
+    })
+    s.lists.full = true
+    expect(await s.service.call(call('create_list', { title: 'Trips' }), signal)).toMatchObject({
+      status: 'ok',
+    })
+    expect(s.added.map((a) => [a.call.callId, a.id])).toEqual([['c1', 'L9']])
+    expect(s.audited.map((a) => a.call.tool)).toEqual(['create_list', 'create_list'])
+  })
+
   it('lists nothing until on, then every tool: which an agent holds follows its own access', async () => {
     const s = await setup()
     expect(s.service.listTools()).toEqual([])
@@ -170,6 +201,8 @@ describe('EventKitService', () => {
       'reminders.create',
       'reminders.update',
       'reminders.delete',
+      'reminders.create_list',
+      'reminders.delete_list',
     ])
     expect(s.changed()).toBe(1)
   })
@@ -277,6 +310,8 @@ describe('EventKitService', () => {
       'create_event',
       'update_event',
       'delete_event',
+      'create_calendar',
+      'delete_calendar',
     ])
   })
 

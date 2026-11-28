@@ -67,6 +67,7 @@ import {
   type WriteArgs,
   withAnswers,
 } from '@valet/mcp-server'
+import type { CalendarInfo, EventKit } from '@valet/native-calendar'
 import { loadDependencies, memoryTarballStore, nodeRuntimeProcess } from '@valet/node-runtime'
 import { HostMailReader, imapBackend, type ProtocolHostOptions, sftpBackend } from '@valet/protocols'
 import { writeProtocolHost, writeSftpHost } from '@valet/protocols/build'
@@ -193,6 +194,7 @@ async function setup(
     sftp?: ServiceDeps['sftp']
     mailReader?: ServiceDeps['mailReader']
     mail?: ServiceDeps['mail']
+    eventKit?: ServiceDeps['eventKit']
     raw?: ServiceDeps['raw']
     scratch?: ServiceDeps['scratch']
     sessionBrowser?: ServiceDeps['sessionBrowser']
@@ -285,6 +287,7 @@ async function setup(
     ...(options.sftp === undefined ? {} : { sftp: options.sftp }),
     ...(options.mailReader === undefined ? {} : { mailReader: options.mailReader }),
     ...(options.mail === undefined ? {} : { mail: options.mail }),
+    ...(options.eventKit === undefined ? {} : { eventKit: options.eventKit }),
     ...(options.raw === undefined ? {} : { raw: options.raw }),
     ...(options.scratch === undefined ? {} : { scratch: options.scratch }),
     ...(options.sessionBrowser === undefined ? {} : { sessionBrowser: options.sessionBrowser }),
@@ -3944,6 +3947,110 @@ describe('remote access', () => {
     expect(signed()).not.toBeNull()
     await broker.lockdown()
     expect(signed()).toBeNull()
+  })
+
+  it('gives a cloud agent Full access to Calendar in the Save: it adds a calendar, which is its own', async () => {
+    const lib = buildLibrary(mkdtempSync(join(tmpdir(), 'sa-mail-')))
+    const calendars: CalendarInfo[] = [
+      { id: 'C1', title: 'Home', account: 'iCloud', writable: true, subscribed: false },
+    ]
+    const removed: string[] = []
+    const nope = async (): Promise<never> => {
+      throw new Error('not here')
+    }
+    const kit: EventKit = {
+      access: async () => 'full',
+      requestAccess: async () => 'full',
+      refresh: async () => {},
+      calendars: async (kind) => (kind === 'events' ? calendars : []),
+      events: async () => ({ events: [], more: false }),
+      reminders: async () => ({ reminders: [], more: false }),
+      saveEvent: nope,
+      saveReminder: nope,
+      removeEvent: nope,
+      removeReminder: nope,
+      createCalendar: async (_kind, title) => {
+        const made = {
+          id: `C${calendars.length + 1}`,
+          title,
+          account: 'iCloud',
+          writable: true,
+          subscribed: false,
+        }
+        calendars.push(made)
+        return made
+      },
+      removeCalendar: async (_kind, id) => {
+        removed.push(id)
+        const found = calendars.find((c) => c.id === id)
+        if (found === undefined) throw new Error('gone')
+        calendars.splice(calendars.indexOf(found), 1)
+        return found
+      },
+    }
+    const s = await setup({
+      mail: {
+        reader: await runningReader(),
+        files: new DirectMailFiles(lib),
+        drafts: { save: async () => ({ kind: 'saved' }) },
+      },
+      eventKit: kit,
+    })
+    await s.api.eventKit.update('calendar', { enabled: true })
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    const port = Number(new URL(s.service.remote.status().url as string).port)
+    const agent = approvedClient(s, [])
+    const other = approvedClient(s, [])
+    const label = `remote:${agent.id}`
+    const names = async (token = agent.token) =>
+      (await (await remoteClient(port, token)).listTools()).tools.map((t) => t.name)
+    const calendarApp = async (who = label) =>
+      (await s.api.agentAccess.view(who)).apps.find((a) => a.app === 'calendar')
+    expect(await calendarApp()).toMatchObject({ ready: true, full: false })
+    expect((await s.api.agentAccess.view(label)).apps.find((a) => a.app === 'mail')?.full).toBeNull()
+
+    // On is signed (cancelled: nothing), and brings only the tool that adds calendars.
+    s.presence.answer = false
+    expect(await s.api.agentAccess.save(label, { full: { calendar: true } })).toBe(false)
+    expect(await calendarApp()).toMatchObject({ full: false })
+    s.presence.answer = true
+    const prompts = s.presence.prompts.length
+    expect(await s.api.agentAccess.save(label, { full: { calendar: true } })).toBe(true)
+    expect(s.presence.prompts.length).toBe(prompts + 1)
+    expect(await calendarApp()).toMatchObject({ full: true })
+    const listed = await names()
+    expect(listed).toEqual(expect.arrayContaining(['calendar_create_calendar', 'calendar_delete_calendar']))
+    expect(listed).not.toContain('calendar_create_event')
+    expect(await names(other.token)).not.toContain('calendar_create_calendar')
+
+    // The calendar it adds is its own, at Edit; nobody else's.
+    const client = await remoteClient(port, agent.token)
+    const made = await client.callTool({ name: 'calendar_create_calendar', arguments: { title: 'Trips' } })
+    expect(made.isError).not.toBe(true)
+    expect((await calendarApp())?.items).toContainEqual(expect.objectContaining({ id: 'C2', level: 'edit' }))
+    expect((await calendarApp(`remote:${other.id}`))?.items).toContainEqual(
+      expect.objectContaining({ id: 'C2', level: 'off' }),
+    )
+    // The call that added it went through; its next session lists adding events too.
+    expect(await names()).toContain('calendar_create_event')
+    // It deletes only one it may edit.
+    const again = await remoteClient(port, agent.token)
+    const refused = await again.callTool({
+      name: 'calendar_delete_calendar',
+      arguments: { calendarId: 'C1' },
+    })
+    expect(refused.isError).toBe(true)
+    const gone = await again.callTool({ name: 'calendar_delete_calendar', arguments: { calendarId: 'C2' } })
+    expect(gone.isError).not.toBe(true)
+    expect(removed).toEqual(['C2'])
+
+    // Off is at once, with no prompt, and the tools go.
+    const before = s.presence.prompts.length
+    expect(await s.api.agentAccess.save(label, { full: { calendar: false } })).toBe(true)
+    expect(s.presence.prompts.length).toBe(before)
+    expect(await calendarApp()).toMatchObject({ full: false })
+    expect(await names()).not.toContain('calendar_create_calendar')
   })
 
   it('saves an app’s own See Valet, All agents’ activity and Ask for changes with its access, without Touch ID', async () => {

@@ -136,4 +136,23 @@ describe('agent access', () => {
     await again.load()
     expect(again.seeded).toBe(true)
   })
+
+  it('gives a created calendar only while Full access is saved, so a Save that ran first is never undone', async () => {
+    const store = new AgentAccessStore(path())
+    await store.load()
+    await store.set('remote:agent', 'calendar', { items: { Family: 'edit' }, full: true })
+    // The person narrows while the agent's add is still running: the two writes queue, the Save first.
+    const narrowed = store.set('remote:agent', 'calendar', { items: {}, full: false })
+    const given = store.addCreated('remote:agent', 'calendar', 'Trips')
+    await narrowed
+    expect(await given).toBe(false)
+    expect(store.app('remote:agent', 'calendar')).toEqual(NO_APP_ACCESS)
+
+    await store.set('remote:agent', 'calendar', { items: { Family: 'read' }, full: true })
+    expect(await store.addCreated('remote:agent', 'calendar', 'Trips')).toBe(true)
+    expect(store.app('remote:agent', 'calendar')).toEqual({ items: { Family: 'read', Trips: 'edit' }, full: true })
+    // Another agent holds nothing, so it is given nothing.
+    expect(await store.addCreated('remote:other', 'calendar', 'X')).toBe(false)
+    expect(store.app('remote:other', 'calendar')).toEqual(NO_APP_ACCESS)
+  })
 })

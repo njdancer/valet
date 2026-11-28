@@ -81,7 +81,7 @@ import {
   type ToolCall,
   type ToolCaller,
 } from '@valet/mcp-server'
-import { calendarTools, type EventKit, reminderTools } from '@valet/native-calendar'
+import { calendarTools, type EventKit, FULL_ACCESS_TOOLS, reminderTools } from '@valet/native-calendar'
 import {
   MAIL_ADAPTER_ID,
   type MailDrafts,
@@ -168,6 +168,7 @@ import {
   accessWidening,
   applyAccessChange,
   type ClientAccess,
+  type FullAccessApp,
   MAX_ACCESS_ITEMS,
   NO_APP_ACCESS,
   withWidening,
@@ -1139,7 +1140,7 @@ export class AppService {
     this.remote = new RemoteAccess({
       downloads: (id) => this.downloadShelf.get(id),
       appTool: (clientId, adapter, declaration) =>
-        this.appToolHeld(`remote:${clientId}`, adapter, declaration.sideEffect),
+        this.appToolHeld(`remote:${clientId}`, adapter, declaration),
       path: paths.remote,
       clientsPath: paths.remoteClients,
       info: { name: 'valet', version: deps.version },
@@ -1312,6 +1313,7 @@ export class AppService {
           reader: mail?.reader ?? null,
           kit,
           access: (call) => this.callAccess(call, app),
+          added: (call, id) => this.calendarAdded(call, app, id),
           audit: (call, result, durationMs) => this.auditNativeCall(call, result, durationMs),
           now: this.deps.now,
           changed: () => {
@@ -1456,6 +1458,7 @@ export class AppService {
           level: level('mail', a.id),
           editable: true,
         })),
+        full: null,
       })
     for (const [app, service] of this.eventKitApps) {
       let status: EventKitStatus
@@ -1474,6 +1477,7 @@ export class AppService {
           level: level(app, c.id),
           editable: c.writable,
         })),
+        full: this.agentAccess.app(label, app).full,
       })
     }
     const { tools, gone } = await this.accessTools(label)
@@ -1564,10 +1568,14 @@ export class AppService {
     const view = await this.accessView(label)
     const next: { app: AccessApp; after: AppAccess }[] = []
     const items: ApprovalSubject<'agent-access'>['items'][number][] = []
+    const full: FullAccessApp[] = []
     for (const app of ACCESS_APPS) {
-      const levels = changes[app]
-      if (levels === undefined || Object.keys(levels).length === 0) continue
+      const levels = changes[app] ?? {}
+      const fullTo = app === 'mail' ? undefined : changes.full?.[app]
+      if (Object.keys(levels).length === 0 && fullTo === undefined) continue
       const shown = view.apps.find((a) => a.app === app)
+      // Full access needs the app set up: it adds calendars or lists there.
+      if (fullTo === true && shown?.ready !== true) throw new ValetError('config', 'invalid')
       for (const [id, to] of Object.entries(levels)) {
         const item = shown?.items.find((i) => i.id === id)
         // Off is always fine, even for one gone from the Mac: it only takes away.
@@ -1575,13 +1583,18 @@ export class AppService {
         if (item === undefined || (to === 'edit' && !item.editable)) throw new ValetError('config', 'invalid')
       }
       const before = this.agentAccess.app(label, app)
-      const after = applyAccessChange(before, { items: levels })
+      const after = applyAccessChange(
+        before,
+        fullTo === undefined ? { items: levels } : { items: levels, full: fullTo },
+      )
       if (Object.keys(after.items).length > MAX_ACCESS_ITEMS) throw new ValetError('config', 'invalid')
       next.push({ app, after })
-      for (const { id, level } of accessWidening(before, after).items) {
+      const widening = accessWidening(before, after)
+      for (const { id, level } of widening.items) {
         const item = shown?.items.find((i) => i.id === id)
         items.push({ app, id, label: accessLabel(item?.label ?? id), level })
       }
+      if (widening.full && app !== 'mail') full.push(app)
     }
     // A cloud agent's tools: on is signed with the rest, off is at once. An app on this Mac has
     // none to give here.
@@ -1626,11 +1639,11 @@ export class AppService {
     const valet = this.valetChange(label, changes.valet)
     // One request lists at most 100 of each; a Save that adds more is refused, changing nothing.
     if (items.length > 100 || tools.length > 100) throw new ValetError('config', 'invalid')
-    if (items.length > 0 || tools.length > 0 || valet.sign.length > 0) {
+    if (items.length > 0 || tools.length > 0 || full.length > 0 || valet.sign.length > 0) {
       const subject: ApprovalSubject<'agent-access'> = {
         clientId: label,
         items,
-        full: [],
+        full,
         tools,
         capabilities: valet.sign,
       }
@@ -1770,6 +1783,25 @@ export class AppService {
     this.emit('remote-changed')
   }
 
+  /**
+   * Full access: a calendar or list the calling agent just added is its own, at Edit, and nobody
+   * else's.
+   */
+  private async calendarAdded(call: ToolCall, app: FullAccessApp, id: string): Promise<void> {
+    if (call.identity === undefined) return
+    const label = identityLabel(call.identity)
+    if (!(await this.agentAccess.addCreated(label, app, id))) return
+    // Not accessChanged: closing the agent's sessions now would abort the very call that added
+    // it. Every call checks the record, so it may use the calendar at once; a tool it didn't hold
+    // before (adding events, with its first editable calendar) lists in its next session.
+    try {
+      await this.refreshTools()
+    } catch {
+      // The record is saved; the list catches up later.
+    }
+    this.emit('clients-changed')
+  }
+
   /** The calling agent's access to one app; none for a call with no identity. */
   private callAccess(call: ToolCall, app: AccessApp): AppAccess {
     return call.identity === undefined
@@ -1785,12 +1817,15 @@ export class AppService {
   private appToolHeld(
     clientLabel: string,
     adapterId: string,
-    sideEffect: ToolDeclaration['sideEffect'],
+    declaration: Pick<ToolDeclaration, 'name' | 'sideEffect'>,
   ): boolean | null {
     const app = accessAppOf(adapterId)
     if (app === null) return null
-    const reach = accessReach(this.agentAccess.app(clientLabel, app))
-    return sideEffect === 'read' ? reach.read : reach.edit
+    const access = this.agentAccess.app(clientLabel, app)
+    // Adding and removing whole calendars or lists: Full access only.
+    if (app !== 'mail' && FULL_ACCESS_TOOLS[app].includes(declaration.name)) return access.full
+    const reach = accessReach(access)
+    return declaration.sideEffect === 'read' ? reach.read : reach.edit
   }
 
   /** The apps' own tools as listed now: Mail's, Calendar's and Reminders'. */
@@ -1812,7 +1847,7 @@ export class AppService {
   private localToolsOff(clientId: string): ReadonlySet<string> {
     const off = new Set(this.clients.toolsOff(clientId))
     for (const tool of this.appListedTools()) {
-      if (this.appToolHeld(`local:${clientId}`, tool.adapterId, tool.declaration.sideEffect) === false)
+      if (this.appToolHeld(`local:${clientId}`, tool.adapterId, tool.declaration) === false)
         off.add(`${tool.adapterId}.${tool.declaration.name}`)
     }
     return off
@@ -3036,8 +3071,6 @@ export class AppService {
       // applies only what was signed; the Save then writes the rest, which only narrows.
       'agent-access': {
         precheck: async (subject) => {
-          // Full access rides on this kind later; nothing asks for it yet.
-          if (subject.full.length > 0) return false
           if (!this.accessClientKnown(subject.clientId)) return false
           // See Valet and Ask for changes are signed for cloud agents only; an app's are its own.
           if (subject.capabilities.length > 0 && !subject.clientId.startsWith('remote:')) return false
@@ -3050,6 +3083,8 @@ export class AppService {
           } catch {
             return false
           }
+          // Full access only in an app that is set up now.
+          if (!subject.full.every((app) => view.apps.some((a) => a.app === app && a.ready))) return false
           return subject.items.every((s) => {
             const item = view.apps.find((a) => a.app === s.app)?.items.find((i) => i.id === s.id)
             return item !== undefined && (s.level === 'read' || item.editable)
@@ -3058,13 +3093,10 @@ export class AppService {
         apply: async (subject) => {
           for (const app of ACCESS_APPS) {
             const raised = subject.items.filter((i) => i.app === app).map(({ id, level }) => ({ id, level }))
-            if (raised.length === 0) continue
+            const full = app !== 'mail' && subject.full.includes(app)
+            if (raised.length === 0 && !full) continue
             const before = this.agentAccess.app(subject.clientId, app)
-            await this.agentAccess.set(
-              subject.clientId,
-              app,
-              withWidening(before, { items: raised, full: false }),
-            )
+            await this.agentAccess.set(subject.clientId, app, withWidening(before, { items: raised, full }))
           }
           if (subject.tools.length > 0) {
             const client = subject.clientId.slice('remote:'.length)

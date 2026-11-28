@@ -61,6 +61,10 @@ export interface EventKitToolDeps {
   readonly editable: () => ReadonlySet<string>
   /** Takes one change from the hour's allowance; false when it is spent. */
   readonly spend: () => boolean
+  /** Whether this agent may add and remove whole calendars (or lists) here: Full access. */
+  readonly full?: () => boolean
+  /** A calendar (or list) this agent just added: it gets Edit on it, and nobody else anything. */
+  readonly added?: (id: string) => Promise<void>
   readonly now: () => number
 }
 
@@ -158,6 +162,11 @@ const calendarShape = z.object({
 const id = z.string().min(1).max(400)
 const words = z.string().min(1).max(200)
 const title = z.string().min(1).max(500)
+const calendarTitle = z
+  .string()
+  .min(1)
+  .max(200)
+  .refine((t) => t.trim() !== '', 'a name')
 const notes = z.string().max(10_000)
 const url = z
   .string()
@@ -214,6 +223,10 @@ export const calendarInputs = {
       calendarId: id.describe('Its calendarId from calendar_events.'),
     })
     .strict(),
+  create_calendar: z.object({ title: calendarTitle.describe('The new calendar’s name.') }).strict(),
+  delete_calendar: z
+    .object({ calendarId: id.describe('A calendar you may change, from calendar_calendars.') })
+    .strict(),
 } as const
 
 export const calendarOutputs = {
@@ -222,6 +235,8 @@ export const calendarOutputs = {
   create_event: z.object({ event, note: z.string() }),
   update_event: z.object({ event, note: z.string() }),
   delete_event: z.object({ deleted: event, note: z.string() }),
+  create_calendar: z.object({ calendar: calendarShape, note: z.string() }),
+  delete_calendar: z.object({ deleted: calendarShape, note: z.string() }),
 } as const
 
 type CalendarToolName = keyof typeof calendarInputs
@@ -269,9 +284,39 @@ const CALENDAR_DECLARATIONS: Readonly<Record<CalendarToolName, Omit<ToolDeclarat
     destructive: true,
     idempotent: true,
   },
+  create_calendar: {
+    title: 'Add a calendar',
+    description:
+      'Add a calendar, in the account new events go to. You may change it; nobody else is given it. ' +
+      'Only while the person lets you add and remove calendars.',
+    sideEffect: 'write',
+    destructive: false,
+    idempotent: false,
+  },
+  delete_calendar: {
+    title: 'Delete a calendar',
+    description:
+      'Delete one of the calendars you may change, with every event in it. It can’t be undone from ' +
+      'here. Only when the person asked, and only while they let you add and remove calendars.',
+    sideEffect: 'write',
+    destructive: true,
+    idempotent: true,
+  },
 }
 
-const CALENDAR_WRITES: readonly CalendarToolName[] = ['create_event', 'update_event', 'delete_event']
+const CALENDAR_WRITES: readonly CalendarToolName[] = [
+  'create_event',
+  'update_event',
+  'delete_event',
+  'create_calendar',
+  'delete_calendar',
+]
+
+/** Each app's tools that add and remove whole calendars or lists: held only with Full access. */
+export const FULL_ACCESS_TOOLS: Readonly<Record<'calendar' | 'reminders', readonly string[]>> = {
+  calendar: ['create_calendar', 'delete_calendar'],
+  reminders: ['create_list', 'delete_list'],
+}
 
 export function calendarTools(options: { readonly writes: boolean }): readonly EventKitToolDef[] {
   return (Object.keys(calendarInputs) as CalendarToolName[])
@@ -331,6 +376,8 @@ export const reminderInputs = {
       listId: id.describe('Its listId from reminders_search.'),
     })
     .strict(),
+  create_list: z.object({ title: calendarTitle.describe('The new list’s name.') }).strict(),
+  delete_list: z.object({ listId: id.describe('A list you may change, from reminders_lists.') }).strict(),
 } as const
 
 export const reminderOutputs = {
@@ -339,6 +386,8 @@ export const reminderOutputs = {
   create: z.object({ reminder, note: z.string() }),
   update: z.object({ reminder, note: z.string() }),
   delete: z.object({ deleted: reminder, note: z.string() }),
+  create_list: z.object({ list: calendarShape, note: z.string() }),
+  delete_list: z.object({ deleted: calendarShape, note: z.string() }),
 } as const
 
 type ReminderToolName = keyof typeof reminderInputs
@@ -380,9 +429,33 @@ const REMINDER_DECLARATIONS: Readonly<Record<ReminderToolName, Omit<ToolDeclarat
     destructive: true,
     idempotent: true,
   },
+  create_list: {
+    title: 'Add a reminder list',
+    description:
+      'Add a reminder list, in the account new reminders go to. You may change it; nobody else is given ' +
+      'it. Only while the person lets you add and remove lists.',
+    sideEffect: 'write',
+    destructive: false,
+    idempotent: false,
+  },
+  delete_list: {
+    title: 'Delete a reminder list',
+    description:
+      'Delete one of the lists you may change, with every reminder in it. It can’t be undone from here. ' +
+      'Only when the person asked, and only while they let you add and remove lists.',
+    sideEffect: 'write',
+    destructive: true,
+    idempotent: true,
+  },
 }
 
-const REMINDER_WRITES: readonly ReminderToolName[] = ['create', 'update', 'delete']
+const REMINDER_WRITES: readonly ReminderToolName[] = [
+  'create',
+  'update',
+  'delete',
+  'create_list',
+  'delete_list',
+]
 
 export function reminderTools(options: { readonly writes: boolean }): readonly EventKitToolDef[] {
   return (Object.keys(reminderInputs) as ReminderToolName[])
@@ -526,6 +599,55 @@ function mayChange(deps: EventKitToolDeps, calendarId: string, idKey: string): E
   return null
 }
 
+/** Full access: a new calendar or list, which only this agent is given, at Edit. */
+async function addCalendar(
+  deps: EventKitToolDeps,
+  kind: 'events' | 'reminders',
+  name: string,
+  key: 'calendar' | 'list',
+  note: string,
+): Promise<EventKitToolResult> {
+  if (!deps.spend()) return fail('tool-run', 'rate-limited')
+  const added = await deps.kit.createCalendar(kind, name.trim())
+  // It exists now, whatever happens next: a failure here is never reported as a failed add, which
+  // would only invite a second one.
+  let given = true
+  try {
+    await deps.added?.(added.id)
+  } catch {
+    given = false
+  }
+  return {
+    status: 'ok',
+    output: {
+      [key]: { id: added.id, title: added.title, account: added.account, writable: added.writable },
+      note: given
+        ? note
+        : `It was added, but Valet couldn’t save your access to it. Don’t add it again: ask the person to give you Edit on it.`,
+    },
+  }
+}
+
+/** Full access: deletes a calendar or list this agent may change, with everything in it. */
+async function removeCalendar(
+  deps: EventKitToolDeps,
+  kind: 'events' | 'reminders',
+  calendarId: string,
+  idKey: string,
+  note: string,
+): Promise<EventKitToolResult> {
+  const refused = mayChange(deps, calendarId, idKey)
+  if (refused !== null) return refused
+  const removed = await deps.kit.removeCalendar(kind, calendarId)
+  return {
+    status: 'ok',
+    output: {
+      deleted: { id: removed.id, title: removed.title, account: removed.account, writable: false },
+      note,
+    },
+  }
+}
+
 function defined<T extends object>(value: T): T {
   return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined)) as T
 }
@@ -537,7 +659,12 @@ export async function callCalendarTool(
 ): Promise<EventKitToolResult> {
   if (!Object.hasOwn(calendarInputs, tool)) return fail('tool-input', 'not-found')
   const name = tool as CalendarToolName
-  if (CALENDAR_WRITES.includes(name) && !deps.writes()) return fail('tool-input', 'not-found')
+  if (
+    FULL_ACCESS_TOOLS.calendar.includes(name)
+      ? deps.full?.() !== true
+      : CALENDAR_WRITES.includes(name) && !deps.writes()
+  )
+    return fail('tool-input', 'not-found')
   const parsed = calendarInputs[name].safeParse(input)
   if (!parsed.success) return fail('tool-input', 'invalid', issueFromZod(parsed.error.issues[0], input))
   try {
@@ -657,6 +784,20 @@ export async function callCalendarTool(
           output: { deleted: shownEvent(deleted, false), note: 'Deleted from the calendar.' },
         }
       }
+      case 'create_calendar': {
+        const q = calendarInputs.create_calendar.parse(input)
+        return await addCalendar(
+          deps,
+          'events',
+          q.title,
+          'calendar',
+          'Added. You may add events to it; nobody else sees it.',
+        )
+      }
+      case 'delete_calendar': {
+        const q = calendarInputs.delete_calendar.parse(input)
+        return await removeCalendar(deps, 'events', q.calendarId, 'calendarId', 'Deleted, with its events.')
+      }
     }
   } catch (error) {
     return failure(error, 'calendarId')
@@ -670,7 +811,12 @@ export async function callReminderTool(
 ): Promise<EventKitToolResult> {
   if (!Object.hasOwn(reminderInputs, tool)) return fail('tool-input', 'not-found')
   const name = tool as ReminderToolName
-  if (REMINDER_WRITES.includes(name) && !deps.writes()) return fail('tool-input', 'not-found')
+  if (
+    FULL_ACCESS_TOOLS.reminders.includes(name)
+      ? deps.full?.() !== true
+      : REMINDER_WRITES.includes(name) && !deps.writes()
+  )
+    return fail('tool-input', 'not-found')
   const parsed = reminderInputs[name].safeParse(input)
   if (!parsed.success) return fail('tool-input', 'invalid', issueFromZod(parsed.error.issues[0], input))
   try {
@@ -761,6 +907,20 @@ export async function callReminderTool(
         if (refused !== null) return refused
         const deleted = await deps.kit.removeReminder({ calendar: q.listId, id: q.id })
         return { status: 'ok', output: { deleted: shownReminder(deleted), note: 'Deleted from the list.' } }
+      }
+      case 'create_list': {
+        const q = reminderInputs.create_list.parse(input)
+        return await addCalendar(
+          deps,
+          'reminders',
+          q.title,
+          'list',
+          'Added. You may add reminders to it; nobody else sees it.',
+        )
+      }
+      case 'delete_list': {
+        const q = reminderInputs.delete_list.parse(input)
+        return await removeCalendar(deps, 'reminders', q.listId, 'listId', 'Deleted, with its reminders.')
       }
     }
   } catch (error) {

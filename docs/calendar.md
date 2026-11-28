@@ -17,23 +17,27 @@ agent may use"; "writes on" is now Edit on that calendar or list.
 
 Calendar (adapter id `calendar`):
 
-| Tool                    | What it does                                                                                    |
-| ----------------------- | ----------------------------------------------------------------------------------------------- |
-| `calendar_calendars`    | The picked calendars, with ids and whether agents may add to them.                              |
-| `calendar_events`       | Events between two days or times (a week from today by default, at most 366 days), by words.    |
-| `calendar_create_event` | Only when writes are on. A timed or all-day event in a picked, writable calendar. No attendees. |
-| `calendar_update_event` | Only when writes are on. Title, times, location, notes or link; one occurrence of a recurring.  |
-| `calendar_delete_event` | Only when writes are on. Deletes an event, or one occurrence of a recurring one.                |
+| Tool                       | What it does                                                                                    |
+| -------------------------- | ----------------------------------------------------------------------------------------------- |
+| `calendar_calendars`       | The picked calendars, with ids and whether agents may add to them.                              |
+| `calendar_events`          | Events between two days or times (a week from today by default, at most 366 days), by words.    |
+| `calendar_create_event`    | Only when writes are on. A timed or all-day event in a picked, writable calendar. No attendees. |
+| `calendar_update_event`    | Only when writes are on. Title, times, location, notes or link; one occurrence of a recurring.  |
+| `calendar_delete_event`    | Only when writes are on. Deletes an event, or one occurrence of a recurring one.                |
+| `calendar_create_calendar` | Full access only. A calendar in the account new events go to; the agent gets Edit on it.        |
+| `calendar_delete_calendar` | Full access only. Deletes a calendar the agent may edit, with its events.                       |
 
 Reminders (adapter id `reminders`):
 
-| Tool               | What it does                                                                         |
-| ------------------ | ------------------------------------------------------------------------------------ |
-| `reminders_lists`  | The picked lists.                                                                    |
-| `reminders_search` | Open (default), done or all reminders, by list, due dates and words.                 |
-| `reminders_create` | Only when writes are on. A reminder with an optional due day or time and priority.   |
-| `reminders_update` | Only when writes are on. Title, notes, due date, priority, link, or done / not done. |
-| `reminders_delete` | Only when writes are on. Deletes a reminder.                                         |
+| Tool                    | What it does                                                                            |
+| ----------------------- | --------------------------------------------------------------------------------------- |
+| `reminders_lists`       | The picked lists.                                                                       |
+| `reminders_search`      | Open (default), done or all reminders, by list, due dates and words.                    |
+| `reminders_create`      | Only when writes are on. A reminder with an optional due day or time and priority.      |
+| `reminders_update`      | Only when writes are on. Title, notes, due date, priority, link, or done / not done.    |
+| `reminders_delete`      | Only when writes are on. Deletes a reminder.                                            |
+| `reminders_create_list` | Full access only. A list in the account new reminders go to; the agent gets Edit on it. |
+| `reminders_delete_list` | Full access only. Deletes a list the agent may edit, with its reminders.                |
 
 What agents can and can't do:
 
@@ -44,6 +48,11 @@ What agents can and can't do:
   the Calendar app. No tool adds attendees.
 - **See or touch a calendar or list that isn't picked.** Never: the picks are read on every call;
   ids outside them read as not found.
+
+- **Add and remove whole calendars or lists** only with Full access, which the person turns on for
+  that agent and app in its access card (docs/access.md, "Full access"). A calendar or list it adds
+  is given to it at Edit and to nobody else. It deletes only one it has Edit on; macOS refuses a
+  subscribed or fixed one. Adding and deleting count toward the hour's changes.
 
 Changes are capped at 100 an hour for each of Calendar and Reminders, all agents together. Every
 call is in the audit log like any built-in tool's. Results say that titles, notes and invitations

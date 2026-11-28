@@ -111,6 +111,20 @@ final class EventKitAccessTests: XCTestCase {
     refused(#"{"v":1,"op":"eventkit.removeReminder","calendar":"L","id":"R","occurrenceMs":5}"#)
   }
 
+  func testCalendars() throws {
+    XCTAssertEqual(
+      try parse(#"{"v":1,"op":"eventkit.createCalendar","kind":"events","title":"Trips"}"#),
+      .createCalendar(kind: .events, title: "Trips"))
+    XCTAssertEqual(
+      try parse(#"{"v":1,"op":"eventkit.removeCalendar","kind":"reminders","calendar":"L"}"#),
+      .removeCalendar(kind: .reminders, calendar: "L"))
+    refused(#"{"v":1,"op":"eventkit.createCalendar","kind":"events","title":"  "}"#)
+    refused(#"{"v":1,"op":"eventkit.createCalendar","kind":"events"}"#)
+    refused(#"{"v":1,"op":"eventkit.createCalendar","kind":"events","title":"T","source":"S"}"#)
+    refused(#"{"v":1,"op":"eventkit.removeCalendar","kind":"events"}"#)
+    refused(#"{"v":1,"op":"eventkit.removeCalendar","kind":"tasks","calendar":"C"}"#)
+  }
+
   func testDayComponents() {
     let c = components(of: .day(year: 2026, month: 2, day: 3))
     XCTAssertEqual(c.year, 2026)

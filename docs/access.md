@@ -41,8 +41,21 @@ or Reminders' own, which follow from the items. It then raises only what was sig
 turned on for cloud agents if it wasn't, then added to this agent's grant. The Save writes the rest
 of the change, which only narrows.
 
-`agent-access` also carries a `full` field for a later step (adding and removing whole calendars
-and lists). Nothing asks for it yet, and the handler refuses a subject that names any.
+## Full access
+
+Calendar and Reminders each have one more switch on the card: **Let it add and remove calendars**
+(or lists). It is off for every agent until the person turns it on, and only for an app that is
+set up. On is in the Save's `agent-access` `full`, signed with the rest; off is at once. With it the
+agent holds `calendar_create_calendar` and `calendar_delete_calendar` (`reminders_create_list`,
+`reminders_delete_list`), and without it never, whatever else it has (`FULL_ACCESS_TOOLS`).
+
+A calendar or list it adds is written into its own record at Edit, and nobody else's: adding is
+what Full access was signed for. The call that added it isn't cut off for the new tool list (its
+sessions aren't closed); a tool it didn't hold before, such as adding events when this is its first
+calendar it may edit, lists in its next session. It deletes only one it has Edit on. Turning Full
+access off keeps the calendars it added, at Edit, until the person changes them.
+
+Agents can't ask for Full access with `valet_request_access`; only the person turns it on.
 
 ## Valet itself
 

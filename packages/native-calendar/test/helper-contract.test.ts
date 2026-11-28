@@ -64,10 +64,14 @@ describe.skipIf(HELPER === undefined || HELPER === '')(
         if ((await kit.access(kind)) === 'full') continue
         await expect(kit.calendars(kind)).rejects.toEqual(new EventKitError('denied'))
       }
-      if ((await kit.access('events')) !== 'full')
+      if ((await kit.access('events')) !== 'full') {
         await expect(kit.events({ calendars: ['X'], startMs: 0, endMs: 86_400_000 })).rejects.toEqual(
           new EventKitError('denied'),
         )
+        // Nor adds or removes a calendar.
+        await expect(kit.createCalendar('events', 'Contract')).rejects.toEqual(new EventKitError('denied'))
+        await expect(kit.removeCalendar('events', 'X')).rejects.toEqual(new EventKitError('denied'))
+      }
     })
 
     it('refuses unknown questions and keys', async () => {
@@ -77,6 +81,8 @@ describe.skipIf(HELPER === undefined || HELPER === '')(
         '{"v":1,"op":"eventkit.status","kind":"events","extra":true}',
         '{"v":1,"op":"eventkit.events","calendars":["X"],"startMs":0,"endMs":99999999999999}',
         '{"v":1,"op":"eventkit.saveEvent","calendar":"X","id":"E","attendees":["a@b.c"]}',
+        '{"v":1,"op":"eventkit.createCalendar","kind":"events","title":""}',
+        '{"v":1,"op":"eventkit.removeCalendar","kind":"events"}',
       ])
         expect(JSON.parse(await raw(socketPath, line))).toEqual({ error: 'invalid' })
     })
