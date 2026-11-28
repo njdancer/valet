@@ -150,7 +150,10 @@ describe('agent access', () => {
 
     await store.set('remote:agent', 'calendar', { items: { Family: 'read' }, full: true })
     expect(await store.addCreated('remote:agent', 'calendar', 'Trips')).toBe(true)
-    expect(store.app('remote:agent', 'calendar')).toEqual({ items: { Family: 'read', Trips: 'edit' }, full: true })
+    expect(store.app('remote:agent', 'calendar')).toEqual({
+      items: { Family: 'read', Trips: 'edit' },
+      full: true,
+    })
     // Another agent holds nothing, so it is given nothing.
     expect(await store.addCreated('remote:other', 'calendar', 'X')).toBe(false)
     expect(store.app('remote:other', 'calendar')).toEqual(NO_APP_ACCESS)
