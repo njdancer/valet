@@ -565,7 +565,8 @@ test('a tool page’s own dialogs return at once and never show its window or ho
 
 test('a tool page whose renderer crashed is replaced, and calls work again without a restart', async () => {
   const round = {
-    reason: 'crashed',
+    // forcefullyCrashRenderer() reads as crashed on Linux and as killed on macOS.
+    reason: expect.stringMatching(/^(crashed|killed)$/),
     oldWindowClosed: true,
     began: true,
     freshPage: true,
