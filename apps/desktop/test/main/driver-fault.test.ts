@@ -98,9 +98,14 @@ describe('diagnosticLines', () => {
     expect(head).toBe('diagnostic: woolworths tool set-up failed (partition): Error')
   })
 
-  it('keeps unknown words out, and other diagnostics to their type', () => {
+  it('keeps unknown words out of driver lines, and logs other diagnostics as they are', () => {
     expect(diagnosticLines({ type: 'audit-write-failed', event: 'tool-finished' } as never)).toEqual([
       'diagnostic: audit-write-failed',
+    ])
+    // The app's own lines that travel as a diagnostic's type are logged as they always were.
+    expect(diagnosticLines({ type: '[blind relay] online' })).toEqual(['diagnostic: [blind relay] online'])
+    expect(diagnosticLines({ type: '[phone door] 1a2b3c4d connected' })).toEqual([
+      'diagnostic: [phone door] 1a2b3c4d connected',
     ])
     expect(diagnosticLines({ type: 'browser', adapterId: '../x y', diagnostic: null })).toEqual([
       'diagnostic: unknown browser unknown',

@@ -96,5 +96,7 @@ export function diagnosticLines(diagnostic: DiagnosticView): string[] {
     }
     return [`diagnostic: ${adapter} browser ${word(inner.type)}`]
   }
-  return [`diagnostic: ${word(type)}`]
+  // Every other diagnostic is the app's own fixed text (some, such as "[blind relay] online", a
+  // whole line), logged as it always was; the log flattens and caps each line.
+  return [`diagnostic: ${type}`]
 }
