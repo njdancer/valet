@@ -31,6 +31,7 @@ import {
   type Grant,
   type GrantStore,
   type ImapProtocol,
+  isDisplayText,
   type LocalAccess,
   MAIL_SECRET,
   type MacToPhoneMessage,
@@ -1395,6 +1396,7 @@ export class AppService {
         secretIn: (text) => this.knownSecretIn([text]),
         openLogin: (adapterId, clientName) => this.openLoginSession(adapterId, clientName),
         signedIn: (ask) => this.signedInBrowsing(ask),
+        signedInHolds: (client, adapterId) => this.browsingGrantHolds(client, adapterId),
         notify: (text) => this.notifier.draftActivity(text),
         audit: (call, result, durationMs) => this.auditNativeCall(call, result, durationMs),
         now: this.deps.now,
@@ -2373,6 +2375,12 @@ export class AppService {
           asks.delete(id)
           dropped = true
         }
+    // Its signed-in browsing goes with it, and any session open on it.
+    for (const [id, grant] of this.browsingGrants)
+      if (asker === null || grant.client === asker) {
+        this.browsingGrants.delete(id)
+        this.agentBrowser?.closeSignedIn(asker === null ? null : grant.client, grant.adapterId)
+      }
     if (dropped) this.emit('attention-changed')
   }
 
@@ -5294,32 +5302,51 @@ export class AppService {
     }
     const broker = this.approvalBroker
     if (broker === null) throw new BrowserRefusal('Valet can’t ask for approvals right now.')
-    const grantId = `browse-${randomBytes(5).toString('hex')}`
-    const origins = [...new Set(manifest.navigation)].filter((o) => o.startsWith('https://')).slice(0, 10)
+    const purpose = ask.purpose.replace(/\s+/g, ' ').trim()
+    if (purpose.length < 3 || !isDisplayText(purpose))
+      throw new BrowserRefusal('Say in plain words what the session is for (3 to 200 characters).')
+    // A second ask from the same agent for the same site waits on the first one's grant id, so the
+    // person sees one card, not a pile of them.
+    let grantId: string | null = null
+    for (const [id, grant] of this.browsingGrants)
+      if (grant.client === ask.client && grant.adapterId === ask.adapterId && grant.until === null)
+        grantId = id
+    const fresh = grantId === null
+    grantId ??= `browse-${randomBytes(5).toString('hex')}`
+    const origins = httpsOrigins([
+      ...(manifest.home === undefined ? [] : [manifest.home]),
+      ...manifest.navigation,
+    ])
     this.browsingGrants.set(grantId, { client: ask.client, adapterId: ask.adapterId, until: null })
-    const asked = await broker.request(
-      'browser-grant',
-      {
-        adapterId: ask.adapterId,
-        draftId: grantId,
-        origins,
-        purpose: ask.purpose,
-        mode: 'read',
-        minutes: Math.min(Math.max(ask.minutes, 1), SIGNED_IN_LIMITS.maxMinutes),
-      },
-      { kind: 'agent', clientId: ask.client, clientName: ask.clientName.slice(0, 100) },
-      {
-        agentNote: null,
-        display: {
-          client: {
-            label: ask.clientName.slice(0, 100),
-            badge: ask.client.startsWith('local:') ? 'local' : 'remote',
+    let asked: Awaited<ReturnType<typeof broker.request>>
+    try {
+      asked = await broker.request(
+        'browser-grant',
+        {
+          adapterId: ask.adapterId,
+          draftId: grantId,
+          origins,
+          purpose,
+          mode: 'read',
+          minutes: Math.min(Math.max(ask.minutes, 1), SIGNED_IN_LIMITS.maxMinutes),
+        },
+        { kind: 'agent', clientId: ask.client, clientName: ask.clientName.slice(0, 100) },
+        {
+          agentNote: null,
+          display: {
+            client: {
+              label: ask.clientName.slice(0, 100),
+              badge: ask.client.startsWith('local:') ? 'local' : 'remote',
+            },
           },
         },
-      },
-    )
+      )
+    } catch (error) {
+      if (fresh) this.browsingGrants.delete(grantId)
+      throw error
+    }
     if (!asked.ok) {
-      this.browsingGrants.delete(grantId)
+      if (fresh) this.browsingGrants.delete(grantId)
       throw new BrowserRefusal(
         submitRefusal(asked.reason, asked.until).replace(/^Not submitted: /, 'Not asked: '),
       )
@@ -5327,6 +5354,21 @@ export class AppService {
     this.emit('approvals-changed')
     this.emit('attention-changed')
     return { status: 'asked', siteName: manifest.name, ref: asked.ref, expiresAt: asked.expiresAt }
+  }
+
+  /** Whether an agent's signed-in browsing of a site still stands: granted, unexpired, site installed. */
+  private browsingGrantHolds(client: string, adapterId: string): boolean {
+    if (this.lockedDown || this.adapter(adapterId) === null) return false
+    const now = this.deps.now()
+    for (const grant of this.browsingGrants.values())
+      if (
+        grant.client === client &&
+        grant.adapterId === adapterId &&
+        grant.until !== null &&
+        grant.until > now
+      )
+        return true
+    return false
   }
 
   /** The installed site a login session is for, while developer mode is on, or a refusal. */
@@ -7486,4 +7528,17 @@ function submitRefusal(reason: string, until?: string): string {
 
 function feedbackPart(desk: FeedbackDeskImpl | null): { feedback?: FeedbackDeskImpl } {
   return desk === null ? {} : { feedback: desk }
+}
+
+/** The distinct https origins of a site's addresses, at most ten, for a grant's card. */
+function httpsOrigins(items: readonly string[]): string[] {
+  const out = new Set<string>()
+  for (const item of items) {
+    try {
+      const url = new URL(item)
+      if (url.protocol === 'https:') out.add(url.origin)
+    } catch {}
+    if (out.size >= 10) break
+  }
+  return [...out]
 }

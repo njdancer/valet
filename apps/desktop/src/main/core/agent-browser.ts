@@ -168,6 +168,11 @@ export interface AgentBrowserDeps {
    */
   readonly signedIn?: (ask: SignedInAsk) => Promise<SignedInGrant | SignedInAsked>
   /**
+   * Whether the agent's grant for the site still holds (not ended, revoked or uninstalled),
+   * checked on every call to a signed-in session. Without it, only the grant's end is checked.
+   */
+  readonly signedInHolds?: (client: string, adapterId: string) => boolean
+  /**
    * Waits for a page load's turn on `host`: only a limit already known for the host (an installed
    * adapter's), shared with that adapter; none for any other host. Rejects with a BrowserRefusal to
    * hold the load back.
@@ -1247,6 +1252,17 @@ export class AgentBrowserService implements NativeTools {
     const session = this.sessions.get(id)
     if (session === undefined || session.client !== client || session.browser.isClosed())
       throw new BrowserRefusal('No open session has that id. browser_session_create starts one.')
+    // A timer may not fire on time (a Mac asleep), and the person can take the grant back.
+    const signedIn = session.signedIn
+    if (
+      signedIn !== null &&
+      (signedIn.until <= this.deps.now() || this.deps.signedInHolds?.(client, signedIn.adapterId) === false)
+    ) {
+      session.browser.close()
+      throw new BrowserRefusal(
+        'That signed-in session has ended: its grant ran out or was taken back. browser_session_create with signedIn asks again.',
+      )
+    }
     this.touch(session)
     return session.browser
   }

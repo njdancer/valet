@@ -583,4 +583,18 @@ describe('redactTokens and signedInRefuses', () => {
     expect(signedInRefuses('mainFrame', new URL('https://s.test/shop/myaccount/myorders'))).toBe(false)
     expect(signedInRefuses('mainFrame', new URL('https://s.test/shop/mylists/reorder'))).toBe(false)
   })
+
+  it('reads underscores and doubly encoded queries, and the slashes of a signed path', () => {
+    expect(signedInRefuses('xhr', new URL('https://s.test/api/sign_out'))).toBe(true)
+    expect(signedInRefuses('mainFrame', new URL('https://s.test/go?to=%252Flog%252Bout'))).toBe(true)
+    expect(signedInRefuses('mainFrame', new URL('https://s.test/go?action=sign+out'))).toBe(true)
+    expect(signedInRefuses('mainFrame', new URL('https://s.test/search?q=milk+bread'))).toBe(false)
+    expect(redactTokens('/files/Ab3dEfGh/IjKlMnOp/QrStUvWx/Yz012345abcdEFGH')).toBe(
+      '/files/Ab3dEfGh/IjKlMnOp/QrStUvWx/Yz012345abcdEFGH',
+    )
+    expect(redactTokens('k=AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGh')).toBe('k=[token]')
+    expect(redactTokens('id 123e4567-e89b-12d3-a456-426614174000')).toBe(
+      'id 123e4567-e89b-12d3-a456-426614174000',
+    )
+  })
 })
