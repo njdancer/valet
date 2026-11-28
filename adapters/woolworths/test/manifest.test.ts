@@ -55,7 +55,7 @@ function stepsIn(steps: readonly unknown[]): any[] {
 describe('the real manifest', () => {
   it('is the default export and points at the live site', () => {
     expect(realManifest.home).toBe('https://www.woolworths.com.au/')
-    expect(realManifest.version).toBe('0.6.1')
+    expect(realManifest.version).toBe('0.6.2')
     expect(manifestSchema.parse(realManifest)).toEqual(realManifest)
   })
 
@@ -350,13 +350,13 @@ describe('the request surface', () => {
     ])
   })
 
-  it('lets the runtime reuse catalogue answers for a quarter of an hour and the trolley for two minutes', () => {
+  it('lets the runtime reuse catalogue answers for a quarter of an hour, pick-up stores and times for five minutes, and the trolley for two', () => {
     expect(requests.filter((request) => request.purpose === 'read')).toEqual([
       { method: 'POST', path: '/apis/ui/Search/products', purpose: 'read', cacheSeconds: 900 },
       { method: 'GET', path: '/apis/ui/product/detail/:stockcode', purpose: 'read', cacheSeconds: 900 },
       { method: 'GET', path: '/apis/ui/Trolley', purpose: 'read', cacheSeconds: 120 },
-      { method: 'GET', path: '/api/v3/ui/fulfilment/stores', purpose: 'read' },
-      { method: 'GET', path: '/api/v3/ui/fulfilment/windows', purpose: 'read' },
+      { method: 'GET', path: '/api/v3/ui/fulfilment/stores', purpose: 'read', cacheSeconds: 300 },
+      { method: 'GET', path: '/api/v3/ui/fulfilment/windows', purpose: 'read', cacheSeconds: 300 },
       { method: 'GET', path: '/apis/ui/Delivery/DeliveryInfo', purpose: 'read' },
     ])
   })
