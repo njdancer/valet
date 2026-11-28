@@ -31,6 +31,7 @@ import {
   type Grant,
   type GrantStore,
   type ImapProtocol,
+  isDisplayText,
   type LocalAccess,
   MAIL_SECRET,
   type MacToPhoneMessage,
@@ -177,7 +178,12 @@ import {
   AgentBrowserService,
   BROWSER_ADAPTER_ID,
   BrowserRefusal,
+  isBrowsingGrant,
   type SessionBrowser,
+  SIGNED_IN_LIMITS,
+  type SignedInAsk,
+  type SignedInAsked,
+  type SignedInGrant,
   sessionPacer,
 } from './agent-browser'
 import {
@@ -902,6 +908,15 @@ export class AppService {
    * in to the installed adapter's site, read only, until `until`.
    */
   private readonly browserGrants = new Map<string, { readonly adapterId: string; readonly until: number }>()
+  /**
+   * Signed-in browser sessions' grants (docs/agent-browser.md#signed-in-sessions), by grant id
+   * (`browse-…`, the browser-grant request's draftId): the agent and site asked for, and once the
+   * person approves, until when.
+   */
+  private readonly browsingGrants = new Map<
+    string,
+    { readonly client: string; readonly adapterId: string; until: number | null }
+  >()
   /** Repair tickets for installed adapters (docs/authoring-tools.md#repairs-pr-3), from the audit log. */
   private readonly repairTickets = new RepairTickets()
   /** Drafts agents are writing (docs/authoring-tools.md), and the tools over them once started. */
@@ -1380,6 +1395,8 @@ export class AppService {
         downloads: { shelf: this.downloadShelf, origin: () => this.publicOrigin() },
         secretIn: (text) => this.knownSecretIn([text]),
         openLogin: (adapterId, clientName) => this.openLoginSession(adapterId, clientName),
+        signedIn: (ask) => this.signedInBrowsing(ask),
+        signedInHolds: (client, adapterId) => this.browsingGrantHolds(client, adapterId),
         notify: (text) => this.notifier.draftActivity(text),
         audit: (call, result, durationMs) => this.auditNativeCall(call, result, durationMs),
         now: this.deps.now,
@@ -2358,6 +2375,12 @@ export class AppService {
           asks.delete(id)
           dropped = true
         }
+    // Its signed-in browsing goes with it, and any session open on it.
+    for (const [id, grant] of this.browsingGrants)
+      if (asker === null || grant.client === asker) {
+        this.browsingGrants.delete(id)
+        this.agentBrowser?.closeSignedIn(asker === null ? null : grant.client, grant.adapterId)
+      }
     if (dropped) this.emit('attention-changed')
   }
 
@@ -2616,6 +2639,7 @@ export class AppService {
     // Lockdown ends every lent session and private address (B).
     this.authoringSessions.clear()
     this.browserGrants.clear()
+    this.browsingGrants.clear()
     this.privateNetwork.clear()
     const ledger = this.approvalBroker?.lockdown().catch(() => undefined)
     this.dropAgentAsks(null)
@@ -3180,6 +3204,15 @@ export class AppService {
       // A draft's scratch browser opens signed in, read only, for a while (docs/browser-grants.md).
       'browser-grant': {
         precheck: async (subject) => {
+          // A signed-in browser session's grant, not a draft's.
+          if (isBrowsingGrant(subject.draftId)) {
+            const asked = this.browsingGrants.get(subject.draftId)
+            return (
+              asked !== undefined &&
+              asked.adapterId === subject.adapterId &&
+              this.adapter(subject.adapterId) !== null
+            )
+          }
           const record = await this.drafts.record(subject.draftId).catch(() => null)
           return (
             record !== null &&
@@ -3189,6 +3222,16 @@ export class AppService {
           )
         },
         apply: async (subject) => {
+          if (isBrowsingGrant(subject.draftId)) {
+            const asked = this.browsingGrants.get(subject.draftId)
+            if (asked === undefined) return
+            asked.until = this.deps.now() + subject.minutes * 60_000
+            const name = this.adapter(subject.adapterId)?.definition.manifest.name ?? subject.adapterId
+            this.notifier.draftActivity(
+              `An agent may open a browser signed in to ${name}, read only, for ${subject.minutes} minutes.`,
+            )
+            return
+          }
           this.browserGrants.set(subject.draftId, {
             adapterId: subject.adapterId,
             until: this.deps.now() + subject.minutes * 60_000,
@@ -5225,6 +5268,107 @@ export class AppService {
     })
     this.notifier.draftActivity(`${clientName} opened a login session for ${manifest.name}.`)
     return session
+  }
+
+  /**
+   * An agent's signed-in browser session (docs/agent-browser.md#signed-in-sessions): its running
+   * grant for the site, or else a browser-grant request put to the person, read only, for the
+   * minutes asked. Cloud agents too: the session's walls (scratch.ts, signedIn) are what a red
+   * team asked for before letting them in.
+   */
+  private async signedInBrowsing(ask: SignedInAsk): Promise<SignedInGrant | SignedInAsked> {
+    if (this.lockedDown) throw new BrowserRefusal('Valet is locked down.')
+    const adapter = this.adapter(ask.adapterId)
+    if (adapter === null)
+      throw new BrowserRefusal('No installed site has that id. valet_list_adapters lists them.')
+    const manifest = adapter.definition.manifest
+    if (manifest.session.cookieDomains.length === 0 || Object.keys(manifest.secrets).length === 0)
+      throw new BrowserRefusal(`${manifest.name} has no login, so there is nothing to sign in with.`)
+    const now = this.deps.now()
+    for (const [id, grant] of this.browsingGrants) {
+      if (grant.until !== null && grant.until <= now) {
+        this.browsingGrants.delete(id)
+        continue
+      }
+      if (grant.client === ask.client && grant.adapterId === ask.adapterId && grant.until !== null)
+        return {
+          status: 'granted',
+          adapterId: ask.adapterId,
+          siteName: manifest.name,
+          cookieDomains: manifest.session.cookieDomains,
+          domains: draftDomains(manifest),
+          until: grant.until,
+        }
+    }
+    const broker = this.approvalBroker
+    if (broker === null) throw new BrowserRefusal('Valet can’t ask for approvals right now.')
+    const purpose = ask.purpose.replace(/\s+/g, ' ').trim()
+    if (purpose.length < 3 || !isDisplayText(purpose))
+      throw new BrowserRefusal('Say in plain words what the session is for (3 to 200 characters).')
+    // A second ask from the same agent for the same site waits on the first one's grant id, so the
+    // person sees one card, not a pile of them.
+    let grantId: string | null = null
+    for (const [id, grant] of this.browsingGrants)
+      if (grant.client === ask.client && grant.adapterId === ask.adapterId && grant.until === null)
+        grantId = id
+    const fresh = grantId === null
+    grantId ??= `browse-${randomBytes(5).toString('hex')}`
+    const origins = httpsOrigins([
+      ...(manifest.home === undefined ? [] : [manifest.home]),
+      ...manifest.navigation,
+    ])
+    this.browsingGrants.set(grantId, { client: ask.client, adapterId: ask.adapterId, until: null })
+    let asked: Awaited<ReturnType<typeof broker.request>>
+    try {
+      asked = await broker.request(
+        'browser-grant',
+        {
+          adapterId: ask.adapterId,
+          draftId: grantId,
+          origins,
+          purpose,
+          mode: 'read',
+          minutes: Math.min(Math.max(ask.minutes, 1), SIGNED_IN_LIMITS.maxMinutes),
+        },
+        { kind: 'agent', clientId: ask.client, clientName: ask.clientName.slice(0, 100) },
+        {
+          agentNote: null,
+          display: {
+            client: {
+              label: ask.clientName.slice(0, 100),
+              badge: ask.client.startsWith('local:') ? 'local' : 'remote',
+            },
+          },
+        },
+      )
+    } catch (error) {
+      if (fresh) this.browsingGrants.delete(grantId)
+      throw error
+    }
+    if (!asked.ok) {
+      if (fresh) this.browsingGrants.delete(grantId)
+      throw new BrowserRefusal(
+        submitRefusal(asked.reason, asked.until).replace(/^Not submitted: /, 'Not asked: '),
+      )
+    }
+    this.emit('approvals-changed')
+    this.emit('attention-changed')
+    return { status: 'asked', siteName: manifest.name, ref: asked.ref, expiresAt: asked.expiresAt }
+  }
+
+  /** Whether an agent's signed-in browsing of a site still stands: granted, unexpired, site installed. */
+  private browsingGrantHolds(client: string, adapterId: string): boolean {
+    if (this.lockedDown || this.adapter(adapterId) === null) return false
+    const now = this.deps.now()
+    for (const grant of this.browsingGrants.values())
+      if (
+        grant.client === client &&
+        grant.adapterId === adapterId &&
+        grant.until !== null &&
+        grant.until > now
+      )
+        return true
+    return false
   }
 
   /** The installed site a login session is for, while developer mode is on, or a refusal. */
@@ -7384,4 +7528,17 @@ function submitRefusal(reason: string, until?: string): string {
 
 function feedbackPart(desk: FeedbackDeskImpl | null): { feedback?: FeedbackDeskImpl } {
   return desk === null ? {} : { feedback: desk }
+}
+
+/** The distinct https origins of a site's addresses, at most ten, for a grant's card. */
+function httpsOrigins(items: readonly string[]): string[] {
+  const out = new Set<string>()
+  for (const item of items) {
+    try {
+      const url = new URL(item)
+      if (url.protocol === 'https:') out.add(url.origin)
+    } catch {}
+    if (out.size >= 10) break
+  }
+  return [...out]
 }

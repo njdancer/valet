@@ -40,3 +40,13 @@ describe('sensitivePage', () => {
     expect(sensitivePage('not a url', [])).toBeNull()
   })
 })
+
+describe('sensitivePage, camelCase and query', () => {
+  it('reads /PaymentInstruments and a query naming a payment page', () => {
+    expect(sensitivePage('https://s.test/api/PaymentInstruments', [])).toBe('a payment page')
+    expect(sensitivePage('https://s.test/account?tab=change-password', [])).toBe(
+      'a password or security page',
+    )
+    expect(sensitivePage('https://s.test/shop/myaccount/myorders', [])).toBeNull()
+  })
+})

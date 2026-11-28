@@ -4,7 +4,14 @@
 import { JSDOM } from 'jsdom'
 import { describe, expect, it } from 'vitest'
 import type { FrameHandle } from '../src/platform'
-import { SCRATCH_LIMITS, ScratchBrowser, ScratchError, type ScratchRules } from '../src/scratch'
+import {
+  redactTokens,
+  SCRATCH_LIMITS,
+  ScratchBrowser,
+  ScratchError,
+  type ScratchRules,
+  signedInRefuses,
+} from '../src/scratch'
 import { type FakeFrame, FakePlatform, type FakeSession, FakeSurface, flush } from './fake-browser'
 
 const PAGE = `<!doctype html><html><head><title>Quotes</title><script>secret()</script></head><body>
@@ -517,5 +524,77 @@ describe('a signed-in scratch browser (a browser grant)', () => {
   it('leaves a signed-out browser alone: a password field there is just a field', async () => {
     const { browser } = await open()
     await expect(browser.navigate('https://finance.example.com/')).resolves.toBeDefined()
+  })
+})
+
+describe('an agent’s signed-in session (docs/agent-browser.md#signed-in-sessions)', () => {
+  async function openSession() {
+    const platform = new FakePlatform()
+    const live = platform.session('persist:tool:shop')
+    live.cookies = [
+      { name: 'sid', value: 'session-value-123456', domain: '.shop.example.com', path: '/', sameSite: 'lax' },
+    ]
+    const frame = jsdomFrame('<html><body><h1>Orders</h1></body></html>', 'https://shop.example.com/account')
+    platform.makeSurface = (partition) => new FakeSurface(partition, [frame as unknown as FakeFrame])
+    const r = rules({ session: true, signedIn: { adapterId: 'shop', cookieDomains: ['shop.example.com'] } })
+    const browser = await ScratchBrowser.open({ platform, partition: 'session:s1', rules: r })
+    return { browser, session: platform.session('session:s1') }
+  }
+
+  it('scrubs what it shows, though a signed-out session shows its own cookies as they are', async () => {
+    const { browser } = await openSession()
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U'
+    expect(browser.scrub(`id session-value-123456 and ${jwt}`)).toBe('id [cookie] and [token]')
+    const plain = await open(PAGE, { session: true })
+    expect(plain.browser.scrub('session-value-123456')).toBe('session-value-123456')
+  })
+
+  it('refuses sockets, event streams and GETs that sign out or change something, and keeps no downloads', async () => {
+    const { browser, session } = await openSession()
+    const filter = session.filter as NonNullable<typeof session.filter>
+    const get = (url: string, resourceType = 'xhr') => filter({ url, method: 'GET', resourceType })
+    expect(await get('https://shop.example.com/api/orders')).toBe(true)
+    expect(await get('wss://shop.example.com/live', 'webSocket')).toBe(false)
+    expect(await get('https://shop.example.com/stream', 'eventsource')).toBe(false)
+    expect(await get('https://shop.example.com/auth/logout', 'mainFrame')).toBe(false)
+    expect((browser as unknown as { refusal: string }).refusal).toMatch(/signs out or changes something/)
+    expect(await get('https://shop.example.com/api/SignOut')).toBe(false)
+    expect(await get('https://shop.example.com/cart/remove?id=4')).toBe(false)
+    expect(browser.writesRefused).toBe(5)
+    expect(session.downloads).toBeNull()
+  })
+})
+
+describe('redactTokens and signedInRefuses', () => {
+  it('takes out JWTs and long token-like runs, never words, slugs or prices', () => {
+    expect(redactTokens('a 3f9c1e7b2a4d4c8e9f0a1b2c3d4e5f60 b')).toBe('a [token] b')
+    expect(redactTokens('code=AbCdEfGhIjKlMnOpQrStUvWxYz012345&x')).toBe('code=[token]&x')
+    for (const kept of [
+      'https://www.woolworths.com.au/shop/productdetails/6004543/pauls-plus-protein-chocolate-yoghurt-pouch',
+      'Woolworths Full Cream Milk 3L $4.95',
+      'Order 123456789, delivered on 28 November',
+    ])
+      expect(redactTokens(kept)).toBe(kept)
+  })
+
+  it('reads camelCase and decoded paths, and leaves ordinary pages alone', () => {
+    expect(signedInRefuses('xhr', new URL('https://s.test/api/LogOut'))).toBe(true)
+    expect(signedInRefuses('mainFrame', new URL('https://s.test/%6Cogout'))).toBe(true)
+    expect(signedInRefuses('mainFrame', new URL('https://s.test/shop/myaccount/myorders'))).toBe(false)
+    expect(signedInRefuses('mainFrame', new URL('https://s.test/shop/mylists/reorder'))).toBe(false)
+  })
+
+  it('reads underscores and doubly encoded queries, and the slashes of a signed path', () => {
+    expect(signedInRefuses('xhr', new URL('https://s.test/api/sign_out'))).toBe(true)
+    expect(signedInRefuses('mainFrame', new URL('https://s.test/go?to=%252Flog%252Bout'))).toBe(true)
+    expect(signedInRefuses('mainFrame', new URL('https://s.test/go?action=sign+out'))).toBe(true)
+    expect(signedInRefuses('mainFrame', new URL('https://s.test/search?q=milk+bread'))).toBe(false)
+    expect(redactTokens('/files/Ab3dEfGh/IjKlMnOp/QrStUvWx/Yz012345abcdEFGH')).toBe(
+      '/files/Ab3dEfGh/IjKlMnOp/QrStUvWx/Yz012345abcdEFGH',
+    )
+    expect(redactTokens('k=AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGh')).toBe('k=[token]')
+    expect(redactTokens('id 123e4567-e89b-12d3-a456-426614174000')).toBe(
+      'id 123e4567-e89b-12d3-a456-426614174000',
+    )
   })
 })

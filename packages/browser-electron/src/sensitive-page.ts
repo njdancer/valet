@@ -40,7 +40,10 @@ export function sensitivePage(url: string, fields: readonly PageField[]): string
   let path = ''
   try {
     const parsed = new URL(url)
-    path = `${parsed.pathname}${parsed.hash}`.toLowerCase()
+    // camelCase split, so /PaymentInstruments reads as payment-instruments; the query too.
+    path = `${parsed.pathname}${parsed.search}${parsed.hash}`
+      .replace(/([a-z])([A-Z])/g, '$1-$2')
+      .toLowerCase()
   } catch {
     path = ''
   }

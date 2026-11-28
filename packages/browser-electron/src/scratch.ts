@@ -58,6 +58,73 @@ const READ_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD', 'OPTIONS'])
 /** The requests an app page draws itself from, as webRequest and DevTools name them. */
 const API_TYPES: ReadonlySet<string> = new Set(['xhr', 'fetch'])
 const POSTED = 'The page tried to post a form, which this browser never sends.'
+const SIGNED_IN_REFUSED_PAGE =
+  'That address signs out or changes something on the site, which a signed-in browser never opens.'
+
+/**
+ * Path words of a GET that changes something: signing out (which would end the person's real
+ * session too, since the browser holds a copy of it) and the add, remove and cancel links some
+ * sites make with GET. Matched on the path's lower-cased words, camelCase split.
+ */
+const SIDE_EFFECT_WORDS =
+  /(^|[^a-z])(log[-_+ ]?out|log[-_+ ]?off|sign[-_+ ]?out|sign[-_+ ]?off|end[-_+ ]?session|revoke|unsubscribe|delete|remove|cancel|add[-_+ ]?to[-_+ ]?(cart|trolley|list)|confirm)([^a-z]|$)/
+
+/** True when a signed-in browser refuses this request whatever its method. */
+export function signedInRefuses(resourceType: string, url: URL): boolean {
+  const type = resourceType.toLowerCase()
+  if (type === 'websocket' || type === 'eventsource' || url.protocol === 'wss:') return true
+  const words = `${decoded(url.pathname)}?${decoded(url.search.replace(/\+/g, ' '))}`
+    .replace(/([a-z])([A-Z])/g, '$1-$2')
+    .toLowerCase()
+  return SIDE_EFFECT_WORDS.test(words)
+}
+
+/** Percent-decoded until it stops changing (a few rounds at most), so %2573ignout reads as signout. */
+function decoded(text: string): string {
+  let out = text
+  for (let i = 0; i < 4; i++) {
+    let next = out
+    try {
+      next = decodeURIComponent(out)
+    } catch {
+      return out
+    }
+    if (next === out) return out
+    out = next
+  }
+  return out
+}
+
+/**
+ * What a signed-in browser shows with bearer-like values taken out: JWTs, and long unbroken runs
+ * of letters, digits and token punctuation, which page text and links rarely hold but tokens,
+ * signed URLs and session ids do. A best guess on top of the cookie values replaced exactly.
+ */
+export function redactTokens(text: string): string {
+  return text
+    .replace(/eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(\.[A-Za-z0-9_-]*)?/g, '[token]')
+    .replace(/[A-Za-z0-9_+/-]{32,}={0,2}/g, (run) =>
+      run
+        .split(/(\/)/)
+        .map((part) => (tokenLike(part) ? '[token]' : part))
+        .join(''),
+    )
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * A long run (between slashes, so an address's path keeps its words) that reads as a token, not
+ * words: mixed case, or digits in it and many digits or not a hyphenated slug. A UUID is an id.
+ */
+function tokenLike(run: string): boolean {
+  if (run.length < 24 || UUID.test(run)) return false
+  const digits = run.replace(/\D/g, '').length
+  const mixed = /[A-Z]/.test(run) && /[a-z]/.test(run)
+  if (mixed && run.length >= 32) return true
+  if (digits === 0) return false
+  return /[A-Z]/.test(run) || digits >= 6 || !/^[a-z0-9]+(-[a-z0-9]+)+$/.test(run)
+}
 
 export const SCRATCH_LIMITS = {
   requestsPerLoad: 300,
@@ -282,7 +349,8 @@ export class ScratchBrowser {
     let self: ScratchBrowser | null = null
     session.filterRequests((request) => (self === null ? false : self.allow(request)))
     // Only a session keeps what it downloads; any other scratch browser refuses downloads.
-    if (options.rules.session === true)
+    // A signed-in session keeps nothing: a download would carry the person's data out of it.
+    if (options.rules.session === true && options.rules.signedIn === undefined)
       session.acceptDownloads(SCRATCH_LIMITS.downloadBytes, (event) => self?.downloaded(event))
     session.onCookieChanged((cookie) => {
       if (cookie.value.length >= 6) self?.cookieValues.add(cookie.value)
@@ -455,7 +523,9 @@ export class ScratchBrowser {
     if (target === null || target.protocol !== 'https:') throw new ScratchError('Only https pages open here.')
     if (!this.options.rules.mayNavigate(target))
       throw new ScratchError(
-        `${target.hostname} isn't under the draft's domains. Add it to the manifest's home, navigation or egress first.`,
+        this.options.rules.signedIn === undefined
+          ? `${target.hostname} isn't under the draft's domains. Add it to the manifest's home, navigation or egress first.`
+          : `${target.hostname.slice(0, 100)} isn't one of the site's own addresses, which is all a signed-in browser opens.`,
       )
     if (!this.options.rules.mayRequest(target))
       throw new ScratchError(`This browser doesn’t reach ${target.hostname.slice(0, 100)}.`)
@@ -812,7 +882,9 @@ export class ScratchBrowser {
         'That element isn’t a field you can type into (it is disabled, read only or not a text field).',
       )
     if (raw.error === 'cannot-fill')
-      throw new ScratchError(`That field can’t take text: ${String(raw.message ?? '').slice(0, 200)}`)
+      throw new ScratchError(
+        `That field can’t take text: ${this.scrub(String(raw.message ?? '')).slice(0, 200)}`,
+      )
     if (raw.error !== undefined) throw this.targetError(raw.error)
     const frames = this.mainFrames
     if (raw.done !== true) {
@@ -1140,16 +1212,20 @@ export class ScratchBrowser {
     this.close()
     throw new ScratchError(
       `Valet closed the signed-in browser: this looks like ${what}, which a browser grant never shows. ` +
-        'Open it again with valet_browser_open and stay away from that page.',
+        (this.options.rules.session === true
+          ? 'Open a new session and stay away from that page.'
+          : 'Open it again with valet_browser_open and stay away from that page.'),
     )
   }
 
   /** Replaces every cookie value the partition has held, so none reaches the agent or a fixture. */
   scrub(text: string): string {
-    if (this.options.rules.session === true) return text
+    const signedIn = this.options.rules.signedIn !== undefined
+    // A signed-out session's cookies were set in it and are nothing of the person's.
+    if (this.options.rules.session === true && !signedIn) return text
     let out = text
     for (const value of this.cookieValues) if (out.includes(value)) out = out.replaceAll(value, '[cookie]')
-    return out
+    return signedIn ? redactTokens(out) : out
   }
 
   private allow(request: OutgoingRequest): boolean | Promise<boolean> {
@@ -1167,6 +1243,13 @@ export class ScratchBrowser {
     if (this.options.rules.signedIn !== undefined && !READ_METHODS.has(request.method.toUpperCase())) {
       this.refusedWrites++
       if (mainFrame) this.refusal = POSTED
+      return false
+    }
+    // A socket's frames, an event stream and a GET that signs out (or a link that changes
+    // something by GET) are writes in a read's clothing.
+    if (this.options.rules.signedIn !== undefined && signedInRefuses(request.resourceType, url)) {
+      this.refusedWrites++
+      if (mainFrame) this.refusal = SIGNED_IN_REFUSED_PAGE
       return false
     }
     if (request.resourceType === 'webSocket') {

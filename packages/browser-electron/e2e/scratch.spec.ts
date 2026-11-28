@@ -66,3 +66,25 @@ test('a snapshot leaves out every kind of hidden text a page aims at an agent', 
   expect(hidden.every((m) => !m.visible)).toBe(true)
   expect(query.matches.find((m) => m.text.startsWith('VISIBLE-1'))?.visible).toBe(true)
 })
+
+// An agent's signed-in session (docs/agent-browser.md#signed-in-sessions) over real Electron.
+test('a signed-in session shows the page with its cookie and tokens hidden, and lets only reads out', async () => {
+  const r = (await scenario(app, 'signedSession')) as {
+    yaml: string
+    logout: string
+    paths: string[]
+    posted: number
+    refused: number
+  }
+  expect(r.yaml).toContain('Your orders')
+  // Signed in: the page read the copied cookie, and the agent sees neither it nor the token.
+  expect(r.yaml).toContain('Session sid=[cookie]')
+  expect(r.yaml).not.toContain('live-session-value-42')
+  expect(r.yaml).toContain('[token]')
+  expect(r.yaml).not.toContain('eyJhbGci')
+  // No sign-out, no form post, no fetch write, no socket reached the site.
+  expect(r.logout).not.toContain('/auth/logout')
+  expect(r.paths.filter((p) => /logout|signed-post|signed-write|signed-socket/.test(p))).toEqual([])
+  expect(r.posted).toBe(0)
+  expect(r.refused).toBeGreaterThanOrEqual(3)
+})

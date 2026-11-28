@@ -69,6 +69,36 @@ sign-in with tools alone (src/main/core/login-session.ts). It takes four tools:
   new browser, and check step 6b needs that before the draft can be submitted
   ([authoring-tools.md](authoring-tools.md#repairing-an-installed-adapter)).
 
+## Signed-in sessions
+
+`browser_session_create` with `signedIn: { site, purpose, minutes }` opens a session signed in to an
+installed site as the person, read only, so an agent can look around the signed-in site (orders,
+lists, account pages) without building anything. Nick chose this shape on 2026-11-28 (feedback
+#35), for cloud agents and agents on the Mac alike, after a red team of the draft browser's signed-in
+mode (thread "Let cloud agents browse Woolworths signed in").
+
+- **The person approves first.** The first call asks with a `browser-grant` request (the draft
+  browser's kind, so the phone app shows it as it is; its `draftId` is a `browse-…` grant id, not a
+  draft) and answers `session: null` with `approval: { ref, expiresAt }`. Once approved, calls for
+  that agent and site open sessions until the grant's end (120 minutes at most), when each closes.
+  Lockdown ends every grant and closes the sessions.
+- **The person's cookies, copied one way.** The browser starts with the installed adapter's
+  tool-partition cookies for its cookie domains (`ScratchRules.signedIn`), in memory; nothing is
+  copied back. Only the adapter's own registrable domains load: no third-party script or beacon.
+  Public addresses only, whatever the agent's home-network setting.
+- **Read only.** Only GET, HEAD and OPTIONS leave. Also refused, whatever the method: sockets and
+  event streams, and GETs whose path or query reads as signing out or changing something (logout,
+  sign-out, remove, delete, cancel, add-to-cart, …), since signing out would end the person's real
+  session too (`signedInRefuses`, scratch.ts).
+- **Nothing beyond the page.** `browser_evaluate`, `browser_cookie_list`, `browser_storage_list`,
+  `browser_console_messages`, both network tools and `browser_file_upload` are refused, and nothing
+  is downloaded. Everything shown has the session's cookie values replaced with `[cookie]` and
+  JWTs and long token-like runs with `[token]` (`redactTokens`). Payment, bank, password, security
+  and account-settings pages close the session (sensitive-page.ts, which reads camelCase paths and
+  the query too). Screenshots are taken only after the same check.
+- **Not built yet:** ending a grant early from the Mac or phone (today: lockdown, or wait for its
+  time), and a Mac-side list of running grants.
+
 ## Tools
 
 | Tool                                                                          | What it does                                                                                                          |

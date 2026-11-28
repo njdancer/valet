@@ -222,6 +222,7 @@ async function setup() {
     'scratch:e2e-aria',
     'scratch:e2e-hostile-aria',
     'scratch:e2e-session',
+    'scratch:e2e-signed',
   ]) {
     session.fromPartition(partition).setCertificateVerifyProc((request, callback) => {
       callback(trusted(request.certificate.data) ? 0 : -2)
@@ -1276,6 +1277,52 @@ async function setup() {
       const query = await browser.query('p')
       browser.close()
       return { view, query }
+    },
+
+    // An agent's signed-in session: the tool partition's cookie copied in and hidden, tokens hidden,
+    // and nothing but reads reaching the site: no form post, no fetch write, no socket, no sign-out.
+    signedSession: async () => {
+      await session.fromPartition('persist:tool:e2e').cookies.set({
+        url: site.url('site.test', '/'),
+        name: 'sid',
+        value: 'live-session-value-42',
+        secure: true,
+      })
+      const browser = await openElectronScratchBrowser({
+        partition: 'scratch:e2e-signed',
+        rules: {
+          mayNavigate: (url) => url.protocol === 'https:' && url.hostname === 'site.test',
+          mayRequest: (url) => url.hostname === 'site.test',
+          pace: async () => undefined,
+          blocked: () => undefined,
+          mayType: () => true,
+          session: true,
+          signedIn: { adapterId: 'e2e', cookieDomains: ['site.test'] },
+        },
+        dial: local.dial,
+      })
+      const before = site.requests.length
+      const postsBefore = site.posts.length
+      const page = await browser.go(site.url('site.test', '/signed'))
+      await sleep(800)
+      const logout = await browser.clickElement('#logout').then(
+        (p) => p.url,
+        (e: { detail?: string }) => e.detail ?? 'failed',
+      )
+      await browser.go(site.url('site.test', '/signed'))
+      await browser.clickElement('#post').catch(() => undefined)
+      await sleep(300)
+      const seen = site.requests.slice(before)
+      const result = {
+        yaml: page.yaml,
+        logout,
+        paths: seen.map((r) => `${r.method} ${r.path}`),
+        posted: site.posts.length - postsBefore,
+        refused: browser.writesRefused,
+        sawCookie: seen.length > 0,
+      }
+      browser.close()
+      return result
     },
 
     // An agent's session: forms post, back goes back, checkboxes tick, the window resizes.

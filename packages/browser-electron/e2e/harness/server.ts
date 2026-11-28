@@ -162,6 +162,25 @@ function routes(
       ),
     }
   }
+  // An agent's signed-in session (docs/agent-browser.md#signed-in-sessions): the session's cookie
+  // and a token shown on the page, a sign-out link, a form that posts, a fetch that writes, and a
+  // socket, each of which the session must refuse or hide.
+  if (host === 'site.test' && path === '/signed') {
+    return {
+      body: page(
+        'Account',
+        `<h1>Your orders</h1>
+        <p id="sid"></p><p>Token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3</p>
+        <a id="logout" href="/auth/logout" style="display:inline-block;width:100px;height:30px">Sign out</a>
+        <form method="post" action="/signed-post"><button id="post" type="submit" style="width:100px;height:30px">Post</button></form>
+        <script>
+          document.getElementById('sid').textContent = 'Session ' + document.cookie
+          fetch('/signed-write', { method: 'POST', body: 'x' }).catch(() => {})
+          try { new WebSocket('wss://' + location.host + '/signed-socket') } catch {}
+        </script>`,
+      ),
+    }
+  }
   // The hostile-page suite (docs/authoring-tools.md#prompt-injection): instructions for an agent in
   // every place a page can hide them. Each hidden one carries HIDDEN-; the visible one VISIBLE-.
   if (host === 'site.test' && path === '/hostile') {
