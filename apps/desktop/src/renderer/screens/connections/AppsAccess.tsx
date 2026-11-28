@@ -1,7 +1,8 @@
 // What one agent may use (docs/access.md): each Mail account, calendar and reminder list at Off,
 // Read or Edit, and for a cloud agent each tool of an approved site and Valet's own (the browser's),
-// on or off. Changes are a draft until Save, and one Save is one Touch ID for everything it adds.
-// Taking things away needs no Touch ID.
+// on or off, and what it may do in Valet itself (See Valet, Ask for changes). Changes are a draft
+// until Save, and one Save is one Touch ID for everything it adds. Taking things away needs no
+// Touch ID.
 
 import {
   Badge,
@@ -16,6 +17,7 @@ import {
   Segmented,
   SiteAvatar,
   Stack,
+  Switch,
   Text,
   TextLink,
   toast,
@@ -28,6 +30,7 @@ import type {
   AgentAccessChanges,
   AgentAccessItem,
   AgentAccessTool,
+  AgentValetAccess,
 } from '../../../shared/api'
 import { useAction, useApi, useLoad } from '../../lib/api-context'
 import { href } from '../../lib/router'
@@ -48,7 +51,53 @@ const EDIT_MEANS: Readonly<Record<AccessApp, string>> = {
 
 const RANK: Readonly<Record<AccessChoice, number>> = { off: 0, read: 1, edit: 2 }
 
-type Draft = Partial<Record<AccessApp, Record<string, AccessChoice>>> & { tools?: Record<string, boolean> }
+type ValetKey = 'seeValet' | 'allActivity' | 'askForChanges'
+type Draft = Partial<Record<AccessApp, Record<string, AccessChoice>>> & {
+  tools?: Record<string, boolean>
+  /** `seeByAsk`: See Valet went on only because Ask for changes did, so it goes off with it. */
+  valet?: Partial<Record<ValetKey | 'seeByAsk', boolean>>
+}
+
+/**
+ * Valet itself as the draft has it: Ask for changes brings See Valet, and without See Valet there
+ * is neither Ask for changes nor All agents' activity.
+ */
+export function valetDraft(saved: AgentValetAccess, draft: Draft['valet'] = {}): AgentValetAccess {
+  const ask = draft.askForChanges ?? saved.askForChanges
+  const see = ask || (draft.seeValet ?? saved.seeValet)
+  return {
+    seeValet: see,
+    allActivity: saved.allActivity === null ? null : see && (draft.allActivity ?? saved.allActivity),
+    askForChanges: see && ask,
+    seeValetSignedAgain: saved.seeValetSignedAgain,
+  }
+}
+
+/** A switch's change in the draft, with what it brings or takes along. */
+function valetChoose(
+  saved: AgentValetAccess,
+  draft: Draft['valet'],
+  key: ValetKey,
+  on: boolean,
+): Draft['valet'] {
+  const now = valetDraft(saved, draft)
+  if (key === 'askForChanges' && on)
+    return { ...draft, askForChanges: true, seeValet: true, seeByAsk: !now.seeValet }
+  if (key === 'askForChanges' && !on) {
+    const { seeByAsk, ...rest } = draft ?? {}
+    return seeByAsk === true
+      ? { ...rest, askForChanges: false, seeValet: false }
+      : { ...rest, askForChanges: false }
+  }
+  if (key === 'seeValet' && !on)
+    return {
+      ...draft,
+      seeValet: false,
+      askForChanges: false,
+      ...(now.allActivity === null ? {} : { allActivity: false }),
+    }
+  return { ...draft, [key]: on }
+}
 
 /** The draft's changes against what is saved, and whether any of them adds something. */
 export function accessChanges(
@@ -56,12 +105,27 @@ export function accessChanges(
   draft: Draft,
   tools: readonly AgentAccessTool[] = [],
   gone: readonly string[] = [],
+  valet: AgentValetAccess | null = null,
 ): { readonly changes: AgentAccessChanges; readonly count: number; readonly widens: boolean } {
   const changes: Partial<Record<AccessApp, Record<string, AccessChoice>>> & {
     tools?: Record<string, boolean>
+    valet?: Partial<Record<ValetKey, boolean>>
   } = {}
   let count = 0
   let widens = false
+  if (valet !== null) {
+    const next = valetDraft(valet, draft.valet)
+    for (const key of ['seeValet', 'allActivity', 'askForChanges'] as const) {
+      if (next[key] === null || next[key] === valet[key]) continue
+      changes.valet = { ...(changes.valet ?? {}), [key]: next[key] }
+      count += 1
+      // A cloud agent's are signed for; an app on this Mac's are its own choices.
+      if (next[key] === true && valet.allActivity === null) widens = true
+    }
+    // Ask for changes off alone, with See Valet signed only beside it: See Valet is signed again.
+    if (valet.seeValetSignedAgain && valet.askForChanges && !next.askForChanges && next.seeValet)
+      widens = true
+  }
   for (const [ref, on] of Object.entries(draft.tools ?? {})) {
     const tool = tools.find((t) => t.ref === ref)
     const saved = tool?.on ?? gone.includes(ref)
@@ -95,9 +159,12 @@ export function AppsAccess({ clientId, name }: { readonly clientId: string; read
   const [draft, setDraft] = useState<Draft>({})
   if (view.status !== 'ready')
     return view.status === 'error' ? <Failed failed what="load its access" /> : null
-  const { apps, tools, gone } = view.data
-  if (apps.length === 0 && tools.length === 0 && gone.length === 0) return null
-  const pending = accessChanges(apps, draft, tools, gone)
+  const { apps, tools, gone, valet } = view.data
+  const pending = accessChanges(apps, draft, tools, gone, valet)
+  const valetNow = valetDraft(valet, draft.valet)
+  const chooseValet = (key: ValetKey, on: boolean) =>
+    setDraft((d) => ({ ...d, valet: valetChoose(valet, d.valet, key, on) }))
+  const local = valet.allActivity !== null
   const toolOn = (t: { readonly ref: string; readonly on: boolean }) => draft.tools?.[t.ref] ?? t.on
   const chooseTool = (ref: string, on: boolean) =>
     setDraft((d) => ({ ...d, tools: { ...(d.tools ?? {}), [ref]: on } }))
@@ -260,6 +327,53 @@ export function AppsAccess({ clientId, name }: { readonly clientId: string; read
             })}
           </section>
         )}
+        <section aria-label="Valet itself" className="flex flex-col gap-3" data-testid="access-valet">
+          <Stack gap={0.5}>
+            <Text weight="medium">Valet itself</Text>
+            <Text size="sm" tone="muted">
+              {local
+                ? 'Besides calling tools. Changing these needs no Touch ID: it’s an app on this Mac.'
+                : 'Besides calling tools. Turning these on is signed with the rest of the Save.'}
+            </Text>
+          </Stack>
+          <ValetSwitch
+            label="See Valet"
+            description={
+              local
+                ? 'Read Valet’s status, sites, Needs you, its own calls and the audit log.'
+                : 'Read Valet’s status, its sites and their health, and its own calls.'
+            }
+            on={valetNow.seeValet}
+            changed={valetNow.seeValet !== valet.seeValet}
+            onChange={(on) => chooseValet('seeValet', on)}
+          />
+          {valetNow.allActivity === null ? null : (
+            <ValetSwitch
+              label="All agents’ activity"
+              description="With See Valet, it also sees other apps’ and agents’ calls, not only its own."
+              on={valetNow.allActivity}
+              disabled={!valetNow.seeValet}
+              changed={valetNow.allActivity !== valet.allActivity}
+              onChange={(on) => chooseValet('allActivity', on)}
+            />
+          )}
+          <ValetSwitch
+            label="Ask for changes"
+            description="Build and repair adapters, and ask you for access, settings, logins and sessions. Nothing it writes runs, and nothing widens, until you approve it. Brings See Valet."
+            on={valetNow.askForChanges}
+            changed={valetNow.askForChanges !== valet.askForChanges}
+            onChange={(on) => chooseValet('askForChanges', on)}
+          />
+          {valet.seeValetSignedAgain &&
+          valet.askForChanges &&
+          !valetNow.askForChanges &&
+          valetNow.seeValet ? (
+            <Text size="sm" tone="muted" data-testid="see-valet-signed-again">
+              You gave See Valet together with Ask for changes, so keeping it needs Touch ID once more. Turn
+              See Valet off too to take both away without it.
+            </Text>
+          ) : null}
+        </section>
         <Stack gap={2}>
           <Inline gap={2}>
             <Button
@@ -282,5 +396,36 @@ export function AppsAccess({ clientId, name }: { readonly clientId: string; read
         </Stack>
       </CardContent>
     </Card>
+  )
+}
+
+function ValetSwitch({
+  label,
+  description,
+  on,
+  changed,
+  disabled = false,
+  onChange,
+}: {
+  readonly label: string
+  readonly description: string
+  readonly on: boolean
+  readonly changed: boolean
+  readonly disabled?: boolean
+  readonly onChange: (on: boolean) => void
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <Switch aria-label={label} checked={on} disabled={disabled} onCheckedChange={onChange} />
+      <Stack gap={0.5}>
+        <Text weight="medium">
+          {label}
+          {changed ? <span className="font-normal text-fg-muted text-sm"> · not saved</span> : null}
+        </Text>
+        <Text size="sm" tone="muted">
+          {description}
+        </Text>
+      </Stack>
+    </div>
   )
 }

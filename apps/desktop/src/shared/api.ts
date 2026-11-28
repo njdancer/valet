@@ -1713,16 +1713,37 @@ export interface AgentAccessView {
   readonly tools: readonly AgentAccessTool[]
   /** Tools in a cloud agent's grant that Valet doesn't offer now (a site since removed): shown, never callable. */
   readonly gone: readonly string[]
+  /** What it may do in Valet itself, beyond calling tools. */
+  readonly valet: AgentValetAccess
 }
 
 /**
- * A Save on the access page: each changed item's new level, by app, and (cloud agents only) each
- * changed tool, on or off, by ref.
+ * What an agent may do in Valet itself (the access card's "Valet itself"): See Valet (Valet's own
+ * read tools), and Ask for changes (build and fix adapters, ask for access, settings and logins),
+ * which brings See Valet with it. All agents' activity is an app on this Mac's only: null for a
+ * cloud agent.
+ */
+export interface AgentValetAccess {
+  readonly seeValet: boolean
+  readonly allActivity: boolean | null
+  readonly askForChanges: boolean
+  /**
+   * A cloud agent's See Valet is signed only together with Ask for changes: taking Ask away alone
+   * signs See Valet again, so that Save asks for Touch ID.
+   */
+  readonly seeValetSignedAgain: boolean
+}
+
+/**
+ * A Save on the access page: each changed item's new level, by app, (cloud agents only) each
+ * changed tool, on or off, by ref, and each changed capability in Valet itself.
  */
 export type AgentAccessChanges = Readonly<
   Partial<Record<AccessApp, Readonly<Record<string, AccessChoice>>>>
 > & {
   readonly tools?: Readonly<Record<string, boolean>>
+  /** Valet itself: each capability changed, on or off. */
+  readonly valet?: Readonly<Partial<Record<'seeValet' | 'allActivity' | 'askForChanges', boolean>>>
 }
 
 /** Messages on this Mac (docs/messages.md). */

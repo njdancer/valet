@@ -31,7 +31,7 @@ import {
   Value,
 } from '@valet/ui'
 import { useState } from 'react'
-import type { ClientAccessPatch, ClientInfo, RemoteClientItem } from '../../../shared/api'
+import type { ClientInfo, RemoteClientItem } from '../../../shared/api'
 import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
 import { formatAgo, formatDay, plural } from '../../lib/format'
 import { href, navigate } from '../../lib/router'
@@ -301,7 +301,6 @@ function AppAccess({ client }: { readonly client: ClientInfo }) {
   const action = useAction()
   const access = useLoad((a) => a.clients.access(client.id), [client.id], ['clients-changed'])
   const reach = useReach()
-  const set = (patch: ClientAccessPatch) => void action.run(() => api.clients.setAccess(client.id, patch))
   const turnOn = async (qualified: string) => {
     if (await action.run(() => api.clients.turnToolOn(client.id, qualified)))
       toast.success('Turned back on', { description: `${client.name} sees ${qualified} again.` })
@@ -328,40 +327,9 @@ function AppAccess({ client }: { readonly client: ClientInfo }) {
         >
           <Switch checked disabled aria-label="Use tools" />
         </Field>
-        <Field
-          inline
-          label="See Valet"
-          description="Read Valet’s status, sites, Needs you, its own calls and the audit log."
-        >
-          <Switch
-            checked={a.seeValet}
-            onCheckedChange={(on) => set({ seeValet: on })}
-            aria-label="See Valet"
-          />
-        </Field>
-        <Field
-          inline
-          label="All agents’ activity"
-          description="With See Valet, it also sees other apps’ and agents’ calls, not only its own."
-        >
-          <Switch
-            checked={a.allActivity}
-            disabled={!a.seeValet}
-            onCheckedChange={(on) => set({ allActivity: on })}
-            aria-label="All agents’ activity"
-          />
-        </Field>
-        <Field
-          inline
-          label="Ask for changes"
-          description="Build and repair adapters, and ask for settings, logins and sessions. Anything that widens what it can reach still comes to you to approve."
-        >
-          <Switch
-            checked={a.askForChanges}
-            onCheckedChange={(on) => set({ askForChanges: on })}
-            aria-label="Ask for changes"
-          />
-        </Field>
+        <Text size="sm" tone="muted">
+          See Valet and Ask for changes are in What it may use, under Valet itself.
+        </Text>
         <Stack gap={2}>
           <Text weight="medium">Tools it turned off for itself</Text>
           {a.toolsOff.length === 0 ? (
@@ -406,12 +374,6 @@ function AgentPage({ agent }: { readonly agent: RemoteClientItem }) {
       : []
   const items = reach.status === 'ready' ? reachItems(scoped) : null
   const label = agent.clientName === null ? null : clientLabel(agent.clientName)
-  const setAsk = async (on: boolean) => {
-    if (await action.run(() => api.remote.setAskForChanges(agent.id, on)))
-      toast(on ? `${agent.host} may ask for changes` : `${agent.host} can no longer ask for changes`, {
-        description: 'Its next session has the change. Start a new chat if it’s in one now.',
-      })
-  }
   const revoke = async () => {
     if (await action.run(() => api.remote.revokeClient(agent.id))) {
       toast(`${agent.host} revoked`)
@@ -494,35 +456,6 @@ function AgentPage({ agent }: { readonly agent: RemoteClientItem }) {
             />
           </CardContent>
         </Card>
-        {agent.grant !== null ? (
-          <Card>
-            <CardHeader>
-              <CardTitle>What else it may do</CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3">
-              <div className="flex items-start gap-3">
-                <Switch
-                  aria-label="Ask for changes"
-                  checked={agent.askForChanges}
-                  disabled={action.busy}
-                  onCheckedChange={(next) => void setAsk(next)}
-                />
-                <Stack gap={0.5}>
-                  <Text weight="medium">Ask for changes</Text>
-                  <Text size="sm" tone="muted">
-                    Write and test adapters, and ask you for tools and settings. Nothing it writes runs or
-                    installs until you approve it. Turning this on needs Touch ID; off is at once.
-                  </Text>
-                </Stack>
-              </div>
-              <Text size="sm" tone="muted" data-testid="agent-see-valet">
-                {agent.seeValet
-                  ? 'It can see Valet: its sites, their health and its own calls.'
-                  : 'It can’t see Valet’s settings or other sites.'}
-              </Text>
-            </CardContent>
-          </Card>
-        ) : null}
         {agent.grant !== null ? <AppsAccess clientId={`remote:${agent.id}`} name={agent.host} /> : null}
       </PageBody>
       <ConfirmDialog

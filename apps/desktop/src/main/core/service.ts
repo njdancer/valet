@@ -125,9 +125,11 @@ import type {
   AgentAccessTool,
   AgentAccessView,
   AgentRequestItem,
+  AgentValetAccess,
   AppEvent,
   AttentionItem,
   ChainStatus,
+  ClientAccessPatch,
   ClientInfo,
   ClientSnippet,
   ConfirmationItem,
@@ -1475,7 +1477,28 @@ export class AppService {
       })
     }
     const { tools, gone } = await this.accessTools(label)
-    return { clientId: label, apps, tools, gone }
+    return { clientId: label, apps, tools, gone, valet: this.valetAccess(label) }
+  }
+
+  /** What an agent may do in Valet itself: an app's stored choices, or a cloud agent's signed ones. */
+  private valetAccess(label: string): AgentValetAccess {
+    const id = label.slice(label.indexOf(':') + 1)
+    if (label.startsWith('local:')) {
+      const c = this.clients.capabilities(id)
+      if (c === null) throw new ValetError('config', 'not-found')
+      return {
+        seeValet: c.seeValet,
+        allActivity: c.allActivity,
+        askForChanges: c.askForChanges,
+        seeValetSignedAgain: false,
+      }
+    }
+    const now = this.remoteCapabilities(id)
+    return {
+      ...now,
+      allActivity: null,
+      seeValetSignedAgain: now.askForChanges && !this.seeValetWithoutAsk(id),
+    }
   }
 
   /**
@@ -1598,15 +1621,18 @@ export class AppService {
         sideEffect: shown.sideEffect,
       })
     }
+    // Valet itself: a cloud agent's capabilities are signed with the rest; an app's are its own
+    // stored choices, written with the rest of the Save.
+    const valet = this.valetChange(label, changes.valet)
     // One request lists at most 100 of each; a Save that adds more is refused, changing nothing.
     if (items.length > 100 || tools.length > 100) throw new ValetError('config', 'invalid')
-    if (items.length > 0 || tools.length > 0) {
+    if (items.length > 0 || tools.length > 0 || valet.sign.length > 0) {
       const subject: ApprovalSubject<'agent-access'> = {
         clientId: label,
         items,
         full: [],
         tools,
-        capabilities: [],
+        capabilities: valet.sign,
       }
       if (!(await this.approveHere('agent-access', subject))) return false
     }
@@ -1615,8 +1641,83 @@ export class AppService {
     for (const { app, after } of next) await this.agentAccess.set(label, app, after)
     for (const t of off)
       await this.setRemoteClientTool(label.slice('remote:'.length), t.adapterId, t.tool, false)
+    if (valet.local !== null) await this.setLocalCapabilities(label.slice('local:'.length), valet.local)
+    if (valet.drop !== null) await this.dropRemoteCapability(label.slice('remote:'.length), valet.drop)
     await this.accessChanged(label)
     return true
+  }
+
+  /**
+   * What a Save does to an agent's capabilities in Valet itself. An app on this Mac: the patch,
+   * written as it is (`local`). A cloud agent: what to sign for (`sign`), and what to take away
+   * once the Save goes through (`drop`). Ask for changes brings See Valet; See Valet off takes Ask
+   * for changes too. Taking Ask for changes away keeps See Valet, signed again when the only
+   * signature behind it also gave Ask for changes.
+   */
+  private valetChange(
+    label: string,
+    change: AgentAccessChanges['valet'],
+  ): {
+    readonly local: ClientAccessPatch | null
+    readonly sign: ('see-valet' | 'ask-for-changes')[]
+    readonly drop: 'all' | 'ask-for-changes' | null
+  } {
+    const none = { local: null, sign: [], drop: null }
+    if (change === undefined || Object.keys(change).length === 0) return none
+    if (change.seeValet === false && change.askForChanges === true) throw new ValetError('config', 'invalid')
+    if (label.startsWith('local:')) return { ...none, local: change }
+    if (change.allActivity !== undefined) throw new ValetError('config', 'invalid')
+    const id = label.slice('remote:'.length)
+    const before = this.remoteCapabilities(id)
+    const ask = change.seeValet === false ? false : (change.askForChanges ?? before.askForChanges)
+    const see = ask || (change.seeValet ?? before.seeValet)
+    const sign: ('see-valet' | 'ask-for-changes')[] = []
+    if (see && !before.seeValet) sign.push('see-valet')
+    if (ask && !before.askForChanges) sign.push('ask-for-changes')
+    if (before.seeValet && !see) return { ...none, drop: 'all' }
+    if (before.askForChanges && !ask) {
+      if (!this.seeValetWithoutAsk(id)) sign.push('see-valet')
+      return { ...none, sign, drop: 'ask-for-changes' }
+    }
+    return { ...none, sign }
+  }
+
+  /** Whether a signature that didn't also give Ask for changes backs a cloud agent's See Valet. */
+  private seeValetWithoutAsk(clientId: string): boolean {
+    const broker = this.approvalBroker
+    if (broker === null) return false
+    const id = `remote:${clientId}`
+    const seeOnly = (capabilities: readonly RemoteCapability[] | undefined): boolean =>
+      (capabilities ?? []).includes('see-valet') && !(capabilities ?? []).includes('ask-for-changes')
+    return (
+      broker.honoured('remote-client', (s) => s.clientId === id && seeOnly(s.capabilities)) !== null ||
+      broker.honoured('agent-access', (s) => s.clientId === id && seeOnly(s.capabilities)) !== null
+    )
+  }
+
+  /** An app's own capabilities, changed: recorded before it can use them, undone if that fails. */
+  private async setLocalCapabilities(clientId: string, patch: ClientAccessPatch): Promise<void> {
+    const before = this.clients.capabilities(clientId)
+    if (before === null || !(await this.clients.setCapabilities(clientId, patch)))
+      throw new ValetError('config', 'not-found')
+    const after = this.clients.capabilities(clientId) ?? before
+    // Turning Ask for changes on widens what the app may do: every change is recorded, and one
+    // that can't be recorded is undone before the app could use it.
+    if (capabilityNames(before).join() !== capabilityNames(after).join()) {
+      try {
+        await this.audit.append({
+          type: 'client-access-changed',
+          clientId: `local:${clientId}`,
+          before: capabilityNames(before),
+          after: capabilityNames(after),
+        })
+      } catch (error) {
+        await this.clients.setCapabilities(clientId, before)
+        throw error
+      }
+    }
+    this.refreshEndpoint()
+    this.emit('clients-changed')
   }
 
   /**
@@ -2935,9 +3036,11 @@ export class AppService {
       // applies only what was signed; the Save then writes the rest, which only narrows.
       'agent-access': {
         precheck: async (subject) => {
-          // Capabilities and full access ride on this kind later; nothing asks for them yet.
-          if (subject.capabilities.length > 0 || subject.full.length > 0) return false
+          // Full access rides on this kind later; nothing asks for it yet.
+          if (subject.full.length > 0) return false
           if (!this.accessClientKnown(subject.clientId)) return false
+          // See Valet and Ask for changes are signed for cloud agents only; an app's are its own.
+          if (subject.capabilities.length > 0 && !subject.clientId.startsWith('remote:')) return false
           // Tools are a cloud agent's, each at the version and side effect signed for.
           if (subject.tools.length > 0 && !subject.clientId.startsWith('remote:')) return false
           if (!subject.tools.every((t) => this.signedToolDeclaration(t) !== null)) return false
@@ -3737,7 +3840,9 @@ export class AppService {
       broker.honoured(
         'remote-client',
         (s) => s.clientId === id && (s.capabilities ?? []).includes(capability),
-      ) !== null
+      ) !== null ||
+      broker.honoured('agent-access', (s) => s.clientId === id && s.capabilities.includes(capability)) !==
+        null
     const setting = remoteAskSetting(clientId)
     const askForChanges =
       consented('ask-for-changes') ||
@@ -3841,16 +3946,44 @@ export class AppService {
 
   /** Removes the evidence behind a cloud agent's See Valet and Ask for changes. Only tightens. */
   private async dropRemoteCapabilities(clientId: string): Promise<void> {
+    try {
+      await this.revokeCapabilityEvidence(clientId, 'see-valet')
+    } catch {
+      // Revoking and disconnecting go on: without its grant, no signature gives it anything.
+    }
+  }
+
+  /**
+   * Removes every signature behind one of a cloud agent's capabilities: Ask for changes' own, or
+   * See Valet's, which takes Ask for changes too. Only tightens. A signature that gave items or
+   * tools as well goes too: what it gave is kept where it was written, not in the signature.
+   * Throws if the ledger couldn't be written, so a Save never says it took away what it didn't.
+   */
+  private async revokeCapabilityEvidence(clientId: string, capability: RemoteCapability): Promise<void> {
     const broker = this.approvalBroker
     if (broker === null) return
+    const id = `remote:${clientId}`
+    const hits = (capabilities: readonly RemoteCapability[] | undefined): boolean =>
+      capability === 'see-valet' ? (capabilities ?? []).length > 0 : (capabilities ?? []).includes(capability)
     const setting = remoteAskSetting(clientId)
-    if (setting !== null) await broker.revoke('setting', (s) => s.setting === setting).catch(() => 0)
-    await broker
-      .revoke(
-        'remote-client',
-        (s) => s.clientId === `remote:${clientId}` && (s.capabilities ?? []).length > 0,
-      )
-      .catch(() => 0)
+    if (setting !== null) await broker.revoke('setting', (s) => s.setting === setting)
+    await broker.revoke('remote-client', (s) => s.clientId === id && hits(s.capabilities))
+    await broker.revoke('agent-access', (s) => s.clientId === id && hits(s.capabilities))
+  }
+
+  /**
+   * A Save took a cloud agent's See Valet (`all`) or only its Ask for changes away: the signatures
+   * go, and so do its requests about changes. The Save's own signature, if it kept See Valet,
+   * never gives Ask for changes, so it stays.
+   */
+  private async dropRemoteCapability(clientId: string, which: 'all' | 'ask-for-changes'): Promise<void> {
+    await this.revokeCapabilityEvidence(clientId, which === 'all' ? 'see-valet' : 'ask-for-changes')
+    try {
+      await this.approvalBroker?.withdrawClient(`remote:${clientId}`)
+    } catch {
+      // A request it can't withdraw now expires; its capability is gone either way.
+    }
+    this.dropAgentAsks(`remote:${clientId}`)
   }
 
   /** A widening change the person asked for: Touch ID first, then the kind's handler applies it. */
@@ -6590,29 +6723,7 @@ export class AppService {
           if (capabilities === null) throw new ValetError('config', 'not-found')
           return { ...capabilities, toolsOff: [...this.clients.toolsOff(clientId)].sort() }
         },
-        setAccess: async (clientId, patch) => {
-          const before = this.clients.capabilities(clientId)
-          if (before === null || !(await this.clients.setCapabilities(clientId, patch)))
-            throw new ValetError('config', 'not-found')
-          const after = this.clients.capabilities(clientId) ?? before
-          // Turning Ask for changes on widens what the app may do: every change is recorded, and
-          // one that can't be recorded is undone before the app could use it.
-          if (capabilityNames(before).join() !== capabilityNames(after).join()) {
-            try {
-              await this.audit.append({
-                type: 'client-access-changed',
-                clientId: `local:${clientId}`,
-                before: capabilityNames(before),
-                after: capabilityNames(after),
-              })
-            } catch (error) {
-              await this.clients.setCapabilities(clientId, before)
-              throw error
-            }
-          }
-          this.refreshEndpoint()
-          this.emit('clients-changed')
-        },
+        setAccess: (clientId, patch) => this.setLocalCapabilities(clientId, patch),
         turnToolOn: async (clientId, qualified) => {
           if (!(await this.clients.turnOnTool(clientId, qualified)))
             throw new ValetError('config', 'not-found')

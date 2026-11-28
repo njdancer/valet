@@ -76,6 +76,15 @@ const accessChanges = z
       .record(z.string().regex(/^[a-z][a-z0-9-]{0,63}\.[A-Za-z0-9_-]{1,128}$/), z.boolean())
       .refine((r) => Object.keys(r).length <= 500, 'too many tools')
       .optional(),
+    valet: z
+      .object({
+        seeValet: z.boolean().optional(),
+        allActivity: z.boolean().optional(),
+        askForChanges: z.boolean().optional(),
+      })
+      .strict()
+      .transform((v) => stripUndefined(v))
+      .optional(),
   })
   .strict()
   .transform((c) => stripUndefined(c))

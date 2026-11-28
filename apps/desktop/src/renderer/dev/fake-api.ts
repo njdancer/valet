@@ -841,6 +841,27 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         }),
       ],
       ...accessTools(clientId),
+      valet: valetOf(clientId),
+    }
+  }
+  // Valet itself: an app's own choices, or a cloud agent's.
+  const valetOf = (clientId: string): AgentAccessView['valet'] => {
+    const [origin, id = ''] = clientId.split(':')
+    if (origin === 'local') {
+      const a = accessOf(id)
+      return {
+        seeValet: a.seeValet,
+        allActivity: a.allActivity,
+        askForChanges: a.askForChanges,
+        seeValetSignedAgain: false,
+      }
+    }
+    const agent = remoteClients.find((c) => c.id === id)
+    return {
+      seeValet: agent?.seeValet ?? false,
+      seeValetSignedAgain: agent?.askForChanges ?? false,
+      allActivity: null,
+      askForChanges: agent?.askForChanges ?? false,
     }
   }
   // A cloud agent's tools: every tool remote access offers, on where its grant names it.
@@ -1932,7 +1953,19 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       async save(clientId, changes) {
         enter('agentAccess.save', clientId, changes)
         const record = { ...(appAccess.get(clientId) ?? {}) }
-        const { tools: toolChanges, ...apps } = changes
+        const { tools: toolChanges, valet, ...apps } = changes
+        if (valet !== undefined) {
+          const [origin, id = ''] = clientId.split(':')
+          if (origin === 'local') access.set(id, { ...accessOf(id), ...valet })
+          else {
+            remoteClients = remoteClients.map((c) => {
+              if (c.id !== id) return c
+              const ask = valet.seeValet === false ? false : (valet.askForChanges ?? c.askForChanges)
+              return { ...c, askForChanges: ask, seeValet: ask || (valet.seeValet ?? c.seeValet) }
+            })
+            emit({ type: 'remote-changed' })
+          }
+        }
         if (toolChanges !== undefined) {
           remoteClients = remoteClients.map((c) => {
             if (`remote:${c.id}` !== clientId || c.grant === null) return c
