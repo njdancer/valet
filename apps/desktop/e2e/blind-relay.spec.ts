@@ -419,9 +419,7 @@ test('the person gives the agent See Valet and Ask for changes on its card, and 
   const signedSaves = async (): Promise<number> =>
     (
       await control.evaluate(async () =>
-        ((await window.valet?.audit.page({ category: 'approvals-grants', limit: 500 }))?.records ?? []).map(
-          (r) => JSON.stringify(r.event),
-        ),
+        ((await window.valet?.audit.page({ limit: 500 }))?.records ?? []).map((r) => JSON.stringify(r.event)),
       )
     ).filter((e) => e.includes('"type":"approval-requested"') && e.includes('"kind":"agent-access"')).length
   const signedBefore = await signedSaves()
