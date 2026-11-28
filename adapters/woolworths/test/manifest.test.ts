@@ -55,7 +55,7 @@ function stepsIn(steps: readonly unknown[]): any[] {
 describe('the real manifest', () => {
   it('is the default export and points at the live site', () => {
     expect(realManifest.home).toBe('https://www.woolworths.com.au/')
-    expect(realManifest.version).toBe('0.6.0')
+    expect(realManifest.version).toBe('0.6.1')
     expect(manifestSchema.parse(realManifest)).toEqual(realManifest)
   })
 
@@ -357,6 +357,7 @@ describe('the request surface', () => {
       { method: 'GET', path: '/apis/ui/Trolley', purpose: 'read', cacheSeconds: 120 },
       { method: 'GET', path: '/api/v3/ui/fulfilment/stores', purpose: 'read' },
       { method: 'GET', path: '/api/v3/ui/fulfilment/windows', purpose: 'read' },
+      { method: 'GET', path: '/apis/ui/Delivery/DeliveryInfo', purpose: 'read' },
     ])
   })
 

@@ -444,8 +444,16 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
         store: 'Bracken Ridge',
         timeId: 1422412,
       })
-      expect(chosen).toMatchObject({ date: '2030-03-05', start: '11:00', end: '12:00', confirmed: false })
+      // Read back from the session, as the site's header reads it.
+      expect(chosen).toMatchObject({ date: '2030-03-05', start: '11:00', end: '12:00', confirmed: true })
       expect(w.site.pickupTimes(SMS.username)).toContain(1422412)
+      // The runtime applies the store setting again every few hours and after a login. The fake
+      // drops a time whenever a store is chosen again, so applying it must write nothing here.
+      await w.runtime.call('apply_store', { value: '9004224' })
+      expect(w.site.pickupTimes(SMS.username)).toContain(1422412)
+      // Another store is still chosen, and the time goes with the old one.
+      await w.runtime.call('apply_store', { value: '9001310' })
+      expect(w.site.pickupAddresses(SMS.username)).toContain(9001310)
     })
 
     it('stays within the request ceiling and declares every call it makes, probes apart', async () => {

@@ -1,6 +1,6 @@
 // Pick-up times (pickup.ts). The times list is a live capture (Bracken Ridge, signed out,
-// 2026-11-28, cut to two days); what the site answers to a reservation signed in is unseen, so the
-// tests pin both answers it might give.
+// 2026-11-28, cut to two days). Live, signed in, reserving a time answered { IsSuccessful: true }
+// (2026-11-28, 00:50Z); confirmed now rests on reading the time back from DeliveryInfo.
 
 import { ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
@@ -10,6 +10,10 @@ import { FakeToolContext, json, loadFixture } from './fake-context'
 const STORES = '/api/v3/ui/fulfilment/stores'
 const WINDOWS = '/api/v3/ui/fulfilment/windows'
 const FULFILMENT = '/apis/ui/Fulfilment'
+const DELIVERY_INFO = '/apis/ui/Delivery/DeliveryInfo'
+/** The session's DeliveryInfo once a time is reserved. Address's fields signed in are assumed. */
+const reserved = (timeId: number) =>
+  json({ DeliveryMethod: 'DriveUp', Address: { AddressId: 12929425 }, ReservedTime: { Id: timeId } })
 
 const BRACKEN_RIDGE = {
   Description: 'Bracken Ridge',
@@ -99,11 +103,14 @@ describe('choose_pickup_time', () => {
   const choose = (ctx: FakeToolContext, timeId: number, store = 'Bracken Ridge') =>
     choosePickupTime.run(ctx, choosePickupTime.input.parse({ postcode: '4017', store, timeId }))
 
-  it('logs in first, then reserves the time as the site’s own button does', async () => {
-    const ctx = site().on('POST', FULFILMENT, json({ IsSuccessful: true }))
+  it('logs in first, reserves the time as the site’s own button does, then reads it back', async () => {
+    const ctx = site()
+      .on('POST', FULFILMENT, json({ IsSuccessful: true }))
+      .on('GET', DELIVERY_INFO, reserved(1164028))
     const result = await choose(ctx, 1164028)
     expect(ctx.events[0]).toBe('ensure')
-    expect(ctx.fetches.at(-1)?.json).toEqual({
+    expect(ctx.events.slice(-2)).toEqual([`POST ${FULFILMENT}`, `GET ${DELIVERY_INFO}`])
+    expect(ctx.fetches.find((f) => f.method === 'POST')?.json).toEqual({
       fulfilmentMethod: 'DriveUp',
       addressId: 12929425,
       timeslotId: 1164028,
@@ -122,9 +129,33 @@ describe('choose_pickup_time', () => {
     expect(choosePickupTime.output.parse(result)).toEqual(result)
   })
 
-  it('takes a bare 200 as done, unconfirmed, and says so', async () => {
-    const ctx = site().on('POST', FULFILMENT, { status: 200, contentType: '', body: '' })
-    expect(await choose(ctx, 1116912)).toMatchObject({ confirmed: false, notices: [PICKUP_NOTICES.noBody] })
+  it('confirms a bare 200 when the session shows the time', async () => {
+    const ctx = site()
+      .on('POST', FULFILMENT, { status: 200, contentType: '', body: '' })
+      .on('GET', DELIVERY_INFO, reserved(1116912))
+    expect(await choose(ctx, 1116912)).toMatchObject({ confirmed: true, notices: [] })
+  })
+
+  it('does not confirm a time the session doesn’t show, whatever the site said', async () => {
+    const ctx = site()
+      .on('POST', FULFILMENT, json({ IsSuccessful: true }))
+      .on('GET', DELIVERY_INFO, reserved(0))
+    expect(await choose(ctx, 1116912)).toMatchObject({
+      confirmed: false,
+      notices: [PICKUP_NOTICES.otherTime],
+    })
+  })
+
+  it('takes the site’s word when the session can’t be read, and a bare 200 as done, unconfirmed', async () => {
+    const unread = json({ Message: 'Not found' }, 404)
+    const said = site()
+      .on('POST', FULFILMENT, json({ IsSuccessful: true }))
+      .on('GET', DELIVERY_INFO, unread)
+    expect(await choose(said, 1116912)).toMatchObject({ confirmed: true, notices: [] })
+    const bare = site()
+      .on('POST', FULFILMENT, { status: 200, contentType: '', body: '' })
+      .on('GET', DELIVERY_INFO, unread)
+    expect(await choose(bare, 1116912)).toMatchObject({ confirmed: false, notices: [PICKUP_NOTICES.noBody] })
   })
 
   it('reports the site refusing the time as unavailable', async () => {

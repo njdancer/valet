@@ -28,18 +28,18 @@ All site calls are in-page `fetch`es with paths relative to the page, so cookies
 browser and the same code serves both origins. Output is reshaped into plain fields; raw
 Woolworths JSON never reaches the client.
 
-| Tool                 | Side effect | Login  | Site calls                                            |
-| -------------------- | ----------- | ------ | ----------------------------------------------------- |
-| `search_products`    | read        | no     | `POST /apis/ui/Search/products`                       |
-| `get_product`        | read        | no     | `GET /apis/ui/product/detail/:stockcode`              |
-| `get_cart`           | read        | ensure | `GET /apis/ui/Trolley`                                |
-| `add_to_cart`        | write       | ensure | `GET /apis/ui/Trolley`, then `POST …/update`          |
-| `set_cart_quantity`  | write       | ensure | `POST /api/v3/ui/trolley/update`                      |
-| `remove_from_cart`   | write       | ensure | `GET /apis/ui/Trolley`, then `POST …/update`          |
-| `list_pickup_times`  | read        | no     | `GET …/fulfilment/stores`, `GET …/fulfilment/windows` |
-| `choose_pickup_time` | write       | ensure | both of those, then `POST /apis/ui/Fulfilment`        |
-| `find_stores`        | read        | no     | `GET /api/v3/ui/fulfilment/stores`                    |
-| `apply_store`        | write       | no     | `POST /api/v3/ui/fulfilment`                          |
+| Tool                 | Side effect | Login  | Site calls                                             |
+| -------------------- | ----------- | ------ | ------------------------------------------------------ |
+| `search_products`    | read        | no     | `POST /apis/ui/Search/products`                        |
+| `get_product`        | read        | no     | `GET /apis/ui/product/detail/:stockcode`               |
+| `get_cart`           | read        | ensure | `GET /apis/ui/Trolley`                                 |
+| `add_to_cart`        | write       | ensure | `GET /apis/ui/Trolley`, then `POST …/update`           |
+| `set_cart_quantity`  | write       | ensure | `POST /api/v3/ui/trolley/update`                       |
+| `remove_from_cart`   | write       | ensure | `GET /apis/ui/Trolley`, then `POST …/update`           |
+| `list_pickup_times`  | read        | no     | `GET …/fulfilment/stores`, `GET …/fulfilment/windows`  |
+| `choose_pickup_time` | write       | ensure | both, `POST /apis/ui/Fulfilment`, `GET …/DeliveryInfo` |
+| `find_stores`        | read        | no     | `GET /api/v3/ui/fulfilment/stores`                     |
+| `apply_store`        | write       | no     | `GET …/DeliveryInfo`, then `POST /apis/ui/Fulfilment`  |
 
 The last two serve the [store setting](#store) and are run only by Valet. An MCP client is never
 told about them and can't call them.
@@ -193,7 +193,10 @@ tools run on whatever store the site gives the session until one is picked.
   and `detail` its street address, each stripped of markup and cut to length. Anything that isn't
   a postcode returns no choices without a site call. A store the adapter can't read is left out;
   at most 50 are returned.
-- **`apply_store { value }`** sets that store on the session as pick-up. It throws
+- **`apply_store { value }`** first reads what the session is set to
+  (`GET /apis/ui/Delivery/DeliveryInfo`, as the site's own header does) and writes nothing when
+  the store is already the chosen one, so a reserved pick-up time survives. Otherwise, or when
+  that read can't be used, it sets the store on the session as pick-up. It throws
   `tool-run` / `unavailable` when the site refuses, and `site-changed` when the reply names a
   different store.
 
@@ -234,11 +237,16 @@ own "Reserve time" button does. That places no order and takes no payment.
   is left out: it isn't a time to reserve ahead.
 - The reservation is `POST /apis/ui/Fulfilment { fulfilmentMethod, addressId, timeslotId,
   windowDate }`, with `windowDate` the day's `Date` exactly as the list sent it. That is read from
-  the site's scripts and **unverified live**. So is the answer: a bare 200 is taken as done but
-  `confirmed: false`, with a notice to check the site.
+  the site's scripts and was **seen live signed in** on 2026-11-28, answering
+  `{ IsSuccessful: true }`; the time showed on the website (not in the Woolworths phone app).
+  The time is then read back from `GET /apis/ui/Delivery/DeliveryInfo` (`ReservedTime.Id`):
+  `confirmed` is true only when the session shows it. When that read can't be used, the reply's
+  `IsSuccessful` decides, and a bare 200 is `confirmed: false` with a notice to check the site.
 - `choose_pickup_time` checks the time is listed and available before sending anything.
-- Assumed, not seen: whether Valet re-applying the store setting (after a login, or every 6 h)
-  keeps a reserved time. The fake keeps it for the same store.
+- Not seen live: whether choosing the same store again keeps a reserved time. The fake assumes it
+  doesn't, which is why `apply_store` leaves a store already in force alone. Signed-in
+  `DeliveryInfo.Address` fields are also unseen; `Address.AddressId` is assumed, and without it
+  `apply_store` chooses the store as before.
 
 ## Login
 
@@ -380,7 +388,7 @@ From the probe of 2026-11-07 ([findings](../../docs/findings/2026-11-07-woolwort
 | After the callback, www's session cookies are on www or the bare domain, not the auth host                                                                                                   | **Assumed.** The hand-off copies only `woolworths.com.au` and `www.woolworths.com.au`                                                                                                                                                                                                           |
 | Login probe `GET /api/ui/v2/bootstrap` → `ShopperRequest.IsGuest === false`, 401 when logged out                                                                                             | **Seen live** 2026-11-27 for a guest (`IsGuest: true`; `ShopperDetails` is gone). The logged-in value is unconfirmed                                                                                                                                                                            |
 | Search `IsSpecial` flag                                                                                                                                                                      | **Assumed.** The tool also filters to specials locally, so results are right either way, but `total` is then the site's count                                                                                                                                                                   |
-| Trolley item shape: product tiles with `QuantityInTrolley`, no `Price`, one unit in `UnitSalePrice` and the line in `SalePrice`                                                              | **Live signed in** 2026-11-27 (keys only, from call traces): `price` is `UnitSalePrice`, `lineTotal` is `SalePrice` (0.5.5). Which is which is from the names, still to check live with a line of two. `trolley-two-items.json` is synthesised in that shape                                    |
+| Trolley item shape: product tiles with `QuantityInTrolley`, no `Price`, one unit in `UnitSalePrice` and the line in `SalePrice`                                                              | **Live signed in** 2026-11-27 (keys only, from call traces): `price` is `UnitSalePrice`, `lineTotal` is `SalePrice` (0.5.5). Checked live with a line of two (2026-11-27): price 2, lineTotal 4. `trolley-two-items.json` is synthesised in that shape                                          |
 | Update reply: `{ Message, UpdatedItems: [line], Totals, TrolleyItemCount, … }`, a line set to 0 left out                                                                                     | **Live signed in** 2026-11-27 (keys only). Read as the confirmation of each line (0.5.5)                                                                                                                                                                                                        |
 | Update body `{ items: [{ stockcode, quantity }] }`, absolute quantities, quantity 0 removes                                                                                                  | **Assumed** from community code. Real clients may send more fields (`source`, `diagnostics`, …)                                                                                                                                                                                                 |
 | Update response is the updated trolley                                                                                                                                                       | **Assumed.** Otherwise the write is reported unconfirmed                                                                                                                                                                                                                                        |

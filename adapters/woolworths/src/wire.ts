@@ -162,6 +162,18 @@ export const pickupWindowsWire = z.object({
 })
 export type PickupWindowsWire = z.infer<typeof pickupWindowsWire>
 
+/**
+ * GET /apis/ui/Delivery/DeliveryInfo: what the session is set to. Signed out (2026-11-28) it sent
+ * DeliveryMethod null, Address null and ReservedTime { Id: 0, TimeWindow: null, ... }. Address's
+ * fields signed in are unseen: AddressId is assumed, and without it nothing is taken as known.
+ */
+export const deliveryInfoWire = z.object({
+  DeliveryMethod: z.string().nullish(),
+  Address: z.object({ AddressId: z.number().nullish() }).nullish(),
+  ReservedTime: z.object({ Id: z.number().nullish(), TimeWindow: z.string().nullish() }).nullish(),
+})
+export type DeliveryInfoWire = z.infer<typeof deliveryInfoWire>
+
 /** POST /apis/ui/Fulfilment. The site's scripts read IsSuccessful; AddressId is an assumption. */
 export const fulfilmentWire = z.object({
   IsSuccessful: z.boolean().nullish(),

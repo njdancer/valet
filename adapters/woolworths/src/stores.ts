@@ -18,9 +18,15 @@
 // apply_store with nothing applied: a guest's search quotes the site's default store, as it would
 // for anyone browsing signed out. Any login makes the runtime apply every setting again before the
 // next call, so the store is in force for the cart from then on.
+//
+// Choosing a store again may drop a pick-up time reserved at it, and the runtime applies the
+// setting again every few hours and after every login. So apply_store first reads what the session
+// is set to (fulfilment.ts) and writes nothing when the store is already the one chosen. When that
+// can't be read, it chooses the store as before.
 
 import { MAX_SETTING_CHOICES, settingChoicesSchema, settingQuerySchema, tool, ValetError } from '@valet/core'
 import { z } from 'zod'
+import { currentFulfilment } from './fulfilment'
 import { getJson, PATHS, postJsonOrEmpty } from './site'
 import { htmlToText } from './text'
 import { fulfilmentWire, pickupStoresWire, pickupStoreWire } from './wire'
@@ -71,6 +77,8 @@ export const applyStore = tool({
   output: z.object({}).strict(),
   async run(ctx, { value }) {
     const addressId = Number(value)
+    // Already in force: choosing it again could drop the person's reserved time.
+    if ((await currentFulfilment(ctx))?.addressId === addressId) return {}
     const choose = (fulfilmentMethod: 'Pickup' | 'DriveUp') =>
       postJsonOrEmpty(ctx, PATHS.fulfilment, { fulfilmentMethod, addressId }, fulfilmentWire)
     let reply: z.infer<typeof fulfilmentWire> | null

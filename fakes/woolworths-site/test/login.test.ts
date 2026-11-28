@@ -893,11 +893,20 @@ describe('after the login', () => {
     expect(reply.text).toBe('')
     expect(site.pickupAddresses(PLAIN.username)).toEqual([9004224])
     expect(site.pickupTimes(PLAIN.username)).toEqual([1422412])
-    // Choosing the same store again keeps the time; another store drops it.
+    // The session's own read shows the store and the time, as the site's header reads them.
+    const info = await b.www.get('/apis/ui/Delivery/DeliveryInfo')
+    expect(JSON.parse(info.text)).toMatchObject({
+      DeliveryMethod: 'DriveUp',
+      Address: { AddressId: 9004224 },
+      ReservedTime: { Id: 1422412, TimeWindow: '11am - 12pm' },
+    })
+    // Choosing a store again without a time, even the same one, drops the time (the fake's
+    // cautious assumption: unseen live).
     await b.www.postJson('/apis/ui/Fulfilment', { addressId: 9004224, fulfilmentMethod: 'Pickup' })
-    expect(site.pickupTimes(PLAIN.username)).toEqual([1422412])
-    await b.www.postJson('/apis/ui/Fulfilment', { addressId: 9001310, fulfilmentMethod: 'Pickup' })
     expect(site.pickupTimes(PLAIN.username)).toEqual([null])
+    expect(JSON.parse((await b.www.get('/apis/ui/Delivery/DeliveryInfo')).text)).toMatchObject({
+      ReservedTime: { Id: 0 },
+    })
   })
 
   it('logs out to a fresh anonymous session; the old token is dead', async () => {

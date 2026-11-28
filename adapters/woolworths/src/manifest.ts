@@ -219,7 +219,7 @@ export function createManifest({
     schemaVersion: 1,
     id: 'woolworths',
     name: 'Woolworths',
-    version: '0.6.0',
+    version: '0.6.1',
     description: 'Search Woolworths (Australia) products and manage the online shopping cart.',
     home: `${origin}/`,
     // Opened in the person's own browser to check out: Valet never places orders.
@@ -288,6 +288,8 @@ export function createManifest({
       { method: 'POST', path: '/apis/ui/Fulfilment', purpose: 'write' },
       // A store's pick-up times (pickup.ts). Seen live signed out, 2026-11-28.
       { method: 'GET', path: '/api/v3/ui/fulfilment/windows', purpose: 'read' },
+      // The session's store and reserved time (fulfilment.ts). Seen live signed out, 2026-11-28.
+      { method: 'GET', path: '/apis/ui/Delivery/DeliveryInfo', purpose: 'read' },
     ],
     tools: [
       {
