@@ -371,6 +371,90 @@ test('the person edits the approved agent’s tools on its page: one Touch ID pe
   expect(await listed()).toEqual(['woolworths_search_products'])
 })
 
+test('the person gives the agent See Valet and Ask for changes on its card, and takes them away', async () => {
+  const agents = await control.evaluate(async () => (await window.valet?.remote.clients()) ?? [])
+  const id = agents[0]?.id ?? ''
+  await control.evaluate((clientId) => {
+    window.location.hash = `#/connections/${clientId}`
+  }, id)
+  const page = control
+  const valet = page.getByTestId('access-valet')
+  const see = valet.getByRole('switch', { name: 'See Valet', exact: true })
+  const ask = valet.getByRole('switch', { name: 'Ask for changes', exact: true })
+  await expect(see).toHaveAttribute('aria-checked', 'false')
+  await expect(ask).toHaveAttribute('aria-checked', 'false')
+  const save = async (label: 'Save' | 'Save with Touch ID') => {
+    await page.getByRole('button', { name: label, exact: true }).click()
+    await expect(page.getByText(/not saved/)).toHaveCount(0)
+  }
+  // Each check is a new session, as a client starts one after a Save closed its old one.
+  const asAgent = async <T>(run: (client: Client) => Promise<T>): Promise<T> => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const client = await claude.connect()
+        try {
+          return await run(client)
+        } finally {
+          await client.close()
+        }
+      } catch (error) {
+        if (attempt >= 3 || !String(error).includes('Session not found')) throw error
+        await new Promise((r) => setTimeout(r, 500))
+      }
+    }
+  }
+  const listed = () => asAgent(async (c) => (await c.listTools()).tools.map((t) => t.name))
+  const text = (r: Awaited<ReturnType<Client['callTool']>>): string =>
+    (r.content as { type: string; text?: string }[]).map((c) => c.text ?? '').join('\n')
+  // An ask-only tool on a draft that doesn't exist: refused for want of Ask, or not found with it.
+  const askRefused = () =>
+    asAgent(async (c) =>
+      /isn't allowed to ask for changes/.test(
+        text(await c.callTool({ name: 'valet_delete_draft', arguments: { draftId: 'no-such-draft' } })),
+      ),
+    )
+  const status = () => asAgent(async (c) => await c.callTool({ name: 'valet_status', arguments: {} }))
+
+  const signedSaves = async (): Promise<number> =>
+    (
+      await control.evaluate(async () =>
+        ((await window.valet?.audit.page({ category: 'approvals-grants', limit: 500 }))?.records ?? []).map(
+          (r) => JSON.stringify(r.event),
+        ),
+      )
+    ).filter((e) => e.includes('"type":"approval-requested"') && e.includes('"kind":"agent-access"')).length
+  const signedBefore = await signedSaves()
+  expect(await listed()).toEqual(['woolworths_search_products'])
+
+  // Ask for changes brings See Valet, both signed in the one Save.
+  await ask.click()
+  await expect(see).toHaveAttribute('aria-checked', 'true')
+  await save('Save with Touch ID')
+  await expect(ask).toHaveAttribute('aria-checked', 'true')
+  expect(await listed()).toEqual(expect.arrayContaining(['valet_status', 'woolworths_search_products']))
+  const seen = await status()
+  expect(seen.isError, text(seen)).toBeFalsy()
+  expect(await askRefused()).toBe(false)
+
+  // Ask off, See Valet kept: its only signature came with Ask, so keeping it is signed again.
+  await ask.click()
+  await expect(see).toHaveAttribute('aria-checked', 'true')
+  await expect(page.getByTestId('see-valet-signed-again')).toBeVisible()
+  await save('Save with Touch ID')
+  await expect(ask).toHaveAttribute('aria-checked', 'false')
+  await expect(see).toHaveAttribute('aria-checked', 'true')
+  expect((await status()).isError).toBeFalsy()
+  expect(await askRefused()).toBe(true)
+
+  // See Valet off: a plain Save, and the agent is back to its site tool alone.
+  await see.click()
+  await save('Save')
+  await expect(see).toHaveAttribute('aria-checked', 'false')
+  expect(await listed()).toEqual(['woolworths_search_products'])
+  // Two of the three Saves were signed; taking away was not.
+  expect((await signedSaves()) - signedBefore).toBe(2)
+})
+
 test('pausing remote access closes the address; on again serves it again', async () => {
   await control.evaluate(() => window.valet?.remote.setEnabled(false))
   const paused = new Client({ name: 'Claude', version: '1' })
