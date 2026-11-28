@@ -614,8 +614,37 @@ describe('pick-up stores and fulfilment (assumed shapes)', () => {
       Suburb: 'Sydney',
       State: 'NSW',
       Postcode: '2000',
+      AreaId: 11201,
+      FulfilmentMethod: 'Pickup',
     })
     expect(JSON.parse((await stores(client, '?postcode=0800')).text)).toEqual([])
+  })
+
+  it('lists a store’s pick-up times by AreaId, signed out, in the live shape', async () => {
+    const site = await start()
+    const client = await browsing(site)
+    const reply = await client.get('/api/v3/ui/fulfilment/windows?areaId=14224&fulfilmentMethod=DriveUp')
+    expect(reply.status).toBe(200)
+    const body = JSON.parse(reply.text)
+    expect(body.Days.map((d: { Date: string }) => d.Date)).toEqual([
+      '2030-03-04T00:00:00.0000000',
+      '2030-03-05T00:00:00.0000000',
+      '2030-03-06T00:00:00.0000000',
+    ])
+    // Direct to boot: "From 30 minutes" first, then the hours; the second hour of the first day is full.
+    expect(body.Days[0].Times.slice(0, 3)).toMatchObject([
+      { Id: 1422499, TimeWindow: 'From 30 minutes', IsDirectToBootNow: true },
+      {
+        Id: 1422400,
+        TimeWindow: '9am - 10am',
+        StartDateTime: '2030-03-04T09:00:00.0000000',
+        Available: true,
+      },
+      { Id: 1422401, TimeWindow: '10am - 11am', Available: false },
+    ])
+    expect((await client.get('/api/v3/ui/fulfilment/windows?areaId=1&fulfilmentMethod=Pickup')).status).toBe(
+      400,
+    )
   })
 
   it('refuses a postcode that is not four digits', async () => {

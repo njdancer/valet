@@ -28,16 +28,18 @@ All site calls are in-page `fetch`es with paths relative to the page, so cookies
 browser and the same code serves both origins. Output is reshaped into plain fields; raw
 Woolworths JSON never reaches the client.
 
-| Tool                | Side effect | Login  | Site calls                                   |
-| ------------------- | ----------- | ------ | -------------------------------------------- |
-| `search_products`   | read        | no     | `POST /apis/ui/Search/products`              |
-| `get_product`       | read        | no     | `GET /apis/ui/product/detail/:stockcode`     |
-| `get_cart`          | read        | ensure | `GET /apis/ui/Trolley`                       |
-| `add_to_cart`       | write       | ensure | `GET /apis/ui/Trolley`, then `POST …/update` |
-| `set_cart_quantity` | write       | ensure | `POST /api/v3/ui/trolley/update`             |
-| `remove_from_cart`  | write       | ensure | `GET /apis/ui/Trolley`, then `POST …/update` |
-| `find_stores`       | read        | no     | `GET /api/v3/ui/fulfilment/stores`           |
-| `apply_store`       | write       | no     | `POST /api/v3/ui/fulfilment`                 |
+| Tool                 | Side effect | Login  | Site calls                                            |
+| -------------------- | ----------- | ------ | ----------------------------------------------------- |
+| `search_products`    | read        | no     | `POST /apis/ui/Search/products`                       |
+| `get_product`        | read        | no     | `GET /apis/ui/product/detail/:stockcode`              |
+| `get_cart`           | read        | ensure | `GET /apis/ui/Trolley`                                |
+| `add_to_cart`        | write       | ensure | `GET /apis/ui/Trolley`, then `POST …/update`          |
+| `set_cart_quantity`  | write       | ensure | `POST /api/v3/ui/trolley/update`                      |
+| `remove_from_cart`   | write       | ensure | `GET /apis/ui/Trolley`, then `POST …/update`          |
+| `list_pickup_times`  | read        | no     | `GET …/fulfilment/stores`, `GET …/fulfilment/windows` |
+| `choose_pickup_time` | write       | ensure | both of those, then `POST /apis/ui/Fulfilment`        |
+| `find_stores`        | read        | no     | `GET /api/v3/ui/fulfilment/stores`                    |
+| `apply_store`        | write       | no     | `POST /api/v3/ui/fulfilment`                          |
 
 The last two serve the [store setting](#store) and are run only by Valet. An MCP client is never
 told about them and can't call them.
@@ -216,6 +218,27 @@ whether a logged-in session already carries the account's own store (session 3 o
 request that sets one. Once the two requests are confirmed, `storeRequired` becomes the default
 for the real site, unless the account's own store turns out to be right, in which case the setting
 stays optional.
+
+## Pick-up times
+
+`list_pickup_times { postcode, store }` lists a store's click and collect times for about a week,
+by day. `choose_pickup_time { postcode, store, timeId }` reserves one for the cart, as the site's
+own "Reserve time" button does. That places no order and takes no payment.
+
+- The store is named by postcode and name ("4017", "Bracken Ridge"), because tool code never sees
+  which store the person chose in Valet. It should be that store: reserving at another store
+  switches the session to it.
+- Times come from `GET /api/v3/ui/fulfilment/windows?areaId=&fulfilmentMethod=`, by the store's
+  `AreaId` and its own method (`DriveUp` for a direct-to-boot store). This was **seen live signed
+  out** on 2026-11-28; the fixture is a cut of that capture. "From 30 minutes" (direct to boot now)
+  is left out: it isn't a time to reserve ahead.
+- The reservation is `POST /apis/ui/Fulfilment { fulfilmentMethod, addressId, timeslotId,
+  windowDate }`, with `windowDate` the day's `Date` exactly as the list sent it. That is read from
+  the site's scripts and **unverified live**. So is the answer: a bare 200 is taken as done but
+  `confirmed: false`, with a notice to check the site.
+- `choose_pickup_time` checks the time is listed and available before sending anything.
+- Assumed, not seen: whether Valet re-applying the store setting (after a login, or every 6 h)
+  keeps a reserved time. The fake keeps it for the same store.
 
 ## Login
 

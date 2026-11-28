@@ -27,6 +27,7 @@ import { FakeToolContext, json, loadFixture } from './fake-context'
 
 /** What each recorded fixture is. Every file in either fixtures folder must be listed here. */
 const ADAPTER_FIXTURES: Record<string, DriftEndpoint> = {
+  'pickup-windows-bracken-ridge.json': 'pickupWindows',
   'product-detail-88436.json': 'productDetail',
   'search-milk.json': 'search',
   'trolley-empty.json': 'trolley',
@@ -178,7 +179,7 @@ describe('drift is caught', () => {
   })
 
   it('every endpoint has a check', () => {
-    expect([...DRIFT_ENDPOINTS].sort()).toEqual(['productDetail', 'search', 'trolley'])
+    expect([...DRIFT_ENDPOINTS].sort()).toEqual(['pickupWindows', 'productDetail', 'search', 'trolley'])
   })
 })
 

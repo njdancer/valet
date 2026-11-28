@@ -423,6 +423,31 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
       expect(cart.cartUrl).toMatch(/^https:\/\/www\.woolworths\.test(:\d+)?\/shop\/cart$/)
     })
 
+    it('lists a store’s pick-up times and reserves one in the account’s session', async () => {
+      const w = await world(SMS)
+      const listed = (await w.runtime.call('list_pickup_times', {
+        postcode: '4017',
+        store: 'Bracken Ridge',
+      })) as {
+        store: { method: string }
+        days: { date: string; times: { id: number; start: string; available: boolean }[] }[]
+      }
+      expect(listed.store.method).toBe('DriveUp')
+      expect(listed.days.map((d) => d.date)).toEqual(['2030-03-04', '2030-03-05', '2030-03-06'])
+      // "From 30 minutes" isn't listed; the full time is, as unavailable.
+      expect(listed.days[0]?.times.slice(0, 2)).toMatchObject([
+        { id: 1422400, start: '09:00', available: true },
+        { id: 1422401, start: '10:00', available: false },
+      ])
+      const chosen = await w.runtime.call('choose_pickup_time', {
+        postcode: '4017',
+        store: 'Bracken Ridge',
+        timeId: 1422412,
+      })
+      expect(chosen).toMatchObject({ date: '2030-03-05', start: '11:00', end: '12:00', confirmed: false })
+      expect(w.site.pickupTimes(SMS.username)).toContain(1422412)
+    })
+
     it('stays within the request ceiling and declares every call it makes, probes apart', async () => {
       const w = await world(SMS)
       await w.runtime.call('add_to_cart', { stockcode: 88436, quantity: 1 })

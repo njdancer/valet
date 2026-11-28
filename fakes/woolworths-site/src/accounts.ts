@@ -39,7 +39,7 @@ export interface Visitor {
    * The pick-up store this session chose, by its address id. It belongs to the session, not the
    * account (assumed: README), so a login, which starts a new session, starts without one.
    */
-  readonly fulfilment: { addressId: number | null }
+  readonly fulfilment: { addressId: number | null; timeslotId: number | null }
 }
 
 export function newToken(): string {
@@ -83,7 +83,7 @@ export class AccountStore {
       token: newToken(),
       username,
       trolley: new Map(),
-      fulfilment: { addressId: null },
+      fulfilment: { addressId: null, timeslotId: null },
     }
     this.visitors.set(visitor.token, visitor)
     return visitor
@@ -99,6 +99,13 @@ export class AccountStore {
     return [...this.visitors.values()]
       .filter((v) => v.username === username)
       .map((v) => v.fulfilment.addressId)
+  }
+
+  /** The pick-up times the sessions now logged in to `username` reserved, oldest first. */
+  pickupTimesOf(username: string): (number | null)[] {
+    return [...this.visitors.values()]
+      .filter((v) => v.username === username)
+      .map((v) => v.fulfilment.timeslotId)
   }
 
   /** The pick-up address ids of the anonymous sessions, oldest first. */

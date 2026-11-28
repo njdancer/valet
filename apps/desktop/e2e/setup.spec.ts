@@ -90,7 +90,7 @@ test('approve the bundled Woolworths adapter in its review, back into setup', as
   const perms = control.getByTestId('setup-perms')
   await expect(perms).toContainText(/www\.woolworths\.test/)
   await expect(perms).toContainText(/auth\.woolworths\.test/)
-  await expect(perms).toContainText(/3 read only.*4 change things/)
+  await expect(perms).toContainText(/4 read only.*5 change things/)
   await expect(perms).not.toContainText('can’t be undone')
   await control.getByRole('link', { name: /^Review Woolworths .*…$/ }).click()
   const approve = control.getByRole('button', { name: /^Approve (Woolworths|\d)/ })
@@ -216,20 +216,28 @@ test('Claude Code’s token lists the six namespaced tools with manifest-derived
   const byName = Object.fromEntries(siteTools(tools).map((t) => [t.name, t.annotations]))
   expect(Object.keys(byName).sort()).toEqual([
     'woolworths_add_to_cart',
+    'woolworths_choose_pickup_time',
     'woolworths_get_cart',
     'woolworths_get_product',
+    'woolworths_list_pickup_times',
     'woolworths_remove_from_cart',
     'woolworths_search_products',
     'woolworths_set_cart_quantity',
     'woolworths_update_cart',
   ])
-  for (const read of ['woolworths_get_cart', 'woolworths_get_product', 'woolworths_search_products']) {
+  for (const read of [
+    'woolworths_get_cart',
+    'woolworths_get_product',
+    'woolworths_list_pickup_times',
+    'woolworths_search_products',
+  ]) {
     expect(byName[read]).toMatchObject({ readOnlyHint: true, openWorldHint: true })
   }
   // C9, from the manifest: every write destructive (add_to_cart until D30); setting a quantity or
   // removing a line twice is the same cart (AC3), adding twice is not.
   for (const [write, idempotentHint] of [
     ['woolworths_add_to_cart', false],
+    ['woolworths_choose_pickup_time', true],
     ['woolworths_remove_from_cart', true],
     ['woolworths_set_cart_quantity', true],
     ['woolworths_update_cart', false],

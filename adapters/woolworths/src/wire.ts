@@ -122,6 +122,10 @@ export const updateStatusWire = z.object({
  */
 export const pickupStoreWire = z.object({
   AddressId: z.number().int().positive(),
+  /** What the store's pick-up times are listed by (live, 2026-11-28). */
+  AreaId: z.number().int().positive().nullish(),
+  /** "Pickup", or "DriveUp" for a direct-to-boot store such as Bracken Ridge (live, 2026-11-28). */
+  FulfilmentMethod: z.string().nullish(),
   Description: z.string().nullish(),
   Street1: z.string().nullish(),
   Suburb: z.string().nullish(),
@@ -130,6 +134,33 @@ export const pickupStoreWire = z.object({
 })
 export type PickupStoreWire = z.infer<typeof pickupStoreWire>
 export const pickupStoresWire = z.array(z.unknown())
+
+/**
+ * GET /api/v3/ui/fulfilment/windows?areaId=&fulfilmentMethod=, a store's pick-up times by day, as
+ * the live site sends them signed out (2026-11-28). Times are the store's local time, without an
+ * offset. Only the fields the tools read are declared.
+ */
+export const pickupTimeWire = z.object({
+  Id: z.number().int().positive(),
+  Available: z.boolean().nullish(),
+  TimeWindow: z.string().nullish(),
+  StartDateTime: z.string(),
+  EndDateTime: z.string(),
+  SalePrice: z.number().nullish(),
+  IsExpress: z.boolean().nullish(),
+  /** "From 30 minutes": direct to boot now, which isn't a time to reserve ahead. */
+  IsDirectToBootNow: z.boolean().nullish(),
+})
+export const pickupWindowsWire = z.object({
+  Days: z.array(
+    z.object({
+      Date: z.string(),
+      Available: z.boolean().nullish(),
+      Times: z.array(pickupTimeWire),
+    }),
+  ),
+})
+export type PickupWindowsWire = z.infer<typeof pickupWindowsWire>
 
 /** POST /apis/ui/Fulfilment. The site's scripts read IsSuccessful; AddressId is an assumption. */
 export const fulfilmentWire = z.object({

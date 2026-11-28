@@ -219,7 +219,7 @@ export function createManifest({
     schemaVersion: 1,
     id: 'woolworths',
     name: 'Woolworths',
-    version: '0.5.5',
+    version: '0.6.0',
     description: 'Search Woolworths (Australia) products and manage the online shopping cart.',
     home: `${origin}/`,
     // Opened in the person's own browser to check out: Valet never places orders.
@@ -286,6 +286,8 @@ export function createManifest({
       // The store setting's two calls (stores.ts). Assumed paths, never seen live.
       { method: 'GET', path: '/api/v3/ui/fulfilment/stores', purpose: 'read' },
       { method: 'POST', path: '/apis/ui/Fulfilment', purpose: 'write' },
+      // A store's pick-up times (pickup.ts). Seen live signed out, 2026-11-28.
+      { method: 'GET', path: '/api/v3/ui/fulfilment/windows', purpose: 'read' },
     ],
     tools: [
       {
@@ -348,6 +350,23 @@ export function createManifest({
         // Lowers quantities and removes lines; adds again when called twice.
         destructive: true,
         idempotent: false,
+      },
+      {
+        name: 'list_pickup_times',
+        title: 'List pick-up times',
+        description:
+          'The click and collect times at a Woolworths store for the next week, by day, each with an id for choose_pickup_time and whether it can still be chosen. Name the store by postcode and name, e.g. 4017 and "Bracken Ridge".',
+        sideEffect: 'read',
+      },
+      {
+        name: 'choose_pickup_time',
+        title: 'Choose pick-up time',
+        description:
+          'Reserves a click and collect time for the cart at a store, as the site’s own "Reserve time" button does. It places no order and takes no payment: the person checks out in their own browser. Takes a time id from list_pickup_times.',
+        sideEffect: 'write',
+        // Replaces any time already reserved; the same time twice is the same reservation.
+        destructive: true,
+        idempotent: true,
       },
       // The store setting's tools. The runtime runs them; no MCP client can list or call them.
       {
