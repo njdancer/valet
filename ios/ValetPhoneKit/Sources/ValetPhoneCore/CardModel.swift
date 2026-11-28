@@ -293,7 +293,8 @@ public enum CardModel {
       row("Reads", "your signed-in \(site(s.adapterId)) for \(s.minutes) minutes", .caution)
       row("On", s.origins.joined(separator: ", "), .caution)
       details.append(CardDetail(label: "Its reason", value: s.purpose, isClaim: true))
-      details.append(CardDetail(label: "Draft", value: s.draftId, isClaim: false))
+      // A `browse-…` id is a signed-in browser session's grant, not a draft (docs/agent-browser.md).
+      details.append(CardDetail(label: s.draftId.hasPrefix("browse-") ? "Grant" : "Draft", value: s.draftId, isClaim: false))
     case let .privateNetwork(s):
       kindWord = "Private network"
       let target = s.port.map { "\(s.address):\($0)" } ?? s.address

@@ -114,6 +114,35 @@ export interface SessionBrowser {
   close(): void
 }
 
+/** An agent's ask to browse an installed site signed in, read only. */
+export interface SignedInAsk {
+  /** The agent, as `origin:clientId`. */
+  readonly client: string
+  readonly clientName: string
+  readonly adapterId: string
+  /** The agent's words, shown to the person as theirs. */
+  readonly purpose: string
+  readonly minutes: number
+}
+
+/** A running grant: what the session may load, and whose cookies it starts with. */
+export interface SignedInGrant {
+  readonly status: 'granted'
+  readonly adapterId: string
+  readonly siteName: string
+  readonly cookieDomains: readonly string[]
+  /** Registrable domains the session may load: the installed adapter's own, which the person approved. */
+  readonly domains: readonly string[]
+  readonly until: number
+}
+
+export interface SignedInAsked {
+  readonly status: 'asked'
+  readonly siteName: string
+  readonly ref: string
+  readonly expiresAt: string
+}
+
 /** How a batch of login steps ended, in codes only. */
 export interface LoginStepsOutcome {
   readonly status: 'ok' | 'needsUser' | 'failed' | 'blocked'
@@ -132,6 +161,12 @@ export interface AgentBrowserDeps {
    * BrowserRefusal saying why not. Without it, browser_session_create refuses `login`.
    */
   readonly openLogin?: (adapterId: string, clientName: string) => Promise<SessionBrowser>
+  /**
+   * A signed-in session's grant (docs/agent-browser.md#signed-in-sessions): the running one for
+   * this agent and site, or else an ask put to the person. Throws a BrowserRefusal saying why not.
+   * Without it, browser_session_create refuses `signedIn`.
+   */
+  readonly signedIn?: (ask: SignedInAsk) => Promise<SignedInGrant | SignedInAsked>
   /**
    * Waits for a page load's turn on `host`: only a limit already known for the host (an installed
    * adapter's), shared with that adapter; none for any other host. Rejects with a BrowserRefusal to
@@ -224,6 +259,29 @@ const element = z
   .describe('What the element is, in words, for the record (as in Playwright MCP).')
 const modifier = z.enum(['Alt', 'Control', 'ControlOrMeta', 'Meta', 'Shift'])
 
+/** Signed-in sessions (docs/agent-browser.md#signed-in-sessions). */
+export const SIGNED_IN_LIMITS = { maxMinutes: 120 } as const
+
+/** A browser-grant request is a signed-in session's, not a draft's, when its draftId is `browse-…`. */
+export function isBrowsingGrant(draftId: string): boolean {
+  return /^browse-[a-f0-9]{10}$/.test(draftId)
+}
+
+/**
+ * Tools a signed-in session refuses: each would hand the agent what the session holds beyond the
+ * page (tokens a script or API answer carries, storage, cookies) or carry something out of it.
+ */
+const SIGNED_IN_REFUSED: ReadonlySet<string> = new Set([
+  'evaluate',
+  'network_requests',
+  'cookie_list',
+  'storage_list',
+  'console_messages',
+  'network_request',
+  'file_upload',
+  'login_steps',
+])
+
 const inputs = {
   session_create: z
     .object({
@@ -240,8 +298,36 @@ const inputs = {
         .describe(
           'Open a login session instead: the site’s own login page, where browser_login_steps can type the person’s login without you seeing it.',
         ),
+      signedIn: z
+        .object({
+          site: z
+            .string()
+            .regex(/^[a-z][a-z0-9-]{1,63}$/)
+            .describe('The installed site’s adapter id, as valet_list_adapters gives it, e.g. "woolworths".'),
+          purpose: z
+            .string()
+            .trim()
+            .min(3)
+            .max(200)
+            .describe(
+              'Why, in a plain sentence the person reads as yours, e.g. "To look at your recent orders".',
+            ),
+          minutes: z
+            .number()
+            .int()
+            .min(1)
+            .max(SIGNED_IN_LIMITS.maxMinutes)
+            .default(30)
+            .describe('How long to ask for, up to 120 minutes.'),
+        })
+        .strict()
+        .optional()
+        .describe(
+          'Open the session signed in to an installed site as the person, read only, once they approve on their phone or Mac.',
+        ),
     })
-    .strict(),
+    .strict()
+    .refine((v) => v.login === undefined || v.signedIn === undefined, 'login or signedIn, not both'),
   session_list: z.object({}).strict(),
   session_close: z.object({ session: sessionId }).strict(),
   navigate: z
@@ -476,11 +562,21 @@ const inputs = {
 
 type BrowserToolName = keyof typeof inputs
 
+interface SignedInInput {
+  readonly site: string
+  readonly purpose: string
+  readonly minutes: number
+}
+
 const outputs: Record<BrowserToolName, z.ZodType> = {
   session_create: z.object({
     session: z.string().nullable(),
     /** What the session may reach, as the person set it for this agent; null for a login session. */
     network: z.object({ homeNetwork: z.boolean(), interface: z.string().nullable() }).nullable().optional(),
+    /** A signed-in session: until when it may stay open. */
+    signedInUntil: z.string().nullable().optional(),
+    /** signedIn asked the person: the request's ref, to tell them, and when the ask lapses. */
+    approval: z.object({ ref: z.string(), expiresAt: z.string() }).nullable().optional(),
     problem: z.string().nullable(),
   }),
   login_steps: pageResult.extend({
@@ -606,7 +702,13 @@ const DECLARATIONS: Record<BrowserToolName, { title: string; description: string
       'repair an installed site’s sign-in: its own login page, in the site’s login browser, where ' +
       'browser_login_steps runs sign-in steps and types the person’s login without you seeing it, and ' +
       'browser_snapshot reads the page with field values and secrets left out. Only browser_login_steps, ' +
-      'browser_navigate, browser_snapshot and browser_session_close work in one. It lasts 30 minutes at most.',
+      'browser_navigate, browser_snapshot and browser_session_close work in one. It lasts 30 minutes at most. ' +
+      'With `signedIn`, it opens signed in to an installed site as the person, read only: the first call asks ' +
+      'the person to approve on their phone or Mac and answers with `approval` (tell them its ref); call again ' +
+      'once they have. Only page loads and reads reach the site (anything that would change something is ' +
+      'refused), only the site’s own domains load, cookie values read [cookie], and payment, bank, password and ' +
+      'security pages close the session. browser_evaluate, the cookie, storage, console and network ' +
+      'tools, file upload and downloads don’t work in one. It closes at the time the person approved.',
   },
   login_steps: {
     title: 'Run sign-in steps',
@@ -737,6 +839,8 @@ interface Session {
   readonly browser: SessionBrowser
   readonly client: string
   idle: unknown
+  /** A signed-in session: until when, and its end timer. */
+  readonly signedIn: { readonly adapterId: string; readonly until: number; ends: unknown } | null
 }
 
 /** A refusal in Valet's words, returned to the agent as `problem`. */
@@ -792,10 +896,35 @@ export class AgentBrowserService implements NativeTools {
         : `${call.identity.origin}:${call.identity.clientId}`
     const id = typeof input['session'] === 'string' ? input['session'] : ''
     try {
+      if (SIGNED_IN_REFUSED.has(name) && this.sessions.get(id)?.signedIn != null)
+        throw new BrowserRefusal(
+          'A signed-in session doesn’t do that: it would hand you what the person’s session holds beyond the page. Read the page with browser_snapshot or browser_find.',
+        )
       switch (name) {
         case 'session_create': {
-          const made = await this.create(client, call.client, input['name'], input['login'])
-          return ok({ session: made.id, network: made.network, problem: null })
+          const made = await this.create(
+            client,
+            call.client,
+            input['name'],
+            input['login'],
+            input['signedIn'] as SignedInInput | undefined,
+          )
+          if ('asked' in made)
+            return ok({
+              session: null,
+              network: null,
+              signedInUntil: null,
+              approval: { ref: made.asked.ref, expiresAt: made.asked.expiresAt },
+              problem:
+                `Valet asked the person to let you browse ${made.asked.siteName} signed in, read only ` +
+                `(request ${made.asked.ref}). Tell them, and call browser_session_create again once they approve.`,
+            })
+          return ok({
+            session: made.id,
+            network: made.network,
+            ...(made.until === null ? {} : { signedInUntil: new Date(made.until).toISOString() }),
+            problem: null,
+          })
         }
         case 'session_list':
           return ok({
@@ -1127,7 +1256,11 @@ export class AgentBrowserService implements NativeTools {
     clientName: string,
     name: unknown,
     login: unknown,
-  ): Promise<{ readonly id: string; readonly network: AgentNetwork | null }> {
+    signedIn: SignedInInput | undefined,
+  ): Promise<
+    | { readonly id: string; readonly network: AgentNetwork | null; readonly until: number | null }
+    | { readonly asked: SignedInAsked }
+  > {
     const live = [...this.sessions.values()].filter((s) => !s.browser.isClosed())
     if (this.own(client).length >= AGENT_BROWSER_LIMITS.perAgent)
       throw new BrowserRefusal(
@@ -1149,11 +1282,42 @@ export class AgentBrowserService implements NativeTools {
     const openLogin = this.deps.openLogin
     if (typeof site === 'string' && openLogin === undefined)
       throw new BrowserRefusal('This Valet can’t open login sessions.')
+    let grant: SignedInGrant | null = null
+    if (signedIn !== undefined) {
+      const ask = this.deps.signedIn
+      if (ask === undefined) throw new BrowserRefusal('This Valet can’t open signed-in sessions.')
+      const answer = await ask({
+        client,
+        clientName,
+        adapterId: signedIn.site,
+        purpose: signedIn.purpose,
+        minutes: signedIn.minutes,
+      })
+      if (answer.status === 'asked') return { asked: answer }
+      if (answer.until <= this.deps.now())
+        throw new BrowserRefusal('That signed-in grant has ended. Ask again with browser_session_create.')
+      grant = answer
+    }
     this.opening++
     let browser: SessionBrowser
     let network: AgentNetwork | null = DEFAULT_NETWORK
     try {
-      if (typeof site === 'string' && openLogin !== undefined) {
+      if (grant !== null) {
+        // Only the installed adapter's own domains, which the person approved: a third-party
+        // script or beacon would otherwise read, or carry off, what the session shows. Public
+        // addresses only, whatever the agent's network settings say.
+        const domains = grant.domains
+        const allowed = (url: URL) => domains.includes(siteDomain(url.hostname.toLowerCase()))
+        browser = await this.deps.open(
+          {
+            ...rules,
+            mayNavigate: (url) => url.protocol === 'https:' && allowed(url),
+            mayRequest: allowed,
+            signedIn: { adapterId: grant.adapterId, cookieDomains: [...grant.cookieDomains] },
+          },
+          DEFAULT_NETWORK,
+        )
+      } else if (typeof site === 'string' && openLogin !== undefined) {
         // A login session reaches only the site's own hosts, so the agent's network settings don't apply.
         browser = await openLogin(site, clientName)
         network = null
@@ -1171,16 +1335,38 @@ export class AgentBrowserService implements NativeTools {
       browser,
       client,
       idle: null,
+      signedIn: grant === null ? null : { adapterId: grant.adapterId, until: grant.until, ends: null },
     }
     this.sessions.set(id, session)
     browser.onClosed(() => {
       this.deps.downloads?.shelf.drop(id)
       if (session.idle !== null) this.deps.timers?.clearTimeout(session.idle)
+      if (session.signedIn?.ends != null) this.deps.timers?.clearTimeout(session.signedIn.ends)
       if (this.sessions.get(id) === session) this.sessions.delete(id)
     })
     this.touch(session)
-    this.deps.notify(`${clientName} opened a browser on this Mac.`)
-    return { id, network }
+    if (grant !== null && session.signedIn !== null) {
+      const timers = this.deps.timers
+      // Closed at the grant's end, used or not.
+      if (timers !== undefined)
+        session.signedIn.ends = timers.setTimeout(
+          () => browser.close(),
+          Math.max(0, grant.until - this.deps.now()),
+        )
+      this.deps.notify(`${clientName} opened a browser signed in to ${grant.siteName}, read only.`)
+    } else this.deps.notify(`${clientName} opened a browser on this Mac.`)
+    return { id, network, until: grant?.until ?? null }
+  }
+
+  /** Closes an agent's signed-in sessions on a site: the person ended the grant, or lockdown. */
+  closeSignedIn(client: string | null, adapterId: string): void {
+    for (const session of [...this.sessions.values()])
+      if (
+        session.signedIn !== null &&
+        session.signedIn.adapterId === adapterId &&
+        (client === null || session.client === client)
+      )
+        session.browser.close()
   }
 
   private touch(session: Session): void {

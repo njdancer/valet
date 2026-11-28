@@ -47,6 +47,8 @@ one card is the follow-up, in line with the permissions redesign's "one confirm"
 - One card for a new site's sign-in adapter, its login and the browsing.
 - "Can act" grants with a card for each change.
 - The phone's "Live now" bar and End button; today the grant shows on the Mac's draft page.
-- Cloud agents (after a red team).
+- Cloud agents in the draft browser. Signed-in *agent browser* sessions are open to cloud agents
+  (docs/agent-browser.md#signed-in-sessions); the draft browser's fixture capture, network bodies and
+  lent-session trials still hand over more than a session's walls allow, so it stays Mac-only.
 - Telling the agent which requests read only refused, beyond the count.
 - Hiding sensitive API responses in the network log of a signed-in browser.

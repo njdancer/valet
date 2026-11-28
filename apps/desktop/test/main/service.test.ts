@@ -20,6 +20,7 @@ import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { buildRecord, type RawPackageRuntime } from '@valet/adapter-store'
+import type { ScratchRules } from '@valet/browser-electron'
 import {
   type AdapterDefinition,
   type ApprovalSubject,
@@ -81,6 +82,7 @@ import { DirectMailFiles } from '../../../../packages/native-mail/src/direct-fil
 import { buildLibrary, ALLOWED as MAIL_ALLOWED } from '../../../../packages/native-mail/test/fixture-library'
 import type { WriterSource } from '../../src/main/core/admin-writer'
 import type { AgentAccessStore } from '../../src/main/core/agent-access'
+import type { SessionBrowser } from '../../src/main/core/agent-browser'
 import {
   type ApprovalBroker,
   adapterSettingSubject,
@@ -3553,6 +3555,77 @@ describe('remote access', () => {
     ).toBe(true)
     await s.api.app.setPaused(true)
     expect(opened[0]?.closed).toBe(true)
+  })
+
+  it('lets a cloud agent open a browser signed in to an installed site, read only, once the person approves', async () => {
+    const opened: ScratchRules[] = []
+    const s = await approved({
+      sessionBrowser: async (rules) => {
+        opened.push(rules)
+        const page = async () => ({
+          url: 'https://www.shop.test/',
+          title: 'Shop',
+          yaml: '- heading "Shop"',
+          previous: null,
+          cut: false,
+        })
+        return {
+          go: page,
+          ariaSnapshot: page,
+          takeNotices: () => [],
+          takeDownloads: () => [],
+          url: () => 'https://www.shop.test/',
+          isClosed: () => false,
+          onClosed: () => undefined,
+          close: () => undefined,
+        } as unknown as SessionBrowser
+      },
+    })
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    const port = Number(new URL(s.service.remote.status().url as string).port)
+    const agent = approvedClient(s, ['browser.session_create'])
+    await s.api.remote.setTool('browser', 'session_create', true)
+    const client = await remoteClient(port, agent.token)
+    const create = async () =>
+      (
+        await client.callTool({
+          name: 'browser_session_create',
+          arguments: { signedIn: { site: 'shop', purpose: 'To look at my recent orders', minutes: 20 } },
+        })
+      ).structuredContent as {
+        session: string | null
+        approval?: { ref: string } | null
+        problem: string | null
+      }
+    const asked = await create()
+    expect(asked.session).toBeNull()
+    expect(asked.problem).toMatch(/asked the person to let you browse Shop signed in, read only/)
+    expect(opened).toEqual([])
+    const broker = (s.service as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+    const pending = broker.list().filter((p) => p.request.kind === 'browser-grant')
+    expect(pending.map((p) => p.request.subject)).toEqual([
+      {
+        adapterId: 'shop',
+        draftId: expect.stringMatching(/^browse-[a-f0-9]{10}$/),
+        origins: ['https://www.shop.test', 'https://login.shop.test'],
+        purpose: 'To look at my recent orders',
+        mode: 'read',
+        minutes: 20,
+      },
+    ])
+    expect(asked.approval?.ref).toBe(pending[0]?.digest.slice(0, 4).toUpperCase())
+    expect(await s.api.attention.approveRequest(pending[0]?.request.id ?? '', null)).toBe(true)
+    const made = await create()
+    expect(made.session).toMatch(/^s[0-9a-f]{12}$/)
+    const rules = opened[0] as ScratchRules
+    expect(rules.signedIn).toEqual({ adapterId: 'shop', cookieDomains: ['www.shop.test'] })
+    expect(rules.mayRequest(new URL('https://www.shop.test/account'))).toBe(true)
+    expect(rules.mayRequest(new URL('https://tracker.example.com/'))).toBe(false)
+    // A second session under the same grant asks nothing new.
+    await create()
+    expect(broker.list().filter((p) => p.request.kind === 'browser-grant')).toHaveLength(0)
+    expect(opened).toHaveLength(2)
   })
 
   it('records each message an agent moves in Mail, and the person puts it back once', async () => {

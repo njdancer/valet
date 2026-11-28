@@ -1028,3 +1028,175 @@ describe('a session’s network', () => {
     expect(opened).toEqual([narrow])
   })
 })
+
+describe('a signed-in session (docs/agent-browser.md#signed-in-sessions)', () => {
+  function signedIn(answer: () => Promise<unknown>) {
+    const asks: unknown[] = []
+    const rules: ScratchRules[] = []
+    const nets: unknown[] = []
+    const notes: string[] = []
+    const timers: { ms: number; run: () => void }[] = []
+    const opened = browser()
+    const service = new AgentBrowserService({
+      open: async (r, net) => {
+        rules.push(r)
+        nets.push(net)
+        return opened
+      },
+      network: async () => ({ homeNetwork: true, interface: 'en0' }),
+      signedIn: async (ask) => {
+        asks.push(ask)
+        return (await answer()) as never
+      },
+      pace: async () => {},
+      secretIn: async () => false,
+      notify: (text) => notes.push(text),
+      audit: async () => {},
+      now: () => 1_000,
+      newId: () => 's00000001',
+      timers: {
+        setTimeout: (run, ms) => {
+          const t = { ms, run }
+          timers.push(t)
+          return t
+        },
+        clearTimeout: () => {},
+      },
+    })
+    const call = async (tool: string, input: unknown) =>
+      (await service.call(
+        {
+          adapterId: 'browser',
+          tool,
+          input,
+          client: 'Claude',
+          identity: { origin: 'remote', clientId: 'a' },
+          callId: `c-${tool}`,
+        } as ToolCall,
+        new AbortController().signal,
+      )) as { status: string; output: Record<string, unknown> }
+    return { call, asks, rules, nets, notes, timers, opened }
+  }
+  const GRANT = {
+    status: 'granted',
+    adapterId: 'woolworths',
+    siteName: 'Woolworths',
+    cookieDomains: ['woolworths.com.au', 'www.woolworths.com.au'],
+    domains: ['woolworths.com.au', 'woolworths.media'],
+    until: 1_000 + 30 * 60_000,
+  }
+  const ASK = { site: 'woolworths', purpose: 'To look at your recent orders' }
+
+  it('asks the person first, opening nothing, and says the ref to tell them', async () => {
+    const t = signedIn(async () => ({
+      status: 'asked',
+      siteName: 'Woolworths',
+      ref: '7B3F',
+      expiresAt: '2026-11-28T12:00:00.000Z',
+    }))
+    const created = await t.call('session_create', { signedIn: ASK })
+    expect(t.asks).toEqual([
+      {
+        client: 'remote:a',
+        clientName: 'Claude',
+        adapterId: 'woolworths',
+        purpose: ASK.purpose,
+        minutes: 30,
+      },
+    ])
+    expect(t.rules).toEqual([])
+    expect(created.output).toMatchObject({
+      session: null,
+      approval: { ref: '7B3F', expiresAt: '2026-11-28T12:00:00.000Z' },
+      problem: expect.stringMatching(/asked the person .* Woolworths signed in, read only \(request 7B3F\)/),
+    })
+  })
+
+  it('opens signed in under the grant: the site’s own domains, its cookies, read only, public network only', async () => {
+    const t = signedIn(async () => GRANT)
+    const created = await t.call('session_create', { signedIn: { ...ASK, minutes: 30 } })
+    expect(created.output).toMatchObject({
+      session: 's00000001',
+      signedInUntil: new Date(GRANT.until).toISOString(),
+      problem: null,
+    })
+    const r = t.rules[0] as ScratchRules
+    expect(r.signedIn).toEqual({ adapterId: 'woolworths', cookieDomains: GRANT.cookieDomains })
+    expect(r.session).toBe(true)
+    // The agent's home-network setting doesn't carry into a signed-in session.
+    expect(t.nets[0]).toEqual({ homeNetwork: false, interface: null })
+    expect(r.mayNavigate(new URL('https://www.woolworths.com.au/shop/myaccount'))).toBe(true)
+    expect(r.mayRequest(new URL('https://cdn0.woolworths.media/x.js'))).toBe(true)
+    expect(r.mayRequest(new URL('https://analytics.example.com/beacon'))).toBe(false)
+    expect(r.mayNavigate(new URL('https://evil.example.com/'))).toBe(false)
+    expect(r.mayNavigate(new URL('http://www.woolworths.com.au/'))).toBe(false)
+    expect(t.notes).toEqual(['Claude opened a browser signed in to Woolworths, read only.'])
+    // Closed at the grant's end, used or not.
+    const end = t.timers.find((x) => x.ms === 30 * 60_000)
+    expect(end).toBeDefined()
+    end?.run()
+    expect(t.opened.closedNow).toBe(true)
+  })
+
+  it('refuses every tool that would hand over what the session holds beyond the page', async () => {
+    const t = signedIn(async () => GRANT)
+    await t.call('session_create', { signedIn: ASK })
+    for (const [tool, input] of [
+      ['evaluate', { function: '() => document.cookie' }],
+      ['cookie_list', {}],
+      ['storage_list', {}],
+      ['console_messages', {}],
+      ['network_requests', {}],
+      ['network_request', { id: 1 }],
+      ['file_upload', { target: 'e1', files: [{ name: 'a.txt', content: 'YQ==' }] }],
+    ] as const) {
+      const answered = await t.call(tool, { session: 's00000001', ...input })
+      expect(answered.output['problem'], tool).toMatch(/signed-in session doesn’t do that/)
+    }
+    expect(t.opened.calls.map((c) => c.method)).toEqual([])
+    // Reading the page works.
+    const shown = await t.call('snapshot', { session: 's00000001' })
+    expect(shown.output['problem']).toBeNull()
+  })
+
+  it('refuses login with signedIn, a purpose too short, and minutes past 120', async () => {
+    const t = signedIn(async () => GRANT)
+    for (const input of [
+      { login: { site: 'woolworths' }, signedIn: ASK },
+      { signedIn: { site: 'woolworths', purpose: 'x' } },
+      { signedIn: { ...ASK, minutes: 121 } },
+    ])
+      expect((await t.call('session_create', input)).status).toBe('failed')
+    expect(t.asks).toEqual([])
+  })
+
+  it('says why when the grant can’t be had, and when the Valet has no signed-in sessions', async () => {
+    const t = signedIn(async () => {
+      throw new BrowserRefusal('Woolworths has no login, so there is nothing to sign in with.')
+    })
+    expect((await t.call('session_create', { signedIn: ASK })).output).toEqual({
+      session: null,
+      problem: 'Woolworths has no login, so there is nothing to sign in with.',
+    })
+    const plain = new AgentBrowserService({
+      open: async () => browser(),
+      pace: async () => {},
+      secretIn: async () => false,
+      notify: () => {},
+      audit: async () => {},
+      now: () => 0,
+      newId: () => 's00000001',
+    })
+    const answered = (await plain.call(
+      {
+        adapterId: 'browser',
+        tool: 'session_create',
+        input: { signedIn: ASK },
+        client: 'C',
+        callId: 'x',
+      } as ToolCall,
+      new AbortController().signal,
+    )) as { output: unknown }
+    expect(answered.output).toEqual({ session: null, problem: 'This Valet can’t open signed-in sessions.' })
+  })
+})

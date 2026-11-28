@@ -58,6 +58,48 @@ const READ_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD', 'OPTIONS'])
 /** The requests an app page draws itself from, as webRequest and DevTools name them. */
 const API_TYPES: ReadonlySet<string> = new Set(['xhr', 'fetch'])
 const POSTED = 'The page tried to post a form, which this browser never sends.'
+const SIGNED_IN_REFUSED_PAGE =
+  'That address signs out or changes something on the site, which a signed-in browser never opens.'
+
+/**
+ * Path words of a GET that changes something: signing out (which would end the person's real
+ * session too, since the browser holds a copy of it) and the add, remove and cancel links some
+ * sites make with GET. Matched on the path's lower-cased words, camelCase split.
+ */
+const SIDE_EFFECT_WORDS =
+  /(^|[^a-z])(log-?out|log-?off|sign-?out|sign-?off|end-?session|revoke|unsubscribe|delete|remove|cancel|add-?to-?(cart|trolley|list)|confirm)([^a-z]|$)/
+
+/** True when a signed-in browser refuses this request whatever its method. */
+export function signedInRefuses(resourceType: string, url: URL): boolean {
+  const type = resourceType.toLowerCase()
+  if (type === 'websocket' || type === 'eventsource' || url.protocol === 'wss:') return true
+  let path = url.pathname
+  try {
+    path = decodeURIComponent(path)
+  } catch {
+    // Left as sent.
+  }
+  const words = `${path}?${url.search}`.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase()
+  return SIDE_EFFECT_WORDS.test(words)
+}
+
+/**
+ * What a signed-in browser shows with bearer-like values taken out: JWTs, and long unbroken runs
+ * of letters, digits and token punctuation, which page text and links rarely hold but tokens,
+ * signed URLs and session ids do. A best guess on top of the cookie values replaced exactly.
+ */
+export function redactTokens(text: string): string {
+  return text
+    .replace(/eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(\.[A-Za-z0-9_-]*)?/g, '[token]')
+    .replace(/[A-Za-z0-9_+-]{32,}={0,2}/g, (run) => (tokenLike(run) ? '[token]' : run))
+}
+
+/** A long run that reads as a token, not words: digits in it, and capitals or many digits. */
+function tokenLike(run: string): boolean {
+  const digits = run.replace(/\D/g, '').length
+  if (digits === 0) return false
+  return /[A-Z]/.test(run) || digits >= 6 || !/^[a-z0-9]+(-[a-z0-9]+)+$/.test(run)
+}
 
 export const SCRATCH_LIMITS = {
   requestsPerLoad: 300,
@@ -282,7 +324,8 @@ export class ScratchBrowser {
     let self: ScratchBrowser | null = null
     session.filterRequests((request) => (self === null ? false : self.allow(request)))
     // Only a session keeps what it downloads; any other scratch browser refuses downloads.
-    if (options.rules.session === true)
+    // A signed-in session keeps nothing: a download would carry the person's data out of it.
+    if (options.rules.session === true && options.rules.signedIn === undefined)
       session.acceptDownloads(SCRATCH_LIMITS.downloadBytes, (event) => self?.downloaded(event))
     session.onCookieChanged((cookie) => {
       if (cookie.value.length >= 6) self?.cookieValues.add(cookie.value)
@@ -1146,10 +1189,12 @@ export class ScratchBrowser {
 
   /** Replaces every cookie value the partition has held, so none reaches the agent or a fixture. */
   scrub(text: string): string {
-    if (this.options.rules.session === true) return text
+    const signedIn = this.options.rules.signedIn !== undefined
+    // A signed-out session's cookies were set in it and are nothing of the person's.
+    if (this.options.rules.session === true && !signedIn) return text
     let out = text
     for (const value of this.cookieValues) if (out.includes(value)) out = out.replaceAll(value, '[cookie]')
-    return out
+    return signedIn ? redactTokens(out) : out
   }
 
   private allow(request: OutgoingRequest): boolean | Promise<boolean> {
@@ -1167,6 +1212,13 @@ export class ScratchBrowser {
     if (this.options.rules.signedIn !== undefined && !READ_METHODS.has(request.method.toUpperCase())) {
       this.refusedWrites++
       if (mainFrame) this.refusal = POSTED
+      return false
+    }
+    // A socket's frames, an event stream and a GET that signs out (or a link that changes
+    // something by GET) are writes in a read's clothing.
+    if (this.options.rules.signedIn !== undefined && signedInRefuses(request.resourceType, url)) {
+      this.refusedWrites++
+      if (mainFrame) this.refusal = SIGNED_IN_REFUSED_PAGE
       return false
     }
     if (request.resourceType === 'webSocket') {
