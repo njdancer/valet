@@ -243,6 +243,9 @@ own "Reserve time" button does. That places no order and takes no payment.
   `confirmed` is true only when the session shows it. When that read can't be used, the reply's
   `IsSuccessful` decides, and a bare 200 is `confirmed: false` with a notice to check the site.
 - `choose_pickup_time` checks the time is listed and available before sending anything.
+- The store list and the times are reused for 5 minutes, so `choose_pickup_time` straight after
+  `list_pickup_times` sends only the reservation and its read-back. Without that, its five paced
+  requests took over 60 s live (2026-11-28), and the MCP client gave up before the read-back.
 - Not seen live: whether choosing the same store again keeps a reserved time. The fake assumes it
   doesn't, which is why `apply_store` leaves a store already in force alone. Signed-in
   `DeliveryInfo.Address` fields are also unseen; `Address.AddressId` is assumed, and without it

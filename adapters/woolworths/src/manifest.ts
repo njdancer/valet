@@ -196,6 +196,13 @@ export const PROBE_TRUST_SECONDS = 60
 export const CATALOGUE_CACHE_SECONDS = 900
 /** How long the trolley an add starts from is reused. Short: the person's own browser can change it. */
 export const TROLLEY_CACHE_SECONDS = 120
+/**
+ * How long a postcode's store list and a store's pick-up times are reused, so choose_pickup_time
+ * right after list_pickup_times costs only its write and read-back. At the site's 10 to 15 s pace,
+ * five requests passed the 60 s an MCP client waits (live, 2026-11-28). A time that filled in the
+ * meantime is refused by the site's own answer to the reservation.
+ */
+export const PICKUP_CACHE_SECONDS = 300
 
 /** The most requests Valet sends the site in an hour. A call that would start past it is refused. */
 export const REQUESTS_PER_HOUR = 100
@@ -219,7 +226,7 @@ export function createManifest({
     schemaVersion: 1,
     id: 'woolworths',
     name: 'Woolworths',
-    version: '0.6.1',
+    version: '0.6.2',
     description: 'Search Woolworths (Australia) products and manage the online shopping cart.',
     home: `${origin}/`,
     // Opened in the person's own browser to check out: Valet never places orders.
@@ -284,10 +291,20 @@ export function createManifest({
       // No `refreshes`: the live reply is the changed lines, not the trolley (2026-11-27).
       { method: 'POST', path: '/api/v3/ui/trolley/update', purpose: 'write' },
       // The store setting's two calls (stores.ts). Assumed paths, never seen live.
-      { method: 'GET', path: '/api/v3/ui/fulfilment/stores', purpose: 'read' },
+      {
+        method: 'GET',
+        path: '/api/v3/ui/fulfilment/stores',
+        purpose: 'read',
+        cacheSeconds: PICKUP_CACHE_SECONDS,
+      },
       { method: 'POST', path: '/apis/ui/Fulfilment', purpose: 'write' },
       // A store's pick-up times (pickup.ts). Seen live signed out, 2026-11-28.
-      { method: 'GET', path: '/api/v3/ui/fulfilment/windows', purpose: 'read' },
+      {
+        method: 'GET',
+        path: '/api/v3/ui/fulfilment/windows',
+        purpose: 'read',
+        cacheSeconds: PICKUP_CACHE_SECONDS,
+      },
       // The session's store and reserved time (fulfilment.ts). Seen live signed out, 2026-11-28.
       { method: 'GET', path: '/apis/ui/Delivery/DeliveryInfo', purpose: 'read' },
     ],
