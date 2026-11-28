@@ -1282,14 +1282,12 @@ async function setup() {
     // An agent's signed-in session: the tool partition's cookie copied in and hidden, tokens hidden,
     // and nothing but reads reaching the site: no form post, no fetch write, no socket, no sign-out.
     signedSession: async () => {
-      await session
-        .fromPartition('persist:tool:e2e')
-        .cookies.set({
-          url: site.url('site.test', '/'),
-          name: 'sid',
-          value: 'live-session-value-42',
-          secure: true,
-        })
+      await session.fromPartition('persist:tool:e2e').cookies.set({
+        url: site.url('site.test', '/'),
+        name: 'sid',
+        value: 'live-session-value-42',
+        secure: true,
+      })
       const browser = await openElectronScratchBrowser({
         partition: 'scratch:e2e-signed',
         rules: {
